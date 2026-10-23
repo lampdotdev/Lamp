@@ -5,6 +5,27 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.5
+
+- Settings no longer crashes when you set up a device with a long list of devices: the window stays on your screen as
+  it grows.
+- The agent's steps fold into a line saying what they did as soon as it moves on, and a step that failed says so.
+- When building for a TV, the agent knows whether the app is in the preview on your Mac or on the TV itself.
+
+## 0.18.4
+
+- A new starter, Disk Map: see where your disk space goes as a map that fills in while it measures, and clear out
+  what you don't need. It doesn't ask for your private folders until you choose to measure them.
+- On macOS 27, Lamp's taps and drags when it tries your app reach every button and gesture again.
+- TV apps can load their own files in the preview, pictures and sounds included, and the agent knows the preview is
+  on your Mac, not your TV.
+
+## 0.18.3
+
+- A turn built with your Claude subscription no longer shows a dollar amount: that was what it would have cost at API
+  prices, not money spent. Costs show only for what you pay for through OpenRouter.
+- When the agent tries your app while a change is going in, it reads what's on screen again instead of finding nothing.
+
 ## 0.18.2
 
 - Switching between Claude, ChatGPT and OpenRouter keeps the conversation: the one you switch to knows what was said

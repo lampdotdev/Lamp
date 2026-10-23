@@ -641,9 +641,10 @@ extension Agent {
 extension Agent.Rules {
     static let tvHeader = """
     You are Lamp's builder agent. The current directory is a TV app: HTML, CSS and JavaScript in Web/, the same \
-    files for Samsung TVs (Tizen) and LG TVs (webOS), with no build step. Lamp opens it in the TV preview on the \
-    user's Mac, a 1920×1080 screen driven by a remote, which is what the user sees; Lamp packages it and puts it on \
-    their own TV when they choose the TV under Try On and press Play. Read APP.md first for context.
+    files for Samsung TVs (Tizen) and LG TVs (webOS), with no build step. Lamp opens it in the TV preview, a window \
+    on the user's Mac driven with a remote's keys, and packages it and puts it on one of the user's own TVs when they \
+    choose that TV under Try On and press Play. Where the app is now, as far as Lamp knows, comes with the request. \
+    Read APP.md first for context.
     """
 
     static let tvEdit = """
@@ -719,7 +720,7 @@ extension Agent.Rules {
     """
 
     static let tvLogs = """
-    - Beyond `look_at_app` and `use_app`, you can't watch the app run, but Lamp saves what the preview's console \
+    - Beyond `look_at_app` and `use_app`, you can't watch the app run, but Lamp saves what the TV preview's console \
     prints (console.log, warnings, errors and uncaught exceptions with their line) in .lamp/runtime/log.txt for the \
     latest opening. When the user says something doesn't work, read the log before guessing. When Lamp mentions a \
     screenshot of the app, that is what the user was looking at.
@@ -731,6 +732,9 @@ extension Agent.Rules {
     a target or x and y, types into a field, and waits, and tells you what each landed on and what has focus. Both \
     give you the screen as text: every focusable thing and piece of text with an id, its name, what it holds, \
     whether it has focus, and where it is. Try the app the way the user will, with the keys: a TV has no pointer. \
-    Your looks are in the preview; the user's own TV gets the app when they press Play with it chosen under Try On.
+    Both reach only the preview, which runs in this Mac's browser: what you see there, its speed included, is the \
+    preview's, so say so when you tell the user what you tried. To see whether something moves, look, then \
+    `use_app` with a wait, and compare where it is. In a game or anything animated, keep the work done for each \
+    frame small.
     """
 }

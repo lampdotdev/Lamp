@@ -1907,6 +1907,7 @@ extension Store {
     /// What the app's AI has cost, under its name in the toolbar ("AI: 3 calls · $0.02"); nil before it's used any.
     func usageSummary(_ project: LampProject) -> String? {
         guard let usage = usage[project.id], usage.calls > 0 else { return nil }
-        return String(format: "AI: %d call%@ · $%.2f", usage.calls, usage.calls == 1 ? "" : "s", usage.cost)
+        let calls = "AI: \(usage.calls) call\(usage.calls == 1 ? "" : "s")"
+        return usage.cost < 0.005 ? calls : calls + String(format: " · $%.2f", usage.cost)
     }
 }

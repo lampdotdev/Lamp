@@ -1,4 +1,6 @@
 import AppKit
+import ScreenCaptureKit
+import UniformTypeIdentifiers
 import WebKit
 
 /// The TV on this Mac's screen: a TV app opened at the TVs' own size (1920×1080, shown at half that), from the copy of
@@ -9,10 +11,19 @@ import WebKit
 final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerWithReply, WKNavigationDelegate, NSWindowDelegate {
     private static var open: [String: TVPreview] = [:]
 
+    /// Where the app's page is opened. A TV opens an app's files straight from its package, and the page reads its own
+    /// files (a game's data, a program in WebAssembly) with fetch and XMLHttpRequest, as text or as bytes. WebKit
+    /// refuses both to a page opened from a file, so the preview serves the staged copy at an address of its own.
+    private static let scheme = "lamp-tv"
+    private static let home = URL(string: "\(scheme)://app/index.html")!
+
     private let project: LampProject
     private let window: NSWindow
     private let webView: WKWebView
+    private let files = StagedFiles()
     private var loaded: CheckedContinuation<Void, Never>?
+    /// When the open page was last pictured, so each picture can say how long after the one before it was taken.
+    private var lastPictured: Date?
     private var log: FileHandle?
 
     static func isOpen(_ project: LampProject) -> Bool { open[project.id]?.window.isVisible == true }
@@ -47,6 +58,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // What the page prints, and what it throws, reach the log.
         controller.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = controller
+        configuration.setURLSchemeHandler(files, forURLScheme: Self.scheme)
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 960, height: 540), configuration: configuration)
         webView.pageZoom = 0.5
         webView.autoresizingMask = [.width, .height]
@@ -91,20 +103,26 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         Runtime.startLog(project)
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
-        let index = staged.appendingPathComponent("index.html")
-        // WebKit keeps the scripts and styles a page loaded and serves them again for the same file's address, so an
+        files.folder = staged
+        lastPictured = nil
+        // WebKit keeps the scripts and styles a page loaded and serves them again for the same address, so an
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
         await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
                                                                 modifiedSince: .distantPast)
         // Closed while the caches went: loading now would start the app again in a preview nobody can see or close.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
-        await withCheckedContinuation { continuation in
-            loaded = continuation
-            webView.loadFileURL(index, allowingReadAccessTo: staged)
-            Task {
-                try? await Task.sleep(for: .seconds(10))
-                self.finishLoading()
+        let carried = await savedFromFileAddress(staged)
+        guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
+        if let carried { webView.configuration.userContentController.addUserScript(Self.restoreScript(carried)) }
+        await navigate { $0.load(URLRequest(url: Self.home)) }
+        if carried != nil {
+            // Marked done only once the app's page says it has the saves: a load that failed, timed out or was closed
+            // ran no script, and the next opening tries again.
+            if Self.open[project.id] === self, (try? await webView.evaluateJavaScript("window.lampRestored === true", in: nil, contentWorld: Self.restoreWorld)) as? Bool == true {
+                UserDefaults.standard.set(true, forKey: Self.carriedKey(project))
             }
+            webView.configuration.userContentController.removeAllUserScripts()
+            webView.configuration.userContentController.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         // Closed while it loaded: showing the window again would bring back a preview with no page in it.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
@@ -113,6 +131,46 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
         try? await Task.sleep(for: .milliseconds(600))
         return nil
+    }
+
+    /// Starts a navigation and waits for it to finish, fail, or ten seconds to pass.
+    private func navigate(_ start: (WKWebView) -> Void) async {
+        await withCheckedContinuation { continuation in
+            loaded = continuation
+            start(webView)
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                self.finishLoading()
+            }
+        }
+    }
+
+    /// WebKit keeps what a page saves by the page's address, and an earlier Lamp opened the app from its file, so what
+    /// the app saved then is read from that address once and handed to the app's first page at its own. Nil when
+    /// there's nothing to hand over.
+    private func savedFromFileAddress(_ staged: URL) async -> String? {
+        guard webView.configuration.websiteDataStore.isPersistent, !UserDefaults.standard.bool(forKey: Self.carriedKey(project)) else { return nil }
+        await navigate { $0.loadHTMLString("", baseURL: staged.appendingPathComponent("index.html")) }
+        let read = "(function () { var o = {}; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); o[k] = localStorage.getItem(k); } return JSON.stringify(o); })()"
+        guard let saved = try? await webView.evaluateJavaScript(read) as? String else { return nil }
+        if saved == "{}" { UserDefaults.standard.set(true, forKey: Self.carriedKey(project)) }
+        return saved == "{}" ? nil : saved
+    }
+
+    private static func carriedKey(_ project: LampProject) -> String { "tvPreviewCarriedSaves." + project.id }
+
+    /// Puts back what was handed over, before the app's own scripts run, leaving alone anything already saved here, and
+    /// says it did in a world of its own, which the app's scripts can't see or set.
+    private static let restoreWorld = WKContentWorld.world(name: "lampRestore")
+    private static func restoreScript(_ saved: String) -> WKUserScript {
+        WKUserScript(source: """
+            (function () {
+              if (location.protocol !== '\(scheme):') return;
+              var s = \(saved);
+              for (var k in s) if (localStorage.getItem(k) === null) localStorage.setItem(k, s[k]);
+              window.lampRestored = true;
+            })();
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: restoreWorld)
     }
 
     private func finishLoading() {
@@ -179,9 +237,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
         // anyone's and would use AI as the app.
-        let staged = TVs.stagingFolder(for: project).appendingPathComponent("web").standardizedFileURL.path + "/"
-        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL,
-              page.standardizedFileURL.path.hasPrefix(staged),
+        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.scheme == Self.scheme, page.host == Self.home.host,
               let call = message.body as? [String: Any], let path = call["path"] as? String,
               ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
@@ -223,14 +279,84 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     // MARK: Looking
 
-    /// A picture of the screen at half the TV's size: a pixel in it is two of the page's.
-    static func picture(_ project: LampProject) async -> Data? {
+    /// A picture of the screen at half the TV's size: a pixel in it is two of the page's. `moving` says whether it shows
+    /// what's moving where it is now: WebKit's own snapshot draws the page again in software, where CSS animations and
+    /// transitions sit at their start, so a square sliding across the screen is at the same place in every picture.
+    struct Picture {
+        let png: Data
+        let moving: Bool
+        let at: Date
+        /// Seconds since the previous picture of this page; nil for the first since it opened.
+        let since: TimeInterval?
+    }
+
+    /// Taken from the window itself, as the screen shows it, where macOS lets Lamp do that for its own windows without
+    /// asking the person (14.4 on); WebKit's snapshot otherwise, or when the window can't be captured (minimized, say).
+    static func picture(_ project: LampProject) async -> Picture? {
         guard let preview = open[project.id] else { return nil }
-        let configuration = WKSnapshotConfiguration()
-        configuration.snapshotWidth = 960
-        guard let image = try? await preview.webView.takeSnapshot(configuration: configuration),
-              let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        var taken: (png: Data, moving: Bool)?
+        if #available(macOS 14.4, *), let png = await preview.captured() { taken = (png, true) }
+        if taken == nil {
+            let configuration = WKSnapshotConfiguration()
+            configuration.snapshotWidth = 960
+            if let image = try? await preview.webView.takeSnapshot(configuration: configuration),
+               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = halfSize(cg) { taken = (png, false) }
+        }
+        guard let taken else { return nil }
+        let now = Date()
+        defer { preview.lastPictured = now }
+        return Picture(png: taken.png, moving: taken.moving, at: now, since: preview.lastPictured.map { now.timeIntervalSince($0) })
+    }
+
+    /// Said with each picture: the time between two pictures includes the agent's own thinking between its calls, so a
+    /// `use_app` wait of one second can be several seconds of animation, and only the times say how many.
+    static func takenNote(_ picture: Picture, timeZone: TimeZone = .current) -> String {
+        let clock = DateFormatter()
+        clock.locale = Locale(identifier: "en_US_POSIX")
+        clock.timeZone = timeZone
+        clock.dateFormat = "HH:mm:ss.S"
+        let when = "This picture was taken at \(clock.string(from: picture.at)) by this Mac's clock"
+        guard let since = picture.since else { return when + ", the first since the app was opened in the preview." }
+        return when + ", \(String(format: "%.1f", since)) s after the previous one."
+    }
+
+    /// The page drawn 960 pixels across, the size `use_app`'s points are measured in, whatever the screen's scale.
+    private static func halfSize(_ page: CGImage) -> Data? {
+        let width = 960, height = Int((960 * CGFloat(page.height) / CGFloat(page.width)).rounded())
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        context.cgContext.interpolationQuality = .high
+        // A window's capture has its rounded corners clear; black is a TV's edge.
+        context.cgContext.setFillColor(.black)
+        context.cgContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.cgContext.draw(page, in: CGRect(x: 0, y: 0, width: width, height: height))
         return bitmap.representation(using: .png, properties: [:])
+    }
+
+    /// Said with a picture that doesn't show movement, so the agent doesn't take a still animation for a broken one.
+    static let stillNote = "On this Mac the picture can't show movement: anything animated with CSS appears where its animation starts. "
+        + "Read where things are from the screen as text instead."
+
+    /// The window as the screen shows it, cut to the page. Nil when macOS doesn't offer the window or the capture fails.
+    @available(macOS 14.4, *)
+    private func captured() async -> Data? {
+        guard window.isVisible, !window.isMiniaturized, webView.bounds.width > 0,
+              let content = try? await SCShareableContent.currentProcess,
+              let shared = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else { return nil }
+        let filter = SCContentFilter(desktopIndependentWindow: shared)
+        let scale = CGFloat(filter.pointPixelScale)
+        let configuration = SCStreamConfiguration()
+        configuration.width = Int((filter.contentRect.width * scale).rounded())
+        configuration.height = Int((filter.contentRect.height * scale).rounded())
+        configuration.showsCursor = false
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) else { return nil }
+        // The capture is the whole window, title bar included, with its origin at the top left; the page is the web
+        // view's part of it.
+        let page = webView.convert(webView.bounds, to: nil)
+        let crop = CGRect(x: page.minX * scale, y: (filter.contentRect.height - page.maxY) * scale,
+                          width: page.width * scale, height: page.height * scale).integral
+        return image.cropping(to: crop).flatMap(Self.halfSize)
     }
 
     struct Item {
@@ -259,7 +385,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     static func text(_ items: [Item]) -> String {
-        guard !items.isEmpty else { return "The screen as text: nothing on it can be read." }
+        guard !items.isEmpty else { return "The TV preview's screen as text: nothing on it can be read." }
         let lines = items.prefix(150).map { item -> String in
             var line = "\(item.id) \(item.kind)"
             if !item.name.isEmpty { line += " \"\(item.name.prefix(80))\"" }
@@ -267,7 +393,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             if item.focused { line += ", has focus" }
             return line + " @\(Int(item.frame.midX.rounded())),\(Int(item.frame.midY.rounded())) \(Int(item.frame.width.rounded()))x\(Int(item.frame.height.rounded()))"
         }
-        return "The screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, whether it "
+        return "The TV preview's screen as text, in reading order. Each line is a thing's id, what it is, its name, \"= \" what it holds, whether it "
             + "has the remote's focus, then @x,y (its middle in the picture) and its size. Act on a thing with `target` set to its id "
             + "or exact name; x and y are for what isn't listed:\n" + lines.joined(separator: "\n")
             + (items.count > 150 ? "\n… and \(items.count - 150) more" : "")
@@ -405,5 +531,65 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             if let focused = screen.first(where: \.focused) { report[report.count - 1] += " Focus is on \(focused.kind) \"\(focused.name)\"." }
         }
         return report.joined(separator: "\n")
+    }
+}
+
+/// The staged copy of a TV app, served to its preview: only plain files inside the copy, each with its type (WebAssembly
+/// is compiled as it arrives only when it says it's WebAssembly) and a part of one when asked (sound and video ask for
+/// theirs in parts). Not kept in WebKit's cache, so an opening after a change has the files as they are now.
+@MainActor
+final class StagedFiles: NSObject, WKURLSchemeHandler {
+    var folder: URL?
+
+    private static let types = ["html": "text/html", "htm": "text/html", "js": "text/javascript", "mjs": "text/javascript",
+                                "css": "text/css", "json": "application/json", "wasm": "application/wasm", "svg": "image/svg+xml"]
+
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
+        guard let data = file(at: url) else {
+            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Cache-Control": "no-store"])!)
+            task.didFinish()
+            return
+        }
+        let ext = url.pathExtension.lowercased()
+        var headers = ["Content-Type": Self.types[ext] ?? UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream",
+                       "Accept-Ranges": "bytes", "Cache-Control": "no-store"]
+        var status = 200, body = data
+        if let range = task.request.value(forHTTPHeaderField: "Range"), let part = Self.part(range, of: data.count) {
+            status = 206
+            body = data.subdata(in: part)
+            headers["Content-Range"] = "bytes \(part.lowerBound)-\(part.upperBound - 1)/\(data.count)"
+        }
+        headers["Content-Length"] = String(body.count)
+        task.didReceive(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
+        task.didReceive(body)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+    /// The file a page address names, when it's a plain file inside the staged copy (which never holds links).
+    private func file(at url: URL) -> Data? {
+        guard let folder, url.host == "app" else { return nil }
+        let root = folder.standardizedFileURL.path + "/"
+        let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
+        let file = folder.appendingPathComponent(path).standardizedFileURL
+        guard file.path.hasPrefix(root),
+              let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+        return try? Data(contentsOf: file, options: .alwaysMapped)
+    }
+
+    /// The bytes one `Range: bytes=…` asks for (a start and an end, a start alone, or the last n), within the file.
+    static func part(_ header: String, of size: Int) -> Range<Int>? {
+        guard header.hasPrefix("bytes="), !header.contains(","), size > 0 else { return nil }
+        let bounds = header.dropFirst(6).split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard bounds.count == 2 else { return nil }
+        switch (bounds[0], bounds[1]) {
+        case let (start?, end?) where start <= end && start < size: return start..<(min(end, size - 1) + 1)
+        case let (start?, nil) where start < size: return start..<size
+        case let (nil, last?) where last > 0: return max(0, size - last)..<size
+        default: return nil
+        }
     }
 }

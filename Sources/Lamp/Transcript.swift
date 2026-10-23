@@ -164,7 +164,7 @@ extension LogLine {
         // A request Lamp sent itself to fix a crash isn't the person's to see as theirs: the line before it says
         // what Lamp is doing.
         let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
-        if details { return lines.filter { !hidden.contains($0.id) } }
+        if details { return lines.filter { !hidden.contains($0.id) }.map(\.withOutcome) }
         // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
         // your answers.") would sit under the card saying the same.
         var afterAsk: Set<UUID> = []
@@ -180,20 +180,30 @@ extension LogLine {
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
         // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own. A tool call is a step
         // in the words the live line said while it ran (`steps(said:)`).
-        return said(lines.filter {
+        return said(lines.map(\.withOutcome).filter {
             !hidden.contains($0.id)
                 && ($0.kind == .agent ? !afterAsk.contains($0.id)
                     : $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
         })
     }
 
+    /// The line as the chat shows it: a command that failed says so after the name the agent gave it, so its row
+    /// never reads as done. Its own row keeps its name for when it ran fine, and two commands of one name, one failed
+    /// and one not, are two rows (`ChatItem.items`).
+    var withOutcome: LogLine {
+        guard failed == true, kind == .status, ChatLook.ranCommand(in: text) != nil else { return self }
+        var line = self
+        line.said = (said ?? ChatLook.unnamedStep) + ChatLook.failedMark
+        return line
+    }
+
     /// Tool calls as the steps a person reads: what the live line said while each ran ("Looking things over",
-    /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files. Calls in a row
-    /// that said the same are one step, and a call that says nothing of its own (a progress line) is no step. A
-    /// command is no step here either: its own row ("Ran: …", by the name the agent gave it) already is, and commands
-    /// under one name are gathered there; the file work after it is named after it too (`Store`, the agent's latest
-    /// words), so it's part of that row, not the same words again under it. Without this a turn that only read and
-    /// edited files had nothing under its open line.
+    /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files, and that it failed
+    /// when it did. Calls in a row that said the same are one step, and a call that says nothing of its own (a progress
+    /// line) is no step. A command is no step here either: its own row ("Ran: …", by the name the agent gave it)
+    /// already is, and commands under one name are gathered there. For Codex the file work after a command is named
+    /// after it too (`Store`, the heading of its reasoning), so it's part of that row, not the same words again under
+    /// it. Without this a turn that only read and edited files had nothing under its open line.
     private static func said(_ lines: [LogLine]) -> [LogLine] {
         var out: [LogLine] = []
         for line in lines {
@@ -211,10 +221,11 @@ extension LogLine {
             let call = ToolCall(line.text)
             guard call.action != .run else { continue }
             // The agent's own words for the step when it gave some, else what the live line said.
-            let words = line.said ?? TurnProgress.activity(for: call)
-            guard !words.isEmpty else { continue }
+            let said = line.said ?? TurnProgress.activity(for: call)
+            guard !said.isEmpty else { continue }
+            let words = line.failed == true ? said + ChatLook.failedMark : said
             if let last = out.last, last.kind == .status, (last.said ?? last.text) == words { continue }
-            out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle))
+            out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle, failed: line.failed))
         }
         return out
     }
@@ -265,7 +276,32 @@ enum ChatItem: Identifiable {
             result += run.contains { $0.id == waiting } ? items(run) : folded(run, summary: line)
             run = []
         }
-        return result + items(run)
+        return result + (run.contains { $0.id == waiting } ? items(run) : closing(run))
+    }
+
+    /// The run going on: each stretch of more than one step that something said came after folds to its one line,
+    /// as it will when the turn ends, so the chat keeps only what's going on now open. The line reads how many steps
+    /// it was until its title comes, which is asked for as the stretch closes (`StepTitles.closed(in:turn:)`). The
+    /// stretch still going, and a step on its own, stay rows.
+    private static func closing(_ run: [LogLine]) -> [ChatItem] {
+        var result: [ChatItem] = []
+        var stretch: [LogLine] = []
+        for line in run {
+            if isStep(line) {
+                stretch.append(line)
+                continue
+            }
+            if stretch.count > 1 {
+                let seconds = stretch[0].at.flatMap { start in line.at.map { max(0, $0.timeIntervalSince(start)) } }
+                let fold = Fold(steps: stretch, first: stretch[0], isAnswers: false, seconds: seconds)
+                result.append(.work(id: stretch[0].id, title: title(of: fold, untitled: "\(stretch.count) steps"), steps: stretch))
+            } else {
+                result += items(stretch)
+            }
+            result += items([line])
+            stretch = []
+        }
+        return result + items(stretch)
     }
 
     /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it
@@ -276,8 +312,8 @@ enum ChatItem: Identifiable {
 
     /// While a turn goes on, the steps since the last thing it said aren't rows of their own: they're inside the one
     /// line at the bottom that says what it's doing (`ActivityRow`, the sidebar's `workingSteps`), which opens to show
-    /// them. Steps that came before something it said (a message, a progress line, Reload) stay rows where they came,
-    /// so the chat reads in the order things happened, newest at the bottom. `shown` is the chat without the live
+    /// them. Steps that came before something it said (a message, a progress line, Reload) stay where they came, folded
+    /// when there's more than one (`closing`), so the chat reads in the order things happened, newest at the bottom. `shown` is the chat without the live
     /// line's steps, `steps` what that line opens to. The turn still going is what comes after the last summary, from
     /// its request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
     /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`), and `looking` whether Lamp is
@@ -429,10 +465,11 @@ enum ChatItem: Identifiable {
                     continue
                 }
                 // Commands the agent gave one name to are one step: the name once, their commands under it.
-                // Each command keeps its own "(not run)", whichever came first.
+                // Each command keeps its own "(not run)", whichever came first, and the step whether none of them ran.
                 if let said = line.said, let last = kept.last, last.said == said,
                    let command = ChatLook.ranCommand(in: line.text), let before = ChatLook.ranCommand(in: last.text) {
                     kept[kept.count - 1].text = "Ran: " + before + "\n" + command
+                    kept[kept.count - 1].notRun = last.wasNotRun && line.wasNotRun
                     items[items.count - 1] = .statuses(kept)
                 } else {
                     items[items.count - 1] = .statuses(kept + [line])

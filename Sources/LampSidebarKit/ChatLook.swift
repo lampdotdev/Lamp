@@ -282,7 +282,7 @@ public enum ChatLook {
         public var body: some View {
             HStack(spacing: 6) {
                 Group {
-                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: "checkmark.circle") }
+                    if running { ProgressView().controlSize(.mini) } else { Image(systemName: ChatLook.stepSymbol(text)) }
                 }
                 .frame(width: 16)
                 Text(text)
@@ -384,7 +384,7 @@ public enum ChatLook {
                     withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle").frame(width: 16)
+                        Image(systemName: ChatLook.stepSymbol(said ?? "")).frame(width: 16)
                         Text(said ?? ChatLook.unnamedStep)
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
@@ -413,31 +413,42 @@ public enum ChatLook {
     /// A step the agent gave no words of its own.
     public static let unnamedStep = "Did a bit of housekeeping"
 
+    /// What a step that was tried and didn't work says after its words.
+    public static let failedMark = " (failed)"
+
+    /// A done step's tick, or a cross for one that says it failed, so its row never reads as done.
+    public static func stepSymbol(_ words: String) -> String {
+        words.hasSuffix(failedMark) ? "xmark.circle" : "checkmark.circle"
+    }
+
     /// The command in a status line that says one was run, or that one was stopped before it ran ("Not run: …", by
     /// a reviewer or a classifier). A stopped command is the same step, by the name the agent gave it, whatever the
     /// engine: its line was already showing while it was judged, and only opening the step says it didn't run.
     public static func ranCommand(in status: String) -> String? {
         if status.hasPrefix("Ran: ") { return String(status.dropFirst(5)) }
-        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + "  (not run)" }
+        if status.hasPrefix(notRun) { return String(status.dropFirst(notRun.count)) + notRunMark }
         return nil
     }
 
     /// How a status line says a command was stopped before it ran.
     public static let notRun = "Not run: "
 
+    /// What a stopped command says after it once its step is opened, and keeps when commands of one name are one row.
+    public static let notRunMark = "  (not run)"
+
     /// A turn's progress: one line saying what the agent is doing, with no clock beside it, which changes in place
     /// as it moves from one thing to the next. `since` is when the activity began, which a long think or build is
-    /// counted from (the turn's start when it isn't known). It starts open, with the steps done since the agent last
-    /// said something above it, oldest first, and itself at the bottom saying what's going on now; a click folds them.
-    /// Steps before that stay where they came, between what was said. The whole turn's time is its "Worked for…": when
-    /// the turn ends, the steps before its answer fold into it (`Worked`), above the answer.
+    /// counted from (the turn's start when it isn't known). The steps done since the agent last said something are
+    /// above it, oldest first, and itself at the bottom saying what's going on now. It doesn't fold: what's going on
+    /// is what's worth seeing, and its steps fold to one line once the agent says something after them
+    /// (`ChatItem.closing`), with the chevron every finished fold has. The whole turn's time is its "Worked for…":
+    /// when the turn ends, the steps before its answer fold into it (`Worked`), above the answer.
     public struct ActivityLine<Steps: View>: View {
         let activity: String
         let started: Date
         let since: Date
         let hasSteps: Bool
         let steps: Steps
-        @State private var expanded = true
         @State private var dim = false
 
         public init(_ activity: String, started: Date, since: Date? = nil, hasSteps: Bool,
@@ -453,37 +464,20 @@ public enum ChatLook {
             VStack(alignment: .leading, spacing: 4) {
                 // What's done reads down in the order it happened, and the line saying what's going on now stays at the
                 // bottom, under all of it: a step that finishes joins the list above the line.
-                if expanded && hasSteps {
+                if hasSteps {
                     VStack(alignment: .leading, spacing: 4) { steps }
                         .transition(.opacity)
                 }
-                Button {
-                    guard hasSteps else { return }
-                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini).frame(width: 16)
-                        // It breathes while the agent works, so the line reads as live rather than stuck.
-                        ActivityText(activity, since: since)
-                            .opacity(dim ? 0.5 : 1)
-                            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
-                        if hasSteps {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                // Right when folded and down when open, as every other fold in the chat turns
-                                // (the steps, "Worked for…"), so the line reads as one of them.
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
-                        }
-                    }
-                    .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).frame(width: 16)
+                    // It breathes while the agent works, so the line reads as live rather than stuck.
+                    ActivityText(activity, since: since)
+                        .opacity(dim ? 0.5 : 1)
+                        .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: dim)
                 }
-                .buttonStyle(.plain)
-                .pointingHand()
                 .font(ChatLook.stepFont)
                 .foregroundStyle(.secondary)
                 .padding(.leading, ChatLook.stepIndent)
-                .help(hasSteps ? (expanded ? "Hide the steps" : "Show the steps") : "")
                 .onAppear { dim = true }
             }
         }

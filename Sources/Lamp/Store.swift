@@ -251,6 +251,12 @@ struct LogLine: Identifiable, Codable, Equatable {
     var said: String? = nil           // for a command Lamp let run ("Ran: …"): what the agent said it was for (`AgentEvent.naming`)
     var at: Date? = nil               // when Lamp logged it, for how long a fold of steps took (`ChatItem.folds`); none in older chats
     var foldTitle: String? = nil      // for the first step of a fold: what the fold did, in a line (`StepTitles`)
+    var failed: Bool? = nil           // for a step: it was tried and didn't work (`AgentEvent.ended`)
+    var call: String? = nil           // for a command's row: the engine's id for its call, which its outcome comes back by
+    var notRun: Bool? = nil           // for commands of one name gathered as one row (`ChatItem.items`): none of them ran
+
+    /// A command's row stopped before it ran: by its own words, or, for commands gathered as one row, every one of them.
+    var wasNotRun: Bool { notRun ?? text.hasPrefix(ChatLook.notRun) }
 
     /// The offer a setup card is about, for this line and for the older key card.
     var setupOffer: SetupOffer? {
@@ -292,11 +298,12 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// Hidden unless Agent Details is on.
     var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
 
-    /// "Worked for 4m 21s · $0.48"
+    /// "Worked for 4m 21s · $0.48", and "Worked for 4m 21s" when nothing was spent: a turn on a Claude or ChatGPT
+    /// sign-in, or on this Mac's own model. Only OpenRouter's calls (pi's, and the pictures painted) cost money.
     static func workSummary(seconds: Double, cost: Double) -> String {
         let total = Int(seconds.rounded())
         let time = total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
-        return String(format: "Worked for %@ · $%.2f", time, cost)
+        return cost < 0.005 ? "Worked for \(time)" : String(format: "Worked for %@ · $%.2f", time, cost)
     }
 
     /// Older chats logged tool calls and run summaries as plain details, and named the engine in summaries.
@@ -551,6 +558,8 @@ final class Store: ObservableObject {
 
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
+        /// Lamp ended the engine itself after it had answered (`endAfterAnswer`): its exit is no failure.
+        var endedAfterAnswer = false
         var build: Process?                 // the app's build.sh, while it runs
         var stopped = false                 // the user pressed Stop (or deleted the app, or quit Lamp)
         /// Stop was pressed at some point in this turn. `stopped` is cleared once the agent has stopped, so the
@@ -624,6 +633,9 @@ final class Store: ObservableObject {
         /// What the agent last said it's doing, in its own words (`AgentEvent.naming`): the name of the commands
         /// that follow, until it says something else.
         var naming: String?
+        /// This turn's tool calls by the engine's id for them: the step each was logged as, and a command's text, so
+        /// the step can say it failed once the call's outcome comes back (`AgentEvent.ended`).
+        var calls: [String: (line: UUID, command: String?)] = [:]
         /// Whether the chat says each command from the engine's own output (`AgentRun.saysCommands`), for the run going now.
         var saysCommands = false
         /// The agent put its questions to the person this turn: the turn is over, whatever the agent does next.
@@ -669,6 +681,7 @@ final class Store: ObservableObject {
         var codexCut: String?
         var claudeSession: String?          // Claude Code's conversation, as its own output says (Privacy.isOwnOutput)
         var writing: (line: UUID, unshown: String)?   // the message the agent is writing right now
+        var titleRoute: StepTitles.TurnRoute?          // what builds the run going on, for its steps' titles
         var showingWritten = false
         /// The agent's token for this turn (Store.agentTokens): the only way to its routes.
         let agentToken = UUID().uuidString + UUID().uuidString
@@ -1028,11 +1041,49 @@ final class Store: ObservableObject {
     }
 
     func log(_ project: LampProject, _ kind: LogLine.Kind, _ text: String, attachments: [String]? = nil, retryPhone: String? = nil,
-             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil) {
+             offer: SetupOffer? = nil, noted: NoteReceipt? = nil, said: String? = nil, failed: Bool = false, call: String? = nil) {
         logs[project.id, default: []].append(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                    offer: offer, noted: noted, said: said, at: Date()))
+                                                    offer: offer, noted: noted, said: said, at: Date(), failed: failed ? true : nil,
+                                                    call: call))
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
+        if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
         saveChat(project)
+    }
+
+    /// A tool call's step in the agent's own words: what it gave this call, else, for Codex, the heading of its
+    /// reasoning before it, which says what the work after it is for. A command's description (Claude Code's, pi's)
+    /// names that command only: the file work after it is a step of its own, or a read would carry "Share the page"
+    /// after the command that was to share it had failed.
+    nonisolated static func stepName(of call: ToolCall, said: String?, naming: String?, engine: Engine) -> String? {
+        let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
+        return said ?? (engine == .codex && (call.action == .run || fileWork) ? naming : nil)
+    }
+
+    /// Marks a step that was tried and didn't work, so it says so in the chat and in its fold's line.
+    func markFailed(_ line: UUID?, id: String?, command: String?, in project: LampProject) {
+        guard var lines = logs[project.id] else { return }
+        let failed = Self.failedRows(in: lines, line: line, id: id, command: command)
+        guard !failed.isEmpty else { return }
+        for index in failed { lines[index].failed = true }
+        logs[project.id] = lines
+        saveChat(project)
+    }
+
+    /// The lines a failed call marks: the call's own step, and a command's row ("Ran: …"), which Lamp logs apart from
+    /// the call, when the command is let run or has run. The row is found by the engine's id for the call, which it
+    /// carries when the approval or the engine's output said it: two calls of the same command in one message may each
+    /// have a row, and only the call's own is its. A row that carries no id (an engine that didn't say it) is found by
+    /// its command, the latest since the call, or since the request when the call isn't known, never one tied to another
+    /// call. A command declined on the card has no row, and an older run of the same command keeps its own.
+    nonisolated static func failedRows(in lines: [LogLine], line: UUID?, id: String?, command: String?) -> [Int] {
+        let own = line.flatMap { line in lines.lastIndex { $0.id == line } }
+        var rows = own.map { [$0] } ?? []
+        if let id, let row = lines.lastIndex(where: { $0.kind == .status && $0.call == id }) { return rows + [row] }
+        let since = own ?? lines.lastIndex { $0.kind == .user } ?? lines.startIndex
+        if let command, let row = lines[since...].lastIndex(where: { $0.kind == .status && $0.call == nil && $0.text == "Ran: \(command)" }) {
+            rows.append(row)
+        }
+        return rows
     }
 
     /// What each fold of a finished turn's steps did (`StepTitles`), put on the fold's first step. A line gone since
@@ -1123,7 +1174,11 @@ final class Store: ObservableObject {
             let line = LogLine(kind: .agent, text: String(piece.drop(while: \.isWhitespace)), at: Date())
             logs[project.id, default: []].append(line)
             turn.writing = (line.id, "")
-            noteAgent("Replying", for: project)
+            closeSteps(project)
+            // "Replying" only for words the chat shows as they come: after asking, what the agent says on its way out
+            // is hidden (the card is the answer, `LogLine.visible`), so the line says it's working, as it would
+            // with nothing known yet.
+            noteAgent(turn.asked ? Activity.thinking : Self.replying, for: project)
             return
         }
         turn.writing?.unshown += piece
@@ -1135,6 +1190,34 @@ final class Store: ObservableObject {
             showWritten(for: project)
         }
     }
+
+    /// Something said during a run closes the stretch of steps before it, which is titled now rather than when the
+    /// turn ends (`StepTitles.closed(in:turn:)`).
+    private func closeSteps(_ project: LampProject) {
+        guard let route = turns[project.id]?.titleRoute else { return }
+        StepTitles.closed(in: project, turn: route)
+    }
+
+    /// Ends Claude Code when it's still there a while after it answered, so the turn ends with its answer. With its
+    /// input closed it exits at once, unless something it started in the background holds it open: Claude Code then
+    /// waits for that and takes one more turn with what it found, which for a server never comes. Lamp turns
+    /// background commands off (`Agent.run`), so this is for whatever else might; SIGTERM is how Claude Code's own
+    /// documentation ends a run, and what the run still had going (its commands, what they started) ends with it, as
+    /// with Stop.
+    private func endAfterAnswer(_ process: Process, in turn: Turn) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.answeredGrace))
+            guard turn.agent === process, process.isRunning, !turn.stopped else { return }
+            turn.endedAfterAnswer = true
+            Subprocess.terminateTree(process)
+        }
+    }
+
+    /// How long Claude Code has to exit after it answered: it takes a moment to write its output and end.
+    private static let answeredGrace: TimeInterval = 10
+
+    /// What the live line says while the agent writes a message the chat shows.
+    private static let replying = "Replying"
 
     /// Puts what has arrived of the message being written into its chat line.
     private func showWritten(for project: LampProject) {
@@ -3242,6 +3325,7 @@ final class Store: ObservableObject {
         // Whether the agent has answered at all: the request, with any word on the notes in it, got through.
         var answered = false
         guard let turn = turns[project.id] else { return false }   // only inside a turn (startQueued)
+        turn.titleRoute = titleRoute
         // One turn can run the agent several times (fixing build errors, a crash on launch): each run's summary
         // shows only the pictures painted during it.
         let artBefore = turn.artCost
@@ -3315,6 +3399,9 @@ final class Store: ObservableObject {
                     turn.naming = nil
                     let written = turn.writing?.line
                     turn.writing = nil
+                    // The message is written: what comes next isn't known yet, so the line no longer says "Replying"
+                    // while the agent thinks. A step the engine already reported in the same reply keeps its words.
+                    if progress[project.id]?.activity == Self.replying { noteAgent(Activity.thinking, for: project) }
                     if let line = written, let index = logs[project.id]?.lastIndex(where: { $0.id == line }) {
                         logs[project.id]?[index].text = text
                         saveChat(project)
@@ -3358,13 +3445,11 @@ final class Store: ObservableObject {
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
-                case .tool(let text, let fullCall, let said):
+                case .tool(let text, let fullCall, let said, let id, let command):
                     let call = ToolCall(text)
-                    // The step in the agent's own words: what it gave this call, else what it last said it's doing (a
-                    // command's name, a heading), which names the file work that follows until it says something else.
-                    let fileWork = [.read, .write, .edit, .search, .list, .delete].contains(call.action)
-                    let named = said ?? (call.action == .run || fileWork ? turn.naming : nil)
+                    let named = Self.stepName(of: call, said: said, naming: turn.naming, engine: engine)
                     log(project, .tool, text, said: named)
+                    if let id, let line = logs[project.id]?.last?.id { turn.calls[id] = (line, command) }
                     endIfOver(turn, before: call.name)
                     noteAgent(named ?? TurnProgress.activity(for: call), file: TurnProgress.file(changedBy: call), for: project)
                     if let file = TurnProgress.file(changedBy: call) { progress[project.id]?.wrote(file) }
@@ -3392,16 +3477,23 @@ final class Store: ObservableObject {
                     received(project)
                 case .acting(let id, let started):
                     if started { turn.codexActing.insert(id) } else { turn.codexActing.remove(id); steer(project) }
-                case .ran(let command, let refused):
+                case .ended(let id, let failed):
+                    if failed, let call = turn.calls[id] { markFailed(call.line, id: id, command: call.command, in: project) }
+                case .ran(let command, let refused, let failed, let id):
                     // A command Codex ran is said in the chat as a command Lamp let run is, by the name the agent gave
                     // it; one its reviewer refused is the same step, marked only when it's opened (`ChatLook.ranCommand`).
-                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either.
-                    guard turn.saysCommands else { break }
-                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming)
+                    // A run whose commands each come to Lamp's card says nothing here: the others' don't either. Its
+                    // row was logged as the card let it run, and says so if it failed.
+                    guard turn.saysCommands else {
+                        if failed { markFailed(nil, id: id, command: command, in: project) }
+                        break
+                    }
+                    log(project, .status, (refused ? ChatLook.notRun : "Ran: ") + command, said: turn.naming, failed: failed, call: id)
                 case .finished:
                     // Claude Code has answered. A message sent from now on is the next request.
                     turn.input?.close()
                     turn.input = nil
+                    if let process = turn.agent { endAfterAnswer(process, in: turn) }
                 case .session(let id):
                     if engine == .claude { turn.claudeSession = id }
                     if engine != .pi {
@@ -3426,8 +3518,10 @@ final class Store: ObservableObject {
             turn.autoApply?.cancel()
             if turn.warming == nil, let current = current(project), isRunning(current) { turn.warming = warmLive(current) }
             turn.autoApply = autoApply(project, in: turn)
+            turn.endedAfterAnswer = false
             status = await Shell.run(run.command, cwd: project.dir, env: run.env, input: input,
                                      started: { turn.agent = $0 }, onLine: onLine)
+            if turn.endedAfterAnswer { status = 0 }
             turn.autoApply?.cancel()
             turn.autoApply = nil
             await turn.applying?.value
@@ -3462,7 +3556,7 @@ final class Store: ObservableObject {
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
         log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
-        // Each fold of the turn's steps gets a line saying what it did, made after the turn and never waited on.
+        // The folds the run's messages didn't close get their lines now, never waited on.
         StepTitles.start(for: project, turn: titleRoute)
         recordAgent(project, cost: cost)
         if turn.stopped {
@@ -3796,7 +3890,7 @@ final class Store: ObservableObject {
 
     /// Commands confined for Claude Code's classifier to judge (`format=claude-confine`), by what they became, with
     /// what the agent wrote and said they were for, so its card and the chat show the agent's words.
-    private var confinedCommands: [String: (original: String, said: String?)] = [:]
+    private var confinedCommands: [String: (original: String, said: String?, call: String?)] = [:]
 
     /// The latest request per app, so the decision model can judge commands against what the user asked for.
 
@@ -3804,10 +3898,10 @@ final class Store: ObservableObject {
     /// `sandboxed`: the command will run confined to the app (Sandbox), so where it looks isn't in question.
     /// `said` is what the agent said the command is for, which names it in the chat (`LogLine.said`).
     private func approveCommand(_ command: String, for project: LampProject, escalated: Bool, shell: Bool = true, sandboxed: Bool,
-                                said: String? = nil) async -> Bool {
+                                said: String? = nil, call: String? = nil) async -> Bool {
         switch CommandApproval.current {
         case .never:
-            log(project, .status, "Ran: \(command)", said: said)
+            log(project, .status, "Ran: \(command)", said: said, call: call)
             return true
         case .risky where !escalated:
             let judgment = await commandJudgment(command, for: project, aboutRequest: !sandboxed)
@@ -3817,14 +3911,14 @@ final class Store: ObservableObject {
             // nearly all of them allowed. A check that couldn't be made at all goes to the in-app model's rating:
             // the sandbox leaves the network open, so it isn't the only guard, but a "low" there runs it.
             if judgment.verdict == .run || (sandboxed && judgment.verdict == .unsure && judgment.judged) {
-                log(project, .status, "Ran: \(command)", said: said)
+                log(project, .status, "Ran: \(command)", said: said, call: call)
                 return true
             }
             // A risky verdict always has its reason; if one were ever missing, the card still comes up as flagged.
             let flagged = judgment.verdict == .risky ? judgment.reason ?? .reachesBeyond : nil
             let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, flagged: flagged,
                                                 said: said)
-            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
             return allowed
         case .risky where shell:
             // Claude Code's own classifier judged it and asked: the person decides, with no second check of
@@ -3835,7 +3929,7 @@ final class Store: ObservableObject {
             // A command allowed on the card is a step like any other, by the name the agent gave it, whichever engine
             // asked, as one that needed no card is.
             let allowed = await requestApproval(for: project, command: command, shell: shell, sandboxed: sandboxed, said: said)
-            if allowed, shell { log(project, .status, "Ran: \(command)", said: said) }
+            if allowed, shell { log(project, .status, "Ran: \(command)", said: said, call: call) }
             return allowed
         }
     }
@@ -4216,6 +4310,21 @@ final class Store: ObservableObject {
             DistributedNotificationCenter.default().removeObserver(steps)
             trial.end()
         }
+        // SwiftUI takes a click for a tap gesture only in the active app's key window (macOS 27), so a batch that
+        // clicks brings the app in front, as a real click would. Only over Lamp, whose chat the person is watching:
+        // never over another app they're using, where their typing would land in this one.
+        if NSApp.isActive, !app.isActive, actions.contains(where: { ["click", "double_click", "drag"].contains($0["action"] as? String ?? "") }) {
+            app.activate()
+            try? await Task.sleep(for: .milliseconds(300))
+            // Stop pressed meanwhile reached an app that had no batch yet to stop, so the batch isn't sent at all.
+            if trial.tookOver {
+                if !turn.tookOver {
+                    turn.tookOver = true
+                    log(project, .status, Self.stoppedByYou)
+                }
+                return (200, ["text": "Stopped: the person took the app over before anything was done.\n\n" + Self.tookOverNote])
+            }
+        }
         // Signed with the app's token rather than carrying it: distributed notifications reach every process.
         Self.signal(project, "useApp", ["actions": json, "id": id], signedAs: "lampUseAppSignature", over: "\(id)\n\(json)")
         // Waits, and keys held down (a Mac app's `key` with `amount`), each up to 10 seconds, as the app takes them;
@@ -4549,6 +4658,7 @@ final class Store: ObservableObject {
                 // agent hasn't had that answer yet, and a new card would be asking over it.
                 if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
                 logs[project.id, default: []].append(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()))
+                closeSteps(project)
                 // A new app's card gives up its checklist in the same moment the questions arrive, not when
                 // the turn ends a little later: once there's something to click, nothing above it moves.
                 if progress[project.id]?.newApp == true { progress[project.id]?.asking = true }
@@ -4563,6 +4673,7 @@ final class Store: ObservableObject {
             case .success(nil): return (200, ["text": Talk.saidAlready])
             case .success(let text?):
                 logs[project.id, default: []].append(LogLine(kind: .progress, text: text, at: Date()))
+                closeSteps(project)
                 // A new phase: the file work after it isn't what the last command or heading was for.
                 turns[project.id]?.naming = nil
                 saveChat(project)
@@ -6187,12 +6298,15 @@ final class Store: ObservableObject {
                 log(project, .error, problem)
                 return problem
             }
+            // What the staged copy was made from, taken before the upload: an edit meanwhile isn't on the TV.
+            let stagedFrom = Runtime.builtFingerprint(project)
             let say: @Sendable (String) -> Void = { [weak self] text in Task { @MainActor in self?.note(text, for: project) } }
             // The app opened by this install asks for its token, which isn't in its package.
             DeviceSupport.Claims.shared.open(project.id, from: record.address)
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
                 else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
+                Runtime.putOnTV(project, tv: record.id, staged: stagedFrom)
                 log(project, .status, "\(project.name) is open on \(record.name).")
                 return nil
             } catch {
@@ -6209,14 +6323,14 @@ final class Store: ObservableObject {
 
     /// `look_at_app` for a TV app: the preview pictured at half the TV's size and read as text, with what it printed.
     private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
-        var summary = "The app is open in the TV preview."
+        var summary = "The app is open in the TV preview on this Mac."
         if changed || !TVPreview.isOpen(project) || reopen {
             let problem = await install(project, inFront: false, early: true)
             turn.look.installed = true
-            if let problem { return (200, ["text": "The app didn't open in the TV preview.\n\n\(problem)"]) }
-            summary = changed ? "The app was opened again in the TV preview with your changes." : "The app was opened again in the TV preview, so it started fresh."
+            if let problem { return (200, ["text": "The app didn't open in the TV preview on this Mac.\n\n\(problem)"]) }
+            summary = changed ? "The app was opened again in the TV preview on this Mac with your changes." : "The app was opened again in the TV preview on this Mac, so it started fresh."
         } else {
-            summary = "The app is open in the TV preview with your latest code; nothing needed opening again."
+            summary = "The app is open in the TV preview on this Mac with your latest code; nothing needed opening again."
         }
         note("Looking at \(project.name)", for: project)
         if progress[project.id]?.newApp == true, !turn.look.presented {
@@ -6225,14 +6339,23 @@ final class Store: ObservableObject {
         }
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-        var text = summary + " It's a 1920×1080 TV screen pictured at half size: a pixel in the picture is two of the page's. "
-            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of it follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+        let taken = await TVPreview.picture(project)
+        if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
+        var text = summary + " " + Self.notTheTV + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
+            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the TV preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+        if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
+            text += " " + TVPreview.takenNote(taken)
+            if !taken.moving { text += " " + TVPreview.stillNote }
+        }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n\(tail)" }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
+
+    /// Said with every look at a TV app: a preview at the TV's size reads like the TV itself, and the agent would tell
+    /// the person how the app runs on a TV it has never seen.
+    static let notTheTV = "This is the TV preview, a window on this Mac, not one of the person's TVs: it runs in this Mac's browser, so what it shows, its speed included, is the preview's."
 
     /// `use_app` for a TV app: the remote's keys and clicks on the preview, the screen read between them.
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
@@ -6244,7 +6367,7 @@ final class Store: ObservableObject {
         }
         // In plain sight, with Stop and Esc, and the person's own click or key in the preview taking it back.
         // Taking over is remembered for the turn the moment it happens, whatever this call is waiting on then.
-        let trial = Handover(label: "\(Self.lampName) is trying it on the TV", lampWindow: TVPreview.window(project)) { [weak self] in
+        let trial = Handover(label: "\(Self.lampName) is trying it in the TV preview", lampWindow: TVPreview.window(project)) { [weak self] in
             guard let self, !owner.tookOver else { return }
             owner.tookOver = true
             log(project, .status, Self.stoppedByYou)
@@ -6255,7 +6378,7 @@ final class Store: ObservableObject {
             guard let self else { return false }
             return exists(project) && turns[project.id] === owner && !owner.stopped && !trial.tookOver && TVPreview.isOpen(project)
         }
-        var text = "What happened:\n\(report)"
+        var text = "What happened in the TV preview on this Mac, not on the person's TV:\n\(report)"
         if owner.tookOver { return (200, ["text": text + "\n\n" + Self.tookOverNote]) }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last opened: it doesn't have the changes you've made to the code since. Call look_at_app to open them."
@@ -6264,10 +6387,15 @@ final class Store: ObservableObject {
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if Privacy.sharesPictures {
             text += "\n\n" + TVPreview.text(await TVPreview.items(project))
-            if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-            text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
+            let taken = await TVPreview.picture(project)
+            if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
+            text += "\n\nA picture of the TV preview follows. Points for the next use_app are pixels in it."
+            if let taken, !screenshots.isEmpty {
+                text += " " + TVPreview.takenNote(taken)
+                if !taken.moving { text += " " + TVPreview.stillNote }
+            }
         }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n" + tail }
         // Taken back during the reads above: the agent is told now, not at its next call.
         if owner.tookOver { text += "\n\n" + Self.tookOverNote }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
@@ -8439,8 +8567,10 @@ final class Store: ObservableObject {
                 let (allowed, reason) = await fileAccess(tool: tool, path: path, for: project)
                 return (200, reason.map { ["allow": allowed, "reason": $0] } ?? ["allow": allowed])
             }
-            // pi's extension sends {"command", "description"}; Claude Code's hook sends {"tool_input": {"command", "description"}}.
+            // pi's extension sends {"command", "description", "call"}; Claude Code's hook sends {"tool_input": {"command",
+            // "description"}, "tool_use_id"}. The call's id ties the command's row to the call its outcome comes back by.
             let input = body["tool_input"] as? [String: Any] ?? [:]
+            let call = (body["call"] as? String ?? body["tool_use_id"] as? String)?.nilIfEmpty
             let tool = body["tool_name"] as? String ?? "Bash"
             if request.path.contains("format=claude-file") {
                 // One of Claude Code's file tools, before it runs: the same check pi's and Codex's get.
@@ -8480,14 +8610,15 @@ final class Store: ObservableObject {
             if request.path.contains("format=claude-refused") {
                 if let known { confinedCommands[wrapped] = nil }
                 let why = (body["reason"] as? String ?? body["message"] as? String)?.trimmed.nilIfEmpty
-                log(project, .status, ChatLook.notRun + command, said: known?.said)
+                log(project, .status, ChatLook.notRun + command, said: known?.said, call: known?.call ?? call)
                 if let why { log(project, .detail, "Claude's check stopped it: \(why)") }
                 return (200, [:])
             }
             if request.path.contains("format=claude-ran") {
                 if let known {
                     confinedCommands[wrapped] = nil
-                    log(project, .status, "Ran: \(command)", said: known.said)
+                    log(project, .status, "Ran: \(command)", said: known.said,
+                        failed: body["hook_event_name"] as? String == "PostToolUseFailure", call: known.call ?? call)
                 }
                 return (200, [:])
             }
@@ -8511,7 +8642,7 @@ final class Store: ObservableObject {
                 if known == nil {
                     let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
                     if confinedCommands.count > 500 { confinedCommands.removeAll() }   // ones refused never come back
-                    confinedCommands[confined] = (command, said)
+                    confinedCommands[confined] = (command, said, call)
                 }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
             }
@@ -8519,7 +8650,7 @@ final class Store: ObservableObject {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
                 let allowed = await approveCommand(command, for: project, escalated: false, sandboxed: sandboxed,
-                                                   said: turns[project.id]?.naming)
+                                                   said: turns[project.id]?.naming, call: call)
                 return (200, allowed ? [:] : ["hookSpecificOutput": ["hookEventName": "PreToolUse",
                                                                      "permissionDecision": "deny",
                                                                      "permissionDecisionReason": "The user denied this command in Lamp."]])
@@ -8527,7 +8658,8 @@ final class Store: ObservableObject {
             // Claude Code's hook and pi's extension carry the command's own description, so each command keeps its
             // own words whichever of the approval and the engine's output reaches Lamp first.
             let said = (input["description"] as? String ?? body["description"] as? String)?.trimmed.nilIfEmpty
-            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said)
+            let allowed = await approveCommand(command, for: project, escalated: escalated, shell: shell, sandboxed: sandboxed, said: said,
+                                               call: call)
             let reason = allowed ? "Approved in Lamp." : "The user denied this command in Lamp."
             // An allowed command goes back confined: the hooks run what Lamp hands them.
             if escalated {

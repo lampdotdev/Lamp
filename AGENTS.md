@@ -48,17 +48,23 @@ A capability given to one engine must be given to all of them that can take it, 
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
   after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
-  the steps before that stay rows where they came, between the messages. While the turn goes on the line is open, at
+  the steps before that stay where they came, between the messages, each stretch of more than one folded to its one
+  line as soon as the agent says something after it (`ChatItem.closing`), as it would be when the turn ends. While the turn goes on the line is open, at
   the bottom under its steps, oldest first, so what's going on now is always last (a command by the name
   the agent gave it, any other tool call in the words the line said while it ran, `LogLine.visible`, never its
-  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`), and a
-  click folds the list. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
+  files); the step still going is the line itself and joins the list when the agent moves on (`ChatItem.live`). The line
+  has no chevron and doesn't fold: its steps get one once they fold, when the agent says something after them. When the turn ends each stretch of steps folds where it came (`ChatItem.items`): the one just
   before the turn's last message into "Worked for…", above that message, any other to how many steps it was, or to
-  its one step. Once the turn is over each fold is given a line saying what it did, with how long its steps took
-  ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`): one call for the whole turn to the small
-  model on the route that built it (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model
-  on this Mac that built it, or not at all, whatever key is saved), made after the turn's summary and never waited on,
-  told only the steps' words and what was said around them, never a command or what it printed. A fold keeps its
+  its one step. Each fold is given a line saying what it did, with how long its steps took
+  ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`), by the small model on the route that
+  built the turn (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model on this Mac that
+  built it, or not at all, whatever key is saved): a stretch of steps is asked about once, in a call of its own, as soon as
+  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
+  lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
+  failed) in one call after the turn's summary, never waited on. The model is
+  told only the request and the steps' words, never a command or what it printed, with which steps failed or never ran
+  (`StepTitles.words`); a step's words are what the agent set out to do, so the prompt has it say what was done, not
+  that its aim was reached, and say when it failed. A fold keeps its
   words until the line comes, and for good when it doesn't. How long a fold took comes from when Lamp logged its
   lines (`LogLine.at`), so a chat from before that shows no time; "Worked for…" stays the whole run's time, shown
   until its fold is titled. Whatever the agent writes as messages on the way is
@@ -250,7 +256,9 @@ A capability given to one engine must be given to all of them that can take it, 
   is running and before its next request (`Store.handOver`). pi's extension asks `/agent/steer` after each of pi's turns and hands such messages to pi's own
   steering (`sendUserMessage` with `deliverAs: "steer"`); Claude Code reads its request on its input
   (`--input-format stream-json`, `Store.steer`), which Lamp writes to while a tool runs and closes once Claude Code
-  has answered. A message goes into the chat as it's handed over and is a request of the turn (its version,
+  has answered. Claude Code runs with background commands off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`), as pi has
+  none: after answering it waits for one it started (a server) and takes another turn when that ends, so the turn never
+  ended; one still there ten seconds after its answer is ended as Stop would end it (`Store.endAfterAnswer`). A message goes into the chat as it's handed over and is a request of the turn (its version,
   `LogLine.midTurn`) once the engine's output shows the model has it (pi's user `message_end`, Claude Code's
   `--replay-user-messages` echo); nothing more is handed over until then, and one the run ends without goes back to
   the front of the line. Send Now isn't offered while the group holds an answer to a card or a request sent again, while a
@@ -279,7 +287,14 @@ A capability given to one engine must be given to all of them that can take it, 
   call (its parser, and its approval hook, which carries the same input; `Agent.claudeNote` asks for plain words),
   and for Codex the heading of the reasoning summary before it (`model_reasoning_summary`). The name is the activity
   while the command runs and the step's row in the chat (`LogLine.said`, `ChatLook.RanCommand`; consecutive commands
-  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". A
+  under one name are one row, `ChatItem.items`); a command with no name stays "Did a bit of housekeeping". The name
+  is that command's only: Claude Code's and pi's file work after it is a step of its own, and only a Codex heading,
+  which says what the work after it is for, names that work too (`Store.stepName`). A step that was tried and didn't
+  work says so after its words, "(failed)" (`LogLine.failed`, `LogLine.withOutcome`): each engine reports how a call
+  ended by its id (`AgentEvent.ended`: pi's `tool_execution_end`, Claude Code's `tool_result`, Codex's `mcp_tool_call`
+  and `file_change`, and its commands' status in `AgentEvent.ran`), and a command's row is the one marked, found by
+  that id, which the approval carries (pi's extension sends it, Claude Code's hooks give `tool_use_id`; `LogLine.call`,
+  `Store.failedRows`). A
   command a reviewer or classifier stopped is the same row, with "(not run)" beside it only once the row is opened, and
   one allowed on Lamp's card is a row like one that needed no card (`Store.approveCommand`); one the person declines leaves none. pi's bash takes only the
   command, so Lamp's extension replaces it, as pi's extension docs allow, with pi's own bash and a `description`
@@ -377,7 +392,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with ten wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with eleven wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
@@ -789,9 +804,22 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 `LampStore` under the name it had first). The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). The agent tries the app in
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
-`look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
+the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
+files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and
+`look_at_app` pictures it (`TVPreview.picture`: the window as the screen shows it, through ScreenCaptureKit's capture of the
+process's own windows, which asks nobody, from macOS 14.4; WebKit's snapshot redraws the page without its CSS animations, so it
+is only the fallback, and the agent is told its picture can't show movement; each picture says when it was taken and how long
+after the one before, since the agent's own thinking between two calls is part of the time a movement took) and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
-each app keeps its own saved data there between openings, as a TV does. Closing the window, by the person or by
+each app keeps its own saved data there between openings, as a TV does (what it saved when earlier Lamps opened it as a
+file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, so everything
+the agent is told of it (each look and use with `Store.notTheTV`, the screen as text, the note on its picture) says it is
+the TV preview on this Mac and not the person's TV. Where the app is otherwise comes with the request, as the device line
+(`DeviceNote.tv`), from Lamp's own state and never a fixed description: whether the preview is open, each of the person's
+TVs with what's known of it (chosen under Try On, found on the network, set up, when Play last put this app on it and
+whether the code has changed since, `Runtime.putOnTV`, which records what the staged copy was made from, read before the upload, and is read back through `AppFile`), and "unknown" for the rest, the TV's screen size and whether the
+app runs there now among them. Lamp's tools don't reach a TV, but the agent is told it may find another way to see one,
+not that it can't. Closing the window, by the person or by
 Lamp, ends the page (its sound and timers): WebKit runs a page as long as its web view lives, so the preview lets go of
 its script handlers and web view when its window closes. TVs are found on the network (`TVs.scan`:
 SSDP, then a Samsung TV's own API at port 8001, an LG TV's UPnP description) and listed with the other devices; a
