@@ -1,19 +1,15 @@
 {
   "fill" : {
-    "automatic-gradient" : "srgb:0.94902,0.94902,0.96078,1.00000"
+    "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
   },
   "groups" : [
     {
-      "blur-material" : 0.69999999999999996,
       "layers" : [
         {
-          "fill" : {
-            "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
-          },
           "glass" : true,
-          "image-name" : "layer-1.svg",
-          "name" : "lifted frosted wedge",
-          "opacity" : 0.55000000000000004
+          "image-name" : "layer-2.svg",
+          "name" : "outer ring",
+          "opacity" : 0.90000000000000002
         }
       ],
       "lighting" : "individual",
@@ -24,7 +20,27 @@
       "specular" : true,
       "translucency" : {
         "enabled" : true,
-        "value" : 0.45000000000000001
+        "value" : 0.55000000000000004
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "layer-1.svg",
+          "name" : "middle ring",
+          "opacity" : 0.94999999999999996
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.40000000000000002
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.55000000000000004
       }
     },
     {
@@ -32,7 +48,7 @@
         {
           "glass" : true,
           "image-name" : "layer-0.svg",
-          "name" : "pie chart segments",
+          "name" : "inner ring",
           "opacity" : 1
         }
       ],

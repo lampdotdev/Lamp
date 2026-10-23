@@ -3,17 +3,21 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var model: DiskModel
     @State private var pendingTrash: [Node] = []
+    @State private var hovered: (outer: Node, inner: Node?)?
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220)
-        } detail: {
+        // A fixed side pane, part of the window, that can't be hidden: the places to measure and what's in the
+        // folder being shown.
+        HSplitView {
+            SidebarView(hovered: $hovered)
+                .frame(minWidth: 244, idealWidth: 264, maxWidth: 340)
             detail
+                .frame(minWidth: 460, maxWidth: .infinity)
         }
         .frame(minWidth: 820, minHeight: 520)
         .toolbar { toolbar }
-        .navigationTitle(model.current?.title ?? model.location?.name ?? "Disk Map")
+        .navigationTitle("Disk Map")
+        .hidingToolbarEdge()
         .onReceive(NotificationCenter.default.publisher(for: .requestTrash)) { note in
             pendingTrash = note.object as? [Node] ?? []
         }
@@ -36,7 +40,7 @@ struct ContentView: View {
 
     @ViewBuilder private var detail: some View {
         if let current = model.current {
-            BrowserView(folder: current)
+            BrowserView(folder: current, hovered: $hovered)
         } else {
             ContentUnavailableView {
                 Label("Choose a Location", systemImage: "internaldrive")
@@ -50,9 +54,12 @@ struct ContentView: View {
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
-            Button { model.goUp() } label: { Label("Enclosing Folder", systemImage: "chevron.up") }
-                .help("Go to the enclosing folder (⌘↑)")
-                .disabled(!model.canGoUp)
+            Button { model.goBack() } label: { Label("Back", systemImage: "chevron.left") }
+                .help("Back to the folder you were in (⌘[)")
+                .disabled(!model.canGoBack)
+            Button { model.goForward() } label: { Label("Forward", systemImage: "chevron.right") }
+                .help("Forward again (⌘])")
+                .disabled(!model.canGoForward)
         }
         ToolbarItemGroup(placement: .primaryAction) {
             Button { model.scan() } label: { Label("Rescan", systemImage: "arrow.clockwise") }
@@ -60,7 +67,7 @@ struct ContentView: View {
                 .disabled(model.location == nil || model.scanning)
             Button {
                 if model.selectedNodes.isEmpty { if let current = model.current { model.reveal(current) } } else { model.reveal(model.selectedNodes) }
-            } label: { Label("Show in Finder", systemImage: "folder") }
+            } label: { Label("Show in Finder", systemImage: "finder") }
                 .help("Show the selected item in Finder")
                 .disabled(model.current == nil)
             Button {
@@ -84,38 +91,68 @@ func requestTrash(_ nodes: [Node]) {
 
 struct SidebarView: View {
     @EnvironmentObject var model: DiskModel
+    @Binding var hovered: (outer: Node, inner: Node?)?
+
+    /// How tall the locations are, and the pane they're in: past a share of the pane they scroll, so the
+    /// folder's contents below always keep their room however many folders and volumes there are.
+    @State private var locationsHeight: CGFloat = 0
+    @State private var paneHeight: CGFloat = 0
 
     var body: some View {
-        List(selection: $model.selectedLocation) {
-            Section("Locations") {
-                ForEach(model.places) { row($0) }
-            }
-            if !model.volumes.isEmpty {
-                Section("Volumes") {
-                    ForEach(model.volumes) { row($0) }
-                }
-            }
-            Section("Folders") {
-                ForEach(model.folders) { loc in
-                    row(loc).contextMenu {
-                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: loc.path)]) }
-                        Divider()
-                        Button("Remove from Sidebar") { model.removeFolder(loc) }
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    header("Locations")
+                    ForEach(model.places) { LocationRow(location: $0) }
+                    if !model.volumes.isEmpty {
+                        header("Volumes")
+                        ForEach(model.volumes) { LocationRow(location: $0) }
                     }
+                    header("Folders")
+                    ForEach(model.folders) { loc in
+                        LocationRow(location: loc).contextMenu {
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: loc.path)]) }
+                            Divider()
+                            Button("Remove from Sidebar") { model.removeFolder(loc) }
+                        }
+                    }
+                    Button { model.addFolder() } label: {
+                        Label("Add Folder…", systemImage: "plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
-                Button { model.addFolder() } label: {
-                    Label("Add Folder…", systemImage: "plus")
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { locationsHeight = $0 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(locationsHeight, max(160, paneHeight * 0.45)))
+            .lampDropFiles { urls in
+                for url in urls where (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    model.addFolder(url)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
             }
-        }
-        .lampDropFiles { urls in
-            for url in urls where (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                model.addFolder(url)
+
+            Divider().padding(.horizontal, 12)
+            if let current = model.current {
+                header("In \(current.title)")
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                if model.unreadableCount > 0 {
+                    UnreadableNotice(count: model.unreadableCount) { model.openFullDiskAccessSettings() }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 4)
+                }
+                ItemList(folder: current, hovered: $hovered)
+            } else {
+                Spacer()
             }
-        }
-        .safeAreaInset(edge: .bottom) {
+
             if let usage = model.diskUsage {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: Double(usage.used), total: Double(max(usage.total, 1)))
@@ -127,12 +164,82 @@ struct SidebarView: View {
                 .padding(12)
             }
         }
+        .background(.background.secondary)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { paneHeight = $0 }
         .onAppear { model.refreshVolumes() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in model.refreshVolumes() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in model.refreshVolumes() }
     }
 
-    private func row(_ loc: Location) -> some View {
-        Label(loc.name, systemImage: loc.symbol).tag(loc.id)
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.top, 10)
+            .padding(.bottom, 3)
+    }
+}
+
+/// A place to measure, as a sidebar row.
+struct LocationRow: View {
+    @EnvironmentObject var model: DiskModel
+    let location: Location
+    @State private var hovering = false
+
+    var body: some View {
+        let selected = model.selectedLocation == location.id
+        Button { model.selectedLocation = location.id } label: {
+            Label(location.name, systemImage: location.symbol)
+                .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 6)
+                    .fill(selected ? Color.primary.opacity(0.1) : hovering ? Color.primary.opacity(0.05) : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .onHover { hovering = $0 }
+    }
+}
+
+extension View {
+    /// No line under the toolbar: the path bar below it carries on from the title.
+    @ViewBuilder func hidingToolbarEdge() -> some View {
+        if #available(macOS 15, *) { toolbarBackgroundVisibility(.hidden, for: .windowToolbar) } else { self }
+    }
+}
+
+/// Folders macOS keeps from apps without Full Disk Access, as a small notice that opens the switch for it.
+struct UnreadableNotice: View {
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "eye.slash")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(count.formatted()) \(count == 1 ? "folder" : "folders") couldn't be read")
+                        .fontWeight(.medium)
+                    Text("Allow Full Disk Access, then rescan")
+                        .font(.caption)
+                        .opacity(0.8)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.callout)
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help("macOS keeps some folders, like Mail's and Messages', from apps until you give them Full Disk Access in System Settings.")
     }
 }

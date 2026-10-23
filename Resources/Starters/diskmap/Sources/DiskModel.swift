@@ -37,13 +37,21 @@ final class DiskModel: ObservableObject {
     /// The items selected in the current folder: any number, from the map (⌘- or ⇧-click) or the table.
     @Published var selection: Set<Node.ID> = []
     @Published var revision = 0
+    /// Folders visited before and after this one, like a browser's back and forward.
+    @Published var backStack: [Node] = []
+    @Published var forwardStack: [Node] = []
+    /// Whether the last move went into a folder (the map zooms in) or out of one (it zooms out).
+    @Published var zoomingIn = true
 
     @Published var scanning = false
     @Published var scannedFiles = 0
     @Published var scannedBytes: Int64 = 0
     @Published var scanningFolder = ""
     @Published var unreadableCount = 0
+    /// The startup disk's space, shown at the foot of the left pane.
     @Published var diskUsage: VolumeUsage?
+    /// The space of the disk or volume being shown, whose free space the chart can add; nil for Home and folders.
+    @Published var locationUsage: VolumeUsage?
     @Published var errorMessage: String?
 
     @Published var isPartial = false
@@ -99,10 +107,14 @@ final class DiskModel: ObservableObject {
     }
 
     func refreshUsage() {
-        let values = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey])
-        if let total = values?.volumeTotalCapacity, let free = values?.volumeAvailableCapacity {
-            diskUsage = VolumeUsage(total: Int64(total), free: Int64(free))
-        }
+        diskUsage = Self.usage(of: "/")
+        locationUsage = location.flatMap { $0.kind == .disk || $0.kind == .volume ? Self.usage(of: $0.path) : nil }
+    }
+
+    private static func usage(of path: String) -> VolumeUsage? {
+        let values = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey])
+        guard let total = values?.volumeTotalCapacity, let free = values?.volumeAvailableCapacity else { return nil }
+        return VolumeUsage(total: Int64(total), free: Int64(free))
     }
 
     func addFolder() {
@@ -133,6 +145,7 @@ final class DiskModel: ObservableObject {
     }
 
     private func showSelectedLocation() {
+        backStack = []; forwardStack = []
         guard let location else { current = nil; return }
         LampStore.save(location.id, to: "lastLocation")
         if let result = results[location.id] {
@@ -142,6 +155,7 @@ final class DiskModel: ObservableObject {
             isPartial = result.partial
             notAsked = result.notAsked
             selection = []
+            refreshUsage()
         } else {
             scan()
         }
@@ -171,6 +185,7 @@ final class DiskModel: ObservableObject {
         root.rootPath = path
         root.displayName = location.name
         current = root
+        backStack = []; forwardStack = []
         results[location.id] = nil
         expectedSize = estimatedSize(of: location)
 
@@ -270,19 +285,55 @@ final class DiskModel: ObservableObject {
 
     func open(_ node: Node) {
         guard node.kind == .folder, !node.children.isEmpty else { return }
-        current = node
+        visit(node)
         selection = []
     }
 
     func goUp() {
         guard let current, let parent = current.parent else { return }
-        self.current = parent
+        visit(parent)
         selection = [current.id]
     }
 
     func go(to node: Node) {
+        guard node !== current else { return }
         let previous = current
+        visit(node)
+        selectPath(from: node, toward: previous)
+    }
+
+    func goBack() {
+        guard let target = backStack.popLast(), let previous = current else { return }
+        forwardStack.append(previous)
+        show(target, from: previous)
+    }
+
+    func goForward() {
+        guard let target = forwardStack.popLast(), let previous = current else { return }
+        backStack.append(previous)
+        show(target, from: previous)
+    }
+
+    var canGoBack: Bool { !backStack.isEmpty }
+    var canGoForward: Bool { !forwardStack.isEmpty }
+
+    /// A new step in the history: what was ahead is dropped, as in a browser.
+    private func visit(_ node: Node) {
+        guard let previous = current, node !== previous else { current = node; return }
+        backStack.append(previous)
+        forwardStack = []
+        zoomingIn = node.ancestors.count >= previous.ancestors.count
         current = node
+    }
+
+    private func show(_ node: Node, from previous: Node) {
+        zoomingIn = node.ancestors.count >= previous.ancestors.count
+        current = node
+        selectPath(from: node, toward: previous)
+    }
+
+    /// Coming back out to a folder selects the item you came out of.
+    private func selectPath(from node: Node, toward previous: Node?) {
         selection = Set([previous?.ancestors.first { $0.parent === node }?.id].compactMap { $0 })
     }
 
@@ -319,6 +370,9 @@ final class DiskModel: ObservableObject {
                 try FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
                 forgetOverlapping(node.path)
                 if let current, node.contains(current) { self.current = node.parent }
+                // Back and Forward mustn't lead into what's gone.
+                backStack.removeAll { node.contains($0) }
+                forwardStack.removeAll { node.contains($0) }
                 selection.remove(node.id)
                 node.detach()
             } catch {
