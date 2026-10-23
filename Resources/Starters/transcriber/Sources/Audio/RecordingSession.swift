@@ -296,8 +296,9 @@ final class RecordingSession: ObservableObject {
             guard !mine.isEmpty else { return false }
             // Only the call's line said again, word for word, within two seconds, is dropped: that loses nothing.
             // Any difference, even one word left out or added ("we should not approve…" and "we should approve…"),
-            // can change what was meant, so the line stays; an echo heard a little wrong stays as a repeat.
-            guard mayEcho else { return true }
+            // can change what was meant, so the line stays; an echo heard a little wrong stays as a repeat. A short
+            // line ("yes", "I agree") is as likely to be the person answering in the same words, so it always stays.
+            guard mayEcho, mine.count >= 4 else { return true }
             return !theirWords.contains { other in
                 line.start >= other.start - 1 && line.start - other.start < 2 && mine == other.words
             }
