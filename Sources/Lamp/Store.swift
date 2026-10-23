@@ -8141,8 +8141,13 @@ final class Store: ObservableObject {
     private func iconToParts(of project: LampProject, spec: IconSpec) async {
         guard !project.isPart else { return }
         for part in parts(of: project) {
-            // A part busy on its own (opened from its menu) takes it when it's given back (`finish`).
-            guard begin(part) != nil else { pendingIconArt.insert(part.id); continue }
+            // A part busy on its own (opened from its menu) takes it when it's given back (`finish`). What it last drew
+            // is forgotten, since a picture chosen in its place keeps the same design and would otherwise pass for it.
+            guard begin(part) != nil else {
+                artApplied[part.id] = nil
+                pendingIconArt.insert(part.id)
+                continue
+            }
             await renderIcon(part, spec: spec)
             if hasMacBuild(part) { await installIcon(part) }
             release(part)
@@ -8412,7 +8417,8 @@ final class Store: ObservableObject {
             try png.write(to: url)
             // The person's picture takes the place of a glass design drawn for the same icon.
             try? FileManager.default.removeItem(at: Icons.glassURL(project, spec: spec))
-            artApplied[project.id] = nil   // the icon on show was made with other artwork, or none
+            // The icon on show was made with other artwork, or none, on the wish's other apps too.
+            for app in [project] + parts(of: project) { artApplied[app.id] = nil }
             // As with generated artwork: a turn that has the app installs the picture when it ends. The chat
             // shows it at once and says so, or picking it would look like nothing happened.
             guard begin(project) != nil else {
