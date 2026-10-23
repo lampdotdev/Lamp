@@ -7,8 +7,9 @@ building, and then follows that kind's defaults. The person makes none of these 
 that already looks right, and they change it by saying so.
 
 The rules the agent reads are `Agent.Rules.kinds(mac:)`, just before the base design (`macDesign` /
-`iPhoneDesign`), and `artRules` for `make_art`. This file is the reasoning behind them: change the two
-together.
+`iPhoneDesign`), which names the kinds, the `app-kinds` skill (`Resources/skills/app-kinds`), which says how
+each one looks and is read when an app is made or changes kind, and `artRules` for `make_art`. This file is the
+reasoning behind them: change them together.
 
 ## How the agent chooses
 

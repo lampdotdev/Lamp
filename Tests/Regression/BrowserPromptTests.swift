@@ -7,7 +7,7 @@ final class BrowserPromptTests: XCTestCase {
     override func tearDown() { BrowserBridge.testOverride = nil }
 
     func testTheMacPromptFollowsTheSwitch() {
-        let rule = "Declare it in `browser.json`"
+        let rule = "always also gets a sidebar in Chrome"
         BrowserBridge.testOverride = false
         XCTAssertFalse(Agent.systemPrompt.contains(rule))
         BrowserBridge.testOverride = true

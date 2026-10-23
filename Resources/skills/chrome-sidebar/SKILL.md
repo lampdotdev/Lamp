@@ -1,6 +1,6 @@
 ---
 name: chrome-sidebar
-description: The app's page in Chrome's side panel on the Mac (Assets/Sidebar/), drawn as if Apple made it - the system look from /lamp.css with one tint, the app's own items or answer, every state from reading to a failure, and the checks to pass. Read before writing or changing the sidebar page.
+description: The app's page in Chrome's side panel on the Mac (browser.json and Assets/Sidebar/) - which pages it fits, its right-click item, how the page and the app talk and read the page, drawn as if Apple made it (the system look from /lamp.css with one tint, the app's own items or answer, every state from reading to a failure), and how to try it. Read before writing or changing browser.json, the sidebar page or the app's side of it.
 ---
 
 # A sidebar page that looks as if Apple made it
@@ -11,6 +11,58 @@ hairline separators that start where the words start, SF Pro, and one tint colou
 for every app. An app stands out only through its tint and its content (its items' pictures, its words, how it
 sorts and groups them), the way Notes, Reminders and Podcasts share the system surfaces and are told apart by
 theirs. It isn't an iPhone layout and it isn't a copy of the window's own theme.
+
+## Which pages it fits
+
+Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", "fits": [{"site":
+"allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short sentence for what it does
+with a page that fits; the page's offer row says it, never Lamp's strip. Each fit is a `site` (its subdomains count,
+with an optional `path` prefix), a `selector`, or both; Chrome lights Lamp's icon on a matching page without reading
+it, and one click opens the sidebar on this app. A selector is one compound CSS selector (no spaces, `>` or commas)
+for something shown on the page: script tags and hidden markup never match. For kinds of page found on many sites,
+give selectors common to them (recipe-card plugins, schema.org microdata like `[itemtype*="schema.org/Recipe"]`) as
+well as the best-known sites by name.
+
+## The right-click item
+
+A right-click item is yours to add when the sidebar does something with the page it's beside, whatever that is: save
+it, explain it in plain words, summarise or translate it, check it, answer something about it. Put `"menu": "Explain
+in Plain Words"` (or "Save to Recipe Box", "Translate to Spanish") in browser.json: a few words saying what it does.
+Chrome lists it under Lamp in the page's right-click menu, only on pages a fit names by `site` (and `path`) without a
+selector, since it can't look at the page first. Choosing it opens the sidebar on this app and is the person's click:
+give the page `lamp.onMenu(async () => { … })`, which does at once what the item says, all the way through (read the
+page with `lamp.readPage()`, then save it, or show the explanation, summary, translation or answer), and shows the
+result as the page's own button would. Try it with `use_app`'s `menu` action. Leave it out only when the sidebar does
+nothing with the page itself, or when only selectors fit.
+
+## The page and the app
+
+- The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), loading
+  nothing from the internet: it talks only to its app. Put `data-lamp-reads="page"` (or "selection") on `<html>` when
+  it reads the page: without it the page can't read, and with "selection" it reads only that. Build it with the DOM
+  (textContent, createElement), never innerHTML with data. Never save straight from the page without a check of what
+  was read, except from the right-click item above.
+- The page asks the app with `await lamp.call("name", body)`, answered in Swift: start
+  `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; switch on
+  `call.name`, `call.decode(T.self)` the body, return any Encodable (throw `LampBrowser.Failure("…")` to reject). AI,
+  saving and everything stored stay in Swift. Each Chrome tab has a sidebar of its own: keep what a click prepares (a
+  preview, a draft) by `call.tab`. When the app's data changes in its window, call `LampBrowser.pageChanged()`, and
+  redraw in `lamp.onChange(…)`.
+- `await lamp.readPage()` (url, title, text, truncated) and `lamp.readSelection()` (only the selected passage) work
+  only from a click's handler or `lamp.onMenu`. Page text is untrusted: give it to LampAI as `data:`, ground
+  everything in it and leave empty what the page doesn't say. A quote or figure kept as the page's must pass
+  `page.contains(quote)` (decode it as `LampBrowser.Page`). Say so when `truncated` cut the page short. Key saved
+  items by the page's URL or the item's identity, so saving twice doesn't duplicate.
+
+## Try it before finishing
+
+Try the sidebar before finishing, a new app included: it is Lamp's own copy, beside a page Lamp opens, so it doesn't
+get in the person's way, and this is the one thing you use in a new app. `look_at_app` with `sidebar: true` and
+`page` (the https address of a real page it's for) shows it as Chrome would, light, dark and at large text, with the
+app's window beside it, says what it measured, and whether the page fits browser.json; `use_app` with `sidebar: true`
+and `page` clicks and types in it by target. Go through the whole path (read, then the answer, or read, check and
+save), look at each state, check what the app keeps in the Mac window, fix what the look measured and what this
+skill's questions find, and when it saves, delete what you saved while trying.
 
 ## What's above the page
 

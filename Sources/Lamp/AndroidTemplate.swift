@@ -394,7 +394,7 @@ extension Agent {
     static func androidPrompt() -> String {
         let rules = [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
                      Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
-                     Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(mac: false, android: true)),
+                     Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(.android)),
                      Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.androidHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Android")

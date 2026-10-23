@@ -395,7 +395,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D, Skills.index(Skills.offered(mac: false, sidebar: BrowserBridge.enabled)),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D, Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
                      Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
@@ -418,7 +418,7 @@ enum Agent {
         rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if mac { rules += [Rules.computer] }
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac, threeD: mac && Rules.scenes), Rules.game2D, Skills.index(Skills.offered(mac: mac, sidebar: mac && sidebar))]
+        rules += [Rules.store, Rules.kinds(mac: mac), Rules.game2D, Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
                   Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -572,52 +572,10 @@ enum Agent {
             serves itself with `LampBrowser.startPage`. Decide that from the wish yourself, never ask; make the sidebar one of `plan`'s parts (its \
             files: browser.json and Assets/Sidebar/), and say it in one line of your reply, like "Recipe Box also works \
             in Chrome, beside recipe pages." Lamp's one extension frames every app's page: never write extension \
-            code, a web server of your own, or browser automation.
-            - Declare it in `browser.json` at the app's root: `{"offer": "Save this recipe to Recipe Box", \
-            "fits": [{"site": "allrecipes.com"}, {"selector": ".wprm-recipe-container"}]}`. `offer` is the app's own short \
-            sentence for what it does with a page that fits; the page's offer row says it, never Lamp's strip. Each fit is a `site` (its subdomains count, with an \
-            optional `path` prefix), a `selector`, or both; Chrome lights Lamp's icon on a matching page without \
-            reading it, and one click opens the sidebar on this app. A selector is one compound CSS selector (no \
-            spaces, `>` or commas) for something shown on the page: script tags and hidden markup never match. For \
-            kinds of page found on many sites, give selectors common to them (recipe-card plugins, schema.org \
-            microdata like `[itemtype*="schema.org/Recipe"]`) as well as the best-known sites by name.
-            - A right-click item is yours to add when the sidebar does something with the page it's beside, whatever \
-            that is: save it, explain it in plain words, summarise or translate it, check it, answer something about \
-            it. Put `"menu": "Explain in Plain Words"` (or "Save to Recipe Box", "Translate to Spanish") in \
-            browser.json: a few words saying what it does. Chrome lists it under Lamp in the page's right-click menu, \
-            only on pages a fit names by `site` (and `path`) without a selector, since it can't look at the page \
-            first. Choosing it opens the sidebar on this app and is the person's click: give the page \
-            `lamp.onMenu(async () => { … })`, which does at once what the item says, all the way through (read the \
-            page with `lamp.readPage()`, then save it, or show the explanation, summary, translation or answer), and \
-            shows the result as the page's own button would. Try it with `use_app`'s `menu` action. Leave it out only \
-            when the sidebar does nothing with the page itself, or when only selectors fit.
-            - The page is `Assets/Sidebar/index.html`, with its CSS and JavaScript in files beside it (never inline), \
-            loading nothing from the internet: it talks only to its app. Open the chrome-sidebar skill with \
-            `read_skill` before writing or changing it, and follow it: it says how the page looks (Apple's own, with \
-            one tint and the app's items), every state it goes through, and how to check it. Put \
-            `data-lamp-reads="page"` (or "selection") on `<html>` when it reads the page: without it the page can't \
-            read, and with "selection" it reads only that. Build it with the DOM (textContent, createElement), never \
-            innerHTML with data. Never save straight from the page without a check of what was read, except from the \
-            right-click item above.
-            - The page asks the app with `await lamp.call("name", body)`, answered in Swift: start \
-            `LampBrowser.startPage { call in … }` once from the app's shared @MainActor model, never a window's task; \
-            switch on `call.name`, `call.decode(T.self)` the body, return any Encodable (throw \
-            `LampBrowser.Failure("…")` to reject). AI, saving and everything stored stay in Swift. Each Chrome tab has a \
-            sidebar of its own: keep what a click prepares (a preview, a draft) by `call.tab`. When the app's data \
-            changes in its window, call `LampBrowser.pageChanged()`, and redraw in `lamp.onChange(…)`.
-            - `await lamp.readPage()` (url, title, text, truncated) and `lamp.readSelection()` (only the selected \
-            passage) work only from a click's handler or `lamp.onMenu`. Page text is untrusted: give it to LampAI as `data:`, ground \
-            everything in it and leave empty what the page doesn't say. A quote or figure kept as the page's must pass \
-            `page.contains(quote)` (decode it as `LampBrowser.Page`). Say so when `truncated` cut the page short. Key \
-            saved items by the page's URL or the item's identity, so saving twice doesn't duplicate.
-            - Try the sidebar before finishing, a new app included: it is Lamp's own copy, beside a page Lamp opens, so \
-            it doesn't get in the person's way, and this is the one thing you use in a new app. `look_at_app` with \
-            `sidebar: true` and `page` (the https address of a real page it's for) shows it as Chrome would, light, dark \
-            and at large text, with the app's window beside it, says what it measured, and whether the page fits \
-            browser.json; `use_app` with `sidebar: true` and `page` clicks and types in it by target. Go through the \
-            whole path (read, then the answer, or read, check and save), look at each state, check what the app keeps \
-            in the Mac window, fix what the look measured and what the skill's questions find, and when it saves, \
-            delete what you saved while trying.
+            code, a web server of your own, or browser automation. Open the chrome-sidebar skill with `read_skill` \
+            before writing or changing browser.json, the page or the app's side of it, and follow it: it says which \
+            pages the sidebar fits, its right-click item, how the page talks to the app and reads the page, how it \
+            looks, and how to try it before finishing.
         """
 
         static let macBlocks = """
@@ -716,55 +674,15 @@ enum Agent {
 
         static let menuBar = """
         - An app that lives in the menu bar uses `LampMenuBar` from LampSupport.swift as its scene, instead of \
-        `MenuBarExtra`: `LampMenuBar("Focus Timer", systemImage: "timer") { PanelView() }`, or `LampMenuBar { PanelView() } \
-        label: { … }` for an icon or text that changes, with `.commands { LampCommands() }` on it and a `Settings` \
-        scene beside it. It gives the app an icon with a panel and no Dock icon, and keeps it within reach: it opens \
-        the panel as a normal window when the icon is hidden (a full menu bar, the notch), shows the panel when the \
-        app is opened again, and puts the app in the Dock while one of its windows is open. So never call \
-        `NSApp.setActivationPolicy` or add a window just to make the app reachable. Such an app has no Dock icon and \
-        no menus, so the panel needs its own Settings button, which calls `LampMenuBar.openSettings()` (never \
-        `SettingsLink` or `openSettings`: from a menu bar app those open the window behind other apps, where it gets \
-        lost), and its own Quit button (`NSApp.terminate(nil)`). `LampMenuBar.close()` closes the panel after an \
-        action in it. Put `LampPanelWand()` beside the panel's own buttons, at the right of its header (or of its footer, beside Settings and Quit, when the header has none), as a \
-        window has Lamp's wand in its title bar (without it, Lamp gives it a strip of its own above the panel). \
-        Give the panel a fixed width, and hand it its model inside the braces (`{ PanelView().environmentObject(model) }`), \
-        never with a modifier on the scene, which crashes the panel. Pass `dockIcon: true` only when the app also has a main window. \
-        For a menu instead of a panel: `LampMenuBar(menu: "Clipboard", systemImage: "list.clipboard") { Button(…); Toggle(…); \
-        Divider() }`, which adds Settings… and Quit itself (`settings: false` when there's no Settings scene). For one \
-        thing the app turns on and off: `LampMenuBar("Keep Awake", isOn: $model.awake, on: "cup.and.saucer.fill", off: \
-        "cup.and.saucer") { more menu items }`, where a click flips it and a right-click shows the menu; keep that state \
-        in the App (@StateObject or @State) so the icon follows it.
+        `MenuBarExtra`: open the menu-bar skill before writing or changing one, and \
+        follow it.
         """
 
-        /// Mac only: an iPhone app's widget needs an extension Lamp doesn't build (`iPhoneHardware` says so).
+        /// A Mac app's desktop widget; an iPhone app's are `iPhoneWidget`. How to write one is the mac-widgets skill.
         static let widget = """
-        - The app can have a widget for the desktop and Notification Center. Make one when the user asks for a \
-        widget, or for something to keep in view without opening the app. Write it with WidgetKit and SwiftUI in \
-        a `Widget/` folder at the app's root, beside Sources/, starting with Widget/Widget.swift: one `@main`, on \
-        the `Widget` or on a `WidgetBundle` for several. Lamp builds that folder into the app as its widget. It \
-        is a separate program that shares no code with Sources/: nothing from LampSupport.swift exists there, and \
-        a type both sides need is written on both. Use `StaticConfiguration` with a `TimelineProvider`, a \
-        `configurationDisplayName` and `description` in the user's words, `supportedFamilies` from .systemSmall, \
-        .systemMedium and .systemLarge, and `.containerBackground(for: .widget) { … }` on the view, without which \
-        it shows nothing. Put `.lampWand()` on each widget's whole view too (`.lampWand(edgeToEdge: true)` with \
-        `.contentMarginsDisabled()`): it's Lamp's wand in the top right corner, which opens the app's chat, so \
-        leave that corner empty. A widget is a picture macOS redraws from the timeline, not a running view: no timers, \
-        animation, scrolling or text fields. `Text(date, style: .timer)` and `.relative` count by themselves, \
-        entries dated ahead change it on schedule, and macOS refreshes it when it chooses, minutes apart at best. \
-        It may load from the web with URLSession. \(Template.WidgetSharing.rule) \
-        When a widget is all the user asked for ("make me a countdown widget"), they get only the widget, with \
-        no app window: make Sources/App.swift just `@main struct MainApp: App { var body: some Scene { \
-        LampWidgetOnly() } }`, with no commands, delete Sources/ContentView.swift with delete_file, and put \
-        everything in the widget, which works out what it shows by itself (the date, the web). Such an app has \
-        no window, no Dock icon and is never opened, so don't call `look_at_app` or `use_app` for it. Only when \
-        the widget has to show something an app must fetch or keep for it (the user's files, calendar or mail, \
-        what they type in, an AI answer) does it get a real app, which shares that with `LampWidget.share` and \
-        lives in the menu bar (`LampMenuBar`, with its Quit button) unless the user asked for a window too. \
-        Lamp shows the user a card that says how to add the widget and when it's on their desktop, so never \
-        explain how to add it, and never say you couldn't see it. When the request was for a widget, what \
-        you say once it's made is two sentences at most, on what the widget shows: no list of sizes or \
-        options, no assumptions, no "it's ready", no question at the end. A widget they placed stays through \
-        your changes and shows them by itself. To take the widget away, delete the files in Widget/.
+        - The app can have a widget for the desktop and Notification Center, in a `Widget/` folder at the app's root. \
+        Make one when the user asks for a widget, or for something to keep in view without opening the app; a widget \
+        can be all they asked for. Open the mac-widgets skill before writing or changing one, and follow it.
         """
 
         /// App Intents: the app's actions given to Siri, Shortcuts and Spotlight. build.sh reads them out of the
@@ -881,109 +799,27 @@ enum Agent {
         without losing anything.
         """
 
-        /// Where an app works comes before what kind it is: a wish about something the user already has in front
-        /// of them wants no window to bring it to, and one that waits for something wants no window at all. Without
-        /// this the agent makes a window for everything, and the person has one more app to open.
-        static let shapes = """
-         Before the kind, decide where the app works. When the wish acts on something the user already has in \
-        front of them in another app (the text they selected, the post or message they're writing there, the file or \
-        page they're looking at), don't make a window to paste or drop it into: make a utility that works where \
-        they are. A `LampHotKey` \
-        takes the selection: read it from the focused element through Accessibility (kAXFocusedUIElementAttribute, \
-        then kAXSelectedTextAttribute; `LampPermissions` asks for Accessibility), and when that gives nothing, send \
-        ⌘C and read the clipboard, putting back what was on it. Show the result in a small floating panel that \
-        doesn't take focus from their app (an NSPanel with `.nonactivatingPanel` at `.floating` level, near the \
-        mouse) with the one or two actions that make sense (put it back in place by pasting, copy, save), or put it \
-        straight back in place when that's what they asked for; the menu bar icon holds the settings, where the \
-        shortcut can be changed. When the wish waits or watches for something (a folder, a time, the calendar, a \
-        site, the clipboard), it's a utility too: it works in the background and reaches the user with a \
-        notification, never a window they must open to check. Such a utility declares `{"background": true}` in \
-        `capabilities.json` at the app's root: then it opens at login and keeps running, and Lamp tells the user \
-        so (don't explain it yourself; put Open at Login in its Settings so they can turn it off). What runs at a \
-        time or every so often uses `LampSchedule`. A window is for what the user brings things to and \
-        comes back to: writing, collecting, browsing, playing. Collecting from wherever the user finds things \
-        (recipes from any website, articles, quotes, products) is both: the window to keep and find them in, and a \
-        way to save from where they are without coming to the window: a hotkey that takes the page or selection in \
-        front of them (the current tab's address from Safari, Chrome or Arc through AppleScript, or the selected \
-        text) and saves it with a brief floating confirmation, besides dropping or pasting a link.
-        """
-
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
         /// nothing alike. The agent picks a kind once and keeps it in APP.md, so the look holds across requests.
+        /// How each kind looks, and on a Mac where the app works, is the app-kinds skill, read when an app is made
+        /// or changes kind (Lamp names it with a new app's request, `Skills.applying`); the prompt keeps what every
+        /// request needs: that the person's direction wins, the kinds to choose from, and that the kind is kept.
         /// design/app-archetypes/README.md is the reasoning behind each.
-        /// `threeD`: whether the 3D skill is offered in this prompt too (Mac apps, on a Mac that can run them).
-        static func kinds(mac: Bool, threeD: Bool = false) -> String {
-            let haptic = mac ? "" : " and a haptic (sensoryFeedback)"
-            let companionPlace = mac
-                ? "; on a Mac it also shows its state in the menu bar (LampMenuBar with `dockIcon: true`, its label the time left or the count)"
-                : ""
-            let dashboardPlace = mac ? " When it's checked often, a menu bar icon shows the main number." : ""
-            let canvas = mac ? """
-                A larger toolbar (labels under the icons where there's room) holds the tools, never a palette drawn \
-                on the canvas; settings for the selection go in an `.inspector`, hidden when nothing is selected. Proper \
-                windows: DocumentGroup with a window per document, tabs, full screen, and a focus mode that hides the \
-                toolbar and inspector.
-                """ : """
-                The canvas goes edge to edge; tools in a bottom toolbar, settings for the selection in a sheet with \
-                detents (an inspector on iPad), and a tap on empty canvas hides the chrome. DocumentGroup for documents.
-                """
-            let utility = mac ? """
-                it lives in the menu bar (LampMenuBar) with a Settings window, and has no main window unless it has \
-                something to show. When it has one main thing to turn on and off (pause syncing, keep awake, watch the \
-                folder), a click on the icon does it, the icon shows the state with two clearly different symbols, and \
-                a right-click shows the menu (LampMenuBar's switch). Otherwise a click shows a menu (LampMenuBar(menu:)). \
-                Prefer a menu, with toggles as checkmarks, to a panel; a panel only for what a menu can't do (a search \
-                field over a long history, a preview, a slider you watch while dragging).
-                """ : """
-                it does its work through App Intents (Shortcuts and Siri) and the share sheet wherever it can, and the \
-                app itself is one screen: its settings and what it did recently.
-                """
-            return """
+        static func kinds(mac: Bool) -> String {
+            """
             - Design: the user's own direction always wins. If they describe a look, a mood or a style, attach a mockup \
             or ask for something unconventional (full-screen, no chrome, an art piece), build exactly that and don't \
-            add standard UI they didn't ask for. Everything they didn't say follows the app's kind, below. Before \
-            writing a new app, pick the kind closest to what it's for, even when unsure, and put it in APP.md's first \
-            line (`Kind: companion`). Keep it on later requests so the app keeps its structure and voice; change it \
-            only when the user asks for a different feel or the app becomes another kind of app (a change in what it's \
-            about is the theme rule below). Never ask them which kind, and never \
-            name kinds to them. A style they gave wins over the kind's look but keeps its structure: a "cozy" water \
-            tracker is a companion app, made cozy. Every kind feels like Apple made it, following the \
-            \(mac ? "macOS" : "iOS") Human Interface Guidelines.\(mac ? shapes : "")
-              • Tool (notes, inventory, lists, logs, a CRM: keeping and finding things): the base design below, exactly. \
-            Dense and calm: system colors, the accent color, SF Symbols, no illustration. It's judged on how fast \
-            things are found, added and changed.
-              • Companion (water, a timer, habits, mood, a plant, breathing: a small ritual come back to many times a \
-            day): one main screen built around one picture of where you are now (the glass, the timer, the plant), not \
-            a list or a sidebar; history is one step away. That picture is art from `make_art`, never shapes drawn in \
-            code, and it always shows the state: animate it (fill it with a mask, grow, move or scale it), never a \
-            static picture beside a progress bar. A palette of two or three colors that suit the subject, as named colors with light and dark \
-            versions; text and controls keep system colors. The one number that matters is large (.largeTitle or \
-            bigger, .rounded design). The main action is one big, obvious button or a tap on the picture, with a \
-            spring animation\(haptic); something small and pleasant happens when a goal is met, and nothing nags. \
-            Short, warm words with a little personality ("Nice. Two to go."), never at the cost of clarity. Reminders \
-            come as notifications\(companionPlace). One first screen is allowed when the app can't work without a \
-            choice (a daily goal), with a sensible default filled in; never a tour.
-              • Collection (recipes, books, wines, trips, records: things nice to look at): pictures lead, in an \
-            adaptive grid of cards (LazyVGrid) with large images and titles under them; a list as an option, not the \
-            default. The detail is a full page with a large picture at the top and the facts below, like an album in \
-            Music. Every item has a picture: the user's own photo, or else art from `make_art` for the kind of item, \
-            so the grid is never gray placeholders; the empty state shows some of that art too, so a new app doesn't \
-            open on a blank page. Search, sort and filter as Photos does (toolbar menus, scopes), \
-            not as a form.
-              • Dashboard (spending, fitness totals, a server's status: look, understand, leave): the one or two numbers \
-            that matter come first and large, details below. Swift Charts for anything over time, kept simple: no \
-            grid clutter, the latest point marked, values labeled where they matter. Color means good, warning or bad \
-            and nothing else; a soft gradient from the state behind the main number is the only decoration. No \
-            art.\(dashboardPlace)
-              • Canvas (drawing, diagrams, layout, long writing: making a thing): a minimal interface with the content \
-            front and center. \(canvas) Undo for everything, autosave, export; every gesture (drag, resize, pinch) \
-            also has a command or button. No art: the user's work is the only thing to look at.
-              • Utility (a clipboard history, automations, a folder watcher: works while you do other things): \
-            \(utility) Quiet: a notification only when something needs the user.
-              • Game or toy (played rather than used): fully custom, with no standard chrome while playing; pause, \
-            settings and scores are standard SwiftUI. 2D games as the 2D rule says\(threeD ? ", 3D ones with the scene-3d skill" : ""), \
-            SwiftUI animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with \
-            sound\(mac ? "" : " and haptics"). Scores are kept on the device.
+            add standard UI they didn't ask for. Everything they didn't say follows the app's kind. Before writing a \
+            new app, pick the kind closest to what it's for, even when unsure: tool (keeping and finding things), \
+            companion (a small ritual come back to many times a day), collection (things nice to look at), dashboard \
+            (look, understand, leave), canvas (making a thing), utility (works while you do other things) or game or \
+            toy (played rather than used). Open the app-kinds skill first and follow it: it says how each kind looks \
+            and works\(mac ? ", and before the kind, where the app works: in a window, or where the person already is" : ""). \
+            Put the kind in APP.md's first line (`Kind: companion`). Keep it on later requests so the app keeps its \
+            structure and voice; change it only when the user asks for a different feel or the app becomes another \
+            kind of app (a change in what it's about is the theme rule below). Never ask them which kind, and never \
+            name kinds to them. Every kind feels like Apple made it, following the \
+            \(mac ? "macOS" : "iOS") Human Interface Guidelines.
             \(theme)
             """
         }
@@ -1190,60 +1026,16 @@ enum Agent {
         """
 
         static let iPhoneWidget = """
-        - The app can have home screen widgets and Live Activities. Make a widget when the user asks for one, or \
-        for something to glance at without opening the app; a Live Activity when something is under way and \
-        ends (a timer, a delivery, a game, a workout, a trip). Write them with WidgetKit, SwiftUI and ActivityKit \
-        in a `Widget/` folder at the app's root, beside Sources/, starting with Widget/Widget.swift: one `@main` \
-        on a `WidgetBundle` holding the widgets (`StaticConfiguration` with a `TimelineProvider`, \
-        `.containerBackground(.fill.tertiary, for: .widget)`, `.supportedFamilies` for the sizes that fit) and \
-        any `ActivityConfiguration` (the lock screen's view and the `dynamicIsland` regions). Lamp builds that \
-        folder into the app as its extension. It shares no code with Sources/ and has nothing from \
-        LampSupport.swift, except Widget/Shared/: Swift there is compiled into both the app and the extension \
-        (Lamp links it into Sources/ as Sources/WidgetShared; edit it in Widget/Shared/), the place for an \
-        `ActivityAttributes` type and anything else both sides need. The widget's data: in the app, \
-        `LampWidget.share(Summary(…), as: "summary")` with any Codable value, at launch and whenever it changes \
-        (it redraws the widgets too); in the widget, `LampWidget.read(Summary.self, from: "summary") { summary \
-        in … }` in getSnapshot and getTimeline, or `await` it, from Widget/LampWidgetSupport.swift, which Lamp \
-        writes: never edit it. It gives what the app shared last, also while the app is closed, and nil until \
-        then: show a short line asking to open the app. A Live Activity starts from the app, \
-        `Activity.request(attributes:content:)`, and is changed with `update` and ended with `end` from the app \
-        while it runs; there's no server to push changes, so give a timer or progress an end date \
-        (`Text(timerInterval:countsDown:)`, `ProgressView(timerInterval:)`) and it moves by itself. A button or \
-        toggle in a widget or Live Activity runs an App Intent, `Button(intent: AddCupIntent()) { … }` or \
-        `Toggle(isOn:intent:)`: write that intent in Widget/Shared/ as a `LiveActivityIntent`, which iOS performs \
-        in the app (starting it out of sight when it's closed), and keep the work under `#if !LAMP_WIDGET` (defined \
-        only in the widget, which can't reach the app's code): change the data there and `LampWidget.share` it, \
-        and the widget redraws. A Control Center control is a `ControlWidget` in the same `WidgetBundle`, marked \
-        `@available(iOS 18, *)`: `StaticControlConfiguration(kind: "AddCup") { ControlWidgetButton(action: \
-        AddCupIntent()) { Label("Add a Cup", systemImage: "cup.and.saucer") } }`. To see them, \
-        `use_app` with `key` "lock" shows the lock screen, where a Live Activity is, and "home" the home screen; \
-        then the picture. Not every iPhone has a Dynamic Island (the iPhone 14 Pro and Pro Max, and every iPhone \
-        15 and later but the 16e have one; iPads don't): `look_at_app` says which simulator the app is open on, \
-        and when it has none, say so and that the person can choose one under Try On. Only the person can add a widget to the home screen, and Lamp shows them how: don't \
-        explain it, and say in a sentence that it's ready to add.
+        - The app can have home screen widgets, Live Activities and Control Center controls, in a `Widget/` folder at \
+        the app's root. Make a widget when the user asks for one, or for something to glance at without opening the \
+        app; a Live Activity when something is under way and ends (a timer, a delivery, a game, a workout, a trip). \
+        Open the iphone-widgets skill before writing or changing them, and follow it.
         """
 
         static let iPhoneWatch = """
-        - The app can have an Apple Watch app with complications. Make one when the user asks, or when a glance \
-        or a tap on the wrist suits it (a timer, a workout, a tally, a checklist). Write it in SwiftUI in a \
-        `Watch/` folder at the app's root, starting with Watch/WatchApp.swift: one `@main` App whose WindowGroup \
-        ends in `.lampWatch()`, which keeps complications current while the watch app is closed, and a screen or two \
-        of big controls. Complications go in Watch/Complications/: one `@main` `WidgetBundle` of \
-        `StaticConfiguration`s with `.supportedFamilies` from `.accessoryCircular`, `.accessoryRectangular`, \
-        `.accessoryInline` and `.accessoryCorner`, and `.containerBackground(.fill.tertiary, for: .widget)`. \
-        Neither shares code with Sources/ or has LampSupport.swift: declare the Codable types they read in each \
-        folder. The data: in the app, `LampWatch.share(Today(…), as: "today")` at launch and whenever it changes; \
-        on the watch, `@LampWatched("today") var today: Today?` in a view, or `LampWatch.read(Today.self, from: \
-        "today")` in a complication's timeline, nil until the phone has first shared. A tap \
-        on the watch: `LampWatch.send("addGlass", 1)`, done in the app by `LampWatch.onAction { name, payload in \
-        … }` set at launch (`payload.decode(Int.self)`), which shares what changed. Watch/LampWatchSupport.swift \
-        and its copy in Complications/ are Lamp's: never edit them. A workout on the watch, saved to Health with \
-        heart rate, calories and distance: `@StateObject private var workout = LampWorkout()` from that file, \
-        `try await workout.start(.running)`, `pause()`, `resume()`, `await workout.end()`, with `{"healthkit": \
-        true}` in capabilities.json; the simulator's watch measures nothing, so check it starts and ends. The watch \
-        app's icon is the app's. Lamp opens the watch app on an Apple Watch \
-        simulator beside the iPhone; `look_at_app` and `use_app` see only the iPhone, so don't try them on the \
-        watch. Say in a sentence that it's on the watch, and that a complication is added by editing a watch face.
+        - The app can have an Apple Watch app with complications, in a `Watch/` folder at the app's root. Make one \
+        when the user asks, or when a glance or a tap on the wrist suits it (a timer, a workout, a tally, a \
+        checklist). Open the apple-watch skill before writing or changing it, and follow it.
         """
 
         /// What `LampNotifications` does beyond a plain message, said in both kinds' blocks.
@@ -1268,38 +1060,12 @@ enum Agent {
         """
 
         static let iPhoneHardware = """
-        - The phone itself is the app's best material: use what it has, without being asked, whenever it fits \
-        what the user wants. Motion: `LampMotion` from LampSupport.swift (tilt, gravity, acceleration, rotation, \
-        compass heading, today's steps, a shake count) for anything that tilts, steers, shakes or counts. Camera: \
-        AVFoundation's AVCaptureSession in a UIViewRepresentable for live capture, UIImagePickerController or \
-        PhotosPicker to take or choose a picture, VisionKit's DataScannerViewController to read text and codes \
-        live and VNDocumentCameraViewController to scan documents. Location and maps: CoreLocation (ask for \
-        when-in-use) and MapKit. Haptics: `.sensoryFeedback` for taps and successes, CoreHaptics for patterns. \
-        Face ID or Touch ID: LocalAuthentication. Bluetooth devices: CoreBluetooth; nearby phones without a \
-        network: MultipeerConnectivity. Health: `LampHealth` from LampSupport.swift, after `{"healthkit": true}` in \
-        capabilities.json: `authorize(read:write:workouts:)` once, then `total(.steps)` (today's; a day's sum, or \
-        its average for heart rate and the like), `dailyTotals(.activeCalories, days: 7)`, `latest(.weight)`, \
-        `samples(.heartRate, days:)`, `sleep()` (hours, last night), `workouts(days:)`, and `save(.caloriesEaten, \
-        350)` to log what the person tells it; `Kind` lists steps, distance, calories, heart rate, sleep, weight, \
-        water, protein and the rest, each with `unitName`. The simulator has no Health data of its own: save a \
-        sample there to have something to read, and only there. Never write test data on a person's own phone, \
-        where it would join their real record; what the app logs for them is only what they told it. A Mac has none at all (`LampHealth.isAvailable` is false): an app for \
-        both reads on the iPhone and keeps what the Mac shows in LampSync, if it's activity and fitness that may \
-        go to iCloud (see the iCloud rule); medical data stays on the iPhone. NFC tags: CoreNFC. \
-        Notifications at a place: UNUserNotificationCenter with a location trigger. Siri and Shortcuts: App \
-        Intents. AR: ARKit with RealityKit. Music: MusicKit or MediaPlayer. The app already declares why it \
-        wants each of these (microphone, speech, camera, photos, location, motion, Bluetooth, Face ID, health, \
-        NFC, Siri, nearby devices, music), so just request authorization before use and handle denial in the \
-        interface. Health, NFC, Siri, nearby phones and background work need a declaration first: write \
-        `capabilities.json` at the app's root, e.g. `{"healthkit": true, "nfc": true, "siri": true, "weather": true, "homekit": true, "timeSensitive": true, \
-        "backgroundModes": ["audio", "location"], "bonjourServices": ["_myapp._tcp", "_myapp._udp"], \
-        "backgroundTasks": ["com.example.refresh"]}`, and Lamp signs the app for them and declares them. Modes: \
-        audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral. \
-        `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of \
-        the same name, up to 15 characters); `backgroundTasks` are the identifiers BGTaskScheduler registers, \
-        needed with the fetch and processing modes. Not possible yet: extensions other than \
-        the ones described here (a keyboard, for one), push notifications from a server, and in-app purchases; say \
-        so when asked.
+        - The phone itself is the app's best material: use what it has, without being asked, whenever it fits what \
+        the user wants: motion, the camera and scanning, location, haptics, Face ID, Bluetooth and nearby phones, \
+        Health, NFC, AR and music. Open the iphone-hardware skill before using any of them, and follow it: it says \
+        what to use for each and what to declare in capabilities.json. Not possible yet: extensions other than the \
+        ones described here (a keyboard, for one), push notifications from a server, and in-app purchases; say so \
+        when asked.
         """
 
         static let appMd = """

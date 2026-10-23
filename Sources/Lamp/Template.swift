@@ -3033,22 +3033,6 @@ enum Template {
         /// Entitlement lines this way adds to every widget's signature, as plist XML. None: the app group is
         /// added only for a team's signature (`widgetEntitlementsPlist(appGroup:)`).
         static let entitlements: [String] = []
-
-        /// What the agent is told about the app's data in a widget.
-        static let rule = """
-        It can't read what the app has saved (LampStore, files, settings), so the app hands it over: in the \
-        app, `LampWidget.share(Summary(…), as: "summary")` with any Codable value, at launch and whenever the \
-        data changes (it also redraws the widget); in the widget, `LampWidget.read(Summary.self, from: \
-        "summary") { summary in … }` in getSnapshot and getTimeline, or `await` it. That comes from \
-        Widget/LampWidgetSupport.swift, which Lamp writes: never edit it. It gives what the app shared last, \
-        also while the app is closed, and nil until the app has run once: then show a short line asking to \
-        open the app. Share a small value made for the widget, not everything, and declare its type on both sides. \
-        A button or toggle in the widget changes the app's data through the app: in Widget/, an App Intent \
-        whose `perform()` calls `await LampWidget.perform("addWater", 250)` (a name, and any Codable value or \
-        none) and returns `.result()`, shown with `Button(intent: AddWater()) { … }`; in the app, at launch, \
-        `LampWidget.onAction { name, payload in … }` does it (`payload.decode(Int.self)`) and shares what \
-        changed, and the widget redraws. It works with the app closed too: the app does it when it next starts.
-        """
     }
 
     /// What the widget is signed with. macOS shows no widget that isn't sandboxed, and the sandbox lets it

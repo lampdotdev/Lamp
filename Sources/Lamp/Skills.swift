@@ -45,13 +45,23 @@ enum Skills {
                      body: lines[(close + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// The skills a prompt offers. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place
-    /// from map data is built as one. The Chrome sidebar's page is offered where the prompt has the sidebar's rule.
-    /// An Android app's design is offered to its prompt alone, and a TV app's page for phones to the TV prompt.
-    /// `device-integrations` isn't listed: every prompt's rule for devices (`Agent.deviceRules`) names it.
-    static func offered(mac: Bool, sidebar: Bool = false, android: Bool = false, tv: Bool = false) -> [String] {
-        (mac && Agent.Rules.scenes ? ["scene-3d", "maps"] : []) + (sidebar ? ["chrome-sidebar"] : []) + (android ? ["android-design"] : [])
-            + (tv ? ["phone-controllers"] : [])
+    /// The skills a prompt offers, by the kind of app it's for. How each kind of app looks is for the apps that have
+    /// a look of Lamp's kinds (Mac, iPhone, both). The menu bar is the Mac half's, a desktop widget a Mac app's alone
+    /// (an app for both has the iPhone half's widgets), and the phone's hardware, its widgets and the watch the iPhone
+    /// half's. 3D scenes need a Mac app on a Mac that can run RealityView, and a real place from map data is built as
+    /// one. The Chrome sidebar's page is offered where the prompt has the sidebar's rule. An Android app's design is
+    /// offered to its prompt alone, and a TV app's page for phones to the TV prompt. `device-integrations` isn't
+    /// listed: every prompt's rule for devices (`Agent.deviceRules`) names it.
+    static func offered(_ platform: Platform, sidebar: Bool = false) -> [String] {
+        let kinds: [String] = switch platform {
+        case .mac: ["app-kinds", "menu-bar", "mac-widgets"] + (Agent.Rules.scenes ? ["scene-3d", "maps"] : [])
+        case .iphone: ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch"]
+        case .universal: ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch"]
+        case .android: ["android-design"]
+        case .tv: ["phone-controllers"]
+        case .device: []
+        }
+        return kinds + (sidebar ? ["chrome-sidebar"] : [])
     }
 
     /// The rule that lists a prompt's skills; empty when it offers none.
@@ -73,26 +83,42 @@ enum Skills {
 
     // MARK: - Telling the agent a skill applies
 
-    /// The skills an app's own code shows it uses, each with what showed it, among those its prompt offers.
+    /// The skills an app's own code shows it uses, each with what showed it, among those its prompt offers. A new
+    /// app (still Lamp's placeholder) is about to be given its kind, so it's told how the kinds look.
     static func applying(to project: LampProject) -> [(name: String, because: String)] {
-        let offered = offered(mac: project.platform == .mac, sidebar: BrowserBridge.enabled && project.platform.hasMac, tv: project.platform == .tv)
+        let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.platform.hasMac)
         var found: [(name: String, because: String)] = []
+        if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }
         if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
+        if offered.contains("menu-bar"), appSwift(of: project, matches: #"\bLampMenuBar\b"#) { found.append(("menu-bar", "its code uses LampMenuBar")) }
+        if offered.contains("mac-widgets"), Template.hasWidget(project) { found.append(("mac-widgets", "it has a widget in Widget/")) }
+        if offered.contains("iphone-widgets"), Template.hasWidget(project) { found.append(("iphone-widgets", "it has widgets or Live Activities in Widget/")) }
+        if offered.contains("apple-watch"), Template.hasWatch(project) { found.append(("apple-watch", "it has an Apple Watch app in Watch/")) }
+        if offered.contains("iphone-hardware"), appSwift(of: project, matches: phoneHardware) { found.append(("iphone-hardware", "its code uses the phone's hardware or Health")) }
         if offered.contains("scene-3d"), Template.usesScene(project) { found.append(("scene-3d", "its code uses RealityKit")) }
         if offered.contains("maps"), usesMapData(project) { found.append(("maps", "its code uses OpenStreetMap data")) }
         if offered.contains("phone-controllers"), let why = phonePageUse(project) { found.append(("phone-controllers", why)) }
         return found
     }
 
-    /// Whether some Swift of the app's own fetches or shows OpenStreetMap data: the maps skill has it fetched
-    /// from the Overpass API and credits "© OpenStreetMap contributors" on screen, so either is in the code.
-    static func usesMapData(_ project: LampProject) -> Bool {
+    /// What in an app's Swift shows it uses what the iphone-hardware skill covers: Lamp's blocks for motion and
+    /// Health, or the frameworks the skill names for the camera, scanning, Face ID, Bluetooth, nearby phones, NFC and AR.
+    static let phoneHardware = #"\b(LampMotion|LampHealth|AVCaptureSession|DataScannerViewController|VNDocumentCameraViewController|LocalAuthentication|CoreBluetooth|MultipeerConnectivity|CoreNFC|CoreHaptics|ARKit)\b"#
+
+    /// Whether some Swift of the app's own, in Sources/ and not Lamp's support files, matches a pattern.
+    static func appSwift(of project: LampProject, matches pattern: String) -> Bool {
         let sources = project.dir.appendingPathComponent("Sources")
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { file in
             file.pathExtension == "swift" && !["LampSupport.swift", Template.sceneSupportFile].contains(file.lastPathComponent)
-                && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: #"OpenStreetMap|overpass-api|overpass\.|/api/interpreter"#, options: [.regularExpression, .caseInsensitive]) != nil)
+                && ((try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil)
         }
+    }
+
+    /// Whether some Swift of the app's own fetches or shows OpenStreetMap data: the maps skill has it fetched
+    /// from the Overpass API and credits "© OpenStreetMap contributors" on screen, so either is in the code.
+    static func usesMapData(_ project: LampProject) -> Bool {
+        appSwift(of: project, matches: #"OpenStreetMap|overpass-api|overpass\.|/api/interpreter"#)
     }
 
     /// What shows a TV app has a page for phones: a Phone/ folder, or its own web code using the phone page's address
