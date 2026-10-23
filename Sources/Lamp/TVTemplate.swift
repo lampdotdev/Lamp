@@ -375,7 +375,8 @@ extension Agent.Rules {
     give you the screen as text: every focusable thing and piece of text with an id, its name, what it holds, \
     whether it has focus, and where it is. Try the app the way the user will, with the keys: a TV has no pointer. \
     Both reach only the preview, which runs in this Mac's browser: what you see there, its speed included, is the \
-    preview's, so say so when you tell the user what you tried. In a game or anything animated, keep the work done \
-    for each frame small.
+    preview's, so say so when you tell the user what you tried. To see whether something moves, look, then \
+    `use_app` with a wait, and compare where it is. In a game or anything animated, keep the work done for each \
+    frame small.
     """
 }
