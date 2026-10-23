@@ -5,12 +5,13 @@ import { DOWNLOAD_URL } from "../lib/download";
 
 // The page we're on, so its link can say so.
 const here = Astro.url.pathname.replace(/\/$/, "") || "/";
-// On a phone Home is left out: the name beside it goes home too. AI and Features go to the homepage's sections of
-// those names, and only where there's room for them beside the rest.
+// On a phone Home is left out: the name beside it goes home too. Features, Pricing and AI go to the homepage's
+// sections of those names, in the page's order, and only where there's room for them beside the rest.
 const links = [
   { href: "/", label: "Home", wide: true },
-  { href: "/#ai", label: "AI", wider: true },
   { href: "/#features", label: "Features", wider: true },
+  { href: "/#pricing", label: "Pricing", wider: true },
+  { href: "/#ai", label: "AI", wider: true },
   { href: "/ideas", label: "Ideas" },
 ];
 ---
@@ -38,6 +39,7 @@ const links = [
         links.map((link) => (
           <a
             href={link.href}
+            data-nav-link
             aria-current={here === link.href ? "page" : undefined}
             class:list={[
               "group flex h-10 items-center rounded-full px-3 text-[14px] text-ink/70 transition hover:bg-black/[0.04] hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite aria-[current=page]:text-ink sm:px-4",
@@ -64,3 +66,30 @@ const links = [
     </div>
   </nav>
 </header>
+
+<script>
+  // On the homepage, the link to the section being read is the one marked, as the page scrolls; Home is marked
+  // everywhere else on it. A section is being read while it's under a line a third of the way down the window.
+  if (location.pathname === "/") {
+    const links = [...document.querySelectorAll<HTMLAnchorElement>("a[data-nav-link]")].filter((link) => link.getAttribute("href") !== "/ideas");
+    const home = links.find((link) => link.getAttribute("href") === "/");
+    const sections = links
+      .map((link) => ({ link, section: document.getElementById(link.getAttribute("href")!.replace("/#", "")) }))
+      .filter((entry): entry is { link: HTMLAnchorElement; section: HTMLElement } => !!entry.section && entry.link !== home);
+    const mark = () => {
+      const line = innerHeight / 3;
+      const reading = sections.find(({ section }) => {
+        const box = section.getBoundingClientRect();
+        return box.top <= line && box.bottom > line;
+      });
+      const current = reading?.link ?? home;
+      for (const link of links) {
+        if (link === current) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
+      }
+    };
+    addEventListener("scroll", mark, { passive: true });
+    addEventListener("resize", mark);
+    mark();
+  }
+</script>

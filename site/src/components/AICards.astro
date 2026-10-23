@@ -1,0 +1,110 @@
+---
+// The homepage's "Made with AI inside": four things AI does inside an app, as four quiet cards rather than bento
+// tiles, since the section only has to say AI can be part of what an app does; the features above get the bento.
+// Each card is a small picture of one app doing it, on a pale tint of the colour its tile had, then a line on it,
+// like the places section's cards. The pictures are drawn at 3:2 and sized in the picture's width (cqw), so each is
+// the same picture at every width. Making sense of things leads, as the most everyday; judgment, the one people
+// don't expect, closes. No providers, models or technical words here: which AI answers is the section further down.
+import { Image } from "astro:assets";
+import { together } from "../lib/text";
+import etching from "../assets/dragons/etching.jpg";
+import clay from "../assets/dragons/clay.jpg";
+import comic from "../assets/dragons/comic.jpg";
+
+const cards = [
+  { id: "sense", title: "Makes sense of anything.", text: "It sums up the long thread, explains the small print, finds what matters in a pile of PDFs.", tint: "bg-linear-to-b from-[#e3f5f2] to-[#cdeae5]" },
+  { id: "draws", title: "Draws on demand.", text: "It makes pictures for a bedtime story, characters for a game, art for anything.", tint: "bg-linear-to-b from-[#fdebe5] to-[#f9d6cb]" },
+  { id: "words", title: "Finds the words.", text: "It drafts the reply, names the thing, makes it friendlier.", tint: "bg-linear-to-b from-[#fff8dc] to-[#fdecaa]" },
+  { id: "call", title: "Makes the call.", text: "It makes quick judgments all day long: which app is slowing your Mac down, and the setting that fixes it.", tint: "bg-linear-to-b from-[#ebeaff] to-[#d9d7ff]" },
+];
+
+// The same bedtime-story dragon three ways, an etching, clay and a comic book, to show the range of what an app can
+// draw. Drawn by an image model, as the ideas page's pictures are.
+const dragons = [etching, clay, comic];
+const lines = [0.92, 0.84, 0.96, 0.7, 0.88, 0.62];
+const card = "rounded-[3cqw] bg-white shadow-[0_1.5cqw_4cqw_rgba(0,0,0,0.12)]";
+---
+
+<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  {
+    cards.map((item) => (
+      <li class="overflow-hidden rounded-[22px] bg-panel">
+        <div aria-hidden="true" class:list={["@container flex aspect-[4/3] w-full items-center justify-center overflow-hidden select-none", item.tint]}>
+          {item.id === "sense" && (
+            <div class="relative h-[50cqw] w-[78cqw]">
+              {/* Two pages of small print, fanned, and the one line an app made of them. */}
+              {[1, 0].map((depth) => (
+                <div class:list={["absolute w-[44cqw] p-[3.5cqw]", card]} style={`left: ${depth * 8}cqw; top: ${3 - depth * 3}cqw; rotate: ${depth * 4}deg; opacity: ${1 - depth * 0.3}`}>
+                  <div class="flex flex-col gap-[2cqw]">{lines.map((w) => <span class="h-[1.4cqw] rounded-full bg-black/12" style={`width: ${w * 100}%`} />)}</div>
+                </div>
+              ))}
+              <div class:list={["absolute top-[24cqw] right-0 w-[60cqw] p-[3.5cqw] text-[4cqw] leading-snug text-ink", card]}>
+                <span class="font-semibold">In short:</span> the lease renews on 1&nbsp;March unless you give notice.
+              </div>
+            </div>
+          )}
+          {item.id === "draws" && (
+            <div class="flex flex-col items-center gap-[5cqw]">
+              {/* A child's idea and three pictures a story app made of it, each in a style of its own. */}
+              <div class="rounded-full bg-white px-[4cqw] py-[2cqw] text-[4cqw] font-semibold whitespace-nowrap text-ink shadow-[0_1.5cqw_4cqw_rgba(0,0,0,0.12)]">A dragon who's scared of the dark</div>
+              {/* Fanned and overlapping like prints on a table, so each is big enough to tell its style. */}
+              <div class="flex">
+                {dragons.map((dragon, index) => (
+                  <Image
+                    src={dragon}
+                    alt=""
+                    width={160}
+                    height={160}
+                    densities={[1, 2]}
+                    class:list={["size-[34cqw] rounded-[3cqw] shadow-[0_1.5cqw_4cqw_rgba(0,0,0,0.22)] ring-[0.8cqw] ring-white", index > 0 && "-ml-[5cqw]", index === 1 && "relative z-10 -translate-y-[1.5cqw]"]}
+                    style={`rotate: ${(index - 1) * 7}deg`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          {item.id === "words" && (
+            /* A reply an app has drafted, still being written, with "Friendlier" chosen. */
+            <div class:list={["w-[82cqw] p-[4cqw] text-ink", card]}>
+              <p class="border-b border-black/8 pb-[2cqw] text-[3.6cqw] text-muted">To: <span class="text-ink">Sam</span></p>
+              <p class="mt-[2.5cqw] text-[4.2cqw] leading-[1.45]">
+                Hi Sam, thanks so much for this! Friday works perfectly, and I'll bring the drafts<span class="ml-[0.5cqw] inline-block h-[4.5cqw] w-[0.5cqw] translate-y-[0.8cqw] bg-ink" />
+              </p>
+              <div class="mt-[3.5cqw] flex gap-[2cqw]">
+                {["Friendlier", "Shorter", "Formal"].map((tone, index) => (
+                  <span class:list={["rounded-full px-[2.8cqw] py-[1cqw] text-[3.4cqw] font-semibold", index === 0 ? "bg-ink text-white" : "bg-black/6"]}>{tone}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {item.id === "call" && (
+            /* What's running, each judged: the heavy one gets the setting that fixes it, the idle one gets quit,
+               and the busy one is left alone because it's busy for a reason. */
+            <div class:list={["flex w-[82cqw] flex-col gap-[2cqw] p-[3cqw] text-ink", card]}>
+              {[
+                { name: "Chrome", bar: 0.92, verdict: "Turn on Memory Saver", action: "Show Me", strong: true },
+                { name: "Zoom", bar: 0.3, verdict: "Idle since this morning", action: "Quit" },
+                { name: "Photos", bar: 0.24, verdict: "Finding faces. Leave it." },
+              ].map((row) => (
+                <div class:list={["flex items-center gap-[2.5cqw] rounded-[2cqw] px-[2.5cqw] py-[2cqw]", row.strong ? "bg-indigo-50" : "bg-black/[0.03]"]}>
+                  <div class="flex-1">
+                    <div class="flex items-center gap-[2cqw] text-[3.6cqw] font-semibold">
+                      <span class="w-[13cqw]">{row.name}</span>
+                      <span class="h-[1.2cqw] flex-1 overflow-hidden rounded-full bg-black/8"><span class="block h-full rounded-full bg-indigo-500" style={`width: ${row.bar * 100}%`} /></span>
+                    </div>
+                    <p class="mt-[0.8cqw] text-[3.3cqw] text-ink/70">{row.verdict}</p>
+                  </div>
+                  {row.action && <span class:list={["rounded-[1.5cqw] px-[2.2cqw] py-[1cqw] text-[3.2cqw] font-semibold whitespace-nowrap", row.strong ? "bg-indigo-600 text-white" : "bg-black/8"]}>{row.action}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div class="px-6 pt-4 pb-6">
+          <p class="text-lg leading-snug font-semibold">{item.title}</p>
+          <p class="mt-1 text-[15px] leading-snug text-muted">{together(item.text)}</p>
+        </div>
+      </li>
+    ))
+  }
+</ul>
