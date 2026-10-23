@@ -806,7 +806,10 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
 the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
 files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and
-`look_at_app` pictures it and reads it as text (focusable things and text, with which has focus) and `use_app` presses
+`look_at_app` pictures it (`TVPreview.picture`: the window as the screen shows it, through ScreenCaptureKit's capture of the
+process's own windows, which asks nobody, from macOS 14.4; WebKit's snapshot redraws the page without its CSS animations, so it
+is only the fallback, and the agent is told its picture can't show movement; each picture says when it was taken and how long
+after the one before, since the agent's own thinking between two calls is part of the time a movement took) and reads it as text (focusable things and text, with which has focus) and `use_app` presses
 remote keys (synthetic key events with TV key codes), clicks and types; the page's console goes to the app's log;
 each app keeps its own saved data there between openings, as a TV does (what it saved when earlier Lamps opened it as a
 file is handed to its new address once, `savedFromFileAddress`). The preview runs in the Mac's browser, so everything

@@ -6337,9 +6337,14 @@ final class Store: ObservableObject {
         }
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
+        let taken = await TVPreview.picture(project)
+        if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
         var text = summary + " " + Self.notTheTV + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
             + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the TV preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+        if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
+            text += " " + TVPreview.takenNote(taken)
+            if !taken.moving { text += " " + TVPreview.stillNote }
+        }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n\(tail)" }
@@ -6380,8 +6385,13 @@ final class Store: ObservableObject {
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if Privacy.sharesPictures {
             text += "\n\n" + TVPreview.text(await TVPreview.items(project))
-            if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
+            let taken = await TVPreview.picture(project)
+            if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
             text += "\n\nA picture of the TV preview follows. Points for the next use_app are pixels in it."
+            if let taken, !screenshots.isEmpty {
+                text += " " + TVPreview.takenNote(taken)
+                if !taken.moving { text += " " + TVPreview.stillNote }
+            }
         }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n" + tail }
         // Taken back during the reads above: the agent is told now, not at its next call.
