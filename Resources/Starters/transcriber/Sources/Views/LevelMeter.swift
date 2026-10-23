@@ -76,8 +76,9 @@ struct LevelMeter: View {
     /// The envelope at a point across the width, 0…1, eased between neighbors.
     private static func sample(_ envelope: [Double], at x: Double) -> Double {
         guard envelope.count > 1 else { return envelope.first ?? 0 }
-        let position = x * Double(envelope.count - 1)
-        let low = Int(position.rounded(.down)), high = min(low + 1, envelope.count - 1)
+        // The last bar can sit a little past the width, so the point is kept on the envelope.
+        let position = min(max(x, 0), 1) * Double(envelope.count - 1)
+        let low = min(Int(position.rounded(.down)), envelope.count - 1), high = min(low + 1, envelope.count - 1)
         let t = (1 - cos((position - Double(low)) * .pi)) / 2
         return envelope[low] * (1 - t) + envelope[high] * t
     }

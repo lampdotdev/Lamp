@@ -74,6 +74,9 @@ final class Library: ObservableObject {
         guard let recording = store.get(id) else { return }
         if player.recordingID == id { player.stop() }
         if let url = audioURL(for: recording) { try? FileManager.default.removeItem(at: url) }
+        if let call = recording.callAudioFileName {
+            try? FileManager.default.removeItem(at: Self.audioFolder.appendingPathComponent(call))
+        }
         store.delete(id)
         if selection == id { selection = nil }
         reload()

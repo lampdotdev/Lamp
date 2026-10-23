@@ -79,6 +79,18 @@ struct RecordingDetail: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            if let call = recording.callAudioFileName {
+                HStack(spacing: 6) {
+                    Label("The call's side couldn't be mixed in, so it plays only your side. It's kept as its own file.",
+                          systemImage: "exclamationmark.triangle")
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([Library.audioFolder.appendingPathComponent(call)])
+                    }
+                    .buttonStyle(.link)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 }

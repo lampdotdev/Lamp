@@ -12,6 +12,8 @@ struct Recording: Codable, Identifiable, Hashable {
     var summary: Summary?
     /// The audio's file name in `Library.audioFolder`. Examples have none, so they can't be played.
     var audioFileName: String?
+    /// The other side of a call, kept on its own only when it couldn't be mixed into `audioFileName`.
+    var callAudioFileName: String?
     /// Sample content written on first launch; Clear Examples removes exactly these.
     var isExample = false
     /// Set once the person renames it, so a summary's suggested title never replaces theirs.

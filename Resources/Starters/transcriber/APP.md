@@ -37,7 +37,9 @@ line plays the audio from there. AI is optional: without it the transcript works
   playback is excluded; gaps are filled with silence to stay in step), and `Mixdown`, which mixes the mic and
   call files into the one .m4a after recording. In `RecordingSession`, each side has its own writer,
   transcriber and `TranscriptCollector(speaker:)`; `StreamClock` aligns them by host time, and `merge` sorts
-  both sides and drops mic lines that echo the call (speakers heard by the mic without headphones).
+  both sides and drops a mic line only when it is a near copy of a call line just before it (speakers heard by the mic
+  without headphones). When the mix fails, the call's file is kept as `Recording.callAudioFileName` and the recording
+  says so.
 - `Sources/Audio/Transcription.swift`: the `Transcriber` protocol, the choice between the two below, and
   `TranscriptCollector`, which gathers lines from whatever thread they arrive on.
 - `Sources/Audio/AnalyzerTranscriber.swift`: macOS 26 and later, `SpeechAnalyzer` + `SpeechTranscriber`

@@ -184,6 +184,7 @@ final class RecordingSession: ObservableObject {
         callWriter?.close()
 
         var audioFileName = fileName
+        var callAudioFileName: String?
         var heard: [TranscriptLine]
         if let callCollector, let callFileName {
             heard = Self.merge(microphone: collector?.finished() ?? micLines, call: callCollector.finished(),
@@ -195,10 +196,15 @@ final class RecordingSession: ObservableObject {
                 if await Mixdown.mix(microphone: micURL, call: callURL, callOffset: clock.callOffset,
                                      into: Library.audioFolder.appendingPathComponent(mixedName)) {
                     try? FileManager.default.removeItem(at: micURL)
+                    try? FileManager.default.removeItem(at: callURL)
                     audioFileName = mixedName
+                } else {
+                    // The only copy of the other side: kept beside the recording rather than lost.
+                    callAudioFileName = callFileName
                 }
+            } else {
+                try? FileManager.default.removeItem(at: callURL)
             }
-            try? FileManager.default.removeItem(at: callURL)
         } else {
             // Without the call there's no one to tell apart.
             heard = (collector?.finished() ?? micLines).map { line in
@@ -214,6 +220,7 @@ final class RecordingSession: ObservableObject {
             duration: Date().timeIntervalSince(startedAt),
             lines: heard,
             audioFileName: audioFileName,
+            callAudioFileName: callAudioFileName,
             transcriptNote: heard.isEmpty ? (transcriptNote ?? "No speech was heard.") : transcriptNote)
         self.engine = nil
         transcriber = nil
@@ -280,9 +287,13 @@ final class RecordingSession: ObservableObject {
         let me = microphone.filter { line in
             let mine = words(in: line.text)
             guard !mine.isEmpty else { return false }
+            // Only a near copy is an echo: soon after, at least a few words, and nearly the same words both ways,
+            // so "I disagree with that plan" after "I agree with that plan", or a short "yes", stays.
+            guard mine.count >= 3 else { return true }
             return !theirWords.contains { other in
-                abs(other.start - line.start) < 8
-                    && Double(mine.intersection(other.words).count) / Double(mine.count) >= 0.6
+                let shared = Double(mine.intersection(other.words).count)
+                return line.start >= other.start - 1 && line.start - other.start < 4
+                    && shared / Double(mine.union(other.words).count) >= 0.8
             }
         }
         return (me + them).sorted { $0.start < $1.start }
@@ -363,12 +374,14 @@ final class StreamClock: @unchecked Sendable {
     func markMicrophone(_ seconds: Double) { lock.withLock { if microphone == nil { microphone = seconds } } }
     func markCall(_ seconds: Double) { lock.withLock { if call == nil { call = seconds } } }
 
-    /// Seconds from the microphone's first sound to the call's; 0 when unknown or implausible.
+    /// Seconds from the microphone's first sound to the call's; 0 when unknown. The call may start long after the
+    /// recording does (it was started before joining), and that wait is only known from here, so any later start is
+    /// kept; one far before the microphone's isn't possible on one clock and is taken as unknown.
     var callOffset: Double {
         lock.withLock {
             guard let microphone, let call else { return 0 }
             let offset = call - microphone
-            return abs(offset) < 30 ? offset : 0
+            return offset.isFinite && offset > -5 ? offset : 0
         }
     }
 }
