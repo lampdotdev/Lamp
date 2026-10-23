@@ -148,6 +148,50 @@ final class PhoneControllerPageTests: XCTestCase {
         }
     }
 
+    /// A pad closed while its reconnect waited (the page replaced it after its link dropped) stays closed: the
+    /// waiting reconnect opens no socket to rejoin beside its replacement.
+    func testAClosedPadDoesntReconnect() throws {
+        let context = try XCTUnwrap(JSContext())
+        var failure: String?
+        context.exceptionHandler = { _, value in failure = value?.toString() }
+        context.evaluateScript("""
+            var window = this, sockets = [], later = [], store = {};
+            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860' };
+            var history = { replaceState: function () { location.hash = ''; } };
+            var sessionStorage = {
+              getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
+              setItem: function (k, v) { store[k] = String(v); }, removeItem: function (k) { delete store[k]; }
+            };
+            function WebSocket(url) { this.readyState = 1; sockets.push(this); }
+            WebSocket.prototype.send = function () {};
+            WebSocket.prototype.close = function () {};
+            function setTimeout(fn) { later.push(fn); return later.length; }
+            function clearTimeout(id) { if (id) later[id - 1] = null; }
+            function setInterval() { return 0; } function clearInterval() {}
+            """)
+        context.evaluateScript(TVTemplate.phoneControllerJS)
+        context.evaluateScript("""
+            var pad = LampController.connect({});
+            sockets[0].onclose({ code: 1006 });   // the Wi-Fi dropped: a reconnect waits
+            pad.close();
+            later.forEach(function (fn) { if (fn) fn(); });
+            """)
+        XCTAssertNil(failure)
+        XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 1, "no socket opens after the pad is closed")
+    }
+
+    /// An app whose phone page stops being served (deleted, or set to open nowhere) ends its game: stopping the site's
+    /// listener leaves the sockets it took open, so its credentials stop working and its phones are let go.
+    @MainActor func testAGameEndsWhenItsPhonePageIsNoLongerServed() {
+        PhoneSites.forgetAll()
+        defer { PhoneSites.forgetAll() }
+        let project = LampProject(id: "unserved", name: "Unserved", exe: "Unserved", dir: URL(fileURLWithPath: "/tmp/unserved"))
+        let host = PhoneControllers.shared.hostCredential(for: project)
+        XCTAssertNotNil(ControllerCredential.check(host, kinds: [.host], app: project.id))
+        PhoneSites.sync([])
+        XCTAssertNil(ControllerCredential.check(host, kinds: [.host], app: project.id), "the host's credential is worthless once the page isn't served")
+    }
+
     /// A socket listening on every address at the port, as another program's would.
     private static func listen(on port: UInt16) -> Int32? {
         let fd = socket(AF_INET6, SOCK_STREAM, 0)

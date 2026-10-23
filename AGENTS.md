@@ -845,8 +845,8 @@ over a credential the page kept from before. The TV page has
 the `lampController` bridge (`TVPreview`); on a TV it asks Lamp's gateway for a host credential (`/app/controller`) and
 opens the same socket, at the app's port, over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
 only in Lamp's memory: a host's for the session, a join link's for fifteen minutes, a phone's for two, renewed over its
-socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen) makes all of
-them worthless. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
+socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen, or the app's page no longer served anywhere, deleted
+included: `PhoneSites.sync`) makes all of them worthless and lets its sockets go. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
 credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
 and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
 The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the

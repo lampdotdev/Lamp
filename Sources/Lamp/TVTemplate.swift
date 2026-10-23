@@ -513,7 +513,7 @@ extension TVTemplate {
 
           function connect(handlers) {
             handlers = handlers || {};
-            var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0;
+            var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0, again = null;
             // The link's credential is read once and taken out of the address, so it isn't left in the history or shared
             // by mistake; the phone then keeps the one Lamp gives it, for coming back as the same player.
             var join = (location.hash || '').replace(/^#/, '');
@@ -523,6 +523,9 @@ extension TVTemplate {
             // A link just opened always wins over a credential kept from before: that one may be for a game that has
             // ended, or have run out while the page was away, and the link is what the person just chose.
             function open() {
+              again = null;
+              // A pad closed while a reconnect waited stays closed: it mustn't rejoin beside the one that replaced it.
+              if (closedForGood) return;
               var credential = join || sessionStorage.getItem(keyName);
               if (!credential) { state('ended'); return; }
               state('connecting');
@@ -559,7 +562,7 @@ extension TVTemplate {
                 if (closedForGood) return;
                 state('connecting');
                 retry = Math.min(retry + 1, 5);
-                setTimeout(open, 500 * retry);
+                again = setTimeout(open, 500 * retry);
               };
             }
 
@@ -583,7 +586,7 @@ extension TVTemplate {
               button: function (name, down) { return post({ t: 'button', name: name, down: !!down }); },
               axis: function (name, x, y) { return post({ t: 'axis', name: name, x: x, y: y }); },
               send: function (data) { return post({ t: 'message', data: data }); },
-              close: function () { closedForGood = true; clearInterval(beat); if (socket) socket.close(); }
+              close: function () { closedForGood = true; clearInterval(beat); clearTimeout(again); again = null; if (socket) socket.close(); }
             };
           }
 

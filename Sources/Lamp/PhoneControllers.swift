@@ -243,6 +243,11 @@ final class PhoneControllers {
         for player in session.players.values { player.peer?.send(#"{"t":"state","host":false}"#) }
     }
 
+    /// Ends the game of every app whose phone page isn't served any more.
+    func endAll(except serving: Set<String>) {
+        for app in sessions.keys where !serving.contains(app) { end(app) }
+    }
+
     /// The app has stopped: its phones are let go, and their links and credentials are no use any more.
     func end(_ app: String) {
         guard let session = sessions.removeValue(forKey: app) else { return }
@@ -570,6 +575,9 @@ enum PhoneSites {
             site.stop()
             sites[app] = nil
         }
+        // Stopping the listener leaves the sockets it took open, so the game ends too: its phones and host are let go
+        // and its credentials are worthless, whether the app was deleted or is no longer set to open anywhere.
+        PhoneControllers.shared.endAll(except: serving)
         for app in ports.keys where !known.contains(app) { ports[app] = nil }
         for app in serving where sites[app] == nil && !opening.contains(app) {
             Task { @MainActor in _ = await open(app, wanted: { served(app) }) }
