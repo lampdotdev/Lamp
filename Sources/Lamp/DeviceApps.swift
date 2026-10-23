@@ -450,9 +450,13 @@ extension Agent.Rules {
                     + "observe its `result` field, and show `result.error` when it's set. Lamp on the person's Mac answers while the device is on its Wi‑Fi "
                     + "with Lamp open. Text from outside the app goes in `options.data`, never into the prompt. Keep the package step zipping that folder. "
                     + "Read Lamp.brs's opening comment before using it; never call an AI service yourself. "
-            case .babylon:
-                rule += "\(entry.path) is Babylon.js 9, the 3D engine (the global `BABYLON`): load it with a script tag before the app's own "
-                    + "scripts, and use it for anything 3D, never another engine or one from the network. "
+            case .three:
+                let folder = "./" + URL(fileURLWithPath: entry.path).lastPathComponent + "/"
+                rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision), the 3D library, with its addons (controls, loaders, "
+                    + "geometries, postprocessing, utils): put the import map `<script type=\"importmap\">{ \"imports\": { \"three\": "
+                    + "\"\(folder)three.module.js\", \"three/addons/\": \"\(folder)addons/\" } }</script>` in index.html before a "
+                    + "`<script type=\"module\">`, then `import * as THREE from 'three'` and addons from 'three/addons/…'. Use it for "
+                    + "anything 3D, never another engine or one from the network. "
             }
         }
         return rule + "Once something is saved, only ever add to it: a new field gets a default where it's read.\n"

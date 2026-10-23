@@ -211,9 +211,10 @@ app at each path before every build, so name those paths in the scaffold's manif
 sure the package step takes them in. Never draw an icon in the scaffold or the package step. A device that shows no icon
 for an app needs none.
 
-`"support"` may also name `"babylon"`, Babylon.js (the 3D engine), as a file in the app's web folder
-(`"babylon": "Web/babylon.js"`): for a device whose web view runs WebGL and whose apps may be games or 3D scenes. Lamp
-writes it with the others; say in the rules to load it before the app's own script.
+`"support"` may also name `"three"`, three.js (the 3D library, with its light addons), as a folder in the app's web
+folder (`"three": "Web/three"`): for a device whose web view runs WebGL 2 and ES modules and whose apps may be games or 3D
+scenes. Lamp writes it with the others; say in the rules to load it through an import map (`"three"` to
+`./three/three.module.js`, `"three/addons/"` to `./three/addons/`) from a module script.
 
 `"preview": "Web"` is for a web app: the folder whose `index.html` Lamp opens at 1920x1080 in a window on the person's Mac,
 for the builder to look at and try as it works (a TV app's preview), since the device's own screen can only be pictured,

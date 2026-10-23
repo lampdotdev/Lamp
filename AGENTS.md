@@ -805,9 +805,12 @@ that answers 204 until it's done (`poll`) and fails with the device's words unle
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
-Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: Babylon.js ships
-with Lamp (`Resources/WebLibraries/babylon`, Apache-2.0 with its notice) as a library a kind asks for like the building
-blocks (`DeviceSupport.Library.babylon`, `"babylon": "Web/babylon.js"`), so nothing loads from the network, and the rules
+Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: three.js ships
+with Lamp (`Resources/WebLibraries/three`, MIT: its WebGL build and the light addons, put there by
+`scripts/update-three.sh` from npm's package, checked) as a library a kind asks for like the building blocks
+(`DeviceSupport.Library.three`, `"three": "Web/three"`, a folder the page loads through an import map), so nothing loads
+from the network. It replaced Babylon.js, which was chosen for EdgeHTML; under WebView2 the agent writes three.js more
+reliably, its efficient path (`InstancedMesh`) is the obvious one, and it's about half the size. The rules
 keep scenes within what an Xbox One's web view draws and have a game read the controller with the Gamepad API while it's
 played, the keyboard too. A kind that declares `preview` (a web app's folder) is looked at and used in the preview on the
 Mac, the TV preview's window under the device's name (`Store.openDevicePreview`, `TVPreview.show(device:)`, where Back

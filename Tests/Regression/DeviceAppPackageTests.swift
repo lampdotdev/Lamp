@@ -39,6 +39,14 @@ final class DeviceAppPackageTests: XCTestCase {
         for name in WebHost.activatableClasses { XCTAssertTrue(manifest.contains("ActivatableClassId=\"\(name)\""), name) }
     }
 
+    /// Every part of a package has a content type, a file with no extension (three.js's LICENSE) too: the Xbox refuses a
+    /// package with an untyped part, as an invalid block map.
+    func testAFileWithNoExtensionStillHasAType() {
+        let types = String(decoding: MSIX.contentTypes(for: ["Web/three/LICENSE", "Web/index.html"]), as: UTF8.self)
+        XCTAssertTrue(types.contains("<Override PartName=\"/Web/three/LICENSE\" ContentType=\"application/octet-stream\"/>"), types)
+        XCTAssertTrue(types.contains("<Default Extension=\"html\""))
+    }
+
     /// The package step's zip is read as plain files only: nothing above its top, no links.
     func testThePackageStepsZipIsReadAsPlainFilesOnly() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-zip-\(UUID().uuidString)")
