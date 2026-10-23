@@ -251,6 +251,9 @@ enum DeviceApps {
         if let stop = bridge.stop, !stop.isEmpty, let installed = installedValues(project, on: device) {
             _ = try? await runner.run(stop, extra: installed)
         }
+        // A setting the install changes for itself (an Xbox's "treat apps as games") stays changed until the app has been
+        // opened: the console settles the package's type then.
+        let changed = IntegrationRunner.ChangedSettings()
         var tries = 0
         while true {
             do {
@@ -258,7 +261,7 @@ enum DeviceApps {
                 // Noted as on its way before the upload, and as the installed one only once the device took it: an install cut
                 // short or deleted midway may still land on the device, and a removal then names both.
                 remember(project, on: device, pending: true)
-                let outcome = try await runner.run(install, extra: values(project), files: files(for: project))
+                let outcome = try await runner.run(install, extra: values(project), files: files(for: project), changed: changed)
                 remember(project, on: device, pending: false)
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
@@ -268,7 +271,7 @@ enum DeviceApps {
                     // to ten seconds or so while that copy's web view lets go): asked again a little later, a few times.
                     var refused = 0
                     while true {
-                        do { _ = try await runner.run(launch, extra: values(project)); break }
+                        do { _ = try await runner.run(launch, extra: values(project), changed: changed); break }
                         catch let failure as IntegrationRunner.Failure where refused < 4 {
                             refused += 1
                             try? await Task.sleep(for: .seconds(4))
@@ -281,10 +284,12 @@ enum DeviceApps {
                 tries += 1
                 try? await Task.sleep(for: .seconds(3))
             } catch {
+                await runner.putBack(changed)
                 run.end()
                 throw error
             }
         }
+        await runner.putBack(changed)
         return run
     }
 
@@ -354,9 +359,18 @@ enum DeviceApps {
         }
     }
 
-    /// Lamp's values for the bridge: the app's id, and for a wrapped package the names Windows gives it.
+    /// Lamp's values for the bridge: the app's id, whether it's a game, and for a wrapped package the names Windows
+    /// gives it.
     private static func values(_ project: LampProject) -> [String: String] {
-        values(project, identity: buildFolder(for: project).appendingPathComponent("identity.json")) ?? ["appID": project.id]
+        var values = values(project, identity: buildFolder(for: project).appendingPathComponent("identity.json")) ?? ["appID": project.id]
+        values["isGame"] = isGame(project) ? "true" : "false"
+        return values
+    }
+
+    /// A game, to a device that gives games more than apps (an Xbox gives a game about five times the memory and the
+    /// whole GPU): Lamp's native games always, and an app of another kind when its capabilities.json says it's one.
+    static func isGame(_ project: LampProject) -> Bool {
+        GameKit.isGame(project) || Template.Capabilities.load(project).game == true
     }
 
     private static func values(_ project: LampProject, identity file: URL) -> [String: String]? {

@@ -881,6 +881,16 @@ the copy there first (installing over a running copy can leave the next launch f
 takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
 package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 
+An Xbox gives a package installed as a game far more than one installed as an app (5 GB of memory rather than 1 GB, and
+much more of the GPU and CPU, about twice the frame rate for a scene that fills an app's share). Device Portal can't change one package's type; the console decides it at each install from its "treat UWP apps as
+games" setting, `DefaultUWPContentTypeToGame`, and an update installed with it off is an app again. So the install sets that
+setting to `{isGame}` and puts the person's back once the app has been launched (`restore`, `IntegrationRunner.putBack`,
+held by `DeviceApps.install` across install and launch, one at a time per device): the console settles the type after the
+install's last step, and put back sooner, a person's "on" made a non-game a game. The type stays with the package after. `{isGame}` is `DeviceApps.isGame`: a native
+game always, and a web app when its capabilities.json says `{"game": true}` (`Template.Capabilities.game`), which the
+rules ask of anything played. That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
+that aren't games and a game may not use it. The native host logs the memory the console gave it, which says which it got.
+
 The tools are a download (`WindowsTools`, the setup window `WindowsSetup`), in `Edition.sharedDeveloperFolder`/Windows
 like Android's: clang and lld (with clang's own headers) out of LLVM's release for Apple silicon and sokol-shdc at a
 pinned commit, each against its published SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp
