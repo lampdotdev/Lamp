@@ -3335,6 +3335,11 @@ final class Store: ObservableObject {
             }
             guard parts(of: project).contains(where: Runtime.sourcesChanged) else { break }
         }
+        // Fixes that went on changing each other's apps: nothing is saved or opened over code some app wasn't built from.
+        if Runtime.sourcesChanged(project) || parts(of: project).contains(where: Runtime.sourcesChanged) {
+            log(project, .error, ErrorMessages.buildFailed)
+            return TurnResult(end: .failed, watched: isWatching(project.id))
+        }
         // Opening the app brings it in front of Lamp, so whether the user was watching is decided first.
         let watched = isWatching(project.id)
         // Nothing is committed when the agent changed no files.
