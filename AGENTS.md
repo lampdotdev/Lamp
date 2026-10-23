@@ -986,9 +986,19 @@ part is the app at its root, as every wish has; each other part is an app of its
 opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
 wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat, versions or icon of its own: what's logged
 for it goes to its wish's chat (`Store.log`), the wish's history keeps its folder, and its icon is the wish's
-(`Icons.home`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place. The
-wish's meta.json lists the parts (`parts`). Which kinds a list of devices makes is `Parts.kinds`: Apple's devices are one
-kind between them, as before, and with a TV they're a part of the TV app's wish; Android and device apps still stand alone.
+(`Icons.home`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
+told where its folder is when it's installed (`folder` in `Template.installValues`, read by `LampInstall.app`), since its
+id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
+scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
+never kept in a list beside them, so a rename, an Undo or a restored version can't part a wish from its
+apps; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's
+game. A part never has a turn of its own: Lamp's own requests for it (carrying on after its Reload, fixing its crash) are
+its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by (whose turn has the app, whether the
+person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
+its apps waits. A copy is found by its install place only for an app with a Mac copy there, since a TV wish's Mac app is
+installed under the wish's name. Which kinds a list
+of devices makes is `Parts.kinds`: Apple's devices are one kind between them, as before, and with a TV they're a part of
+the TV app's wish; Android and device apps still stand alone.
 
 What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
 (`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,
@@ -999,8 +1009,8 @@ doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `P
 (`Store.underTurn`). `make_app_for` takes the whole list: the main kind is changed by `convert` as before, a part is added
 (`Store.addPart`), changed in place, or taken away. The toolbar has one menu for the other part: use or quit it, and Try On.
 
-A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`:
-nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
+A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
+(kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
 `ask`, and gives it its kinds with `make_app_for`, whose reply carries the chosen kind's whole prompt. Each engine's
 conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
 starts one with the wish's own prompt, told the chat so far (`CatchUp`).

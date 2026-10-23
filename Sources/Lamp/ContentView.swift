@@ -887,7 +887,7 @@ struct ProjectView: View {
                     Label(name, systemImage: part.platform == .mac ? "laptopcomputer" : "iphone")
                 }
                 .disabled(busy)
-                .help("The \(name.lowercased()) that goes with \(project.name): use it, and choose where it opens")
+                .help("The \(part.platform == .mac ? "Mac app" : "iPhone app") that goes with \(project.name): use it, and choose where it opens")
             }
         }
         gap

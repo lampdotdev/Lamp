@@ -58,23 +58,49 @@ enum Parts {
         }
     }
 
-    /// A wish's other parts, read from their folders: each listed in the wish's meta.json and with a meta.json of its
-    /// own. One whose folder is missing or unreadable (taken away by a version restored from before it) is left out.
-    /// The meta.json files are in the wish's folder, which the agent writes: a part is only ever one of Lamp's own
-    /// folders, holding the kind that folder is for, once.
+    /// The folders of a wish's other parts, found in its folder: one of Lamp's own part folders holding the scaffold of
+    /// a kind that folder can hold (any of Apple's kinds in an Apple folder, since a part made for more devices is
+    /// changed in place and keeps its folder; a TV app in TV/), at most one of each. They're found from what the wish's
+    /// versions keep (the scaffold), never from a list kept beside them, so a rename, an Undo or a restored version
+    /// can't leave the two telling different stories: a part comes and goes with its files.
+    static func folders(in wish: URL) -> [String] {
+        var found: [String] = [], apple = false
+        for folder in [.iphone, .mac, .universal, .tv].map(folder(for:)) {
+            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish) else { continue }
+            let holds = folder == Self.folder(for: .tv) ? kind == .tv : kind.hasMac || kind.hasIOS
+            guard holds, kind != .tv || !found.contains(folder) else { continue }
+            if kind != .tv { guard !apple else { continue }; apple = true }
+            found.append(folder)
+        }
+        return found
+    }
+
+    /// The kind of app the scaffold in a part's folder is, read without following a link (`AppFile`): the folder is the
+    /// agent's to write. At most the last 64 KB of Package.swift is read: Lamp's own is far smaller, and a file the agent
+    /// made huge is never read whole.
+    static func kindOfScaffold(in dir: URL, wish: URL) -> Platform? {
+        if AppFile.read(dir.appendingPathComponent(TVTemplate.webFolder).appendingPathComponent("lamp.js"), inFolder: wish, last: 1) != nil { return .tv }
+        guard let package = AppFile.read(dir.appendingPathComponent("Package.swift"), inFolder: wish, last: 64 * 1024) else { return nil }
+        let text = String(decoding: package, as: UTF8.self)
+        let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
+        return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
+    }
+
+    /// A wish's other parts (`partFolders`), each with what its own meta.json keeps of where it opens. Who a part is
+    /// comes from its wish and its folder, never from that file, which the agent could make name another app; and a
+    /// part whose file is gone (its folder brought back by a restore, which keeps no `.lamp`) is still the part.
     static func load(_ wish: LampProject) -> [LampProject] {
         guard !wish.isPart else { return [] }
-        var seen: Set<String> = []
         return wish.partFolders.compactMap { folder in
-            guard let kind = partKinds.first(where: { Parts.folder(for: $0) == folder }), seen.insert(folder).inserted else { return nil }
             let dir = wish.dir.appendingPathComponent(folder)
-            guard let data = AppFile.read(dir.appendingPathComponent(".lamp/meta.json"), in: wish),
-                  let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data), meta.platform == kind else { return nil }
-            // Who a part is comes from its wish, never from its own meta.json, which the agent could make name another app.
-            return LampProject(id: id(wish: wish.id, folder: folder), name: wish.name, exe: meta.exe, dir: dir,
+            guard let kind = kindOfScaffold(in: dir, wish: wish.dir), partKinds.contains(kind) else { return nil }
+            let meta = AppFile.read(dir.appendingPathComponent(".lamp/meta.json"), in: wish)
+                .flatMap { try? JSONDecoder().decode(ProjectMeta.self, from: $0) }
+                .flatMap { $0.platform == kind ? $0 : nil }
+            return LampProject(id: id(wish: wish.id, folder: folder), name: wish.name, exe: meta?.exe ?? wish.exe, dir: dir,
                                instance: instance(wish: wish, folder: folder),
-                               platform: meta.platform ?? .mac, integration: meta.integration, family: meta.family ?? .iphone,
-                               device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator, partOf: wish.id)
+                               platform: kind, family: meta?.family ?? .iphone,
+                               device: meta?.device, chosen: meta?.target ?? .mac, simulator: meta?.simulator, partOf: wish.id)
         }
     }
 

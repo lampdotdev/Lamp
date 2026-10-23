@@ -49,7 +49,6 @@ enum Template {
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
                                              integration: project.platform == .device ? project.integration : nil,
-                                             parts: project.partFolders.isEmpty ? nil : project.partFolders,
                                              undecided: project.undecided)),
                             to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
@@ -228,6 +227,8 @@ enum Template {
     static func installValues(for project: LampProject) -> [String: String] {
         [
             "slug": project.id,
+            // Where its folder is under Lamp's apps: its id, or for a wish's other part its wish's folder and its own.
+            "folder": project.isPart ? project.dir.deletingLastPathComponent().lastPathComponent + "/" + project.dir.lastPathComponent : project.id,
             "dataID": Edition.appBundlePrefix + project.id,
             "token": token(for: project),
             "port": String(Gateway.port),
@@ -3623,7 +3624,9 @@ enum Template {
         static var host: String { value("host") }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
-        static var app: String { apps + "/" + slug }
+        /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
+        /// installed by a Lamp from before says only its name.
+        static var app: String { apps + "/" + (value("folder").isEmpty ? slug : value("folder")) }
         static var macHost: String { value("macHost") }
         /// A link that asks Lamp to do something for this app.
         static func link(_ action: String) -> URL {

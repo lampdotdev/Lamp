@@ -160,6 +160,15 @@ struct LampProject: Identifiable, Hashable {
     /// candidates, most likely first): nothing is written for it until the agent has asked and given it its kinds.
     var undecided: [String]?
     var isPart: Bool { partOf != nil }
+
+    /// The same app named, and for a draft moved: everything else it is (its kind, its other parts, whether it's still
+    /// to be told what it's for, where it opens) comes along. Named, it's no longer untitled, a wish from the site or
+    /// one being found.
+    func named(_ name: String, id: String? = nil, exe: String? = nil, dir: URL? = nil) -> LampProject {
+        LampProject(id: id ?? self.id, name: name, exe: exe ?? self.exe, dir: dir ?? self.dir, instance: instance,
+                    deviceSetup: deviceSetup, platform: platform, integration: integration, family: family, device: device,
+                    chosen: chosen, simulator: simulator, partOf: partOf, partFolders: partFolders, undecided: undecided)
+    }
     /// Where the app is built for and opened now.
     var destination: Destination {
         switch platform {
@@ -228,7 +237,6 @@ struct ProjectMeta: Codable {
     var finding: Bool?         // LampProject.finding
     var deviceSetup: String?   // LampProject.deviceSetup
     var integration: String?   // LampProject.integration
-    var parts: [String]?       // LampProject.partFolders
     var undecided: [String]?   // LampProject.undecided
 }
 
@@ -805,13 +813,18 @@ final class Store: ObservableObject {
     /// and opening it again where it was. Pressed while a request's agent works, it's done by that turn as soon as the
     /// agent is between steps (`reloadInTurn`); while any other work has the app, when that's done.
     func reloadWaiting(_ id: String) {
-        guard let project = projects.first(where: { $0.id == id }), Runtime.waitsForReload(project) else {
+        // A wish's Reload is for whichever of its apps waits, its own or one of its other parts'; everything that says
+        // whose turn it is and whether the person stopped or was asked is the wish's (`requestOwner`).
+        let asked = projects.first { $0.id == id }
+        let owner = asked.map { Self.requestOwner(of: $0, among: projects) }
+        let id = owner?.id ?? id
+        guard let owner, let project = waitingForReload(in: owner) else {
             reloadWhenFree.remove(id)
             _ = away.landed(id, stillWaits: false)   // put in meanwhile, by the app closing: nothing of Lamp's to carry on
             return
         }
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
-        guard begin(project) != nil else { reloadWhenFree.insert(id); return }
+        guard begin(owner) != nil else { reloadWhenFree.insert(id); return }
         reloadWhenFree.remove(id)
         away.installs(id)
         // The Mac copy's change, wherever Try On points now (an app for both may have moved it to a phone since).
@@ -821,17 +834,25 @@ final class Store: ObservableObject {
             _ = await install(mac, inFront: true, fresh: true, reload: true)
             // Lamp pressed it while the person was away, and the turn that left it is over (it ended asking for Reload,
             // paused, or the Reload was put off until its end): the agent goes on, as after a pause.
-            if away.landed(id, stillWaits: Runtime.waitsForReload(project)), away.carriesOn(id) { queueCarryOn(project) }
-            finish(project)
+            if away.landed(id, stillWaits: waitingForReload(in: owner) != nil), away.carriesOn(id) { queueCarryOn(owner) }
+            finish(owner)
         }
     }
+
+    /// The one of a wish's apps whose change waits for Reload: its own, else one of its other parts'.
+    private func waitingForReload(in wish: LampProject) -> LampProject? {
+        guard let wish = current(wish) else { return nil }
+        return Runtime.waitsForReload(wish) ? wish : parts(of: wish).first(where: Runtime.waitsForReload)
+    }
+
     /// The person stepped away while a request's change waits for Reload: Lamp presses it for them, so the agent can
     /// go on. While they're at the Mac it stays theirs to press. A turn still at work puts the change in between its
     /// steps; once the turn is over (paused, the agent ending its reply asking for Reload, as models often do rather
     /// than look again, or the Reload put off until its end) the agent is carried on the way a pause is, decided
     /// when the change is in (`reloadWaiting`, `finish`), never after the person pressed Stop (`AwayReloads`).
     private func reloadIfAway() {
-        let waiting = projects.filter(Runtime.waitsForReload).map(\.id)
+        // By the wish: a Stop or a question waiting in its chat holds its parts' Reloads too.
+        let waiting = Array(Set(projects.filter(Runtime.waitsForReload).map { Self.requestOwner(of: $0, among: projects).id }))
         for id in away.toPress(waiting: waiting, idle: AwayReloads.secondsSinceInput) {
             guard let project = projects.first(where: { $0.id == id }) else { continue }
             log(project, .status, "Reloaded \(project.name) while you were away")
@@ -1038,22 +1059,27 @@ final class Store: ObservableObject {
         id != nil && selection == id && NSApp.isActive
     }
 
+    /// A wish as its folder says it is: its meta.json, and the other parts found beside it (`Parts.folders`).
+    nonisolated static func readWish(at dir: URL) -> LampProject? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
+              let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
+        return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
+                           instance: meta.instance ?? dir.lastPathComponent,
+                           untitled: meta.untitled ?? false, fromWish: meta.wish ?? false, finding: meta.finding ?? false,
+                           deviceSetup: meta.deviceSetup,
+                           platform: meta.platform ?? .mac, integration: meta.integration, family: meta.family ?? .iphone,
+                           device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator,
+                           partFolders: Parts.folders(in: dir), undecided: meta.undecided)
+    }
+
     func reload() {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
-        projects = dirs.compactMap { dir in
-            guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
-                  let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
-            return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
-                                instance: meta.instance ?? dir.lastPathComponent,
-                                untitled: meta.untitled ?? false, fromWish: meta.wish ?? false, finding: meta.finding ?? false,
-                                deviceSetup: meta.deviceSetup,
-                                platform: meta.platform ?? .mac, integration: meta.integration, family: meta.family ?? .iphone,
-                                device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator,
-                                partFolders: meta.parts ?? [], undecided: meta.undecided)
-        }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        // Each wish's other parts follow it, as apps of their own kind in its folders (`Parts`).
-        projects += projects.flatMap(Parts.load)
+        let wishes = dirs.compactMap(Self.readWish)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Each wish's other parts follow it, as apps of their own kind in its folders (`Parts`). Set in one go: every
+        // change to the list is acted on (the network listening, phones' sessions), and a list of the wishes alone, for
+        // a moment, would end the game of every TV app whose phones are its wish's other apps.
+        projects = wishes + wishes.flatMap(Parts.load)
 
         for project in projects {
             tokens[Template.token(for: project)] = project.id
@@ -1790,9 +1816,6 @@ final class Store: ObservableObject {
                                    instance: Parts.instance(wish: wish, folder: folder), platform: kind, partOf: wish.id)
             try Template.saveMeta(part)
             try Template.fill(part)
-            var changed = wish
-            changed.partFolders.append(folder)
-            try Template.saveMeta(changed)
         } catch {
             return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)")
         }
@@ -1804,9 +1827,6 @@ final class Store: ObservableObject {
     private func removePart(_ part: LampProject) async -> Bool {
         guard let part = current(part), let wishID = part.partOf, let wish = projects.first(where: { $0.id == wishID }),
               await quit(part, for: turns[wishID]) else { return false }
-        var changed = wish
-        changed.partFolders.removeAll { $0 == part.dir.lastPathComponent }
-        guard (try? Template.saveMeta(changed)) != nil else { return false }
         AppFolder.remove(part.dir, in: wish.dir)
         reload()
         return true
@@ -2123,14 +2143,13 @@ final class Store: ObservableObject {
         if !current.scaffolded {
             return renameDraft(current, to: unique)
         }
-        if await isPristine(current) {
+        // Made again from Lamp's scaffold, a wish would leave its other parts' folders behind.
+        if current.partFolders.isEmpty, await isPristine(current) {
             return await rescaffold(current, as: unique)
         }
 
         let fm = FileManager.default
-        let renamed = LampProject(id: current.id, name: unique, exe: current.exe, dir: current.dir, instance: current.instance,
-                                  platform: current.platform, integration: current.integration, family: current.family, device: current.device,
-                                  chosen: current.chosen, simulator: current.simulator)
+        let renamed = current.named(unique)
         try? Template.saveMeta(renamed)
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
@@ -2287,9 +2306,7 @@ final class Store: ObservableObject {
     private func renameDraft(_ old: LampProject, to name: String) -> LampProject {
         let exe = Template.identifier(from: name)
         let slug = exe.lowercased() == old.id ? old.id : Template.freeSlug(for: exe, in: root)
-        let project = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug), instance: old.instance,
-                                  platform: old.platform, integration: old.integration, family: old.family, device: old.device, chosen: old.chosen,
-                                  simulator: old.simulator)
+        let project = old.named(name, id: slug, exe: exe, dir: root.appendingPathComponent(slug))
         do {
             if slug != old.id {
                 settleChat(old)
@@ -2869,9 +2886,31 @@ final class Store: ObservableObject {
         saveWaiting()
     }
 
+    /// Where a request for an app goes: its own chat, or for a wish's other part its wish's, whose turn works on every
+    /// part (`underTurn`). A part has no conversation, prompt or history of its own, so a turn of its own would build
+    /// on rules it doesn't have and save in a folder that isn't a repository.
+    nonisolated static func requestOwner(of project: LampProject, among projects: [LampProject]) -> LampProject {
+        guard let wish = project.partOf else { return project }
+        return projects.first { $0.id == wish } ?? project
+    }
+
     private func startQueued(_ project: LampProject) {
+        // A part's request (Lamp's own, to carry on after its Reload) is its wish's.
+        let owner = Self.requestOwner(of: project, among: projects)
+        if owner.id != project.id {
+            if let waiting = queued.removeValue(forKey: project.id) {
+                // Lamp's own request to carry on stays first, and only once; the rest wait after what the wish has.
+                var mine = queued[owner.id] ?? []
+                if waiting.contains(where: \.afterReload), !mine.contains(where: \.afterReload) {
+                    mine.insert(contentsOf: waiting.filter(\.afterReload).prefix(1), at: 0)
+                }
+                queued[owner.id] = mine + waiting.filter { !$0.afterReload }
+                saveWaiting()
+            }
+            return startQueued(owner)
+        }
         guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
-              Self.startsNow(messages, changeHeld: Runtime.holdsBuild(project)),
+              Self.startsNow(messages, changeHeld: holdsAnyBuild(project)),
               let owner = begin(project) else { return }
         queued[project.id] = nil
         saveWaiting()
@@ -3074,9 +3113,10 @@ final class Store: ObservableObject {
     /// is what `HeldInstalls` never does, and macOS brings it forward instead of opening the new one.
     func macCopies(of project: LampProject) -> [NSRunningApplication] {
         let place = project.installedURL.standardizedFileURL.resolvingSymlinksInPath()
+        // By its place only for an app that has a Mac copy there: a TV wish's Mac app is installed under the wish's name.
         return NSWorkspace.shared.runningApplications.filter { app in
             !app.isTerminated && (app.bundleIdentifier == project.bundleID
-                || app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
+                || project.platform.hasMac && app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
         }
     }
 
@@ -3880,6 +3920,7 @@ final class Store: ObservableObject {
 
     /// Lamp's own request to carry on after the held change is in (`Agent.afterReload`), first in line.
     private func queueCarryOn(_ project: LampProject) {
+        let project = Self.requestOwner(of: project, among: projects)
         guard !(queued[project.id] ?? []).contains(where: \.afterReload) else { return }
         // Messages queued before it keep copies of their files too, now that the line outlives a relaunch.
         queued[project.id] = [QueuedMessage(text: Agent.afterReload, byLamp: true, afterReload: true)]
@@ -3908,12 +3949,18 @@ final class Store: ObservableObject {
 
     /// Whether the waiting messages wait for the person's Reload (`pause`): the chats say so under them.
     func queueWaitsForReload(in project: LampProject) -> Bool {
-        !Self.startsNow(queued[project.id] ?? [], changeHeld: Runtime.holdsBuild(project))
+        !Self.startsNow(queued[project.id] ?? [], changeHeld: holdsAnyBuild(project))
     }
 
     /// Whether the waiting messages may start a turn now: not while the first of them carries a paused request on
     /// and the change it waits for is still held from the app (`pause`); the person's Reload, or the app closing,
     /// puts the change in and lets them go.
+    /// A change held from the wish's own app or from one of its other parts: the request that carries on after a part's
+    /// Reload waits for that Reload as one after the wish's does.
+    private func holdsAnyBuild(_ project: LampProject) -> Bool {
+        Runtime.holdsBuild(project) || parts(of: project).contains(where: Runtime.holdsBuild)
+    }
+
     static func startsNow(_ messages: [QueuedMessage], changeHeld: Bool) -> Bool {
         !(messages.first?.afterReload == true && changeHeld)
     }
@@ -5993,9 +6040,10 @@ final class Store: ObservableObject {
     /// hears it with its next look (`Turn.reloadedByPerson`), since it was told the change waits for Reload.
     private func reloadInTurn(_ project: LampProject, _ turn: Turn) async {
         guard !turn.stopped, turn.agent != nil, !turn.look.inProgress, !turn.building, !turn.keptOpen, turn.applying == nil,
-              turn.answering == 0, let current = current(project) else { return }
+              turn.answering == 0, let wish = current(project) else { return }
         reloadWhenFree.remove(project.id)
-        guard Runtime.waitsForReload(current) else { away.dropped(project.id); return }   // a live change put it in
+        // The wish's own app, or the part of it whose change waits.
+        guard let current = waitingForReload(in: wish) else { away.dropped(project.id); return }   // a live change put it in
         away.installs(project.id)
         turn.reloading = true
         turn.applying = Task { [weak self] in
@@ -6007,10 +6055,10 @@ final class Store: ObservableObject {
             _ = await install(mac, inFront: true, fresh: true, reload: true, saysReady: false)
             // Lamp's, while the person was away, with the turn over meanwhile: the agent never heard the change is in.
             let lamps = away.landed(project.id, stillWaits: Runtime.waitsForReload(current))
-            if lamps, turns[project.id] !== turn, away.carriesOn(project.id) { queueCarryOn(current) }
+            if lamps, turns[project.id] !== turn, away.carriesOn(project.id) { queueCarryOn(wish) }
             // A request paused for this Reload (`pause`) goes on once the app is given back: here when the turn is
             // already over, else when it ends (`finish`).
-            startQueued(current)
+            startQueued(wish)
             guard turns[project.id] === turn, !Runtime.waitsForReload(current) else { return }
             turn.reloadedByPerson = true
             turn.reloadedWhileAway = lamps
@@ -7589,8 +7637,10 @@ final class Store: ObservableObject {
     /// something. True when the crash is taken care of (a fix started, or one is already under way for it).
     @discardableResult
     private func fixCrash(_ project: LampProject, detail: String) -> Bool {
-        guard let project = current(project) else { return true }
-        let report = Runtime.newestCrash(of: project)?.date
+        guard let crashed = current(project) else { return true }
+        // A part's crash is fixed by its wish's turn, which knows the part as one of its own.
+        let project = Self.requestOwner(of: crashed, among: projects)
+        let report = Runtime.newestCrash(of: crashed)?.date
         if let report, crashesAnswered[project.id] == report { return true }
         // While a turn runs or a request waits, the agent hears of the crash with it.
         guard setup.ready, !busy.contains(project.id), turns[project.id] == nil,
@@ -7599,8 +7649,10 @@ final class Store: ObservableObject {
         if let report { crashesAnswered[project.id] = report }
         log(project, .status, ChatLook.fixingCrash)
         // The report itself goes with the request when macOS wrote one; otherwise what Lamp saw is all there is.
-        let request = "Fix the crash."
-        queued[project.id, default: []].append(QueuedMessage(text: report == nil ? request + "\n\n" + detail : request, byLamp: true))
+        // The wish's request carries no note of a part's crash, so a part's goes with what Lamp saw, and which part it was.
+        let part = crashed.id != project.id
+        let request = part ? "\(Parts.name(of: crashed.platform).prefix(1).uppercased() + Parts.name(of: crashed.platform).dropFirst()), in \(crashed.dir.lastPathComponent)/, crashed. Fix the crash." : "Fix the crash."
+        queued[project.id, default: []].append(QueuedMessage(text: report == nil || part ? request + "\n\n" + detail : request, byLamp: true))
         startQueued(project)
         return true
     }
@@ -7613,8 +7665,9 @@ final class Store: ObservableObject {
     /// a crash on opening is. Only a crash, which leaves macOS's report: a quit leaves none. A crash just after a
     /// change went into the open app is the live change's to answer (`watchAfterReload`).
     private func appEnded(_ app: NSRunningApplication) {
-        guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID
-                  || app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
+        // By its id first: a wish's Mac app is installed under the wish's name, which its TV app shares.
+        guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID })
+                ?? projects.first(where: { $0.platform.hasMac && app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
               !busy.contains(project.id), reloadWatches[project.id] == nil else { return }
         let since = app.launchDate ?? Date().addingTimeInterval(-5)
         Task { [weak self] in
@@ -8759,8 +8812,10 @@ final class Store: ObservableObject {
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
     /// Mac app beside it in its wish (`Parts`).
-    static func takesPlayers(_ project: LampProject) -> Bool {
-        project.platform == .tv && (TVs.hasPhonePage(project) || shared.projects.contains { $0.partOf == project.id })
+    /// Read off the wish itself (its parts as found in its folder), never off the list of apps, which is being set
+    /// while Lamp reads its apps again: a game must not end because, for a moment, the list was half made.
+    nonisolated static func takesPlayers(_ project: LampProject) -> Bool {
+        project.platform == .tv && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty)
     }
 
     /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then

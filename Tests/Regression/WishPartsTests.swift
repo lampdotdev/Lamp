@@ -29,3 +29,99 @@ final class WishPartsTests: XCTestCase {
         XCTAssertEqual(part.realDir.path, apps.appendingPathComponent("remote/iPhone").path)
     }
 }
+
+/// What a wish of several apps keeps through what Lamp does to it, read off its folder as Lamp reads it.
+final class WishPartsKeptTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("wish-parts-kept-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
+
+    /// A wish folder holding a TV app and, in iPhone/, an iPhone app, as `make_app_for` leaves it.
+    private func remote(meta: String) throws -> URL {
+        let wish = root.appendingPathComponent("remote")
+        let phone = wish.appendingPathComponent("iPhone")
+        try FileManager.default.createDirectory(at: wish.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: wish.appendingPathComponent("Web"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: phone.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try meta.write(to: wish.appendingPathComponent(".lamp/meta.json"), atomically: true, encoding: .utf8)
+        try "".write(to: wish.appendingPathComponent("Web/lamp.js"), atomically: true, encoding: .utf8)
+        try #"{"name":"Remote","exe":"Remote","platform":"iphone"}"#.write(to: phone.appendingPathComponent(".lamp/meta.json"), atomically: true, encoding: .utf8)
+        try #"let package = Package(name: "Remote", platforms: [.iOS(.v17)])"#.write(to: phone.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        return wish
+    }
+
+    /// A rename writes the wish's meta.json again, and wrote it without the list of its parts: the iPhone app was still
+    /// in its folder and gone from the wish. Its parts are found from its files, so whatever meta.json says, it has them.
+    func testARenamedWishStillHasItsIPhoneApp() throws {
+        let wish = try remote(meta: #"{"name":"Remote QA","exe":"Remote","platform":"tv"}"#)
+        let read = try XCTUnwrap(Store.readWish(at: wish))
+        XCTAssertEqual(read.partFolders, ["iPhone"])
+        XCTAssertEqual(Parts.load(read).map(\.platform), [.iphone])
+    }
+
+    /// An Undo of the request that added the iPhone app takes its files away; Lamp's own files in its folder stay, and
+    /// must not keep the part.
+    func testAPartGoesWithItsFiles() throws {
+        let wish = try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv","parts":["iPhone"]}"#)
+        try FileManager.default.removeItem(at: wish.appendingPathComponent("iPhone/Package.swift"))
+        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish)).partFolders, [])
+    }
+
+    /// "Make it work on my Mac too" changes the iPhone app in place into one for both, in the same folder: it's still
+    /// the wish's, not gone because iPhone/ now holds an app for both.
+    func testAnIPhoneAppMadeForTheMacTooStaysAPart() throws {
+        let wish = try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv"}"#)
+        try #"let package = Package(name: "Remote", platforms: [.macOS(.v14), .iOS(.v17)])"#
+            .write(to: wish.appendingPathComponent("iPhone/Package.swift"), atomically: true, encoding: .utf8)
+        let read = try XCTUnwrap(Store.readWish(at: wish))
+        XCTAssertEqual(read.partFolders, ["iPhone"])
+        XCTAssertEqual(Parts.load(read).map(\.platform), [.universal])
+    }
+
+    /// A new wish whose request could be for the TV or the Mac waits to be asked. It's named on its first request,
+    /// and naming it wrote it again without that, so it was made a Mac app without asking.
+    func testNamingAWishKeepsWhatItIsStillToBeToldAndItsParts() {
+        let draft = LampProject(id: "untitled", name: "Untitled", exe: "Untitled", dir: root.appendingPathComponent("untitled"),
+                                instance: "a", untitled: true, platform: .tv, partFolders: ["iPhone"], undecided: ["tv", "mac"])
+        let named = draft.named("Family Slideshow", id: "familyslideshow", exe: "FamilySlideshow", dir: root.appendingPathComponent("familyslideshow"))
+        XCTAssertEqual(named.undecided, ["tv", "mac"])
+        XCTAssertEqual(named.partFolders, ["iPhone"])
+        XCTAssertEqual(named.platform, .tv)
+        XCTAssertEqual(named.instance, "a")
+        XCTAssertFalse(named.untitled)
+    }
+
+    /// A wish's Mac app looked for its own files (its pictures, its runtime folder) at Lamp's apps folder and its id,
+    /// "familyalbum.mac", where nothing is: it opened empty. It's told where its folder is.
+    @MainActor func testAPartIsToldWhereItsFolderIs() {
+        let wish = root.appendingPathComponent("familyalbum")
+        let part = LampProject(id: "familyalbum.mac", name: "Family Album", exe: "FamilyAlbum", dir: wish.appendingPathComponent("Mac"),
+                               platform: .mac, partOf: "familyalbum")
+        XCTAssertEqual(Template.installValues(for: part)["folder"], "familyalbum/Mac")
+        let plain = LampProject(id: "familyalbum", name: "Family Album", exe: "FamilyAlbum", dir: wish, platform: .tv)
+        XCTAssertEqual(Template.installValues(for: plain)["folder"], "familyalbum")
+    }
+
+    /// Lamp's own request to carry on after a part's Reload started a turn of the part's own, with no prompt of its
+    /// own and saving in a folder that isn't a repository ("couldn't save this change as a version"). It's the wish's.
+    func testAPartsRequestGoesToItsWish() {
+        let wish = LampProject(id: "familyalbum", name: "Family Album", exe: "FamilyAlbum", dir: root.appendingPathComponent("familyalbum"), platform: .tv)
+        let part = LampProject(id: "familyalbum.mac", name: "Family Album", exe: "FamilyAlbum", dir: wish.dir.appendingPathComponent("Mac"),
+                               platform: .mac, partOf: "familyalbum")
+        XCTAssertEqual(Store.requestOwner(of: part, among: [wish, part]).id, "familyalbum")
+        XCTAssertEqual(Store.requestOwner(of: wish, among: [wish, part]).id, "familyalbum")
+    }
+
+    /// A TV app whose phones are its wish's iPhone app takes them as players whatever the list of Lamp's apps holds at
+    /// the moment: Lamp reading its apps again set the list without the parts first, which ended the game and left the
+    /// phone waiting with the TV running.
+    func testATVAppWithAnIPhoneAppTakesPlayersWhileLampReadsItsApps() throws {
+        let wish = try XCTUnwrap(Store.readWish(at: try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv"}"#)))
+        XCTAssertTrue(Store.takesPlayers(wish))
+    }
+}
