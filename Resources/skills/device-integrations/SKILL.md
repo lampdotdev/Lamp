@@ -188,7 +188,9 @@ builder, for a device with no log to stream. `remove` takes the app off the devi
 What's built for it: `{"lamp": "tv-web"}` for Lamp's own TV web app, or a kind you declare. A declared kind becomes
 a kind of app people can wish for ("a Roku app that…"): `files` is each new app's scaffold, where `{{NAME}}` is the
 app's name; `rules` is what its builder is told about writing for the device (the language, the layout, the screen,
-how input arrives, where its output is printed), as the only guide they get; `package` is the shell command that
+how input arrives, where its output is printed, and how it plays sound: the device's own way for short effects and
+for music, the formats it plays, and that a game keeps both quiet with a way to turn them off), as the only guide
+they get; `package` is the shell command that
 makes the package from the app's folder, run there in the app's sandbox with the system's own tools (`zip`, `tar`),
 never anything to download; `output` is where it leaves it, which `"@{package}"` sends.
 

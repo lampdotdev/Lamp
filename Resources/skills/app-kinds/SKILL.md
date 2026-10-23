@@ -111,3 +111,11 @@ Played rather than used: fully custom, with no standard chrome while playing; pa
 SwiftUI. 2D games as the 2D rule says, 3D ones in a Mac app with the scene-3d skill where it's offered, SwiftUI
 animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with sound
 (and haptics on iPhone). Scores are kept on the device.
+
+Sound: a short effect (under a second) for each thing the player does or meets, and music only when it suits, quiet
+(0.3 to 0.4) under effects at 0.6 to 0.8. Files the person gave go in Assets/ (.wav, .m4a or .mp3) and play with an
+`AVAudioPlayer(contentsOf: LampAssets.url(name)!)` made once and `prepareToPlay()`ed, a few of them for an effect that
+overlaps itself; music is one looping (`numberOfLoops = -1`). With no files, make effects in code: one `AVAudioEngine`
+started at launch with an `AVAudioPlayerNode`, and each effect a few hundredths of a second of a wave written once into
+an `AVAudioPCMBuffer`, with soft ends so it doesn't click. On iPhone set the session to `.ambient`, so the silent switch
+mutes the game and the person's own music keeps playing. Settings or the pause menu turn sound and music on and off.

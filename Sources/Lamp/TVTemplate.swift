@@ -681,10 +681,10 @@ extension Agent {
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`), as `prompt(platform:…)` takes it.
     static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil) -> String {
         let rules = part == nil
-            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
+            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound,
                Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
-            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.tvLogs, Rules.tvTry,
+            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound, Rules.tvLogs, Rules.tvTry,
                Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
         let header = part.map { Rules.partHeader("a TV app (HTML, CSS and JavaScript in Web/, the same files for Samsung and LG TVs, with no build step)", folder: $0) }
             ?? Rules.tvHeader
@@ -765,6 +765,21 @@ extension Agent.Rules {
     the app goes in `data`, never into the prompt. Show progress while a call runs and `error.message` when it fails; \
     where a feature depends on AI, check `LampAI.isAvailable('text')` and show a short note when it can't answer. \
     Read LampAI's comment in lamp.js before using it; never call an AI service yourself.
+    """
+
+    /// Sound in a web app on a device (the TV kit's and a declared web kind's): the browser's own Web Audio, which
+    /// every one of them has, in the form the oldest TV browsers take.
+    static let webSound = """
+    - Sound, in every game and wherever else it helps (a timer's end, a buzzer): the browser's Web Audio. Make one \
+    AudioContext (window.AudioContext || window.webkitAudioContext) when the app starts, and on every key press call \
+    its resume() while its state isn't 'running', since a device may hold sound back until the person presses \
+    something. Short effects, under a second: fetch the file with XMLHttpRequest as an arraybuffer and \
+    decodeAudioData it once at the start, then play each time with a new AudioBufferSourceNode through a GainNode; \
+    or, with no files, make them with an OscillatorNode (a square or triangle wave sliding up for good, down for bad) \
+    and a GainNode that rises over a few milliseconds and fades out, so nothing clicks. Files are .mp3 or .wav, which \
+    every device plays. Music only when it suits, quiet (gain 0.3 to 0.4) under effects at 0.6 to 0.8: an <audio> \
+    element with loop, started like the context on a key press when play() is refused. A game's settings or pause \
+    screen turns sound and music on and off, kept in LampStore. The preview on this Mac plays it aloud.
     """
 
     static let tvAttachments = """

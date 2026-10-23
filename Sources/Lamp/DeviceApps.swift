@@ -456,6 +456,7 @@ extension Agent.Rules {
                 rule += "Load \(entry.path) before the app's own scripts. It has `LampStore` (saved data: `load(key, fallback)`, "
                     + "`save(value, key)`, `collection(name)` with put, get, all, delete), `LampAssets` (the package's own files) and `LampAI`. "
                     + webAI.dropFirst(2).replacingOccurrences(of: "\n", with: "")
+                    + " " + webSound.dropFirst(2).replacingOccurrences(of: "\n", with: "")
                     + " "
             case .brightscript:
                 rule += "Include \(entry.path)/Lamp.brs in a component's XML (`<script type=\"text/brightscript\" uri=\"pkg:/\(entry.path)/Lamp.brs\" />`) "

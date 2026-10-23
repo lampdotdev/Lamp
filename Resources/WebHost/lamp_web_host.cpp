@@ -147,7 +147,11 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     fire_and_forget start() {
         auto lifetime = get_strong();
         try {
-            auto env = co_await CoreWebView2Environment::CreateAsync();
+            // A console app plays its sound as it opens, as a game's title music does: WebView2, like Chrome, would hold
+            // a page's sound back until the first press of a button, so that rule is turned off for the app's own page.
+            CoreWebView2EnvironmentOptions options;
+            options.AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required");
+            auto env = co_await CoreWebView2Environment::CreateWithOptionsAsync(L"", L"", options);
             say(L"Lamp: WebView2 %ls.", env.BrowserVersionString().c_str());
             compositor = Windows::UI::Composition::Compositor();
             target = compositor.CreateTargetForCurrentView();

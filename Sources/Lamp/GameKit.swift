@@ -4,7 +4,8 @@ import Foundation
 
 /// Native 3D games for the Xbox: Lamp's own kind of app ("native-game"), which the Xbox's integration offers beside
 /// its web app (`Integration.kinds`, "xbox-one:game"). The game is C++ written against Lamp's game kit (`lamp_game.h`:
-/// sokol_gfx for drawing, with sokol's shapes and text, HandmadeMath, cgltf and stb_image), compiled on this Mac for
+/// sokol_gfx for drawing, with sokol's shapes and text, HandmadeMath, cgltf and stb_image, and the kit's own sound mix
+/// with stb_vorbis, dr_wav and dr_mp3), compiled on this Mac for
 /// the console with LLVM and Microsoft's SDK (`WindowsTools`) into an x64 app Lamp packages itself (`MSIX`), and put
 /// on the Xbox through its integration's bridge like the web app is.
 ///
@@ -88,7 +89,7 @@ enum GameKit {
     # {{NAME}}
 
     A 3D game for the Xbox, built and changed with Lamp: C++ in Game/ against Lamp's game kit (Lamp/lamp_game.h), with
-    its models and pictures in Assets/. Lamp plays it in a preview on the Mac and puts it on the person's own Xbox.
+    its models, pictures and sounds in Assets/. Lamp plays it in a preview on the Mac and puts it on the person's own Xbox.
 
     ## What it does
     Nothing yet: fresh scaffold, a ball the left stick rolls on a lit floor.
@@ -149,6 +150,7 @@ enum GameKit {
         var pictures: [URL]
         var printed: [String]
         var stats: String?
+        var sound: String?   // what the game played and how loud the mix came out
     }
 
     /// Plays the script in the preview: the game from its start, saves cleared, pictures where the script says.
@@ -167,7 +169,8 @@ enum GameKit {
             if printed.count > 600 { printed.removeFirst(300) }
         }
         let stats = printed.last { $0.hasPrefix("Lamp stats:") }
-        printed.removeAll { $0.hasPrefix("Lamp stats:") }
+        let sound = printed.last { $0.hasPrefix("Lamp sound:") }
+        printed.removeAll { $0.hasPrefix("Lamp stats:") || $0.hasPrefix("Lamp sound:") }
         guard status == 0 else {
             // What it printed is the agent's to read only when the person shares what apps print.
             let said = Privacy.sharesLog && !printed.isEmpty ? " What it printed last:\n" + printed.suffix(20).joined(separator: "\n") : ""
@@ -175,7 +178,8 @@ enum GameKit {
         }
         let names = script.compactMap { line -> String? in line.hasPrefix("shot ") ? String(line.dropFirst(5)) : nil }
         let pictures = names.map { folder.appendingPathComponent("pictures/\($0).png") }.filter { AppFile.read($0, in: project, last: 1) != nil }
-        return Played(pictures: pictures, printed: printed, stats: stats.map { String($0.dropFirst("Lamp stats: ".count)) })
+        return Played(pictures: pictures, printed: printed, stats: stats.map { String($0.dropFirst("Lamp stats: ".count)) },
+                      sound: sound.map { String($0.dropFirst("Lamp sound: ".count)) })
     }
 
     /// The script for `use_app`'s actions on the controller, or why one can't be played. Each action ends with a picture.
@@ -228,7 +232,7 @@ enum GameKit {
 extension Agent {
     /// The rules for a native Xbox game, in the shape of a device app's.
     static func gamePrompt(for project: LampProject) -> String {
-        let rules = [Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameKit, Rules.gameBudget, Rules.icon, Rules.about,
+        let rules = [Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameKit, Rules.gameSound, Rules.gameBudget, Rules.icon, Rules.about,
                      Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Xbox")
@@ -270,7 +274,23 @@ extension Agent.Rules {
     and `released`; B is the game's (it doesn't leave the game), so use it for back or cancel, and Menu for pause. \
     Nothing outside the kit: no Windows or Apple headers, no threads, no files but `lamp_asset`, `lamp_save` and \
     `lamp_load`, no network, no rand() or time (use `lamp_random`, so the preview replays the same). Plain C++20 and \
-    its standard library are fine. Sound isn't in the kit yet: say so if asked.
+    its standard library are fine.
+    """
+
+    static let gameSound = """
+    - Sound: a game has it, through the kit (the sound part of lamp_game.h), never anything of the system's. Give \
+    each thing the player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. \
+    Make them in code with `lamp_sound_tone` (a square or triangle wave sliding up for a jump or a pickup, down for a \
+    fall or a loss, noise for a hit or an explosion, a few milliseconds of attack so nothing clicks) unless the \
+    person gave sound files; theirs go in Assets/ (.wav or .ogg for effects, .ogg or .mp3 for music) and load with \
+    `lamp_sound_load`. Load or make every sound once in game_init, then `lamp_play` it as things happen, varying \
+    `pitch` a little (0.9 to 1.1, from `lamp_random_float`) for one heard often; `lamp_play_loop` for a sound that \
+    lasts (an engine), changed with `lamp_voice_set` and ended with `lamp_stop`. Music is optional and quiet \
+    (0.3 to 0.4) under effects at 0.5 to 0.8: `lamp_music` for a file the person gave, or a short tune of your own \
+    made into samples (`lamp_sound_samples`, notes of a gentle wave with soft ends) played with `lamp_music_sound`. The pause menu \
+    (Menu) turns sound and music on and off with `lamp_volume`, kept with `lamp_save`. The preview plays nothing \
+    aloud, so the person hears it only on the Xbox; each look says what was played and how loud the mix came out: \
+    keep its loudest under -3 dB, and play quieter what pushed it over full volume.
     """
 
     static let gameBudget = """
@@ -294,7 +314,7 @@ extension Agent.Rules {
     - `look_at_app` builds the preview on this Mac and plays the game from its start for two seconds, with no one \
     touching the controller, and shows you the last frame, what the game logged (`lamp_log`, a line per event, never \
     per frame) and the preview's stats (draws and vertices a frame); with `motion` it shows a frame every half \
-    second. `use_app` plays on from there with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
+    second, and what it played on its speakers. `use_app` plays on from there with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \
     Each look or use plays the whole game again from the start with the same moves, so after a change to the code \
