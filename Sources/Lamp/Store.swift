@@ -3,6 +3,7 @@ import LampSidebarKit
 import CryptoKit
 import Security
 import AppKit
+import Network
 import LampFileLook
 
 /// What an app is for: a Mac app that installs beside the user's others, an iPhone app that runs in the
@@ -8102,7 +8103,10 @@ final class Store: ObservableObject {
 
     private func startGateway() {
         let gateway = Gateway(handler: { request in await Store.shared.handleAI(request) },
-                              pages: { request in await Store.shared.phonePage(request) })
+                              pages: { request in await Store.shared.phonePage(request) },
+                              sockets: { request, connection, leftover in
+                                  Task { @MainActor in Store.shared.phoneSocket(request, connection: connection, leftover: leftover) }
+                              })
         do {
             try gateway.start()
             self.gateway = gateway
@@ -8114,13 +8118,13 @@ final class Store: ObservableObject {
 
     /// The gateway answers on the local network only while an app is set to open on the person's own phone or
     /// tablet, Apple's or Android's, or on a TV, or is an app for a device (which always opens on one) that takes Lamp's
-    /// building blocks, or is a TV app open in the preview with a page for a phone: kept in step with the list of apps
-    /// (Try On, deletion, rename, reload) and with the TV preview.
+    /// building blocks: kept in step with the list of apps (Try On, deletion, rename, reload). A TV app's phone page has a
+    /// port of its own (`PhoneSites`), opened and closed here too, with the TV preview.
     func syncLocalNetwork() {
         gateway?.setLocalNetwork(projects.contains {
             (($0.platform.hasIOS || $0.platform.hasAndroid || $0.platform == .tv) && $0.device != nil) || ($0.platform == .device && !DeviceSupport.libraries(for: $0).isEmpty)
-                || Self.servesPhonePage($0)
         })
+        PhoneSites.sync(projects)
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
@@ -8147,6 +8151,10 @@ final class Store: ObservableObject {
         if parts.count == 1 { return Gateway.Page(status: 301, location: path + "/") }
         var names = Array(parts.dropFirst())
         if names.last == "" { names[names.count - 1] = "index.html" }
+        // Lamp's own library for a controller page, served beside the app's files as if it were one of them.
+        if names == ["lamp-controller.js"] {
+            return Gateway.Page(status: 200, type: Self.pageType("js"), body: Data(TVTemplate.phoneControllerJS.utf8))
+        }
         // Only the staged copy's own files: no step up, nothing hidden, no empty name, nothing that isn't a plain file.
         guard names.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") && !$0.contains("\0") }) else { return missing }
         guard let file = TVs.phoneFile(names, in: TVs.phoneFolder(for: project)),
@@ -8182,7 +8190,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -8249,8 +8257,49 @@ final class Store: ObservableObject {
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
+        if route == "/app/controller" { return await controllerSession(request, for: project) }
+        if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
+    }
+
+    /// A TV app on a TV opening a game for phone controllers (`Lamp.controllers` in lamp.js): a credential for its socket
+    /// on this same gateway, by the address the TV reached it at, never anything of Lamp's. The preview joins through its
+    /// bridge instead (`TVPreview`).
+    private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
+        guard project.platform == .tv else { return (403, ["error": "Only TV apps take phone controllers."]) }
+        guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
+        syncLocalNetwork()
+        guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
+        // By the name or address the TV reached Lamp at, at the app's own port.
+        let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
+        return (200, ["socket": "ws://\(host):\(port)/socket", "host": PhoneControllers.shared.hostCredential(for: project)])
+    }
+
+    /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then
+    /// after): the address its site is listening at, which moves when another program has taken the port it had.
+    private func phonePageAddress(for project: LampProject) async -> (Int, [String: Any]) {
+        guard project.platform == .tv else { return (403, ["error": "Only TV apps have phone pages."]) }
+        guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
+        syncLocalNetwork()
+        guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
+        return (200, ["url": TVs.phonePage(port: port)])
+    }
+
+    /// A socket at `/phone/<app>/socket`, from a phone's page or a TV app: addressed to this Mac like the page itself.
+    /// A phone's page is let in only from this gateway's own origin, by the Host it was asked for.
+    func phoneSocket(_ request: Gateway.Request, connection: NWConnection, leftover: Data) {
+        let host = request.headers["host"]
+        let parts = request.path.split(separator: "?", maxSplits: 1).first.map(String.init)?.split(separator: "/").map(String.init) ?? []
+        guard request.fromNetwork ? Self.isMacHost(host) : Self.isLocalHost(host), let host,
+              parts.count == 3, parts[0] == "phone", parts[2] == "socket", let key = request.headers["sec-websocket-key"],
+              projects.contains(where: { $0.id == parts[1] && $0.platform == .tv }) else {
+            connection.send(content: Data("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),
+                            completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        let peer = WebSocketPeer(connection: connection, key: key, leftover: leftover)
+        PhoneControllers.shared.accept(peer, app: parts[1], pageOrigins: ["http://\(host)", "https://\(host)"], origin: request.headers["origin"])
     }
 
     /// File ▸ Share… in a Mac app (`LampShareApp`): the app as a file to open with Lamp, the same one Lamp's own Share…

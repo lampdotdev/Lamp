@@ -329,9 +329,10 @@ enum TVs {
         // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
         // Mac's on the network now, which isn't the app's to keep.
         let script = files.appendingPathComponent("lamp.js")
-        if hasPage, let text = try? String(contentsOf: script, encoding: .utf8), text.contains(TVTemplate.phoneMarker),
-           let address = try? JSONSerialization.data(withJSONObject: [phonePage(for: project)], options: [.withoutEscapingSlashes]) {
-            let value = String(decoding: address, as: UTF8.self).dropFirst().dropLast()
+        let address = hasPage ? await phonePage(staging: project) : ""
+        if !address.isEmpty, let text = try? String(contentsOf: script, encoding: .utf8), text.contains(TVTemplate.phoneMarker),
+           let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) {
+            let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
             try Data(text.replacingOccurrences(of: TVTemplate.phoneMarker, with: "/*LAMP_PHONE*/" + value).utf8).write(to: script)
         }
         try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
@@ -379,11 +380,25 @@ enum TVs {
     }
 
     /// The phone page's address for a phone on the same network as this Mac, by its address there, which a phone
-    /// reaches whether or not it resolves the Mac's Bonjour name. Lamp's gateway hands it out (`Store.phonePage`).
-    static func phonePage(for project: LampProject) -> String {
+    /// reaches whether or not it resolves the Mac's Bonjour name, at the app's own port (`PhoneSites`), which gives each
+    /// app's page an origin of its own.
+    @MainActor static func phonePage(for project: LampProject) -> String {
         let host = Devices.localAddresses.first ?? Devices.macHost
-        let id = project.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? project.id
-        return "http://\(host):\(Gateway.port)/phone/\(id)/"
+        guard let port = PhoneSites.port(for: project.id) else { return "" }
+        return "http://\(host):\(port)/"
+    }
+
+    /// The address put into a staged copy: where the site is listening when the app's page is served now, which waits for
+    /// it to open, else the port it will try first. lamp.js asks again as the page opens (`/app/phone-page`), so a site
+    /// that opens elsewhere is still the address it shows.
+    @MainActor static func phonePage(staging project: LampProject) async -> String {
+        if let port = await PhoneSites.ready(project.id) { return phonePage(port: port) }
+        return phonePage(for: project)
+    }
+
+    /// The phone page's address at a port its site is listening on.
+    @MainActor static func phonePage(port: UInt16) -> String {
+        "http://\(Devices.localAddresses.first ?? Devices.macHost):\(port)/"
     }
 }
 
