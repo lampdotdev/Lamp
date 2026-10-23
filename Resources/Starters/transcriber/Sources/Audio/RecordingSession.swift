@@ -294,13 +294,15 @@ final class RecordingSession: ObservableObject {
         let me = microphone.filter { line in
             let mine = words(in: line.text)
             guard !mine.isEmpty else { return false }
-            // Only a near copy is an echo: soon after, at least a few words, and nearly the same words both ways,
-            // so "I disagree with that plan" after "I agree with that plan", or a short "yes", stays.
+            // Only what can be nothing but the call heard again is dropped: it begins within two seconds of the
+            // call's line, has a few words, says no word the call's line didn't, and shares most of them. Anything
+            // less certain stays, since a repeated line is a small cost and a lost reply isn't: "we should not
+            // approve the final budget" adds a word and stays, and so does a short "yes".
             guard mayEcho, mine.count >= 3 else { return true }
             return !theirWords.contains { other in
-                let shared = Double(mine.intersection(other.words).count)
-                return line.start >= other.start - 1 && line.start - other.start < 4
-                    && shared / Double(mine.union(other.words).count) >= 0.8
+                line.start >= other.start - 1 && line.start - other.start < 2
+                    && mine.isSubset(of: other.words)
+                    && Double(mine.count) / Double(other.words.count) >= 0.8
             }
         }
         return (me + them).sorted { $0.start < $1.start }
