@@ -68,6 +68,21 @@ enum Skills {
         return kinds + (sidebar ? ["chrome-sidebar"] : [])
     }
 
+    /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
+    /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
+    /// extensions, scripting and 2D games, for both kinds; Finder for apps with a Mac half; iCloud for apps with an
+    /// iPhone half (a Mac app's prompt has no iCloud rule). The Mac's permissions and a change of subject stay whole
+    /// in the prompt: their rules are policy the agent must keep without first deciding a skill applies.
+    static func named(_ platform: Platform) -> [String] {
+        let both = ["building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "scripting", "games-2d"]
+        return switch platform {
+        case .mac: both + ["finder-files"]
+        case .iphone: both + ["icloud-sync"]
+        case .universal: both + ["finder-files", "icloud-sync"]
+        case .android, .tv, .device: []
+        }
+    }
+
     /// The rule that lists a prompt's skills; empty when it offers none.
     static func index(_ names: [String], from skills: [String: Skill] = all) -> String {
         let listed = names.compactMap { skills[$0] }
@@ -91,7 +106,7 @@ enum Skills {
     /// app (still Lamp's placeholder) is about to be given its kind, so it's told how the kinds look.
     /// A wish's other parts (`parts`) each bring their kind's rules, which apply as long as the wish has the part.
     static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
-        let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.platform.hasMac)
+        let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.platform.hasMac) + named(project.platform)
         var found: [(name: String, because: String)] = parts.map { part in
             (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part.platform)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(for: part.platform))\" in look_at_app and use_app)")
         }
@@ -105,8 +120,19 @@ enum Skills {
         if offered.contains("scene-3d"), Template.usesScene(project) { found.append(("scene-3d", "its code uses RealityKit")) }
         if offered.contains("maps"), usesMapData(project) { found.append(("maps", "its code uses OpenStreetMap data")) }
         if offered.contains("phone-controllers"), let why = phonePageUse(project) { found.append(("phone-controllers", why)) }
+        if offered.contains("building-blocks"), appSwift(of: project, matches: buildingBlocks) { found.append(("building-blocks", "its code uses Lamp's building blocks")) }
+        if offered.contains("app-ai"), appSwift(of: project, matches: #"\bLampAI\.|\bimport (Vision|VisionKit|Speech|NaturalLanguage|SoundAnalysis|Translation)\b"#) { found.append(("app-ai", "its code uses AI")) }
+        if offered.contains("accounts"), appSwift(of: project, matches: #"\b(LampCalendar|LampReminders|LampContacts|LampMail|LampComputer)\b|LampFolders\.synced"#) { found.append(("accounts", "its code reaches the person's accounts or other apps")) }
+        if offered.contains("app-intents"), appSwift(of: project, matches: #"\bimport AppIntents\b"#) { found.append(("app-intents", "it has App Intents")) }
+        if offered.contains("share-extension"), Template.hasShare(project) { found.append(("share-extension", "it has a share extension in Share/")) }
+        if offered.contains("scripting"), appSwift(of: project, matches: #"\bLampScript\b"#) { found.append(("scripting", "its code uses LampScript")) }
+        if offered.contains("games-2d"), appSwift(of: project, matches: #"\bimport SpriteKit\b"#) { found.append(("games-2d", "it's a SpriteKit game")) }
+        if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
         return found
     }
+
+    /// What in an app's Swift shows it uses one of the blocks the building-blocks skill covers.
+    static let buildingBlocks = #"\b(LampNotifications|LampSchedule|LampText|LampFolderWatcher|LampFolders|LampHotKey|LampLoginItem|LampClipboardWatcher|LampPhotos|LampLocation|LampWeather|LampMusic|LampSpotlight|LampHome|LampDropZone)\b|\.lampDropFiles|\.lampBackground|\.lampSpotlightOpen"#
 
     /// What in an app's Swift shows it uses what the iphone-hardware skill covers: Lamp's blocks for motion and
     /// Health, or the frameworks the skill names for the camera, scanning, Face ID, Bluetooth, nearby phones, NFC and AR.
