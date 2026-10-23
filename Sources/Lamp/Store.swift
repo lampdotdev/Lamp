@@ -6471,6 +6471,19 @@ final class Store: ObservableObject {
             if inFront { log(project, .status, "\(project.name) is open on \(device.name).") }
             return nil
         } catch {
+            if (error as? DeviceTLS.Refusal) == .changed || error.localizedDescription == DeviceTLS.Refusal.changed.localizedDescription {
+                // Only the person can tell a reset device from another posing as it: the reconnect card goes in the chat,
+                // and once they've reconnected and set it up again, the app goes on it.
+                let model = DeviceSetupModel.for(device)
+                model.noteCertificateChanged()
+                logs[project.id]?.removeAll { $0.kind == .deviceStep && $0.text == device.id }
+                log(project, .deviceStep, device.id)
+                model.then = { [weak self] in
+                    guard let self, let now = current(project) else { return }
+                    Task { await self.run(now) }
+                }
+                return "\(device.name) shows another certificate than the one Lamp set it up with, so nothing was sent to it. A card in the chat lets the person reconnect it."
+            }
             log(project, .error, error.localizedDescription)
             return error.localizedDescription
         }

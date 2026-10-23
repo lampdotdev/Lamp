@@ -23,12 +23,26 @@ final class DeviceSetupModel: ObservableObject {
 
     static func existing(_ deviceID: String) -> DeviceSetupModel? { models[deviceID] }
 
+    /// Lets go of a device's setup as it stands in this Lamp, for Forget: its watch stops, a command waiting for the
+    /// person's yes is turned down, and what waited for it to be ready isn't run. Found again, it starts afresh.
+    static func discard(_ deviceID: String) {
+        // Its window shows this model: closed, so a setup started again opens on a fresh one.
+        DeviceSetupWindow.close(deviceID)
+        guard let model = models.removeValue(forKey: deviceID) else { return }
+        model.stopWatching()
+        if model.approval != nil { model.decide(false) }
+        model.then = nil
+    }
+
     @Published var device: Device
     @Published private(set) var passed: [String] = []
     @Published var typed = ""
     @Published private(set) var state: DeviceStepCard.State = .idle
     /// A command or tool waiting for the person's yes.
     @Published private(set) var approval: DeviceCommandApproval?
+    /// The device showed another certificate than the one Lamp kept (`DeviceTLS`): nothing goes to it until the person
+    /// reconnects it. Shown in place of a step's card, wherever the device's setup is.
+    @Published private(set) var certificateChanged = false
     private var answer: CheckedContinuation<Bool, Never>?
     private var watching: Task<Void, Never>?
     /// What asked for the setup, run once the device is ready.
@@ -122,12 +136,32 @@ final class DeviceSetupModel: ObservableObject {
             if ready { then?(); then = nil } else { watch() }
         } else if failed {
             // Waiting won't mend it: the card says why, and nothing goes on checking.
+            if why == DeviceTLS.Refusal.changed.localizedDescription { certificateChanged = true }
             state = .failed(why ?? "\(device.name) can't be checked.")
             stopWatching()
         } else {
             state = .waiting(why ?? "Waiting for \(device.name)…")
             if keepWatching { watch() }
         }
+    }
+
+    /// Lamp refused the device's certificate outside a setup step (putting an app on it): the reconnect card shows.
+    func noteCertificateChanged() { certificateChanged = true }
+
+    /// The person's Reconnect: the certificate kept for the device is let go and its setup starts again from the first
+    /// step, so the sign-in it asks for goes only to the device whose new certificate the first request keeps. Only a
+    /// click does this; a changed certificate never makes Lamp trust the new one by itself.
+    func reconnect() {
+        DeviceTLS.Pins(deviceID: device.id).forget()
+        // Its SSH host key too, which a reset device changes as it does its certificate.
+        try? FileManager.default.removeItem(at: DeviceFolder.of(device.id).appendingPathComponent("known_hosts"))
+        Integrations.startOver(device.id)
+        passed = []
+        typed = ""
+        state = .idle
+        certificateChanged = false
+        Store.shared.refreshDevices()
+        watch()
     }
 
     private func ask(_ approval: DeviceCommandApproval) async -> Bool {
@@ -184,6 +218,9 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
         model.watch()
     }
 
+    /// Closes a device's setup window, for Forget.
+    static func close(_ deviceID: String) { windows[deviceID]?.close() }
+
     func windowWillClose(_ notification: Notification) {
         model.stopWatching()
         if model.approval != nil { model.decide(false) }
@@ -199,7 +236,8 @@ struct DeviceSetupView: View {
         let conversation = Store.shared.projects.first { $0.deviceSetup == model.device.id }
         DeviceSetupPage(device: model.device, steps: model.steps, passed: model.passed, content: model.content, typed: $model.typed,
                         approval: model.approval, act: model.act, decide: model.decide,
-                        ask: conversation.map { project in { Store.shared.showChat(project.id) } })
+                        ask: conversation.map { project in { Store.shared.showChat(project.id) } },
+                        reconnect: model.certificateChanged ? { model.reconnect() } : nil)
     }
 }
 
@@ -216,6 +254,8 @@ struct DeviceSetupPage: View {
     let decide: (Bool) -> Void
     /// Back to the device's setup conversation, where a step that doesn't work is talked through.
     var ask: (() -> Void)? = nil
+    /// Set while the device's certificate has changed: the reconnect card takes the step card's place.
+    var reconnect: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -248,7 +288,9 @@ struct DeviceSetupPage: View {
                 }
             }
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-            if let approval {
+            if let reconnect {
+                DeviceReconnectCard(device: device.name, reconnect: reconnect).padding(.top, 16)
+            } else if let approval {
                 DeviceCommandCard(approval: approval, allow: { decide(true) }, deny: { decide(false) }).padding(.top, 16)
             } else if let content {
                 DeviceStepCard(content: content, typed: $typed, act: act).padding(.top, 16)
@@ -391,6 +433,35 @@ extension DeviceStepCard.Content {
     }
 }
 
+/// A device whose certificate isn't the one Lamp kept: what happened, what the person accepts by reconnecting, and the
+/// one button. Lamp keeps the certificate a device first shows so nothing else on the network can pose as it and be sent
+/// its password; resetting a device, or turning its developer mode on again, gives it a new one, which only the person
+/// can tell from an impostor.
+struct DeviceReconnectCard: View {
+    let device: String
+    let reconnect: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(device) looks different").font(.headline)
+            Text("Lamp knows \(device) by the certificate it first showed. It shows another now, which happens when it's reset or its developer mode is turned on again.")
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("What you accept").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Label("Lamp will trust the device at this address from now on. Do this only if you changed \(device) yourself.",
+                      systemImage: "exclamationmark.triangle").font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Reconnect", action: reconnect).cardButtons().buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.quaternary))
+    }
+}
+
 /// A command for the device, or a tool for this Mac, the first time it runs on a device: the command, what it's for
 /// in the integration's words, and what the person accepts in Lamp's. Allowed, that exact text runs on that device from
 /// then on without asking; changed, it asks again.
@@ -451,7 +522,9 @@ private struct DeviceStepChat: View {
 
     var body: some View {
         Group {
-            if let approval = model.approval {
+            if model.certificateChanged {
+                DeviceReconnectCard(device: model.device.name, reconnect: { model.reconnect() })
+            } else if let approval = model.approval {
                 DeviceCommandCard(approval: approval, allow: { model.decide(true) }, deny: { model.decide(false) })
             } else if let content = model.content {
                 DeviceStepCard(content: content, typed: $model.typed, act: model.act)

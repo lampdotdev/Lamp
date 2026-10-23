@@ -723,7 +723,14 @@ risk down, the mark, one button and the check's line). A device has one `DeviceS
 chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens the window) share. A step that needs
 hands on the device (`wait`) is checked again every few seconds while it's shown. `IntegrationRunner` runs steps and
 sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
-is shown for the moment, never kept.
+is shown for the moment, never kept. A device whose certificate isn't the one kept (reset, or its developer mode turned
+on again) is refused until the person reconnects it: the step's check or the install that met it puts a reconnect card
+where its setup card goes (`DeviceReconnectCard`, `DeviceSetupModel.certificateChanged`), and Reconnect lets the kept
+certificate go and starts its setup over from the first step (`reconnect`, `Integrations.startOver`), so the sign-in goes
+only to the device whose new certificate the first request keeps; an app waiting on it goes on once that setup is done.
+Only the person's click trusts a new certificate. Settings → Your Devices has Reconnect… and Forget… for every device
+Lamp set up itself (an integration's, a TV; not a phone, whose pairing is the Mac's), Forget taking its record, its
+certificates and keys, what was typed for it and its approvals (`Integrations.forget`, `TVs.forget`).
 
 An integration whose `app` is declared makes its device a kind of app (`Platform.device`, with the integration's id in
 `LampProject.integration` and meta.json; DeviceApps.swift), with no Swift of its own for that device: Roku, the first,

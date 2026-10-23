@@ -300,6 +300,13 @@ enum Gallery {
                                     content: DeviceStepCard.Content(step: rokuPassword, number: 2, of: 3, device: roku.name, values: [:], state: .idle),
                                     typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
         },
+        Entry(group: "Device setup", name: "A device with a new certificate") {
+            AnyView(DeviceReconnectCard(device: "XBOX", reconnect: {}))
+        },
+        Entry(group: "Device setup", name: "The setup window, the device's certificate changed") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }, reconnect: {}))
+        },
         Entry(group: "Device setup", name: "The setup window, set up") {
             AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
                                     content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }))

@@ -48,6 +48,27 @@ enum TVs {
         try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
     }
 
+    /// Forgets a TV, as the person asks in Settings: found again, it's set up from the start. An LG TV's key goes with
+    /// it, since its setup counts as done while the key is here. Samsung's certificates for it stay: they name the TV's
+    /// own id, and are as good when it's set up again.
+    static func forget(_ id: String) {
+        if let address = kept().first(where: { $0.id == id })?.address { WebOS.forgetHost(address) }
+        let all = kept().filter { $0.id != id }
+        try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
+        try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+    }
+
+    /// Reconnect: the TV's connection is made again from its setup window, for one reset or whose developer mode was
+    /// turned on again. An LG TV's key is let go, so the window asks for the passphrase its Developer Mode app shows
+    /// now; a Samsung TV's id is read again over a new connection, and its certificates still fit when it's the same.
+    static func reconnect(_ id: String) {
+        try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        guard var record = kept().first(where: { $0.id == id }) else { return }
+        guard record.isSamsung else { WebOS.forgetHost(record.address); return }
+        record.duid = nil
+        keep(record)
+    }
+
     static func record(_ id: String) -> Record? { kept().first { $0.id == id } ?? lastFound.first { $0.id == id } }
     nonisolated(unsafe) private(set) static var lastFound: [Record] = []
 
@@ -529,6 +550,16 @@ enum WebOS {
         TVs.folder.appendingPathComponent("LG").appendingPathComponent(id.replacingOccurrences(of: ":", with: "-") + ".key")
     }
     private static var knownHosts: URL { TVs.folder.appendingPathComponent("LG/known_hosts") }
+
+    /// Lets go of the host key kept for a TV's address, for Reconnect and Forget: a reset TV answers SSH with a new one.
+    static func forgetHost(_ address: String) {
+        guard !address.isEmpty, let text = try? String(contentsOf: knownHosts, encoding: .utf8) else { return }
+        let kept = text.split(separator: "\n", omittingEmptySubsequences: false).filter { line in
+            let hosts = line.split(separator: " ").first.map { $0.split(separator: ",") } ?? []
+            return !hosts.contains { $0 == Substring(address) || $0 == Substring("[\(address)]:9922") }
+        }
+        try? kept.joined(separator: "\n").write(to: knownHosts, atomically: true, encoding: .utf8)
+    }
 
     /// Fetches the TV's key and unlocks it with the passphrase the TV shows; keeps the TV once SSH answers with it.
     static func connect(_ record: TVs.Record, passphrase: String) async throws -> TVs.Record {
