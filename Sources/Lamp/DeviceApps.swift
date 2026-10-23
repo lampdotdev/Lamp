@@ -22,17 +22,39 @@ enum DeviceApps {
         var errorDescription: String? { message }
     }
 
-    /// Whether the integration with this id declares the apps made for its device.
-    static func makesApps(_ id: String) -> Bool { Integrations.integration(id)?.app?.declared != nil }
+    /// An app's kind as `LampProject.integration` keeps it: the integration's id, then ":" and one of its `kinds` when the
+    /// app is that kind rather than its `app` ("xbox-one:game").
+    static func split(_ kind: String) -> (integration: String, kind: String?) {
+        guard let colon = kind.firstIndex(of: ":") else { return (kind, nil) }
+        return (String(kind[..<colon]), String(kind[kind.index(after: colon)...]))
+    }
 
-    /// The integrations that declare apps: the devices the naming call and `make_app_for` may name.
-    static func kinds() -> [Integration] { Integrations.all().filter { $0.app?.declared != nil } }
+    /// The kind of app this names: the integration's `app`, or one of its `kinds`.
+    static func appKind(_ kind: String) -> Integration.AppKind? {
+        let (id, name) = split(kind)
+        guard let integration = Integrations.integration(id), integration.app?.declared != nil else { return nil }
+        return name.map { integration.kinds?[$0] } ?? integration.app
+    }
 
-    static func integration(for project: LampProject) -> Integration? { project.integration.flatMap(Integrations.integration) }
+    /// Whether this names a kind of app Lamp makes for a device: "roku", "xbox-one", "xbox-one:game".
+    static func makesApps(_ kind: String) -> Bool { appKind(kind) != nil }
+
+    /// Every kind of app a device's integration offers, with what each is for: the names the naming call and
+    /// `make_app_for` may give.
+    static func kinds() -> [(id: String, integration: Integration, kind: Integration.AppKind)] {
+        Integrations.all().filter { $0.app?.declared != nil }.flatMap { integration -> [(String, Integration, Integration.AppKind)] in
+            [(integration.id, integration, integration.app!)]
+                + (integration.kinds ?? [:]).sorted { $0.key < $1.key }.map { ("\(integration.id):\($0.key)", integration, $0.value) }
+        }
+    }
+
+    static func integration(for project: LampProject) -> Integration? { project.deviceIntegration.flatMap(Integrations.integration) }
+
+    static func appKind(for project: LampProject) -> Integration.AppKind? { project.integration.flatMap(appKind) }
 
     /// The folder a device app's kind previews on this Mac (`app.declared.preview`), checked; nil when it has none.
     static func previewFolder(for project: LampProject) -> String? {
-        guard project.platform == .device, let folder = integration(for: project)?.app?.declared?.preview,
+        guard project.platform == .device, let folder = appKind(for: project)?.declared?.preview,
               IntegrationCheck.isAppPath(folder) else { return nil }
         return folder
     }
@@ -41,6 +63,11 @@ enum DeviceApps {
 
     /// Writes the integration's scaffold, with Lamp's own names for the app put in (`{{NAME}}`), and the app's APP.md.
     static func fill(_ project: LampProject) throws {
+        if GameKit.isGame(project) {
+            try GameKit.fill(project)
+            try Template.write((project.integration ?? "") + "\n", to: marker, for: project)
+            return
+        }
         guard let integration = integration(for: project), let declared = integration.app?.declared else {
             throw Failure(message: "Lamp no longer has the integration this app is made for.")
         }
@@ -69,7 +96,7 @@ enum DeviceApps {
     /// What the app is built from: everything in its folder but what the package step makes, Lamp's folder and the
     /// person's attachments.
     static func sourceRoots(_ project: LampProject) -> [URL] {
-        let output = integration(for: project)?.app?.declared?.output.split(separator: "/").first.map(String.init)
+        let output = GameKit.isGame(project) ? "build" : integration(for: project)?.app?.declared?.output.split(separator: "/").first.map(String.init)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: project.dir.path)) ?? []
         return names.filter { !$0.hasPrefix(".") && $0 != output && $0 != Attachments.folder && $0 != "APP.md" }
             .sorted().map { project.dir.appendingPathComponent($0) }
@@ -96,6 +123,17 @@ enum DeviceApps {
         guard let declared = integration(for: project)?.app?.declared else {
             throw Failure(message: "Lamp no longer has the integration this app is made for, so it can't make its package.")
         }
+        if GameKit.isGame(project) {
+            // The game's own build for the console, then the package Lamp makes of what it left.
+            let zip = project.dir.appendingPathComponent("build/xbox.zip")
+            AppFolder.remove(zip, in: project.dir)
+            try await GameKit.build(project, for: .xbox, started: started)
+            guard let data = AppFile.read(zip, in: project), !data.isEmpty else { throw Failure(message: "The game's build left nothing to package.") }
+            guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The game is bigger than Lamp sends to a device.") }
+            try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
+            try wrapMSIX(data, for: project, entry: .program("App.exe"))
+            return
+        }
         let output = project.dir.appendingPathComponent(declared.output)
         AppFolder.remove(output, in: project.dir)
         var printed: [String] = []
@@ -109,7 +147,7 @@ enum DeviceApps {
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
-            try wrapMSIX(data, for: project, start: declared.start ?? "index.html")
+            try wrapMSIX(data, for: project, entry: .page(declared.start ?? "index.html"))
         } else if !DeviceSupport.libraries(for: project).isEmpty, declared.output.lowercased().hasSuffix(".zip") {
             try await withFilledSupport(data, for: project).write(to: packageURL(for: project), options: .atomic)
         } else {
@@ -141,13 +179,14 @@ enum DeviceApps {
 
     /// The Windows package Lamp makes of the package step's zip: its own manifest, the app's icon as its logos, and
     /// Lamp's signature, beside the certificate the device installs with it and the identity the bridge launches by.
-    private static func wrapMSIX(_ zip: Data, for project: LampProject, start: String) throws {
+    private static func wrapMSIX(_ zip: Data, for project: LampProject, entry: MSIX.Start) throws {
         let files = DeviceSupport.fill(try MSIX.files(inZip: zip), for: project)
         let folder = buildFolder(for: project)
         let previous = (try? Data(contentsOf: folder.appendingPathComponent("identity.json"))).flatMap { try? JSONDecoder().decode(MSIX.Identity.self, from: $0) }
-        let identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
+        var identity = MSIX.Identity(name: MSIX.identityName(for: project.id), publisher: MSIX.publisher, version: MSIX.version(after: previous?.version))
+        if case .program = entry { identity.architecture = "x64" }
         let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
-        let package = try MSIX.package(payload: files, displayName: project.name, identity: identity, start: start, icon: icon)
+        let package = try MSIX.package(payload: files, displayName: project.name, identity: identity, entry: entry, icon: icon)
         try package.write(to: packageURL(for: project), options: .atomic)
         try MSIX.certificate().write(to: folder.appendingPathComponent("certificate.cer"), options: .atomic)
         try JSONEncoder().encode(identity).write(to: folder.appendingPathComponent("identity.json"), options: .atomic)
@@ -165,7 +204,7 @@ enum DeviceApps {
 
     /// The device the app goes on: the one chosen under Try On, else the only one its integration found.
     @MainActor static func device(for project: LampProject, among devices: [Device]) -> Device? {
-        let mine = devices.filter { $0.integration == project.integration && $0.integration != nil }
+        let mine = devices.filter { $0.integration == project.deviceIntegration && $0.integration != nil }
         if let id = project.device { return mine.first { $0.id == id } ?? Integrations.kept(id).map { Integrations.device(from: $0, onNetwork: false) } }
         return mine.count == 1 ? mine.first : nil
     }
@@ -207,14 +246,34 @@ enum DeviceApps {
         }
         // A device busy closing the app it's replacing can drop a connection, the upload's or the launch's just after
         // it; a little later it's ready, so the pair is tried again a couple of times before Lamp gives up.
+        // The copy on the device now is ended first: a device can fail to open a package installed over its running copy.
+        if let stop = bridge.stop, !stop.isEmpty, let installed = installedValues(project, on: device) {
+            _ = try? await runner.run(stop, extra: installed)
+        }
         var tries = 0
         while true {
             do {
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
+                // Noted as on its way before the upload, and as the installed one only once the device took it: an install cut
+                // short or deleted midway may still land on the device, and a removal then names both.
+                remember(project, on: device, pending: true)
                 let outcome = try await runner.run(install, extra: values(project), files: files(for: project))
+                remember(project, on: device, pending: false)
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
+                if let launch = bridge.launch, !launch.isEmpty {
+                    // A device that has only just taken an update can refuse to open it for a moment (an Xbox answers
+                    // 0x80073D00 to a launch right after an install over a copy it ended): asked again a little later.
+                    var refused = 0
+                    while true {
+                        do { _ = try await runner.run(launch, extra: values(project)); break }
+                        catch let failure as IntegrationRunner.Failure where refused < 2 {
+                            refused += 1
+                            try? await Task.sleep(for: .seconds(3))
+                            guard await stillWanted() else { throw failure }
+                        }
+                    }
+                }
                 break
             } catch let error as URLError where error.code == .networkConnectionLost && tries < 2 {
                 tries += 1
@@ -245,10 +304,62 @@ enum DeviceApps {
         _ = try await IntegrationRunner(integration: integration, device: device).run(use, extra: values(project).merging(["key": name]) { $1 })
     }
 
+    /// What the app's own log on the device holds now, through the bridge's `log`; nil when the integration has none.
+    static func log(_ project: LampProject, on device: Device) async throws -> String? {
+        guard let integration = integration(for: project), let log = integration.bridge?.log, !log.isEmpty else { return nil }
+        return try await IntegrationRunner(integration: integration, device: device).run(log, extra: values(project)).log
+    }
+
+    /// Notes which package is on which device once its install went through, for the next install to end it first.
+    /// Notes the package just built for a device: as on its way (`pending`), or as the one the device has.
+    private static func remember(_ project: LampProject, on device: Device, pending: Bool) {
+        let identity = buildFolder(for: project).appendingPathComponent("identity.json")
+        let record = installedRecord(project, device: device.id, pending: pending)
+        try? FileManager.default.removeItem(at: record)
+        try? FileManager.default.copyItem(at: identity, to: record)
+        try? Data(device.id.utf8).write(to: installedRecord(project, device: device.id).deletingPathExtension().appendingPathExtension("device"))
+        if !pending { try? FileManager.default.removeItem(at: installedRecord(project, device: device.id, pending: true)) }
+    }
+
+    /// Where Lamp notes which package of the app is on a device (the identity, with the device's id beside it), and
+    /// which one is on its way there.
+    private static func installedRecord(_ project: LampProject, device id: String, pending: Bool = false) -> URL {
+        buildFolder(for: project).appendingPathComponent("installed-\(MSIX.publisherID(id))\(pending ? "-pending" : "").json")
+    }
+
+    /// The bridge's values for the copy last put on this device, when Lamp put one there.
+    private static func installedValues(_ project: LampProject, on device: Device) -> [String: String]? {
+        values(project, identity: installedRecord(project, device: device.id)).flatMap { $0["packageFullName"] == nil ? nil : $0 }
+    }
+
+    /// Takes the app off every device Lamp put it on, through the bridge's `remove`, as its wish is deleted: what's
+    /// on a device the person can't reach (off, away) stays there, and nothing stops the delete.
+    @MainActor static func removeEverywhere(_ project: LampProject, among devices: [Device]) async {
+        guard let integration = integration(for: project), let remove = integration.bridge?.remove, !remove.isEmpty else { return }
+        let folder = buildFolder(for: project)
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix("installed-") && name.hasSuffix(".device") {
+            guard let id = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8),
+                  let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) else { continue }
+            let runner = IntegrationRunner(integration: integration, device: device)
+            // The copy the device took, and one that was on its way and may have landed; the same package twice is asked once.
+            var asked: Set<String> = []
+            for pending in [false, true] {
+                guard let package = values(project, identity: installedRecord(project, device: id, pending: pending)),
+                      let fullName = package["packageFullName"], asked.insert(fullName).inserted else { continue }
+                if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: package) }
+                _ = try? await runner.run(remove, extra: package)
+            }
+        }
+    }
+
     /// Lamp's values for the bridge: the app's id, and for a wrapped package the names Windows gives it.
     private static func values(_ project: LampProject) -> [String: String] {
+        values(project, identity: buildFolder(for: project).appendingPathComponent("identity.json")) ?? ["appID": project.id]
+    }
+
+    private static func values(_ project: LampProject, identity file: URL) -> [String: String]? {
         var values = ["appID": project.id]
-        if let data = try? Data(contentsOf: buildFolder(for: project).appendingPathComponent("identity.json")),
+        if let data = try? Data(contentsOf: file),
            let identity = try? JSONDecoder().decode(MSIX.Identity.self, from: data) {
             values["packageFullName"] = identity.fullName
             values["appUserModelID"] = identity.appUserModelID
@@ -276,6 +387,7 @@ enum DeviceApps {
 extension Agent {
     /// The rules for a device app: the integration's own words on writing for its device, in the shape of the others'.
     static func devicePrompt(for project: LampProject) -> String {
+        if GameKit.isGame(project) { return gamePrompt(for: project) }
         let integration = DeviceApps.integration(for: project)
         let name = integration?.name ?? "the device"
         let rules = [Rules.deviceEdit, Rules.ask, Rules.shell, Rules.deviceKind(integration), Rules.deviceBlocks(project), Rules.icon, Rules.about,

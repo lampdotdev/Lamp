@@ -169,12 +169,17 @@ enum AppName {
                           color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
     }
 
-    /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone.
+    /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone. A device
+    /// that takes more than one kind of app has each named with what it's for ("xbox-one:game" for a 3D game), so the
+    /// kind is chosen from the wish as the device is, never by a setting.
     static func deviceKinds() -> String {
         let kinds = DeviceApps.kinds()
         guard !kinds.isEmpty else { return "" }
         return "\n\nThese devices of the person's take apps too; each stands alone, for a request that names it or its maker: "
-            + kinds.map { "[\"\($0.id)\"] for their \($0.name) (\($0.kind ?? "device") by \($0.maker))" }.joined(separator: ", ") + "."
+            + kinds.map { entry in
+                let what = "their \(entry.integration.name) (\(entry.integration.kind ?? "device") by \(entry.integration.maker))"
+                return "[\"\(entry.id)\"] for " + (entry.kind.purpose.map { "\($0) on \(what)" } ?? what)
+            }.joined(separator: ", ") + "."
     }
 
     /// The person's devices Lamp found just now, each with what to answer for a wish that's for it, so "my TV" or
@@ -187,7 +192,11 @@ enum AppName {
             guard let answer = answer(for: device) else { return nil }
             let what = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
             let name = device.name.isEmpty || device.name == device.model ? what : "\(device.name) (\(what))"
-            return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): [\"\(answer)\"]"
+            // A device that takes more than one kind of app is answered by what the wish is for (a 3D game, or an app).
+            let kinds = DeviceApps.kinds().filter { DeviceApps.split($0.id).integration == answer }
+            let answers = kinds.count > 1 ? kinds.map { "[\"\($0.id)\"]" + ($0.kind.purpose.map { " for \($0)" } ?? "") }.joined(separator: ", or ")
+                : "[\"\(answer)\"]"
+            return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): \(answers)"
         }
         guard !listed.isEmpty else { return "" }
         return "\n\nThe person's devices, found just now, with what to answer when the request is for one of them (by its name, "

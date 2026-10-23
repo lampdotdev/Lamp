@@ -162,7 +162,9 @@ struct StoreDialogs: ViewModifier {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The wish, its chat, its history and what it saved are moved to the Trash.")
+            // A device app comes off the devices Lamp put it on too (`DeviceApps.removeEverywhere`).
+            Text("The wish, its chat, its history and what it saved are moved to the Trash."
+                 + (store.deleting.flatMap { $0.platform == .device ? DeviceApps.integration(for: $0)?.name : nil }.map { " It's also taken off your \($0)." } ?? ""))
         }
         .dialogIcon(store.deleting.map { Image(nsImage: store.iconImage(for: $0)) })
         .onChange(of: store.renaming) { newName = store.renaming.map { $0.untitled ? "" : $0.name } ?? "" }

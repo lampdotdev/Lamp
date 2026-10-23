@@ -16,7 +16,8 @@
       },
       "wrap": "msix",
       "preview": "Web"
-    }
+    },
+    "purpose": "an app or a game, 3D games included: what nearly every Xbox wish is"
   },
   "bridge": {
     "install": [
@@ -111,6 +112,81 @@
           "https": true,
           "keep": "picture",
           "path": "/ext/screenshot",
+          "port": 11443
+        }
+      }
+    ],
+    "stop": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "DELETE",
+          "path": "/api/taskmanager/app?package={base64:packageFullName}&forcestop=yes",
+          "port": 11443
+        }
+      }
+    ],
+    "log": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "keep": "log",
+          "path": "/api/filesystem/apps/file?knownfolderid=LocalAppData&packagefullname={packageFullName}&path=%5CLocalState&filename=log.txt",
+          "port": 11443
+        }
+      }
+    ],
+    "remove": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "DELETE",
+          "path": "/api/app/packagemanager/package?package={packageFullName}",
           "port": 11443
         }
       }
@@ -216,5 +292,12 @@
       ],
       "title": "Give Lamp the Device Portal password"
     }
-  ]
+  ],
+  "kinds": {
+    "game": {
+      "lamp": "native-game",
+      "purpose": "only a heavy 3D game the wish says needs the console's full power (a big world, many things moving at once, fast action) or native code; it needs a 2 GB download first"
+    }
+  },
+  "certificateRoot": "/config/rootcertificate"
 }

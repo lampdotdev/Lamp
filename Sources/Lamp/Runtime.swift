@@ -97,7 +97,7 @@ enum Runtime {
         let roots = names.map { project.dir.appendingPathComponent($0) }
         // A device app's package is made from its integration's declared step, so a new step is a change too.
         if project.platform == .device, let declared = DeviceApps.integration(for: project)?.app?.declared {
-            hasher.update(data: Data((declared.package + "\n" + declared.output).utf8))
+            hasher.update(data: Data((declared.package + "\n" + declared.output + "\n" + (project.integration ?? "")).utf8))
         }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])

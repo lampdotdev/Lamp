@@ -72,7 +72,8 @@ Every request goes to the address the device was found at; you give only the por
 `https: true` for a device that only speaks HTTPS with a certificate of its own (Xbox's Device Portal): Lamp
 trusts that certificate the first time and holds the device to it after. `method` (GET, POST, PUT, DELETE), `headers`, `body` or `form` (a value `"@{package}"` sends the package file), `auth`
 (`digest` true or false for basic; the password is always one `{field:…}`), and `keep`: `"picture"` in `bridge.look`
-for the answer that is the screen's picture, `"key"` in a step's `run` for an SSH key the device gives this Mac.
+for the answer that is the screen's picture, `"log"` in `bridge.log` for the answer that is the app's log, `"key"` in a
+step's `run` for an SSH key the device gives this Mac.
 `poll` (seconds) asks again every two seconds while the device answers 204 (still working on an install), and `expect`
 (`json` or `xml`, with `equals` or `contains`) is what the answer must say for the step to count, else it fails with the
 device's words. A form value `"@{certificate}"` sends Lamp's certificate for a wrapped package (below).
@@ -154,7 +155,10 @@ to make apps for the device with, and the builder of each app gets it as Lamp's 
 the person presses Play and at every look, `look` for the picture the builder sees, `use` once for each of the
 remote's keys the builder presses (`{key}` is the device's name for it, from `keys`), `logs` read into the app's log
 while it's open. What the device answers to `install` is shown to the builder, so a device that says there what it
-made of the package (a compile error) needs nothing more. Lamp presses `home` when the app is stopped.
+made of the package (a compile error) needs nothing more. Lamp presses `home` when the app is stopped. `stop` ends the
+copy on the device before an update goes over it, for a device that can fail to open a package installed over its
+running copy, with the values of the copy that's there. `log` reads a log the app keeps on the device (a file) for the
+builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted.
 
 ```json
 "bridge": {
@@ -221,6 +225,10 @@ Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the
 (started at `start`, `index.html` unless said), its logos from the app's icon, and its signature with a certificate of
 Lamp's. Install it with the package and `"@{certificate}"` in one form, and launch it by `{base64:appUserModelID}` and
 `{base64:packageFullName}`. Never write a manifest or sign anything in the package step.
+
+`"purpose"` says in a few words what the kind is for ("an app with menus and pages"), for a device that takes more than
+one kind. The integrations Lamp ships may offer more kinds beside `app` in `kinds` (the Xbox's native 3D games,
+`{"lamp": "native-game"}`); an integration you write has only `app`.
 
 ## Checking it before you send
 

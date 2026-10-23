@@ -19,6 +19,14 @@ struct Integration: Codable, Hashable {
     var steps: [Step]
     var bridge: Bridge?
     var app: AppKind?
+    /// More kinds of app the device takes beside `app`, by a name of the integration's ("game"): each is named to the
+    /// naming call as "<id>:<name>" with its `purpose`, and an app made as one keeps that in `LampProject.integration`.
+    /// Only Lamp's own kinds, in the integrations Lamp ships: the Xbox's native games (`GameKit`).
+    var kinds: [String: AppKind]?
+    /// Where a device that serves its own HTTPS certificate serves the root that signs it ("/config/rootcertificate"
+    /// for Xbox's Device Portal, which makes itself a new certificate each time it starts): Lamp reads it once, over
+    /// the connection it keeps the device's first certificate on, and from then on takes any certificate it signed.
+    var certificateRoot: String?
     /// Where what this says was read: the vendor's documentation, a guide.
     var sources: [String]?
 
@@ -155,15 +163,24 @@ struct Integration: Codable, Hashable {
         /// Run once per key, with `{key}` the device's name for it from `keys`.
         var use: [IntegrationAction]?
         var logs: [IntegrationAction]?
+        /// Ends the app on the device, run before an update replaces it (a device can fail to open a package installed
+        /// over its running copy): with the values of the copy that's there.
+        var stop: [IntegrationAction]?
+        /// Reads the log the app keeps on the device: ends in a request whose answer is kept as the log (`keep: "log"`).
+        var log: [IntegrationAction]?
+        /// Takes the app off the device when its wish is deleted, with the values of the copy that's there.
+        var remove: [IntegrationAction]?
         /// Lamp's names for a remote's keys ("home", "up", "select", "back") to the device's own.
         var keys: [String: String]?
     }
 
     /// What's built for it: a kind Lamp owns, or one the integration declares.
     struct AppKind: Codable, Hashable {
-        /// "tv-web": the TVs' web app. Lamp's own kinds only.
+        /// "tv-web": the TVs' web app; "native-game": a 3D game in C++ on the Xbox (`GameKit`). Lamp's own kinds only.
         var lamp: String?
         var declared: Declared?
+        /// What it's for, as the naming call reads it beside the device's name: "a 3D game played with the controller".
+        var purpose: String?
 
         struct Declared: Codable, Hashable {
             /// The scaffold, by path in the app's folder.
@@ -251,8 +268,9 @@ struct Request: Codable, Hashable {
     /// Over HTTPS, to a device that serves its own certificate (Xbox's Device Portal): Lamp trusts the certificate the
     /// first time and holds the device to it after (`DeviceTLS`).
     var https: Bool?
-    /// "picture": the answer is the screen's picture (in a bridge's `look`). "key": the answer is a key the device
-    /// gives this Mac to sign in to it over SSH, kept in Lamp's folder (in a setup step's `run`).
+    /// "picture": the answer is the screen's picture (in a bridge's `look`). "log": the answer is the app's log (in a
+    /// bridge's `log`). "key": the answer is a key the device gives this Mac to sign in to it over SSH, kept in Lamp's
+    /// folder (in a setup step's `run`).
     var keep: String?
     /// Asks again every two seconds, up to this many seconds, while the device answers 204 (still working): for a
     /// device that takes an install and says later how it went.
@@ -424,6 +442,7 @@ enum IntegrationCheck {
             "tool": .object(["name": .leaf, "download": .leaf, "sha256": .leaf, "arguments": .array(.leaf), "explanation": .leaf]),
             "vendorSignIn": .object(["page": .leaf]), "wait": .leaf, "bridge": .leaf,
         ])
+        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map, "icons": .map, "preview": .leaf])])
         static let read: Shape = .object(["http": request, "description": .leaf, "json": .leaf, "xml": .leaf, "contains": .leaf])
         static let integration: Shape = .object([
             "id": .leaf, "name": .leaf, "maker": .leaf, "kind": .leaf, "sources": .array(.leaf),
@@ -440,8 +459,9 @@ enum IntegrationCheck {
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
-                               "use": .array(action), "logs": .array(action), "keys": .map]),
-            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map, "icons": .map, "preview": .leaf])]),
+                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "keys": .map]),
+            "app": appKind,
+            "kinds": .map, "certificateRoot": .leaf,
         ])
     }
 
@@ -550,16 +570,22 @@ enum IntegrationCheck {
 
         // Bridge
         if let bridge = integration.bridge {
-            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use), ("logs", bridge.logs)]
+            let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use),
+                                                               ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove)]
             for (name, sequence) in sequences {
                 for (n, action) in (sequence ?? []).enumerated() {
                     problems += actionProblems(action, at: "bridge.\(name)[\(n)]", fields: fields, steps: steps, inBridge: true)
                     if action.vendorSignIn != nil { say("bridge.\(name)[\(n)]: a sign-in is a setup step, never part of a bridge.") }
-                    if let keep = action.http?.keep, keep != "picture" || name != "look" { say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture.") }
+                    if let keep = action.http?.keep, !(keep == "picture" && name == "look") && !(keep == "log" && name == "log") {
+                        say("bridge.\(name)[\(n)].http.keep: only look keeps an answer, as the picture, and log, as the log.")
+                    }
                 }
             }
             if let look = bridge.look, !look.contains(where: { $0.http?.keep == "picture" }) {
                 say("bridge.look must have a request with keep \"picture\": its answer is the picture.")
+            }
+            if let log = bridge.log, !log.contains(where: { $0.http?.keep == "log" }) {
+                say("bridge.log must have a request with keep \"log\": its answer is the log.")
             }
             if bridge.use != nil, (bridge.keys ?? [:]).isEmpty { say("bridge.use needs keys: Lamp's names for the remote's keys to the device's.") }
             for (key, name) in bridge.keys ?? [:] where !isID(key) || name.unicodeScalars.contains(where: { !Placeholders.safe.contains($0) }) || name.isEmpty {
@@ -572,6 +598,7 @@ enum IntegrationCheck {
         if let app = integration.app {
             if (app.lamp == nil) == (app.declared == nil) { say("app must have exactly one of lamp or declared.") }
             if let lamp = app.lamp, !["tv-web"].contains(lamp) { say("app.lamp must be one of Lamp's kinds: \"tv-web\".") }
+            if let purpose = app.purpose, purpose.trimmed.isEmpty || purpose.count > 120 { say("app.purpose is a few words: what the kind is for.") }
             if let declared = app.declared {
                 if declared.files.isEmpty { say("app.declared.files is empty: the scaffold is at least one file.") }
                 for path in declared.files.keys + [declared.output] where !isAppPath(path) {
@@ -608,6 +635,16 @@ enum IntegrationCheck {
                 }
             }
             if integration.bridge?.install == nil { say("app is set, so bridge.install must say how it goes on the device.") }
+        }
+        for (name, kind) in integration.kinds ?? [:] {
+            if submitted { say("kinds are Lamp's own and only in the integrations Lamp ships; leave it out."); break }
+            if !isID(name) { say("kinds: \"\(name)\" must be lowercase letters, digits and dashes.") }
+            if kind.lamp != "native-game" || kind.declared != nil { say("kinds.\(name) must be one of Lamp's own: {\"lamp\": \"native-game\"}.") }
+            if kind.purpose?.trimmed.isEmpty != false { say("kinds.\(name).purpose says what it's for, beside app's.") }
+            if integration.app?.declared?.wrap != "msix" { say("kinds.\(name): a native game is a Windows package, so app.declared.wrap must be \"msix\" and the bridge must install one.") }
+        }
+        if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
+            say("certificateRoot is the path the device serves its root certificate at, over HTTPS on the port the bridge uses: \"/config/rootcertificate\".")
         }
         for source in integration.sources ?? [] where !isWebPage(source) { say("sources: \"\(source)\" isn't an https page.") }
         return problems
@@ -723,7 +760,7 @@ enum IntegrationCheck {
                 problems += placeholderProblems(auth.password, at: "\(at).auth.password", place: .auth, fields: fields, steps: steps)
             }
         }
-        if let keep = request.keep, keep != "picture", keep != "key" { problems.append("\(at).keep can only be \"picture\" or \"key\".") }
+        if let keep = request.keep, !["picture", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"log\" or \"key\".") }
         if let poll = request.poll, !(2...600).contains(poll) { problems.append("\(at).poll is seconds, 2 to 600.") }
         if let expect = request.expect {
             if (expect.json == nil) == (expect.xml == nil) { problems.append("\(at).expect reads the answer with exactly one of json or xml.") }

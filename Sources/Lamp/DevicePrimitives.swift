@@ -57,6 +57,8 @@ enum DeviceHTTP {
         let body: Data
         /// The cookies the device set (a CSRF token), by name, for `{cookie:<name>}` later in the same sequence.
         var cookies: [String: String] = [:]
+        /// The certificate the device showed, over HTTPS (DER).
+        var certificate: Data?
         var ok: Bool { (200..<300).contains(status) }
         var text: String { String(decoding: body, as: UTF8.self) }
     }
@@ -141,7 +143,7 @@ enum DeviceHTTP {
             let fields = http.allHeaderFields.reduce(into: [String: String]()) { if let k = $1.key as? String, let v = $1.value as? String { $0[k] = v } }
             for cookie in HTTPCookie.cookies(withResponseHeaderFields: fields, for: url) { cookies[cookie.name] = cookie.value }
         }
-        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body, cookies: cookies)
+        return Answer(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: body, cookies: cookies, certificate: guardian.certificate)
     }
 
     /// Whether a request carries what the person typed or a sign-in, which goes only where Lamp knows the device.
@@ -162,6 +164,8 @@ enum DeviceHTTP {
         private var tried = false
         /// Why the device's certificate wasn't taken, when it wasn't.
         private(set) var refusal: DeviceTLS.Refusal?
+        /// The certificate the device showed, once taken.
+        private(set) var certificate: Data?
         init(address: String, credential: (user: String, password: String, digest: Bool)?, https: Bool = false, port: Int = 0,
              pins: DeviceTLS.Pins? = nil) {
             self.address = address
@@ -186,13 +190,15 @@ enum DeviceHTTP {
                     completionHandler(.cancelAuthenticationChallenge, nil)
                     return
                 }
-                let fingerprint = DeviceTLS.fingerprint(SecCertificateCopyData(leaf) as Data)
+                let der = SecCertificateCopyData(leaf) as Data
+                let fingerprint = DeviceTLS.fingerprint(der)
                 // Kept and compared in one step; without pins (a read while finding) nothing secret is in the request.
-                if let refused = pins?.admit(fingerprint, port: port) {
+                if let refused = pins?.admit(fingerprint, port: port, certificate: der) {
                     refusal = refused
                     completionHandler(.cancelAuthenticationChallenge, nil)
                     return
                 }
+                certificate = der
                 completionHandler(.useCredential, URLCredential(trust: trust))
                 return
             }
