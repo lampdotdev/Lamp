@@ -329,7 +329,7 @@ enum TVs {
         // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
         // Mac's on the network now, which isn't the app's to keep.
         let script = files.appendingPathComponent("lamp.js")
-        let address = hasPage ? await phonePage(for: project) : ""
+        let address = hasPage ? await phonePage(staging: project) : ""
         if !address.isEmpty, let text = try? String(contentsOf: script, encoding: .utf8), text.contains(TVTemplate.phoneMarker),
            let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) {
             let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
@@ -386,6 +386,14 @@ enum TVs {
         let host = Devices.localAddresses.first ?? Devices.macHost
         guard let port = PhoneSites.port(for: project.id) else { return "" }
         return "http://\(host):\(port)/"
+    }
+
+    /// The address put into a staged copy: where the site is listening when the app's page is served now, which waits for
+    /// it to open, else the port it will try first. lamp.js asks again as the page opens (`/app/phone-page`), so a site
+    /// that opens elsewhere is still the address it shows.
+    @MainActor static func phonePage(staging project: LampProject) async -> String {
+        if let port = await PhoneSites.ready(project.id) { return phonePage(port: port) }
+        return phonePage(for: project)
     }
 
     /// The phone page's address at a port its site is listening on.

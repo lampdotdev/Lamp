@@ -79,13 +79,17 @@ final class Gateway: @unchecked Sendable {
         self.listener = listener
         return await withCheckedContinuation { continuation in
             var answered = false
-            listener.stateUpdateHandler = { state in
+            // The listener keeps this handler, so it holds the listener weakly, and lets go of both handlers (and the
+            // callback with them) once the listener is done: a failed try or a closed site leaves nothing behind.
+            listener.stateUpdateHandler = { [weak listener] state in
                 switch state {
                 case .ready:
                     if !answered { answered = true; continuation.resume(returning: true) }
                 case .failed, .cancelled:
                     if !answered { answered = true; continuation.resume(returning: false) } else { onFailure() }
-                    listener.cancel()
+                    listener?.stateUpdateHandler = nil
+                    listener?.newConnectionHandler = nil
+                    listener?.cancel()
                 default:
                     break
                 }

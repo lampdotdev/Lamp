@@ -169,6 +169,7 @@ enum TVTemplate {
          * Lamp.platform   "tizen", "webos" or "browser" (the preview on the Mac)
          * Lamp.phonePage(hash)   the address of the app's Phone/ page for a phone on the Mac's Wi-Fi (for a QR code),
          *   with "#" + hash after it when given; null when the app has no Phone/index.html
+         * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there
          * Lamp.controllers   phones on the same Wi-Fi as controllers: see its comment below
          *
          * The arrows move focus between what can take it (buttons, links, fields, and anything with data-focus),
@@ -239,6 +240,19 @@ enum TVTemplate {
           var store = window.LampStore;
           // Filled in by Lamp in the copy it opens or packages, while the app has a phone page.
           var phone = \(phoneMarker);
+          var phoneHandlers = [];
+          // Lamp may have to move the page to another port (another program took its own), so the address is asked for
+          // again as the page opens and now and then after, and the preview is told at once.
+          function setPhone(address) {
+            if (!phone || typeof address !== 'string' || !address || address === phone) return;
+            phone = address;
+            for (var i = 0; i < phoneHandlers.length; i++) { try { phoneHandlers[i](); } catch (e) { if (window.console) console.error(e); } }
+          }
+          window.__lampPhonePage = setPhone;
+          function askPhone() {
+            if (phone && window.LampAI && LampAI._post) LampAI._post('/app/phone-page', {}, 20000).then(function (r) { setPhone(r && r.url); }, function () {});
+          }
+          if (phone) { setTimeout(askPhone, 0); setInterval(askPhone, 30000); }
 
           document.addEventListener('keydown', function (event) {
             var name = names[event.keyCode];
@@ -285,7 +299,12 @@ enum TVTemplate {
             focusFirst: function () { var list = focusables(); if (list.length) give(list[0]); },
             move: move,
             exit: exit,
-            phonePage: function (hash) { return phone ? phone + (hash ? '#' + hash : '') : null; }
+            phonePage: function (hash) { return phone ? phone + (hash ? '#' + hash : '') : null; },
+            onPhonePage: function (fn) {
+              phoneHandlers.push(fn);
+              if (phone) { try { fn(); } catch (e) { if (window.console) console.error(e); } }
+              return function () { var i = phoneHandlers.indexOf(fn); if (i >= 0) phoneHandlers.splice(i, 1); };
+            }
           };
           document.addEventListener('DOMContentLoaded', function () {
             setTimeout(function () { if (!document.activeElement || document.activeElement === document.body) Lamp.focusFirst(); }, 0);
@@ -670,7 +689,9 @@ extension Agent.Rules {
     `var pad = LampController.connect({onPlayer, onMessage, onState})`, then `pad.button(name, down)`, \
     `pad.axis(name, x, y)` (-1 to 1) and `pad.send(data)`. In Web/, `Lamp.controllers` (lamp.js's comment) \
     starts a game, gives the address phones open, to show as a QR code (it changes every few minutes), and hands you \
-    each player's input. Lamp serves the page and carries the input itself, over the home Wi‑Fi, while the app runs: \
+    each player's input; for a second screen with no controllers, draw its QR code from `Lamp.phonePage()` inside \
+    `Lamp.onPhonePage(fn)`, which calls again when the address moves. Lamp serves the page and carries the input \
+    itself, over the home Wi‑Fi, while the app runs: \
     never start a server, a login item or anything else that keeps running for it, and never publish the page \
     another way. The page is plain http, which phones don't give their motion sensors: make buttons and sticks the \
     controls, and offer tilt (`LampController.tilt`, from a Start button) only where `LampController.canTilt()` says \

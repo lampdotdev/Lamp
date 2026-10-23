@@ -588,7 +588,10 @@ enum PhoneSites {
             let port = sites[app] != nil ? ports[app] : nil
             for waiter in waiting.removeValue(forKey: app) ?? [] { waiter.resume(returning: port) }
             // A host that asked for a link while the site was opening, or before it moved, gets one for where it is.
-            if port != nil { PhoneControllers.shared.siteOpened(app) }
+            if let port {
+                PhoneControllers.shared.siteOpened(app)
+                TVPreview.phonePageMoved(app, to: TVs.phonePage(port: port))
+            }
         }
         var avoided: Set<UInt16> = []
         for _ in 0..<4 {
@@ -598,9 +601,10 @@ enum PhoneSites {
             }, sockets: { request, connection, leftover in
                 Task { @MainActor in Store.shared.phoneSocket(request.within(app), connection: connection, leftover: leftover) }
             })
-            let started = await site.startSite(onFailure: {
+            // Weakly: the listener keeps this callback, and the site keeps the listener.
+            let started = await site.startSite(onFailure: { [weak site] in
                 Task { @MainActor in
-                    guard sites[app] === site else { return }
+                    guard let site, sites[app] === site else { return }
                     sites[app] = nil
                     ports[app] = nil
                     if served(app) { _ = await open(app, wanted: { served(app) }) }

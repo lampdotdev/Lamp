@@ -8190,7 +8190,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -8258,6 +8258,7 @@ final class Store: ObservableObject {
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
         if route == "/app/controller" { return await controllerSession(request, for: project) }
+        if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -8273,6 +8274,16 @@ final class Store: ObservableObject {
         // By the name or address the TV reached Lamp at, at the app's own port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
         return (200, ["socket": "ws://\(host):\(port)/socket", "host": PhoneControllers.shared.hostCredential(for: project)])
+    }
+
+    /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then
+    /// after): the address its site is listening at, which moves when another program has taken the port it had.
+    private func phonePageAddress(for project: LampProject) async -> (Int, [String: Any]) {
+        guard project.platform == .tv else { return (403, ["error": "Only TV apps have phone pages."]) }
+        guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
+        syncLocalNetwork()
+        guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
+        return (200, ["url": TVs.phonePage(port: port)])
     }
 
     /// A socket at `/phone/<app>/socket`, from a phone's page or a TV app: addressed to this Mac like the page itself.

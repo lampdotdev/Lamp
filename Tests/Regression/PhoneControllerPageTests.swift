@@ -1,4 +1,5 @@
 import JavaScriptCore
+import Network
 import XCTest
 @testable import Lamp
 
@@ -92,6 +93,59 @@ final class PhoneControllerPageTests: XCTestCase {
         let given = try XCTUnwrap(ready)
         XCTAssertNotEqual(given, kept, "the address names the port the site took, not the one it lost")
         XCTAssertTrue(PhoneSites.isOpen("moved"))
+    }
+
+    /// A second screen draws its QR code from `Lamp.phonePage()`: when the site has moved since the copy was staged, the
+    /// page is given the address it's at now, by Lamp's answer as it opens and by the preview at once.
+    func testATVPageShowsThePhonePageWhereItsSiteIsNow() throws {
+        let context = try XCTUnwrap(JSContext())
+        var failure: String?
+        context.exceptionHandler = { _, value in failure = value?.toString() }
+        context.evaluateScript("""
+            var window = this, later = [], asked = [], drawn = [];
+            var document = { addEventListener: function () {}, activeElement: null, body: {} };
+            function setTimeout(fn) { later.push(fn); return 0; } function setInterval() { return 0; }
+            var LampAI = { _post: function (path) { asked.push(path); return Promise.resolve({ url: 'http://192.168.1.20:47861/' }); } };
+            """)
+        let staged = TVTemplate.remoteJS.replacingOccurrences(of: TVTemplate.phoneMarker, with: "/*LAMP_PHONE*/\"http://192.168.1.20:47860/\"")
+        context.evaluateScript(staged)
+        context.evaluateScript("Lamp.onPhonePage(function () { drawn.push(Lamp.phonePage('room')); }); while (later.length) later.shift()();")
+        XCTAssertNil(failure)
+        XCTAssertEqual(context.evaluateScript("asked.join()")?.toString(), "/app/phone-page", "the page asks where its phone page is")
+        XCTAssertEqual(context.evaluateScript("drawn.join(' ')")?.toString(),
+                       "http://192.168.1.20:47860/#room http://192.168.1.20:47861/#room", "and draws its code again at the new address")
+        context.evaluateScript("window.__lampPhonePage('http://192.168.1.20:47862/');")
+        XCTAssertEqual(context.evaluateScript("Lamp.phonePage()")?.toString(), "http://192.168.1.20:47862/", "the preview tells it at once")
+        XCTAssertEqual(context.evaluateScript("drawn.length")?.toInt32(), 3)
+    }
+
+    /// A site's listener holds its handlers, and they once held it and the site back: every failed try and closed site
+    /// stayed in memory. Both go once the listener is done.
+    @MainActor func testAFailedOrClosedSiteIsLetGo() async throws {
+        PhoneSites.forgetAll()
+        defer { PhoneSites.forgetAll() }
+        let taken = try XCTUnwrap(PhoneSites.port(for: "taken"))
+        let holder = try XCTUnwrap(Self.listen(on: taken))
+        defer { close(holder) }
+        let free = try XCTUnwrap(PhoneSites.port(for: "free", avoiding: [taken]))
+
+        for (port, opens) in [(taken, false), (free, true)] {
+            weak var site: Gateway?
+            weak var listener: NWListener?
+            do {
+                let gateway = Gateway(site: port, pages: { _ in Gateway.Page(status: 404) }, sockets: { _, connection, _ in connection.cancel() })
+                site = gateway
+                // The callback holds the site, as the one PhoneSites gives it may.
+                let started = await gateway.startSite(onFailure: { _ = gateway })
+                XCTAssertEqual(started, opens)
+                listener = Mirror(reflecting: gateway).children.first { $0.label == "listener" }?.value as? NWListener
+                XCTAssertNotNil(listener)
+                gateway.stop()
+            }
+            for _ in 0..<40 where site != nil || listener != nil { try await Task.sleep(for: .milliseconds(50)) }
+            XCTAssertNil(listener, "the listener at \(port) is released once it's done")
+            XCTAssertNil(site, "and so is its site")
+        }
     }
 
     /// A socket listening on every address at the port, as another program's would.

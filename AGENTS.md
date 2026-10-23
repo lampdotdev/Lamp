@@ -830,8 +830,9 @@ ever given for the port its site holds (`PhoneSites.ready`), sent to the TV page
 (`TVs.phoneFile`), only while the app runs, in the preview or set to open on a TV (`Store.servesPhonePage`), from the
 network by the Mac's name or address and on this Mac by a loopback name, with no token, since a phone following a QR
 code has none; it's opened and closed with the rest of the network listening (`Store.syncLocalNetwork`). The TV page
-reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the staged lamp.js (`TVTemplate.phoneMarker`):
-plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
+reads the address from `Lamp.phonePage(hash)`, which Lamp writes into the staged lamp.js (`TVTemplate.phoneMarker`) and
+which lamp.js asks for again as the page opens and every half minute (`/app/phone-page`), the preview being told at once
+when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows the page. The address is plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
 need https.
 
 Phones as controllers go through Lamp itself (`PhoneControllers`), over the home network the phone page is already

@@ -153,6 +153,13 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         }
     }
 
+    /// The app's phone page has moved to another port: the page's `Lamp.phonePage` is told at once.
+    static func phonePageMoved(_ app: String, to address: String) {
+        guard let preview = open[app], let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) else { return }
+        let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
+        preview.webView.evaluateJavaScript("window.__lampPhonePage && window.__lampPhonePage(\(value));", completionHandler: nil)
+    }
+
     private func deliverController(_ json: String) {
         guard Self.open[project.id] === self, (try? JSONSerialization.jsonObject(with: Data(json.utf8))) is [String: Any] else { return }
         webView.evaluateJavaScript("window.__lampControllers && window.__lampControllers(\(json));", completionHandler: nil)
@@ -167,7 +174,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     /// LampAI in the preview (`DeviceSupport.webJS`): its calls are answered by Lamp in this process, as the app, with
-    /// no token for the page to hold and no network between them. Only the AI routes an app uses.
+    /// no token for the page to hold and no network between them. Only the AI routes an app uses, and where its phone page is.
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
@@ -176,7 +183,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL,
               page.standardizedFileURL.path.hasPrefix(staged),
               let call = message.body as? [String: Any], let path = call["path"] as? String,
-              ["/ai", "/ai/status", "/ai/image", "/ai/decide"].contains(path),
+              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
             replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
             return
