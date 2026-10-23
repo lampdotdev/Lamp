@@ -223,12 +223,15 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         webView.evaluateJavaScript("window.__lampControllers && window.__lampControllers(\(json));", completionHandler: nil)
     }
 
-    /// Whether a message came from the app's own page, from its staged copy: never a frame inside it or a page it went
-    /// on to, which could be anyone's.
+    /// Whether a message came from the app's own page, at the address the preview opens it at: never a frame inside it
+    /// or a page it went on to, which could be anyone's.
     private func isOwnPage(_ message: WKScriptMessage) -> Bool {
-        let staged = TVs.stagingFolder(for: project).appendingPathComponent("web").standardizedFileURL.path + "/"
-        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.isFileURL else { return false }
-        return page.standardizedFileURL.path.hasPrefix(staged)
+        Self.isOwnPage(message.frameInfo.request.url, mainFrame: message.frameInfo.isMainFrame)
+    }
+
+    static func isOwnPage(_ page: URL?, mainFrame: Bool) -> Bool {
+        guard mainFrame, let page else { return false }
+        return page.scheme == scheme && page.host == home.host
     }
 
     /// LampAI in the preview (`DeviceSupport.webJS`): its calls are answered by Lamp in this process, as the app, with
@@ -237,8 +240,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
         // anyone's and would use AI as the app.
-        guard message.frameInfo.isMainFrame, let page = message.frameInfo.request.url, page.scheme == Self.scheme, page.host == Self.home.host,
-              let call = message.body as? [String: Any], let path = call["path"] as? String,
+        guard isOwnPage(message), let call = message.body as? [String: Any], let path = call["path"] as? String,
               ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
             replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
