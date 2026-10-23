@@ -5,6 +5,16 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.8
+
+- Xbox apps and games now run in the console's modern web engine instead of its old one: the same 3D scene went from
+  about 21 to about 57 frames a second, with WebGL 2 and today's JavaScript.
+- A device Lamp can't find on this network, because it's off or at another home, says "Not on this network" instead
+  of Ready.
+- A new starter wish, Site-to-App, turns websites without a Mac app into apps of their own, and Disk Map now shows
+  what fills your disk as a sunburst you can click through.
+- While you write a wish, the desk's icons step back behind the bar.
+
 ## 0.18.7
 
 - Setting up a device no longer crashes Lamp: every setup window now opens sized to fit and stays up.
