@@ -183,6 +183,7 @@ cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes wi
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as Babylon.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what an Xbox game is written against (GameKit.swift)
+rm -rf "$APP/Contents/Resources/WebHost" && cp -R Resources/WebHost "$APP/Contents/Resources/WebHost"   # the program that shows an Xbox web app in WebView2 (WebHost.swift)
 rm -rf "$APP/Contents/Resources/bin"
 if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'

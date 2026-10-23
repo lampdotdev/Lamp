@@ -197,6 +197,9 @@ struct Integration: Codable, Hashable {
             var wrap: String?
             /// The file the app starts at, in a wrapped package: "index.html" unless said.
             var start: String?
+            /// What shows a wrapped web app's pages: "webview2", Lamp's own WebView2 host (`WebHost`), or, unsaid, the
+            /// system's own host for a package that names a start page (EdgeHTML on the Xbox).
+            var host: String?
             /// Lamp's building blocks the app takes, by library ("web", "brightscript") to where they go in its folder:
             /// Lamp's own files there, written afresh before every turn and build (`DeviceSupport`).
             var support: [String: String]?
@@ -442,7 +445,7 @@ enum IntegrationCheck {
             "tool": .object(["name": .leaf, "download": .leaf, "sha256": .leaf, "arguments": .array(.leaf), "explanation": .leaf]),
             "vendorSignIn": .object(["page": .leaf]), "wait": .leaf, "bridge": .leaf,
         ])
-        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map, "icons": .map, "preview": .leaf])])
+        static let appKind: Shape = .object(["lamp": .leaf, "purpose": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "host": .leaf, "support": .map, "icons": .map, "preview": .leaf])])
         static let read: Shape = .object(["http": request, "description": .leaf, "json": .leaf, "xml": .leaf, "contains": .leaf])
         static let integration: Shape = .object([
             "id": .leaf, "name": .leaf, "maker": .leaf, "kind": .leaf, "sources": .array(.leaf),
@@ -611,6 +614,11 @@ enum IntegrationCheck {
                     if !declared.output.lowercased().hasSuffix(".zip") { say("app.declared.output must be a .zip of the app's files when Lamp wraps it.") }
                 }
                 if let start = declared.start, !isAppPath(start) { say("app.declared.start must be a plain path inside the package.") }
+                if let host = declared.host {
+                    if host != "webview2" { say("app.declared.host must be one Lamp has: \"webview2\".") }
+                    if declared.wrap != "msix" { say("app.declared.host is for a wrapped package: app.declared.wrap must be \"msix\".") }
+                    if let start = declared.start, start != "index.html" { say("app.declared.start must be index.html when Lamp's web host shows the app.") }
+                }
                 for (library, path) in declared.support ?? [:] {
                     if DeviceSupport.Library(rawValue: library) == nil {
                         say("app.declared.support: \"\(library)\" isn't one of Lamp's libraries: \(DeviceSupport.Library.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ", ")).")

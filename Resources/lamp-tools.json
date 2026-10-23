@@ -32,7 +32,7 @@
         },
         "on_device": {
           "type": "boolean",
-          "description": "An Xbox game: build it for the console, put it on the person's Xbox and look there instead of in the preview."
+          "description": "An Xbox app or game: put it on the person's Xbox and look there (its screen and its log) instead of in the preview."
         }
       },
       "type": "object"

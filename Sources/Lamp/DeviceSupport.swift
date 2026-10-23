@@ -296,7 +296,29 @@ enum DeviceSupport {
         return out;
       }
 
+      // In Lamp's WebView2 host on the Xbox the page is https and can't call Lamp's plain-http gateway itself, so the
+      // host makes the call and posts the answer back.
+      var host = window.chrome && window.chrome.webview, relayed = {}, relayId = 0;
+      if (host) {
+        host.addEventListener('message', function (e) {
+          var m = e.data, waiting = m && m.lamp === 'http' && relayed[m.id];
+          if (!waiting) return;
+          delete relayed[m.id];
+          if (m.error) { waiting.reject(new Error('unreachable')); return; }
+          var reply = {};
+          try { reply = JSON.parse(m.body) || {}; } catch (x) {}
+          waiting.resolve({ status: m.status, reply: reply });
+        });
+      }
+
       function exchange(route, path, token, body, timeout) {
+        if (host) {
+          return new Promise(function (resolve, reject) {
+            var id = ++relayId;
+            relayed[id] = { resolve: resolve, reject: reject };
+            host.postMessage({ lamp: 'http', id: id, url: route + path, token: token || '', body: body, timeout: timeout });
+          });
+        }
         return new Promise(function (resolve, reject) {
           var xhr = new XMLHttpRequest();
           xhr.open('POST', route + path);
@@ -317,6 +339,12 @@ enum DeviceSupport {
       // just starting.
       function send(path, body, token, timeout) {
         var list = routes(), text = JSON.stringify(body);
+        // Lamp opens a claim for the device's IPv4 address, and a device can reach the Mac's .local name over IPv6
+        // (the Xbox does), so a claim goes to the Mac's IPv4 addresses first.
+        if (path === '/app/claim') {
+          var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
+          list = list.filter(function (r) { return ipv4.test(r); }).concat(list.filter(function (r) { return !ipv4.test(r); }));
+        }
         if (!list.length) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
         function attempt(i, round) {
           if (i >= list.length) {
@@ -753,6 +781,29 @@ enum DeviceSupport {
           return new Date(utc);
         }
       };
+
+      // A game controller in a Chromium web view on the Xbox gives its buttons as key presses with no name, only the
+      // old key codes. They're turned into the keys a page expects, before any of its own handlers hears them: the d-pad
+      // and left stick are the arrows, A is Enter (and presses what has focus), B is Escape, and the rest have the names
+      // Edge gave them on the Xbox ("GamepadX", "GamepadRightShoulder"…).
+      var padKeys = { 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown', 27: 'Escape',
+        195: 'Enter', 196: 'Escape', 197: 'GamepadX', 198: 'GamepadY', 199: 'GamepadRightShoulder', 200: 'GamepadLeftShoulder',
+        201: 'GamepadLeftTrigger', 202: 'GamepadRightTrigger', 203: 'ArrowUp', 204: 'ArrowDown', 205: 'ArrowLeft', 206: 'ArrowRight',
+        207: 'GamepadMenu', 208: 'GamepadView', 209: 'GamepadLeftThumbstick', 210: 'GamepadRightThumbstick',
+        211: 'ArrowUp', 212: 'ArrowDown', 213: 'ArrowRight', 214: 'ArrowLeft',
+        215: 'GamepadRightThumbstickUp', 216: 'GamepadRightThumbstickDown', 217: 'GamepadRightThumbstickRight', 218: 'GamepadRightThumbstickLeft' };
+      function padKey(e) {
+        var key = e.key === 'Unidentified' && padKeys[e.keyCode];
+        if (!key) return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        var target = document.activeElement || document.body;
+        var named = new KeyboardEvent(e.type, { key: key, code: key, repeat: e.repeat, bubbles: true, cancelable: true });
+        var go = target.dispatchEvent(named);
+        if (go && key === 'Enter' && e.type === 'keydown' && !e.repeat && target !== document.body && typeof target.click === 'function') target.click();
+      }
+      window.addEventListener('keydown', padKey, true);
+      window.addEventListener('keyup', padKey, true);
 
       // Opened by Lamp's install, the app asks for its token now, while Lamp is waiting for it, not at its first call.
       if (installed && !bridge) token().then(null, function () {});
