@@ -5,6 +5,16 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.11
+
+- Share a wish as a link: Share Link… shows you exactly what will be public, then copies a lamp.dev link with a preview
+  card. Whoever opens it gets the wish in Lamp, ready to make their own, or a page to download Lamp.
+- Xbox games now run as games, not apps, so the console gives them five times the memory and its whole graphics chip:
+  a test game went from 30 to 60 frames a second.
+- While Lamp tries an app, its glow, pill and pointer stay with that app's window instead of floating over everything
+  else you're doing.
+- Each stretch of the agent's steps reliably gets its one-line title.
+
 ## 0.18.10
 
 - Xbox apps and games can make your controller rumble, and the rumble comes on the controller that's playing.
