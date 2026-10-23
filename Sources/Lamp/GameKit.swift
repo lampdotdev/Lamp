@@ -28,7 +28,7 @@ enum GameKit {
 
     /// Whether the app is a native game.
     static func isGame(_ project: LampProject) -> Bool {
-        project.platform == .device && DeviceApps.appKind(for: project)?.lamp == kind
+        project.platform.hasDevice && DeviceApps.appKind(for: project)?.lamp == kind
     }
 
     // MARK: Lamp's files in the game

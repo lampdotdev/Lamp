@@ -1456,18 +1456,14 @@ struct WishDrag: NSViewRepresentable {
 /// Where a wish lives once it's made, read from its files: for its caption on the desk, and for what the desk
 /// says when it's used and nothing comes to the front to say so itself.
 enum WishPlace: Equatable {
-    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, android, tv, device
+    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, device
+    /// Somewhere a kind of its own runs (an Android device, a TV): its caption and symbol (`Target.Identity.place`).
+    case elsewhere(String, symbol: String)
 
-    /// Reads the app's files: not on the main thread.
+    /// Reads the app's files: not on the main thread. A Mac app's place is read from its code; every other kind
+    /// says its own.
     static func of(_ project: LampProject) -> WishPlace {
-        switch project.platform {
-        case .iphone: return Template.hasWatch(project) ? .iPhoneAndWatch : .iPhone
-        case .universal: return .everywhere
-        case .android: return .android
-        case .tv: return .tv
-        case .device: return .device
-        case .mac: break
-        }
+        if let place = project.platform.target.identity.place(project) { return place }
         if Template.isWidgetOnly(project) { return .widget }
         let code = sources(of: project)
         // An app with a window lives there, whatever else it has: one with a menu bar item beside its window opens
@@ -1497,8 +1493,7 @@ enum WishPlace: Equatable {
         case .iPhone: "iPhone"
         case .iPhoneAndWatch: "iPhone and watch"
         case .everywhere: "Mac and iPhone"
-        case .android: "Android"
-        case .tv: "TV"
+        case .elsewhere(let caption, _): caption
         case .device: "Device"
         }
     }
@@ -1512,8 +1507,7 @@ enum WishPlace: Equatable {
         case .iPhone: "iphone"
         case .iPhoneAndWatch: "applewatch"
         case .everywhere: "laptopcomputer.and.iphone"
-        case .android: "smartphone"
-        case .tv: "tv"
+        case .elsewhere(_, let symbol): symbol
         case .device: "shippingbox"
         }
     }
@@ -1735,7 +1729,7 @@ extension Store {
             case .device:
                 let device = DeviceApps.integration(for: project)?.name ?? "device"
                 WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is opening on your \(device).")
-            case .iPhone, .iPhoneAndWatch, .everywhere, .android, .tv:
+            case .iPhone, .iPhoneAndWatch, .everywhere, .elsewhere:
                 if project.onIOS, project.device != nil {
                     WishHUD.show(icon: icon, symbol: "iphone", title: "\(project.name) is opening on your iPhone.")
                 }

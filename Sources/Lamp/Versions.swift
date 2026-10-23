@@ -267,7 +267,7 @@ enum Versions {
             if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
                 project.platform = kind
                 if !kind.hasIOS { project.device = nil }
-                project.integration = kind == .device ? DeviceApps.integrationID(in: project.dir) : nil
+                project.integration = kind.target.recipe.integration(project.dir)
                 try? Template.saveMeta(project)
             }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't

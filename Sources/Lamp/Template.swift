@@ -42,28 +42,22 @@ enum Template {
     static func saveMeta(_ project: LampProject) throws {
         try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
-                                             device: project.device, target: project.platform == .universal ? project.chosen : nil,
+                                             device: project.device, target: project.platform.choosesPlace ? project.chosen : nil,
                                              simulator: project.platform.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform == .device ? project.integration : nil,
+                                             integration: project.platform.hasDevice ? project.integration : nil,
                                              undecided: project.undecided)),
                             to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 
-    /// Writes the scaffold into a draft's folder, as the kind of app it is now.
-    static func fill(_ project: LampProject) throws {
-        let app: String, view: String, md: String
-        switch project.platform {
-        case .mac: (app, view, md) = (appSwift, contentViewSwift, appMd)
-        case .iphone: (app, view, md) = (iPhoneAppSwift, iPhoneContentViewSwift, iPhoneAppMd)
-        case .universal: (app, view, md) = (universalAppSwift, universalContentViewSwift, universalAppMd)
-        case .android: try fillAndroid(project); return
-        case .tv: try TVTemplate.fill(project); return
-        case .device: try DeviceApps.fill(project); return
-        }
+    /// Writes the scaffold into a draft's folder, as the kind of app it is now (`Target.Recipe.fill`).
+    static func fill(_ project: LampProject) throws { try project.platform.target.recipe.fill(project) }
+
+    /// A Swift app's scaffold, from its kind's App, ContentView and APP.md.
+    static func fillSwift(_ project: LampProject, app: String, view: String, md: String) throws {
         try write(app, to: "Sources/App.swift", for: project)
         try write(view, to: "Sources/ContentView.swift", for: project)
         try write(md, to: "APP.md", for: project)
@@ -128,19 +122,15 @@ enum Template {
         }
     }
 
-    /// The three files Lamp owns in every app, written afresh before every build: LampSupport.swift, build.sh
+    /// Lamp's own files in an app, written afresh before every build: each kind's own (`Target.Recipe.ownedFiles`).
+    static func writeOwnedFiles(for project: LampProject) throws { try project.platform.target.recipe.ownedFiles(project) }
+
+    /// The three files Lamp owns in every Swift app: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
     /// and executes Package.swift as a program before building anything), so nothing the agent, or something
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
-    static func writeOwnedFiles(for project: LampProject) throws {
-        // An Android app's own files are the Gradle project's and its Kotlin building blocks.
-        if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
-        // A TV app's own files are its web code; Lamp's is its building blocks there.
-        if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
-        // A device app's build is the integration's package step, which Lamp holds, not a file in the folder; its own
-        // files are the building blocks its integration asks for.
-        if project.platform == .device { try DeviceSupport.write(for: project); return }
+    static func writeSwiftOwnedFiles(for project: LampProject, build: (_ widget: Bool, _ share: Bool) throws -> Void) throws {
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
         AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
@@ -169,23 +159,8 @@ enum Template {
                 AppFolder.remove(watchEntitlements, in: project.dir)
             }
         }
-        switch project.platform {
-        case .mac:
-            try write(withScene(buildSh(widget: widget, share: share, widgetOnly: isWidgetOnly(project)), for: project), to: "build.sh", for: project, executable: true)
-            try write(withScene(packageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-        case .iphone:
-            try write(withWatch(iPhoneBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
-            try write(withWatch(iPhonePackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-        case .universal:
-            // The Mac build is Xcode's, from a project Lamp writes beside the phone's (it is the phone's: one
-            // project, both platforms), signed for the person's team: that is what lets the app use what Apple
-            // ties to a team, which Lamp's own signing can't give it.
-            try write(withWatch(universalBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
-            try write(withWatch(universalPackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-            try writeDeviceProject(for: project, team: Devices.team)
-        case .android, .tv, .device:
-            break   // above
-        }
+        // build.sh and Package.swift, the kind's own.
+        try build(widget, share)
     }
 
     /// An iPhone app's build.sh or Package.swift as they are, or with its watch app when it has one: the
@@ -264,12 +239,11 @@ enum Template {
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
-    static func writeSupport(for project: LampProject) throws {
-        // An Android app's building blocks are Kotlin (`writeAndroidSupport`).
-        if project.platform == .android { try writeAndroidSupport(for: project); return }
-        // A TV app has no Swift: its building blocks are its own script, and a device app's what its integration asks for.
-        if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
-        if project.platform == .device { try DeviceSupport.write(for: project); return }
+    static func writeSupport(for project: LampProject) throws { try project.platform.target.recipe.support(project) }
+
+    /// A Swift app's building blocks: an Android app's are Kotlin, a TV app's its own script, and a device app's what its
+    /// integration asks for (`Target.Recipe.support`).
+    static func writeSwiftSupport(for project: LampProject) throws {
         let contents = lampSupportSwift
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
@@ -2218,14 +2192,7 @@ enum Template {
 
     /// What an app is made for, read off its Package.swift, which every version keeps: the platforms it lists.
     /// A version restored from before `make_app_for` brings its kind back with its code (`Versions.restoreFiles`).
-    static func platform(fromPackageIn dir: URL) -> Platform? {
-        if isAndroid(dir) { return .android }
-        if TVTemplate.isTV(dir) { return .tv }
-        if DeviceApps.isScaffolded(dir) { return .device }
-        guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
-        let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
-        return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
-    }
+    static func platform(fromPackageIn dir: URL) -> Platform? { Targets.kind(of: dir) }
 
     /// The folder a Mac app and its widget share when Lamp signs them for the person's team: the team's id and
     /// the app's. macOS honours a group named so from the signature alone; one named "group.…" would need a

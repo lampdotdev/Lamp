@@ -1,0 +1,63 @@
+import Foundation
+
+extension Platform {
+    /// An app for a device Lamp has no kit for, made and put on it the way its integration declares (`DeviceApps`),
+    /// which `LampProject.integration` names.
+    static let device = Platform(kind: "device")
+}
+
+extension Target {
+    static let device = Target(
+        platform: .device, places: [.device],
+        identity: Identity(name: "the device's app", phrase: "an app for one of the person's own devices", analytics: "device",
+                           made: { device, whose in "\(whose) \(device ?? "device")" },
+                           // What a device whose integration declares its apps runs is the integration's alone.
+                           devices: Words(words: [], toolNote: "or, alone, the id of a device integration that declares its apps (\"roku\", once Lamp has one)",
+                                            hint: nil, claims: { $0.count == 1 && $0.first.map(DeviceApps.makesApps) == true },
+                                            owns: DeviceApps.makesApps, alone: true),
+                           tryOnHelp: { "Where it opens: which of your \(DeviceApps.integration(for: $0)?.name ?? "devices") it goes on" },
+                           place: { _ in .device }),
+        guidance: Guidance(prompt: Agent.devicePrompt,
+                           changeRules: { project in
+                               GameKit.isGame(project) ? Agent.Rules.gameEdit + Agent.Rules.gameKit + Agent.Rules.gameBudget + Agent.Rules.gameTry
+                                   : Agent.Rules.deviceEdit + Agent.Rules.deviceKind(DeviceApps.integration(for: project)) + Agent.Rules.deviceTry(project)
+                           },
+                           skills: { [] },
+                           noAI: { project in
+                               DeviceSupport.libraries(for: project).isEmpty
+                                   ? "- None: this device's integration takes none of Lamp's building blocks, so the app has no AI from Lamp." : nil
+                           },
+                           elsewhere: { "- On the person's \(DeviceApps.integration(for: $0)?.name ?? "device"): the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, or with Lamp closed, no AI" }),
+        // Its build is the integration's package step, which Lamp holds; its own files are the building blocks the
+        // integration asks for, and its code says which device it's for.
+        recipe: Recipe(language: .device, fill: DeviceApps.fill, ownedFiles: DeviceSupport.write(for:), support: DeviceSupport.write(for:),
+                       isMade: DeviceApps.isScaffolded, scaffolded: { dir, project in project.platform == .device && DeviceApps.isScaffolded(dir) },
+                       sources: { DeviceApps.sourceRoots($0).map(\.lastPathComponent) },
+                       // A new package step is a change too.
+                       inputs: { project in
+                           guard let declared = DeviceApps.integration(for: project)?.app?.declared else { return nil }
+                           return declared.package + "\n" + declared.output + "\n" + (project.integration ?? "")
+                       },
+                       builtURL: DeviceApps.packageURL(for:), marker: DeviceApps.marker, refills: true, integration: DeviceApps.integrationID(in:),
+                       shareRefusal: "Lamp doesn't share apps for devices like this one yet."),
+        part: nil,
+        setup: Setup(
+            // A native Xbox game's tools are a long download: the window that gets them opens as the first request starts.
+            canChoose: { _, integration in
+                if let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, !WindowsTools.isReady { WindowsSetup.shared.show() }
+                return true
+            },
+            notReady: { integration, _ in
+                guard let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, let problem = WindowsTools.problem else { return nil }
+                WindowsSetup.shared.show()
+                return "this Mac can't build Xbox games. \(problem)"
+            },
+            later: nil))
+}
+
+extension Language {
+    /// Each device's own: going to a device app always writes the app again in the scaffold its integration gave.
+    static let device = Language(name: "device", code: "the code that was for the device", leftover: "the files that were for the device") {
+        "Write the app again for the device, in the scaffold its integration gave (it's there now), reading \($0) for what it does, then delete \($1) with delete_file. "
+    }
+}

@@ -10,7 +10,7 @@ enum Runtime {
     /// this Mac and in a simulator at once, so its iPhone copy has a folder of its own beside the Mac copy's,
     /// and neither writes over the other.
     static func folder(_ project: LampProject) -> URL {
-        project.platform == .universal && project.onIOS ? macFolder(project).appendingPathComponent("ios") : macFolder(project)
+        project.platform.choosesPlace && project.onIOS ? macFolder(project).appendingPathComponent("ios") : macFolder(project)
     }
     /// The Mac copy's folder, which the app itself writes to (`LampRuntime`): what only a Mac copy has, such as
     /// its answer to being asked to quit or a build held while it stays open, is read here wherever Try On points.
@@ -84,25 +84,20 @@ enum Runtime {
     static func fingerprint(_ project: LampProject) -> String {
         var hasher = SHA256()
         // An app for both is a different build for each place, so moving it under Try On is a change.
-        if project.platform == .universal { hasher.update(data: Data(project.destination.rawValue.utf8)) }
+        if project.platform.choosesPlace { hasher.update(data: Data(project.destination.rawValue.utf8)) }
         // A Mac app's App Intents are kept or left out by whether it can be signed for a team, so a new team is a
         // change for an app that has them (Store.intentsCanComeBack).
         // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
-        // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
-        let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
-            : project.platform == .tv ? [TVTemplate.webFolder, TVTemplate.phoneFolder, "icon.json"]
-            : project.platform == .device ? DeviceApps.sourceRoots(project).map(\.lastPathComponent)
-            : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
-        let roots = names.map { project.dir.appendingPathComponent($0) }
-        // A device app's package is made from its integration's declared step, so a new step is a change too.
-        if project.platform == .device, let declared = DeviceApps.integration(for: project)?.app?.declared {
-            hasher.update(data: Data((declared.package + "\n" + declared.output + "\n" + (project.integration ?? "")).utf8))
-        }
+        // What each kind's build is made from (`Target.sourceRoots`), leaving out what the build makes there (an Android
+        // app's `app/build`), and whatever else it depends on (a device app's declared package step).
+        let target = project.platform.target
+        let roots = target.recipe.sources(project).map { project.dir.appendingPathComponent($0) }
+        if let inputs = target.recipe.inputs(project) { hasher.update(data: Data(inputs.utf8)) }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
-                .filter { project.platform != .android || !$0.path.hasPrefix(root.appendingPathComponent("build").path + "/") }
+                .filter { file in target.recipe.built.map { !file.path.hasPrefix(root.appendingPathComponent($0).path + "/") } ?? true }
             for file in ([root] + files).sorted(by: { $0.path < $1.path }) {
                 guard let data = try? Data(contentsOf: file) else { continue }
                 hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))

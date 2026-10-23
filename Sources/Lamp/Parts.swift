@@ -12,16 +12,7 @@ import Foundation
 /// once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when its wish has one.
 enum Parts {
     /// The folder a part of this kind lives in, inside the wish's.
-    static func folder(for kind: Platform) -> String {
-        switch kind {
-        case .mac: "Mac"
-        case .iphone: "iPhone"
-        case .universal: "Apple"
-        case .tv: "TV"
-        case .android: "Android"
-        case .device: "Device"
-        }
-    }
+    static func folder(for kind: Platform) -> String { kind.target.part?.folder ?? kind.rawValue.prefix(1).uppercased() + kind.rawValue.dropFirst() }
 
     /// A part's id: its wish's, then its folder. Lamp's own ids are folder names, which never hold a dot, so no wish's
     /// id is ever a part's.
@@ -36,54 +27,30 @@ enum Parts {
     static let appsRoot = Edition.supportFolder.appendingPathComponent("Apps")
 
     /// The word for a part in `look_at_app` and `use_app`'s `part`, and in what Lamp tells the agent.
-    static func word(for kind: Platform) -> String {
-        switch kind {
-        case .mac: "mac"
-        case .iphone, .universal: "iphone"
-        case .tv: "tv"
-        case .android: "android"
-        case .device: "device"
-        }
-    }
+    static func word(for kind: Platform) -> String { kind.target.part?.word ?? kind.rawValue }
 
     /// What a part is, in the agent's words: "the iPhone app".
-    static func name(of kind: Platform) -> String {
-        switch kind {
-        case .mac: "the Mac app"
-        case .iphone: "the iPhone app"
-        case .universal: "the Mac and iPhone app"
-        case .tv: "the TV app"
-        case .android: "the Android app"
-        case .device: "the device's app"
-        }
-    }
+    static func name(of kind: Platform) -> String { kind.target.identity.name }
 
     /// The folders of a wish's other parts, found in its folder: one of Lamp's own part folders holding the scaffold of
-    /// a kind that folder can hold (any of Apple's kinds in an Apple folder, since a part made for more devices is
-    /// changed in place and keeps its folder; a TV app in TV/), at most one of each. They're found from what the wish's
-    /// versions keep (the scaffold), never from a list kept beside them, so a rename, an Undo or a restored version
-    /// can't leave the two telling different stories: a part comes and goes with its files.
+    /// a kind that folder can hold (any kind of the same code: any of Apple's kinds in an Apple folder, since a part made
+    /// for more devices is changed in place and keeps its folder; a TV app in TV/), at most one of each code. They're
+    /// found from what the wish's versions keep (the scaffold), never from a list kept beside them, so a rename, an Undo
+    /// or a restored version can't leave the two telling different stories: a part comes and goes with its files.
     static func folders(in wish: URL) -> [String] {
-        var found: [String] = [], apple = false
-        for folder in [.iphone, .mac, .universal, .tv].map(folder(for:)) {
-            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish) else { continue }
-            let holds = folder == Self.folder(for: .tv) ? kind == .tv : kind.hasMac || kind.hasIOS
-            guard holds, kind != .tv || !found.contains(folder) else { continue }
-            if kind != .tv { guard !apple else { continue }; apple = true }
-            found.append(folder)
+        var found: [String] = [], families: Set<String> = []
+        for part in Targets.all.compactMap(\.part) {
+            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(part.folder), wish: wish),
+                  kind.target.part?.family == part.family, families.insert(part.family).inserted else { continue }
+            found.append(part.folder)
         }
         return found
     }
 
     /// The kind of app the scaffold in a part's folder is, read without following a link (`AppFile`): the folder is the
-    /// agent's to write. At most the last 64 KB of Package.swift is read: Lamp's own is far smaller, and a file the agent
-    /// made huge is never read whole.
+    /// agent's to write.
     static func kindOfScaffold(in dir: URL, wish: URL) -> Platform? {
-        if AppFile.read(dir.appendingPathComponent(TVTemplate.webFolder).appendingPathComponent("lamp.js"), inFolder: wish, last: 1) != nil { return .tv }
-        guard let package = AppFile.read(dir.appendingPathComponent("Package.swift"), inFolder: wish, last: 64 * 1024) else { return nil }
-        let text = String(decoding: package, as: UTF8.self)
-        let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
-        return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
+        Targets.matchOrder.first { $0.part?.isMade(dir, wish) == true }?.platform
     }
 
     /// Whether the parts Lamp has listed for a wish are what its files hold, folder by folder and kind by kind: an Undo
@@ -111,17 +78,24 @@ enum Parts {
         }
     }
 
-    /// The kinds a wish for these devices is made of: one main kind, and the others beside it as parts. Apple's devices
-    /// are one kind between them, one code (`Platform(devices:)`); a TV app and an Android app are each a kind of their
-    /// own. With a TV among them the TV app is the main one, since what's on the TV is what the wish is about and the
-    /// rest reach it. An Android app, and a device with an integration that declares its apps, still stand alone.
+    /// The kinds a wish for these devices is made of: one main kind, and the others beside it as parts. The devices of
+    /// one part family are one kind between them (Apple's: `Platform(devices:)`); a TV app is a kind of its own. The kind
+    /// that leads a wish is the main one (a TV app: what's on the TV is what the wish is about and the rest reach it). An
+    /// Android app, and a device with an integration that declares its apps, still stand alone (`Target.Words.alone`).
     /// Nil for a list Lamp can't make.
     static func kinds(for devices: Set<String>) -> (main: Platform, parts: [Platform])? {
-        let apple = devices.intersection(["mac", "iphone", "watch"])
-        guard devices.contains("tv"), !apple.isEmpty, devices.subtracting(apple) == ["tv"], let kind = Platform(devices: apple) else {
-            return Platform(devices: devices).map { ($0, []) }
+        if let one = Platform(devices: devices) { return (one, []) }
+        var byFamily: [String: Set<String>] = [:]
+        for word in devices {
+            guard let owner = Targets.owner(of: word) else { return nil }
+            byFamily[owner.part?.family ?? owner.platform.rawValue, default: []].insert(word)
         }
-        return (.tv, [kind])
+        let kinds = byFamily.values.map { Platform(devices: $0) }
+        guard kinds.count > 1, !kinds.contains(nil) else { return nil }
+        let all = Targets.all.map(\.platform).filter { kinds.contains($0) }
+        let leading = all.filter { $0.target.identity.devices.leads }
+        guard all.allSatisfy({ !$0.target.identity.devices.alone }), leading.count == 1, let main = leading.first else { return nil }
+        return (main, all.filter { $0 != main })
     }
 
     /// The part of a wish (or the wish itself) a device word names: "iphone" is whichever has an iPhone, "mac" whichever
@@ -132,8 +106,6 @@ enum Parts {
             switch word {
             case "mac": app.platform.hasMac
             case "iphone", "ipad", "phone", "watch": app.platform.hasIOS
-            case "tv": app.platform == .tv
-            case "android": app.platform == .android
             default: Parts.word(for: app.platform) == word || folder(for: app.platform).lowercased() == word
             }
         }
@@ -145,7 +117,7 @@ enum Parts {
     static func skill(for kind: Platform) -> String { "target-" + folder(for: kind).lowercased() }
 
     /// Every kind a part can be, each with its rules as a skill (`Skills.read` answers from these).
-    static let partKinds: [Platform] = [.iphone, .mac, .universal, .tv]
+    static var partKinds: [Platform] { Targets.all.filter { $0.part != nil }.map(\.platform) }
 
     /// The rules for a part of each kind, as skills: the kind's own rules, for the files in its folder, without the
     /// ones about the wish as a whole, which the wish's prompt has. Made when asked, since some follow Lamp's settings.
@@ -159,16 +131,7 @@ enum Parts {
         return skills
     }
 
-    static func pack(for kind: Platform) -> String {
-        let folder = folder(for: kind)
-        switch kind {
-        case .mac: return Agent.prompt(platform: .mac, device: "Mac", sidebar: false, part: folder)
-        case .iphone: return Agent.prompt(platform: .iphone, device: DeviceFamily.iphone.name, sidebar: false, part: folder)
-        case .universal: return Agent.universalPrompt(for: .iphone, part: folder)
-        case .tv: return Agent.tvPrompt(part: folder)
-        case .android, .device: return ""
-        }
-    }
+    static func pack(for kind: Platform) -> String { kind.target.part?.rules(folder(for: kind)) ?? "" }
 
     /// The rule the wish's own prompt gets when it has other parts: what they are, where, how to reach each with the
     /// tools, and to open each one's rules before changing it.
@@ -183,7 +146,7 @@ enum Parts {
         its rules with `read_skill` (once per conversation) and follow them for the files in its folder; the rules \
         above are for the app at the root. `look_at_app` and `use_app` reach another part with `part` (left out, \
         they're for the app at the root): look at each part you changed before finishing.
-        """ + (wish.platform == .tv || parts.contains { $0.platform == .tv } ? Agent.Rules.tvParts : "")
+        """ + Targets.all.filter { kind in ([wish] + parts).contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
     }
 }
 
@@ -224,7 +187,7 @@ extension Agent {
         let named = candidates.compactMap(Parts.device).joined(separator: ", or ")
         return """
         You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Lamp makes apps \
-        for this Mac, for iPhone and iPad, for Samsung and LG TVs and for Android phones, and one wish can be more than \
+        \(Targets.lampMakes), and one wish can be more than \
         one of them, made to work together: a TV app with an iPhone app that controls it, a Mac app with its TV app. \
         This wish could be \(named.isEmpty ? "for more than one of them" : named), and it didn't say which, so nothing \
         is written until it's known.
@@ -244,12 +207,6 @@ extension Agent {
 extension Parts {
     /// A device the naming call or the agent names, in the words the undecided prompt says it with.
     static func device(_ word: String) -> String? {
-        switch word.lowercased() {
-        case "mac": "for this Mac"
-        case "iphone": "for iPhone and iPad"
-        case "tv": "for the TV"
-        case "android": "for an Android phone"
-        default: nil
-        }
+        Targets.asked(word.lowercased())
     }
 }

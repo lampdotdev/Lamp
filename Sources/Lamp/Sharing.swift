@@ -31,7 +31,7 @@ enum Sharing {
     /// whatever it has: a Lamp from before would look for Swift and find none.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
                        share: Bool = false, scene: Bool = false) -> Int {
-        platform == .android ? 9 : scene ? 8 : share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+        platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.hasIOS || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
     @MainActor private static var picker: NSSharingServicePicker?
@@ -160,9 +160,9 @@ enum Sharing {
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
     static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
-        // A shared file doesn't carry a TV app's web code yet.
-        guard project.platform != .tv, project.platform != .device else {
-            throw ImportError("\(project.name) can't be shared yet.", detail: project.platform == .tv ? "Lamp doesn't share TV apps yet." : "Lamp doesn't share apps for devices like this one yet.")
+        // Some kinds' files can't go in a shared file yet (a TV app's web code).
+        if let refusal = project.platform.target.recipe.shareRefusal {
+            throw ImportError("\(project.name) can't be shared yet.", detail: refusal)
         }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
@@ -174,7 +174,7 @@ enum Sharing {
         defer { removeStaged(made ? stage : work) }
 
         // An Android app's code is app/ as Lamp would open it (`AndroidFiles`): never Lamp's Gradle files beside it.
-        let android = project.platform == .android
+        let android = project.platform.target.recipe.language == .kotlin
         if android {
             let files = AndroidFiles.list(in: project.dir)
             for file in files.code + files.data {
@@ -414,7 +414,7 @@ enum Sharing {
             throw ImportError("This app was shared from a newer version of Lamp. Update Lamp to open it.")
         }
         let platform = manifest.platform ?? .mac
-        let android = platform == .android ? AndroidFiles.list(in: folder) : nil
+        let android = platform.target.recipe.language == .kotlin ? AndroidFiles.list(in: folder) : nil
         let appCode = android?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
         guard !appCode.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         // A widget's and a share extension's code is read whatever number the file gives itself: the number is
@@ -468,7 +468,7 @@ enum Sharing {
         // Swap the code there for the shared code; keep Lamp's own LampSupport.swift. The widget goes the
         // same way: whatever widget the app had is gone, and the file's, if it has one, takes its place
         // (Lamp's own file there is written again before the build).
-        if package.platform == .android {
+        if package.platform.target.recipe.language == .kotlin {
             try AndroidFiles.install(package, into: project)
         } else {
             let sources = project.dir.appendingPathComponent("Sources")
@@ -1114,7 +1114,7 @@ extension Sharing {
         if let browser = package.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
             found.files.append((BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
         }
-        if package.platform == .android {
+        if package.platform.target.recipe.language == .kotlin {
             // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
             // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
             found.detected = AndroidFiles.detected(in: package) + (hidesEncodedText(everything) ? [encodedData] : [])
@@ -1147,7 +1147,7 @@ extension Sharing {
         // doesn't wait for it.
         if case .openRouter(let model) = route.kind { Task.detached(priority: .utility) { await ModelNames.refresh(for: model) } }
         let request = reviewRequest(name: package.name, description: package.description, notes: found.about, files: found.files,
-                                    android: package.platform == .android)
+                                    android: package.platform.target.recipe.language == .kotlin)
         do {
             let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
                                                      schema: answerSchema, via: route)

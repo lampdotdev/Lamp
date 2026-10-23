@@ -86,19 +86,19 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
                  then: @escaping (LampProject) -> Void) {
         guard let current = store.current(project) else { cancelled(); return }
         // A TV app's preview needs nothing set up; Play with a TV chosen needs that TV set up.
-        if current.platform == .tv {
+        if current.onTV {
             guard building, let id = current.device else { then(current); return }
             TVSetup.shared.perform(id) { if let now = store.current(project) { then(now) } else { cancelled() } }
             return
         }
         // A device app needs its device set up before Open puts it there; a request goes to the agent either way.
-        if current.platform == .device {
+        if current.onDevice {
             guard building, let device = DeviceApps.device(for: current, among: store.devices), device.setup() != .ready else { then(current); return }
             DeviceSetupWindow.show(device) { if let now = store.current(project) { then(now) } else { cancelled() } }
             return
         }
         // An Android app's checks are Android's: the tools, the emulator, and the person's device when one is chosen.
-        if current.platform == .android {
+        if current.onAndroid {
             AndroidSetup.shared.perform(device: current.device, cancelled: cancelled) {
                 if let now = store.current(project) { then(now) } else { cancelled() }
             }
@@ -474,8 +474,8 @@ extension PhoneSetup.Context {
     /// by an app for both, and a paid one by nothing.
     init(for project: LampProject, phone: String?, building: Bool = false) {
         self.init(family: project.family, phone: phone, requiresPhoneTools: project.platform.hasIOS,
-                  requiresTeam: project.platform == .universal,
-                  requiresPaidTeam: building && (phone != nil || (project.platform == .universal && !project.onIOS)) && Self.usesICloud(project))
+                  requiresTeam: project.platform.choosesPlace,
+                  requiresPaidTeam: building && (phone != nil || (project.platform.choosesPlace && !project.onIOS)) && Self.usesICloud(project))
     }
 
     static func usesICloud(_ project: LampProject) -> Bool {

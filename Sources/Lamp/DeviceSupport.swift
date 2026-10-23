@@ -63,7 +63,7 @@ enum DeviceSupport {
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
-        guard project.platform == .device, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
+        guard project.platform.hasDevice, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
         return support.compactMap { name, path in
             guard let library = Library(rawValue: name), IntegrationCheck.isAppPath(path) else { return nil }
             return (library, path)
@@ -72,7 +72,7 @@ enum DeviceSupport {
 
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        if project.platform == .tv { return [TVTemplate.supportFile] }
+        if project.platform.hasTV { return [TVTemplate.supportFile] }
         if GameKit.isGame(project) { return GameKit.paths }
         return libraries(for: project).flatMap { entry in entry.library.files.map { $0.name.isEmpty ? entry.path : entry.path + "/" + $0.name } }
             + icons(for: project).map(\.path)
@@ -80,7 +80,7 @@ enum DeviceSupport {
 
     /// The icons a declared kind asks for (`app.declared.icons`), checked: a PNG at a plain path, at a size in pixels.
     static func icons(for project: LampProject) -> [(path: String, width: Int, height: Int)] {
-        guard project.platform == .device, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
+        guard project.platform.hasDevice, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
         return icons.compactMap { path, size in
             guard IntegrationCheck.isAppPath(path), path.lowercased().hasSuffix(".png"), let (width, height) = iconSize(size) else { return nil }
             return (path, width, height)

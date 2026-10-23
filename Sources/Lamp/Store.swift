@@ -6,99 +6,24 @@ import AppKit
 import Network
 import LampFileLook
 
-/// What an app is for: a Mac app that installs beside the user's others, an iPhone app that runs in the
-/// iOS Simulator on this Mac or on the person's own phone, one app for both, as Xcode's multiplatform
-/// apps are: one code, built for whichever is chosen under Try On (`LampProject.destination`), or an Android
-/// app (Kotlin and Compose, `AndroidTools`), which runs in the Android emulator or on the person's own device, or an
-/// app for a device Lamp has no kit for, made and put on it the way its integration declares (`DeviceApps`).
-enum Platform: String, Codable {
-    case mac, iphone, universal, android, tv   // "iphone" is the iOS kind: iPhone and iPad apps alike (see DeviceFamily)
-    /// The integration it's for is `LampProject.integration`.
-    case device
-
-    var hasMac: Bool { self == .mac || self == .universal }
-    var hasIOS: Bool { self == .iphone || self == .universal }
-    var hasAndroid: Bool { self == .android }
-}
-
 /// Where an app is built for and opened: this Mac, iOS (a simulator, or the person's phone, by
-/// `LampProject.family` and `device`), or Android (the emulator, or the person's device by `device`). A Mac
-/// app, an iPhone app or an Android app has one; an app for both has the one Try On last chose.
+/// `LampProject.family` and `device`), Android (the emulator, or the person's device by `device`), a TV (the TV
+/// preview, or the person's TV) or a device through its integration. Each kind says where it can open
+/// (`Target.places`); a Mac app, an iPhone app or an Android app has one; an app for both has the one Try On last
+/// chose. How Lamp builds, opens, looks at, uses and quits an app goes by this, so a kind that opens where another
+/// does gets all of that.
 enum Destination: String, Codable {
     case mac, ios, android, tv, device
+
+    /// Where the person's own devices are found to open on (phones, Android devices, TVs), so Lamp looks for them as
+    /// it starts when an app could open on one.
+    var listsDevices: Bool { self == .ios || self == .android || self == .tv }
 }
 
 /// Which simulator an iOS app opens on. The app itself is built for both.
 enum DeviceFamily: String, Codable {
     case iphone, ipad
     var name: String { self == .ipad ? "iPad" : "iPhone" }
-}
-
-/// What a new app is made as, chosen before its first message: in the welcome and in a new app's intro.
-/// iPhone and iPad are one kind of app, as Apple has it; which simulator it opens in is Try On's choice.
-/// The names are what the intro's sentence says ("Describe the iPhone & iPad app you wish you had").
-extension Platform {
-    /// What an app made for these devices is: the names `make_app_for` and the naming call use ("mac",
-    /// "iphone" for iPhone and iPad, "watch"). A watch app is part of an iPhone app (`Template.hasWatch`), so
-    /// "watch" brings the iPhone with it. Nil for an empty list or a device Lamp doesn't make apps for.
-    init?(devices: Set<String>) {
-        // An Android app stands alone: Lamp doesn't make one code for Apple's devices and Android.
-        if devices == ["android"] { self = .android; return }
-        // A TV app too: web code that no other kind shares.
-        if devices == ["tv"] { self = .tv; return }
-        // A device with an integration that declares its apps: what it runs is the integration's alone.
-        if devices.count == 1, let id = devices.first, DeviceApps.makesApps(id) { self = .device; return }
-        guard !devices.isEmpty, devices.isSubset(of: ["mac", "iphone", "watch"]) else { return nil }
-        let phone = devices.contains("iphone") || devices.contains("watch")
-        self = devices.contains("mac") ? (phone ? .universal : .mac) : .iphone
-    }
-}
-
-enum AppKind: String, CaseIterable {
-    case mac = "Mac", phone = "iPhone & iPad", universal = "Mac, iPhone & iPad", android = "Android", tv = "TV", device = "Device"
-
-    init(_ project: LampProject) {
-        self = switch project.platform {
-        case .mac: .mac
-        case .universal: .universal
-        case .iphone: .phone
-        case .android: .android
-        case .tv: .tv
-        case .device: .device
-        }
-    }
-    var platform: Platform {
-        switch self {
-        case .mac: .mac
-        case .universal: .universal
-        case .android: .android
-        case .tv: .tv
-        case .device: .device
-        case .phone: .iphone
-        }
-    }
-    /// For the prompts that describe the app to a model: "a Mac app", "an iPhone and iPad app".
-    var phrase: String {
-        switch self {
-        case .mac: "a Mac app"
-        case .phone: "an iPhone and iPad app"
-        case .universal: "an app for the Mac and the iPhone, one code for both"
-        case .android: "an Android app"
-        case .tv: "a TV app for Samsung and LG TVs"
-        case .device: "an app for one of the person's own devices"
-        }
-    }
-    /// The device's picture where the kind is chosen.
-    var symbol: String {
-        switch self {
-        case .mac: "laptopcomputer"
-        case .phone: "iphone"
-        case .universal: "laptopcomputer.and.iphone"
-        case .android: "smartphone"
-        case .tv: "tv"
-        case .device: "shippingbox"
-        }
-    }
 }
 
 struct LampProject: Identifiable, Hashable {
@@ -171,14 +96,9 @@ struct LampProject: Identifiable, Hashable {
     }
     /// Where the app is built for and opened now.
     var destination: Destination {
-        switch platform {
-        case .mac: .mac
-        case .iphone: .ios
-        case .universal: chosen
-        case .android: .android
-        case .tv: .tv
-        case .device: .device
-        }
+        // Only one of its kind's: a meta.json can say anything.
+        let places = platform.target.places
+        return places.contains(chosen) ? chosen : places[0]
     }
     /// On iOS now: the simulator, or the person's phone. The rest of Lamp's phone work follows this, and an
     /// app for both goes through it only while that's where it opens.
@@ -200,12 +120,7 @@ struct LampProject: Identifiable, Hashable {
     /// another team may have registered the plain one for the same app name.
     func deviceBundleID(team: String) -> String { platform == .universal ? bundleID : bundleID + "." + team.lowercased() }
     /// An app for both keeps a build for each place, so checking one half never replaces the other's.
-    var builtURL: URL {
-        if platform == .android { return dir.appendingPathComponent("app/build/outputs/apk/debug/app-debug.apk") }
-        if platform == .tv { return TVs.stagingFolder(for: self).appendingPathComponent("web/index.html") }
-        if platform == .device { return DeviceApps.packageURL(for: self) }
-        return dir.appendingPathComponent(platform == .universal && onIOS ? "build/iOS/\(exe).app" : "build/\(exe).app")
-    }
+    var builtURL: URL { platform.target.recipe.builtURL(self) }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
     var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
     /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
@@ -217,10 +132,7 @@ struct LampProject: Identifiable, Hashable {
     /// Nothing here is an app yet, or ever: a wish being found, or a device's setup.
     var makesNoApp: Bool { finding || isDeviceSetup }
     /// False for a draft (Template.draft): a new app whose scaffold isn't written yet.
-    var scaffolded: Bool {
-        FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) || Template.isAndroid(dir) || TVTemplate.isTV(dir)
-            || (platform == .device && DeviceApps.isScaffolded(dir))
-    }
+    var scaffolded: Bool { Targets.all.contains { $0.recipe.scaffolded(dir, self) } }
 }
 
 struct ProjectMeta: Codable {
@@ -513,7 +425,7 @@ final class Store: ObservableObject {
 
     /// Whether the app is open where it would open now: for an app for both, where Try On points.
     func isOpen(_ project: LampProject) -> Bool {
-        guard project.platform == .universal else { return openApps.contains(project.id) }
+        guard project.platform.choosesPlace else { return openApps.contains(project.id) }
         return (project.onIOS ? openOnIOS : openOnMac).contains(project.id)
     }
     /// The apps whose widget the person has put on the desktop (`WidgetCard`), for their chats' cards.
@@ -982,7 +894,7 @@ final class Store: ObservableObject {
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
         // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        if projects.contains(where: { $0.platform.hasIOS || $0.platform == .android || $0.platform == .tv }) { refreshDevices(); refreshSimulators() }
+        if projects.contains(where: { $0.platform.target.places.contains(where: \.listsDevices) }) { refreshDevices(); refreshSimulators() }
         else { Task { thisMac = await Device.readThisMac() } }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
@@ -1773,32 +1685,15 @@ final class Store: ObservableObject {
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false, integration: String? = nil,
                     parts: [Platform] = []) async -> LampProject {
         guard !project.scaffolded, kind != project.platform || integration != project.integration else { return project }
-        if kind == .device, let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, !WindowsTools.isReady {
-            // The tools are a long download: the window that gets them opens as the first request starts.
-            WindowsSetup.shared.show()
-        }
-        if kind == .android, !AndroidTools.isReady {
-            // Not asked for: a Mac app, with the setup a button away. Asked for: an Android app, and the setup
-            // window opens now, since the build can't go on without the tools (`androidToolsProblem`).
-            guard said else {
-                log(project, .iphoneSetup, kind.rawValue)
-                return project
-            }
-            AndroidSetup.shared.show()
-        }
-        if kind.hasIOS, !said {
-            let both = kind == .universal
-            let ready = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false).ready }.value
-            guard ready else {
-                log(project, .iphoneSetup, kind.rawValue)
-                return project
-            }
+        // Not asked for and not buildable here yet: a Mac app, with the setup a button away (the kind's own check).
+        guard await kind.target.setup.canChoose(said, integration) else {
+            log(project, .iphoneSetup, kind.rawValue)
+            return project
         }
         setKind(project, kind, integration: integration)
         guard let chosen = current(project) else { return project }
-        if kind != .mac {
-            let devices = kind == .iphone ? "iPhone and iPad" : kind == .android ? "Android" : kind == .tv ? "Samsung and LG TVs"
-                : kind == .device ? "your \(DeviceApps.integration(for: chosen)?.name ?? "device")" : "the Mac, iPhone and iPad"
+        if kind != Targets.fallback.platform {
+            let devices = kind.target.identity.made(DeviceApps.integration(for: chosen)?.name, "your")
             let with = parts.map { ", with \(Parts.name(of: $0)) to go with it" }.joined()
             log(chosen, .status, watch ? "Making this for \(devices), and Apple Watch\(with)." : "Making this for \(devices)\(with).")
         }
@@ -1823,13 +1718,7 @@ final class Store: ObservableObject {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.") }
         if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil) }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.") }
-        if kind.hasIOS {
-            let report = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: kind == .universal, requiresPaidTeam: false) }.value
-            if let issue = report.issue {
-                PhoneSetup.shared.show()
-                return (nil, "this Mac can't build \(Parts.name(of: kind)) yet. \(issue.title): \(issue.message) Lamp opened its setup steps.")
-            }
-        }
+        if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem) }
         let folder = Parts.folder(for: kind)
         let dir = wish.dir.appendingPathComponent(folder)
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing.
@@ -1886,7 +1775,7 @@ final class Store: ObservableObject {
         guard !project.scaffolded, let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         var changed = projects[index]
         changed.platform = platform
-        changed.integration = platform == .device ? integration : nil
+        changed.integration = platform.hasDevice ? integration : nil
         // Choosing what to make doesn't need installed tools. Send checks the selected simulator
         // before building and explains the next setup action without blocking this draft's picker.
         if !platform.hasIOS { changed.device = nil }
@@ -1914,7 +1803,7 @@ final class Store: ObservableObject {
     /// keeps the one chosen, and `.some(nil)` goes back to Lamp's own pick of the family.
     func setDevice(_ project: LampProject, _ udid: String?, family: DeviceFamily? = nil, simulator: String?? = nil) {
         let family = family ?? project.family
-        let moving = project.platform == .universal && project.chosen != .ios
+        let moving = project.platform.choosesPlace && project.chosen != .ios
         let newSimulator = simulator ?? project.simulator
         let otherSimulator = newSimulator != project.simulator
         guard project.platform.hasIOS, project.device != udid || project.family != family || moving || otherSimulator,
@@ -1949,7 +1838,7 @@ final class Store: ObservableObject {
     /// Which Android device an Android app opens on: the person's own, by its serial, or nil for the emulator.
     /// The copy on the old one is closed, so Play and Stop are about the one chosen.
     func setAndroidDevice(_ project: LampProject, _ serial: String?) {
-        guard project.platform == .android, project.device != serial, begin(project) != nil else { return }
+        guard project.onAndroid, project.device != serial, begin(project) != nil else { return }
         var changed = project
         changed.device = serial
         try? Template.saveMeta(changed)
@@ -1968,7 +1857,7 @@ final class Store: ObservableObject {
     /// Which TV a TV app goes on when the person presses Play, by its id in `TVs`, or nil for the preview alone. A TV
     /// not set up yet is set up first (`TVSetup`), and chosen once it's ready.
     func setTVDevice(_ project: LampProject, _ id: String?) {
-        guard project.platform == .tv, project.device != id else { return }
+        guard project.onTV, project.device != id else { return }
         let choose = { [self] in
             guard let current = current(project), begin(current) != nil else { return }
             var changed = current
@@ -1987,7 +1876,7 @@ final class Store: ObservableObject {
     /// Which of the person's devices a device app goes on (`DeviceApps`), by its id as its integration found it. One not
     /// set up yet is set up first, in its setup window, and chosen once it's ready.
     func setDeviceAppDevice(_ project: LampProject, _ id: String) {
-        guard project.platform == .device, let device = devices.first(where: { $0.id == id }) else { return }
+        guard project.onDevice, let device = devices.first(where: { $0.id == id }) else { return }
         let choose = { [self] in
             guard let current = current(project), current.device != id, begin(current) != nil else { return }
             var changed = current
@@ -2052,7 +1941,7 @@ final class Store: ObservableObject {
     /// An app for both, back on this Mac: Try On's "My Mac". Its next open is a Mac build; the iOS copy stays
     /// open, and Stop quits it once Try On points there again.
     func setMac(_ project: LampProject) {
-        guard project.platform == .universal, project.chosen != .mac, begin(project) != nil else { return }
+        guard project.platform.choosesPlace, project.chosen != .mac, begin(project) != nil else { return }
         var changed = project
         changed.chosen = .mac
         try? Template.saveMeta(changed)
@@ -3009,7 +2898,7 @@ final class Store: ObservableObject {
         // Only the first message names the app (bootstrap). A later one, after the agent only asked questions,
         // finds it untitled if that naming failed, and mustn't show a naming that isn't happening.
         progress[project.id]?.naming = first && project.untitled
-        let kind = Analytics.kind(AppKind(project))
+        let kind = project.platform.target.identity.analytics
         if newApp && first {
             Analytics.capture(.appFirstRequest, ["kind": kind, "has_attachments": messages.contains { !$0.attachments.isEmpty }])
         }
@@ -4095,7 +3984,7 @@ final class Store: ObservableObject {
         // under the same name.
         await WidgetProcess.end(for: project)
         // A device app is taken off the devices Lamp put it on, and Lamp's packages of it go.
-        if project.platform == .device {
+        if project.onDevice {
             // An install already under way runs to its end (Stop ends no request mid-upload, and a device may take minutes
             // to say how it went), so it's let finish before its package is taken off again; its own requests and polls
             // are bounded, so this ends.
@@ -4248,7 +4137,7 @@ final class Store: ObservableObject {
     /// Asks the in-app AI model to describe a command for a non-technical person: what it does, and its risk.
     private func explain(_ command: String, for project: LampProject, sandboxed: Bool = false) async -> CommandExplanation? {
         await CommandRisk.rating(command: command, request: turns[project.id]?.request ?? "",
-                                 building: "\(AppKind(project).phrase) called \"\(project.name)\"") { prompt, system in
+                                 building: "\(project.platform.target.identity.phrase) called \"\(project.name)\"") { prompt, system in
             try await AppAI.complete(prompt: prompt, images: [], system: system, json: true).0
         }
     }
@@ -4899,7 +4788,7 @@ final class Store: ObservableObject {
         let lowered = relative.lowercased()
         if protected.contains(where: { lowered == $0.lowercased() || lowered.hasPrefix($0.lowercased() + "/") }) 
             // An Android app's building blocks are Lamp's while it is one; made into a Swift app, the agent clears app/ away.
-            || (project.platform == .android && Template.isAndroidSupport(relative))
+            || (project.platform.target.recipe.language == .kotlin && Template.isAndroidSupport(relative))
             // A TV's or a device app's building blocks are Lamp's too (`DeviceSupport`).
             || DeviceSupport.isSupport(relative, in: project) {
             return (400, ["error": "\(relative) belongs to Lamp and can't be deleted."])
@@ -5007,7 +4896,7 @@ final class Store: ObservableObject {
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return project }
         let kind = Template.platform(fromPackageIn: project.dir)
         // A device app's code also says which device it's for: restoring between two such kinds changes that too.
-        let integration = kind == .device ? DeviceApps.integrationID(in: project.dir) : nil
+        let integration = kind?.target.recipe.integration(project.dir)
         if let kind, projects[index].platform != kind || projects[index].integration != integration {
             projects[index].platform = kind
             projects[index].integration = integration
@@ -5023,7 +4912,7 @@ final class Store: ObservableObject {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         guard let kinds = Parts.kinds(for: devices) else {
             let others = DeviceApps.kinds().map(\.id)
-            return (400, ["error": "`devices` must list one or more of mac, iphone, watch, tv and android"
+            return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
         let kind = kinds.main
@@ -5034,7 +4923,7 @@ final class Store: ObservableObject {
         // kind of the same devices (an iPhone app that's to be for the Mac too) is changed in place; one no longer
         // wanted is taken away.
         var said: [String] = []
-        let group: (Platform) -> Int = { $0 == .tv ? 1 : $0 == .android ? 2 : $0 == .device ? 3 : 0 }
+        let group: (Platform) -> String = { $0.target.part?.family ?? $0.rawValue }
         for part in parts(of: wish) where !kinds.parts.contains(where: { group($0) == group(part.platform) }) {
             said.append(await removePart(part) ? "Lamp took \(Parts.name(of: part.platform)) away, as asked; the wish's versions still have it."
                         : "\(Parts.name(of: part.platform)) is still there: the person kept it open. Tell them it has to close first.")
@@ -5066,7 +4955,7 @@ final class Store: ObservableObject {
     private func changeMainKind(_ arguments: [String: Any], devices: Set<String>, kind: Platform, for project: LampProject) async -> (Int, [String: Any]) {
         // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
         let hadWatch = current(project).map(Template.hasWatch) ?? false
-        let (status, answer) = await convert(project, to: kind, integration: kind == .device ? devices.first : nil)
+        let (status, answer) = await convert(project, to: kind, integration: kind.hasDevice ? devices.first : nil)
         guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
               let now = current(project) else { return (status, answer) }
         // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, and names the skill
@@ -5094,27 +4983,11 @@ final class Store: ObservableObject {
         guard let current = current(project), let index = projects.firstIndex(where: { $0.id == project.id }) else {
             return (404, ["error": "Lamp can't find the app."])
         }
-        let words = kind == .mac ? "the Mac" : kind == .iphone ? "iPhone and iPad" : kind == .android ? "Android" : kind == .tv ? "Samsung and LG TVs"
-            : kind == .device ? "the person's \(integration.flatMap(Integrations.integration)?.name ?? "device")" : "the Mac, iPhone and iPad"
-        guard kind != current.platform || (kind == .device && integration != current.integration) || current.undecided != nil
+        let words = kind.target.identity.made(integration.flatMap(Integrations.integration)?.name, "the person's")
+        guard kind != current.platform || (kind.hasDevice && integration != current.integration) || current.undecided != nil
         else { return (200, ["text": "It's already made for \(words)."]) }
-        if kind == .device, let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, let problem = WindowsTools.problem {
-            WindowsSetup.shared.show()
-            return (200, ["text": "Not yet: this Mac can't build Xbox games. \(problem) Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
-        }
-        if kind == .android, let issue = await AndroidTools.check().issue {
-            AndroidSetup.shared.show()
-            return (200, ["text": "Not yet: this Mac can't build it for Android. \(issue.title): \(issue.message) Lamp opened its setup steps. " +
-                          "Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
-        }
-        if kind.hasIOS {
-            let both = kind == .universal
-            let report = await Task.detached { PhoneTools.checked(family: .iphone, phone: nil, requiresTeam: both, requiresPaidTeam: false) }.value
-            if let issue = report.issue {
-                PhoneSetup.shared.show()
-                return (200, ["text": "Not yet: this Mac can't build it for \(words). \(issue.title): \(issue.message) Lamp opened its setup steps. " +
-                              "Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
-            }
+        if let problem = await kind.target.setup.notReady(integration, nil) {
+            return (200, ["text": "Not yet: \(problem) Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
         }
         // Every copy closes first, the turn's own answer included: one kept open (the person kept unsaved work)
         // would go on as an app Lamp no longer knows by its id.
@@ -5124,7 +4997,7 @@ final class Store: ObservableObject {
         }
         var changed = current
         changed.platform = kind
-        changed.integration = kind == .device ? integration : nil
+        changed.integration = kind.hasDevice ? integration : nil
         // A wish held for its device has nothing written yet: given its kind, it's made now, scaffold and first version,
         // so the agent builds on it in this request as it would on any new wish.
         let undecided = current.undecided != nil
@@ -5164,42 +5037,26 @@ final class Store: ObservableObject {
         }
         syncLocalNetwork()
         log(changed, .status, "\(changed.name) is made for \(words) now.")
-        let rules: String = switch kind {
-        case .universal: Agent.Rules.universal + Agent.Rules.universalFrameworks + Agent.Rules.universalTry
-        case .iphone: Agent.Rules.iPhoneFrameworks + Agent.Rules.iPhoneTry
-        case .mac: Agent.Rules.macFrameworks
-        case .android: Agent.Rules.androidEdit + Agent.Rules.androidFrameworks + Agent.Rules.androidAI + Agent.Rules.androidData + Agent.Rules.androidTry
-        case .tv: Agent.Rules.tvEdit + Agent.Rules.tvFrameworks + Agent.Rules.tvDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry
-        case .device: GameKit.isGame(changed) ? Agent.Rules.gameEdit + Agent.Rules.gameKit + Agent.Rules.gameBudget + Agent.Rules.gameTry
-            : Agent.Rules.deviceEdit + Agent.Rules.deviceKind(DeviceApps.integration(for: changed)) + Agent.Rules.deviceTry(changed)
-        }
-        // To or from Android or a TV the code is written over again in another language: the scaffold of the new kind
-        // is put in beside what's there, for the agent to move the app into.
-        // A device app is the device's own language, so going to or from one always is.
-        let ownLanguage: (Platform) -> Int = { $0 == .android ? 1 : $0 == .tv ? 2 : $0 == .device ? 3 : 0 }
-        if ownLanguage(kind) != ownLanguage(current.platform) || kind == .device, current.scaffolded {
+        let rules = kind.target.guidance.changeRules(changed)
+        // To or from another code the app is written over again in that language: the scaffold of the new kind is put
+        // in beside what's there, for the agent to move the app into. A device app is the device's own language, so
+        // going to one always is.
+        let (before, after) = (current.platform.target, kind.target)
+        if before.recipe.language != after.recipe.language || after.recipe.refills, current.scaffolded {
             try? Template.fill(changed)
         }
-        // Lamp's own script is what marks a folder as a TV app (a version restored later reads its kind off it), so it
-        // goes with the kind, before the next version is saved.
-        if current.platform == .tv, kind != .tv { AppFolder.remove(changed.dir.appendingPathComponent(TVTemplate.supportFile), in: changed.dir) }
-        if current.platform == .device, kind != .device { AppFolder.remove(changed.dir.appendingPathComponent(DeviceApps.marker), in: changed.dir) }
-        let from = current.platform == .android ? "the Kotlin in app/" : current.platform == .tv ? "the web code in Web/"
-            : current.platform == .device ? "the code that was for the device" : "the Swift in Sources/"
-        let leftover = current.platform == .android ? "app/ and the Gradle files" : current.platform == .tv ? "the rest of Web/"
-            : current.platform == .device ? "the files that were for the device" : "Sources/, Package.swift and the other Swift-only files"
-        let rewrite = fresh || ownLanguage(kind) == ownLanguage(current.platform) ? ""
-            : kind == .android ? "Write the app again in Kotlin and Jetpack Compose under app/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
-            : kind == .tv ? "Write the app again as a TV app in Web/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
-            : kind == .device ? "Write the app again for the device, in the scaffold its integration gave (it's there now), reading \(from) for what it does, then delete \(leftover) with delete_file. "
-            : "Write the app again in Swift under Sources/ (the scaffold is there), reading \(from) for what it does, then delete \(leftover) with delete_file. "
+        // What marks a folder as the old kind (a version restored later reads its kind off it) goes with the kind,
+        // before the next version is saved.
+        if kind != current.platform, let marker = before.recipe.marker { AppFolder.remove(changed.dir.appendingPathComponent(marker), in: changed.dir) }
+        let (old, new) = (before.recipe.language, after.recipe.language)
+        let rewrite = fresh || old == new ? "" : new.rewrite(old.code, old.leftover)
         if undecided {
             return (200, ["text": "Done: \(changed.name) is made for \(words), and its scaffold is written. These are your rules from now " +
                           "on, in place of the ones you began with; build the wish now, in this request:\n\n" + Agent.kindPrompt(for: changed)])
         }
         return (200, ["text": "Done: \(changed.name) is made for \(words) from now on, and that replaces what your instructions said " +
                       "about what it runs on. Adapt its code now, in this request, and build it before you finish. " + rewrite +
-                      (kind == .universal ? "Put what only one platform has under `#if os(macOS)` or `#if os(iOS)`. " : "") +
+                      (kind.choosesPlace ? "Put what only one platform has under `#if os(macOS)` or `#if os(iOS)`. " : "") +
                       "What applies now:\n" + rules.replacingOccurrences(of: "{{DEVICE}}", with: changed.family.name)])
     }
 
@@ -5331,17 +5188,28 @@ final class Store: ObservableObject {
         return url
     }
 
-    /// The tools every engine gets, from Resources/lamp-tools.json: the one place their names, descriptions and
-    /// schemas live. pi's extension (lamp-tools.ts) reads the same file, so the two can't drift apart.
-    static let mcpTools: [[String: Any]] = {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"),
-              let data = try? Data(contentsOf: url),
-              let tools = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+    /// The tools every engine gets: Resources/lamp-tools.json, the one place their names, descriptions and schemas live,
+    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`). That's done
+    /// once, to the file's own text: the MCP endpoint serves it, and pi's extension (lamp-tools.ts) reads it from
+    /// `toolsFile`, so both get the same rendering.
+    nonisolated static let toolsJSON: Data = {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"), let data = try? Data(contentsOf: url),
+              let quoted = try? JSONSerialization.data(withJSONObject: [Targets.toolDevices], options: .withoutEscapingSlashes) else {
             assertionFailure("lamp-tools.json is missing from the app")
-            return []
+            return Data("[]".utf8)
         }
-        // `label` is pi's: MCP clients see name, description and inputSchema.
-        return tools.map { tool in tool.filter { $0.key != "label" } }
+        let devices = String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
+        return Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: "{{DEVICES}}", with: devices).utf8)
+    }()
+    // `label` is pi's: MCP clients see name, description and inputSchema.
+    static let mcpTools: [[String: Any]] = ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? [])
+        .map { tool in tool.filter { $0.key != "label" } }
+    /// `toolsJSON` as pi's extension reads it, written once per launch to Lamp's own pi folder.
+    nonisolated static let toolsFile: URL? = {
+        let url = URL(fileURLWithPath: Agent.configDir).appendingPathComponent("lamp-tools.json")
+        guard (try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)) != nil,
+              (try? toolsJSON.write(to: url, options: .atomic)) != nil else { return nil }
+        return url
     }()
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
@@ -5879,7 +5747,7 @@ final class Store: ObservableObject {
         log(project, .status, "Building…")
         // A device app whose kind takes the icon gets it in the package Lamp sends, drawn from the icon as it is now:
         // its install comes after the package is made, so the icon is brought up to date first, not there.
-        if project.platform == .device, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
+        if project.onDevice, !DeviceSupport.icons(for: project).isEmpty { await prepareIcon(project) }
         // Lamp's own files first, and no build without them: the build runs build.sh and Package.swift.
         do {
             try await writeOwnFiles(project, all: true)
@@ -5894,7 +5762,7 @@ final class Store: ObservableObject {
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         // A TV app has nothing to compile: its files are copied where the preview and the packages read them.
-        if project.platform == .tv {
+        if project.onTV {
             do {
                 _ = try await TVs.stage(project)
                 Runtime.markBuilt(project, from: fingerprint)
@@ -5905,7 +5773,7 @@ final class Store: ObservableObject {
             }
         }
         // A device app's build is its integration's package step, in the app's sandbox; Lamp keeps the package it made.
-        if project.platform == .device {
+        if project.onDevice {
             // A game's tools aren't here: said once for a request, with the window that gets them open.
             if let problem = gameToolsProblem(project) {
                 let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
@@ -5947,7 +5815,7 @@ final class Store: ObservableObject {
         }
         let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
         // An Android app's build is Gradle's, with Google's tools where Lamp put them (`AndroidTools.environment`).
-        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.platform == .android ? AndroidTools.buildEnvironment : [:]
+        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.onAndroid ? AndroidTools.buildEnvironment : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
@@ -6690,7 +6558,7 @@ final class Store: ObservableObject {
         let device = previewDevice(project)
         var summary = "The app is open in the \(device) preview on this Mac."
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
-        let stale = project.platform == .device && previewBuilt[project.id] != Runtime.builtFingerprint(project)
+        let stale = project.platform.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
             let problem = await install(project, inFront: false, early: true)
             turn.look.installed = true
@@ -6821,7 +6689,7 @@ final class Store: ObservableObject {
 
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
     private func previewDevice(_ project: LampProject) -> String {
-        project.platform == .tv ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
+        project.onTV ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
     }
 
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
@@ -7267,7 +7135,7 @@ final class Store: ObservableObject {
     }
 
     private func androidToolsProblem(_ project: LampProject) -> String? {
-        guard project.platform == .android, !AndroidTools.isReady else { return nil }
+        guard project.onAndroid, !AndroidTools.isReady else { return nil }
         return "Android's tools aren't on this Mac yet. Download them in the Android Setup window (also under Settings → Building), then try again."
     }
 
@@ -7727,7 +7595,7 @@ final class Store: ObservableObject {
         if owner?.diedOnLaunch == true { crashesAfterRelease[project.id] = crash }
         // A TV, an Android device or another device that didn't take the app has said why already: it never opened, so
         // it didn't crash.
-        else if project.platform == .tv || project.platform == .android || project.platform == .device { return }
+        else if project.onTV || project.onAndroid || project.onDevice { return }
         else { log(project, .error, ErrorMessages.crashAfterLaunch(project.name)) }
     }
 
@@ -8630,7 +8498,7 @@ final class Store: ObservableObject {
         androidApps = androidApps.filter { $0.value.alive }
         // A TV app is open while its preview is, unless a TV is chosen: then Play is for putting it on the TV, which
         // Lamp can't watch, so it always offers Play.
-        let previews = TVPreview.openIDs.filter { id in projects.first { $0.id == id }.map { $0.platform == .tv && $0.device == nil } ?? false }
+        let previews = TVPreview.openIDs.filter { id in projects.first { $0.id == id }.map { $0.onTV && $0.device == nil } ?? false }
         // A device app is open while it's the one Lamp last put on its device, so Stop can take the device back.
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
@@ -8647,7 +8515,7 @@ final class Store: ObservableObject {
     /// unsaved work stays open until the person has said what to do with it.
     /// An app for both is quit only where Try On points: its other copy stays open.
     func quitApp(_ project: LampProject) async {
-        await quit(project, only: project.platform == .universal ? project.destination : nil)
+        await quit(project, only: project.platform.choosesPlace ? project.destination : nil)
         refreshOpenApps()
     }
 
@@ -8678,7 +8546,7 @@ final class Store: ObservableObject {
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
         // Lamp closing it isn't the app dying on launch.
         retireLaunches(of: project)
-        if project.platform == .device {
+        if project.onDevice {
             // Its preview on this Mac too, with the page's sound and timers.
             TVPreview.close(project)
             refreshOpenApps()
@@ -8690,12 +8558,12 @@ final class Store: ObservableObject {
             }
             return true
         }
-        if project.platform == .tv {
+        if project.onTV {
             TVPreview.close(project)
             refreshOpenApps()
             return true
         }
-        if project.platform == .android {
+        if project.onAndroid {
             if let running = androidApps[project.id] {
                 await Adb.stop(Template.androidPackage(for: project), on: running.serial)
                 running.end()
@@ -8771,7 +8639,7 @@ final class Store: ObservableObject {
     /// port of its own (`PhoneSites`), opened and closed here too, with the TV preview.
     func syncLocalNetwork() {
         gateway?.setLocalNetwork(projects.contains {
-            (($0.platform.hasIOS || $0.platform.hasAndroid || $0.platform == .tv) && $0.device != nil) || ($0.platform == .device && !DeviceSupport.libraries(for: $0).isEmpty)
+            (($0.platform.hasIOS || $0.platform.hasAndroid || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
         })
         PhoneSites.sync(projects)
     }
@@ -8780,7 +8648,7 @@ final class Store: ObservableObject {
     /// can't watch, for as long as it's the TV the app opens on. Lamp serves it so the agent never has to start a
     /// server of its own, which would outlive the app.
     static func servesPhonePage(_ project: LampProject) -> Bool {
-        project.platform == .tv && (project.device != nil || TVPreview.window(project) != nil) && takesPlayers(project)
+        project.platform.hasTV && (project.device != nil || TVPreview.window(project) != nil) && takesPlayers(project)
     }
 
     /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
@@ -8922,14 +8790,14 @@ final class Store: ObservableObject {
         // phone following the TV's QR code has, for the TV app's socket. Only a part of the same wish is answered.
         if project.isPart {
             let wish = wish(of: project)
-            guard wish.platform == .tv, wish.id != project.id else { return (403, ["error": "This app's wish has no TV app."]) }
+            guard wish.platform.hasTV, wish.id != project.id else { return (403, ["error": "This app's wish has no TV app."]) }
             syncLocalNetwork()
             guard Self.servesPhonePage(wish), let port = await PhoneSites.ready(wish.id) else {
                 return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."])
             }
             return (200, ["socket": "ws://\(host):\(port)/socket", "join": ControllerCredential.issue(kind: .join, app: wish.id)])
         }
-        guard project.platform == .tv else { return (403, ["error": "Only TV apps take phone controllers."]) }
+        guard project.platform.hasTV else { return (403, ["error": "Only TV apps take phone controllers."]) }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
         guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
@@ -8941,13 +8809,13 @@ final class Store: ObservableObject {
     /// Read off the wish itself (its parts as found in its folder), never off the list of apps, which is being set
     /// while Lamp reads its apps again: a game must not end because, for a moment, the list was half made.
     nonisolated static func takesPlayers(_ project: LampProject) -> Bool {
-        project.platform == .tv && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty)
+        project.platform.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty)
     }
 
     /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then
     /// after): the address its site is listening at, which moves when another program has taken the port it had.
     private func phonePageAddress(for project: LampProject) async -> (Int, [String: Any]) {
-        guard project.platform == .tv else { return (403, ["error": "Only TV apps have phone pages."]) }
+        guard project.platform.hasTV else { return (403, ["error": "Only TV apps have phone pages."]) }
         guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
         guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
@@ -8961,7 +8829,7 @@ final class Store: ObservableObject {
         let parts = request.path.split(separator: "?", maxSplits: 1).first.map(String.init)?.split(separator: "/").map(String.init) ?? []
         guard request.fromNetwork ? Self.isMacHost(host) : Self.isLocalHost(host), let host,
               parts.count == 3, parts[0] == "phone", parts[2] == "socket", let key = request.headers["sec-websocket-key"],
-              projects.contains(where: { $0.id == parts[1] && $0.platform == .tv }) else {
+              projects.contains(where: { $0.id == parts[1] && $0.platform.hasTV }) else {
             connection.send(content: Data("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),
                             completion: .contentProcessed { _ in connection.cancel() })
             return

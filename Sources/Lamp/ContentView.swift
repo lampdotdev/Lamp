@@ -246,7 +246,7 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.isOpen(project))
-        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
+        if project.platform.target.places != [.mac] {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -860,7 +860,7 @@ struct ProjectView: View {
                 .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
             }
         }
-        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
+        if project.platform.target.places != [.mac] {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
@@ -880,18 +880,14 @@ struct ProjectView: View {
                     Label(store.tryOnName(project), systemImage: project.onDevice ? Device.Kind.other.symbol : project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help(project.platform == .device ? "Where it opens: which of your \(DeviceApps.integration(for: project)?.name ?? "devices") it goes on"
-                      : project.platform == .tv ? "Where it opens: the TV preview on this Mac, or one of your TVs"
-                      : project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
-                      : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
-                      : "Where it opens: a simulator, or your own iPhone or iPad")
+                .help(project.platform.target.identity.tryOnHelp(project))
             }
         }
         if let part = store.parts(of: project).first {
             ToolbarItem {
                 // The wish's other app (an iPhone app beside its TV app): used, quit and given a place here, as the
                 // wish's own app is beside it.
-                let name = part.platform == .mac ? "Mac App" : "iPhone App"
+                let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
                 Menu {
                     if store.isOpen(part) {
                         Button("Quit the \(name)") { Task { await store.quitApp(part) } }
@@ -901,10 +897,10 @@ struct ProjectView: View {
                     Divider()
                     TryOnChoices(project: part)
                 } label: {
-                    Label(name, systemImage: part.platform == .mac ? "laptopcomputer" : "iphone")
+                    Label(name, systemImage: symbol)
                 }
                 .disabled(busy)
-                .help("The \(part.platform == .mac ? "Mac app" : "iPhone app") that goes with \(project.name): use it, and choose where it opens")
+                .help("The \(name.replacingOccurrences(of: " App", with: " app")) that goes with \(project.name): use it, and choose where it opens")
             }
         }
         gap
@@ -1402,7 +1398,7 @@ struct ImportReviewView: View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
                          review: pending.review, existing: pending.existing?.name, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
-                         android: pending.package.platform == .android)
+                         android: pending.package.platform.target.recipe.language == .kotlin)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -1766,11 +1762,11 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        if project.platform == .device {
+        if project.onDevice {
             deviceChoices
-        } else if project.platform == .tv {
+        } else if project.onTV {
             tvChoices
-        } else if project.platform == .android {
+        } else if project.onAndroid {
             androidChoices
         } else {
             appleChoices
@@ -1867,7 +1863,7 @@ private struct TryOnChoices: View {
     }
 
     @ViewBuilder private var appleChoices: some View {
-        if project.platform == .universal {
+        if project.platform.choosesPlace {
             // An app for both: this Mac is a place to open it too, beside the simulators and phones.
             Picker("This Mac", selection: Binding(get: { project.onIOS ? nil : Destination.mac },
                                                   set: { if $0 != nil { store.setMac(project) } })) {
