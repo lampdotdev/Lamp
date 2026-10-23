@@ -5,6 +5,15 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.6
+
+- Make 3D games for your Xbox: Lamp comes with a 3D engine for them, the agent tries each game in a window on your Mac
+  as it builds, and the game reads your controller's sticks and triggers.
+- A device that was reset or had its developer mode turned on again can be reconnected, and Settings → Your Devices
+  lets you reconnect or forget any device Lamp set up.
+- A TV app can have a page for your phone, as a controller, a buzzer or a second screen, served by Lamp over your home
+  Wi‑Fi while the app runs.
+
 ## 0.18.5
 
 - Settings no longer crashes when you set up a device with a long list of devices: the window stays on your screen as
