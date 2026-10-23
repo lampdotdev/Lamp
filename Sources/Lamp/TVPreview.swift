@@ -391,8 +391,12 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                     """
                 _ = await js(source)
                 if hold > 0 {
-                    try? await Task.sleep(for: .seconds(hold))
+                    // Let go the moment the person takes the app back or presses Stop, not when the hold would have ended.
+                    let until = Date().addingTimeInterval(hold)
+                    while Date() < until, stillMine() { try? await Task.sleep(for: .milliseconds(100)) }
+                    let held = hold - max(0, until.timeIntervalSinceNow)
                     _ = await js("(function () { if (window.__lampHeldKey) window.__lampHeldKey('keyup'); window.__lampHeldKey = null; return ''; })();")
+                    guard stillMine() else { report.append("\(n). Held \(name) for \(held.formatted(.number.precision(.fractionLength(1)))) s, then stopped."); break }
                     report.append("\(n). Held \(name) for \(hold.formatted()) s.")
                 } else {
                     report.append("\(n). Pressed \(name).")

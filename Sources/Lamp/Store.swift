@@ -3177,8 +3177,9 @@ final class Store: ObservableObject {
                         Notification.Name(Edition.notificationPrefix + "showWindow"), object: project.bundleID, userInfo: nil, deliverImmediately: true)
                     app.activate()
                     log(project, .status, "\(project.name) is \(owner.updatedInPlace ? "updated" : "ready")")
-                } else if project.onDevice, let run = deviceRuns[project.id] {
-                    // The look put it on the device already, as it is now.
+                } else if project.onDevice, let run = deviceRuns[project.id], deviceRunBuilt[project.id] == Runtime.builtFingerprint(project) {
+                    // The look put it on the device already, as it is now. One that went to the preview on this Mac
+                    // didn't, so the change goes on the device below.
                     log(project, .status, "\(project.name) is open on \(run.device.name).")
                 } else if !isOnChosenPhone(project) {
                     crash = await install(project)
@@ -6400,6 +6401,9 @@ final class Store: ObservableObject {
     private var deviceRuns: [String: DeviceApps.Run] = [:]
     /// Devices an app is being put on now, by id.
     private var installingOn: Set<String> = []
+    /// What each device app's run on its device was built from, so a look that went to the preview on this Mac isn't
+    /// taken for the device having the change.
+    private var deviceRunBuilt: [String: String] = [:]
 
     /// The device a device app goes on now: the one chosen, or the only one its integration finds, looked for again
     /// when the list hasn't got it yet.
@@ -6480,9 +6484,11 @@ final class Store: ObservableObject {
         try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         do {
+            let built = Runtime.builtFingerprint(project)
             let run = try await DeviceApps.install(project, on: device, log: file, stillWanted: stillWanted)
             guard stillWanted() else { run.end(); return "Stopped." }
             deviceRuns[project.id] = run
+            deviceRunBuilt[project.id] = built
             refreshOpenApps()
             if inFront { log(project, .status, "\(project.name) is open on \(device.name).") }
             return nil
@@ -8182,6 +8188,10 @@ final class Store: ObservableObject {
         // Lamp closing it isn't the app dying on launch.
         retireLaunches(of: project)
         if project.platform == .device {
+            // Its preview on this Mac too, with the page's sound and timers.
+            TVPreview.close(project)
+            refreshOpenApps()
+            deviceRunBuilt[project.id] = nil
             if let run = deviceRuns.removeValue(forKey: project.id) {
                 run.end()
                 // Home takes a device back from the app, where its remote has one.

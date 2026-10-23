@@ -280,21 +280,24 @@ extension Agent {
         let name = integration?.name ?? "the device"
         let rules = [Rules.deviceEdit, Rules.ask, Rules.shell, Rules.deviceKind(integration), Rules.deviceBlocks(project), Rules.icon, Rules.about,
                      Rules.deviceAttachments, Rules.deviceTry(project), Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return (Rules.deviceHeader(integration) + "\n\nRules:\n" + rules.joined())
+        let previews = DeviceApps.previewFolder(for: project) != nil
+        return (Rules.deviceHeader(integration, previews: previews) + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: name)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a " + name)
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: "puts it on the \(name) again and opens it")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: previews ? "opens it again in the \(name) preview on this Mac" : "puts it on the \(name) again and opens it")
     }
 }
 
 extension Agent.Rules {
-    static func deviceHeader(_ integration: Integration?) -> String {
+    static func deviceHeader(_ integration: Integration?, previews: Bool = false) -> String {
         let name = integration?.name ?? "a device"
+        let watching = previews
+            ? "you try it in a preview of the \(name) on this Mac, and when the person presses Play Lamp makes its package with the package step its integration declares and puts it on the \(name)."
+            : "Lamp makes its package with the package step its integration declares, puts it on the \(name) and opens it there: the person watches it on that device's screen."
         return """
         You are Lamp's builder agent. The current directory is an app for \(name) (\(integration?.kind ?? "a device") by \
-        \(integration?.maker ?? "its maker")), the person's own, which Lamp reaches over their network. Lamp makes its \
-        package with the package step its integration declares, puts it on the \(name) and opens it there: the person \
-        watches it on that device's screen. Read APP.md first for context.
+        \(integration?.maker ?? "its maker")), the person's own, which Lamp reaches over their network: \(watching) \
+        Read APP.md first for context.
         """
     }
 
@@ -350,6 +353,13 @@ extension Agent.Rules {
         let keys = DeviceApps.keys(for: project)
         let integration = DeviceApps.integration(for: project)
         let name = integration?.name ?? "device"
+        if DeviceApps.previewFolder(for: project) != nil {
+            return "- `look_at_app` opens the app in the \(name) preview on this Mac, a 1920x1080 window running it in this Mac's browser, "
+                + "and shows you a picture of it with its screen as text and what its console printed; it's the preview, not the person's "
+                + "\(name), so never say how it runs on the \(name) itself. `use_app` clicks, types and presses keys there: the arrows, enter, "
+                + "back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try a game by "
+                + "playing it. Play puts the app on the \(name).\n"
+        }
         var rule = "- `look_at_app` makes the package, puts it on the person's \(name), opens it there and shows you a picture of its screen, "
             + "with what the device answered to the install and what the app printed when the device has a log. "
         if keys.isEmpty || integration?.bridge?.use == nil {
