@@ -575,10 +575,11 @@ struct WishLinkPanel: View {
                          copy: { link.send(.wishLink(.copy)) }, stop: { link.send(.wishLink(.stop)) },
                          close: { link.send(.wishLink(.close)) }, width: nil)
         }
+        // A new picture is all Lamp changes on the card by itself: what's typed here stays as it is.
         .onChange(of: card.revision) {
             guard card.revision != revision else { return }
             revision = card.revision
-            values = Self.values(of: card)
+            values.includePicture = card.includePicture
         }
     }
 }

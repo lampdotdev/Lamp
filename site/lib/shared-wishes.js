@@ -50,8 +50,13 @@ export function tidy(value, max, { lines = false } = {}) {
   const spaced = value.replace(/\r\n?/g, "\n").replace(lines ? /\t/g : /[\t\n]/g, " ");
   const kept = [...spaced].filter((c) => (lines && c === "\n") || !/[\p{Cc}\p{Cf}\u2028\u2029]/u.test(c) || c === "\u200d").join("");
   const text = (lines ? kept.replace(/\n{3,}/g, "\n\n") : kept.replace(/\s+/g, " ")).trim();
-  return text && [...text].length <= max ? text : null;
+  return text && characters(text) <= max ? text : null;
 }
+
+/** Characters as people see them (and as Swift counts them on Lamp's card): an accented letter or a family emoji
+ *  made of several code points is one. */
+const graphemes = new Intl.Segmenter("en", { granularity: "grapheme" });
+export const characters = (text) => { let n = 0; for (const _ of graphemes.segment(text)) n++; return n; };
 
 /** What a picture is, read from its first bytes: only a PNG or a JPEG of a sensible size. */
 export function imageInfo(bytes) {
@@ -244,6 +249,7 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       if (retry > 0) return reply(429, { error: "rate_limited" }, { "Retry-After": String(retry) });
     }
 
+    let uploaded = [];
     try {
       const earlier = method === "POST" ? null : await kept.get(id);
       if (method !== "POST" && (!earlier || !secretMatches(bearer(request), earlier.secret))) return reply(404, { error: "not_found" });
@@ -256,23 +262,29 @@ export function createShareHandler({ env = process.env, fetcher = fetch, store, 
       }
 
       const wishID = method === "POST" ? newID() : id;
-      const picture = share.picture && { url: await kept.putImage(wishID, "picture", share.picture), width: share.picture.width, height: share.picture.height };
-      const icon = share.icon && { url: await kept.putImage(wishID, "icon", share.icon) };
+      // Pictures go up before the record that names them; until it's kept they're taken back on any failure, or
+      // they'd stay public with nothing that leads to them.
+      uploaded = [];
+      const put = async (name, image) => { const at = await kept.putImage(wishID, name, image); uploaded.push(at); return at; };
+      const picture = share.picture && { url: await put("picture", share.picture), width: share.picture.width, height: share.picture.height };
+      const icon = share.icon && { url: await put("icon", share.icon) };
       const time = now().toISOString();
       const words = { name: share.name, line: share.line, words: share.words, picture: picture || null, icon: icon || null };
       if (method === "PUT") {
         await kept.replace({ ...earlier, ...words, updated: time });
+        uploaded = [];
         await kept.removeImages(oldImages);
         await kept.forget(id);
         return reply(200, { id, url: linkFor(url.origin, id) });
       }
       const secret = newSecret();
       if (!(await kept.create({ id: wishID, ...words, secret: hashSecret(secret), created: time, updated: time }))) {
-        await kept.removeImages([picture?.url, icon?.url].filter(Boolean));
-        return reply(503, { error: "service_unavailable" });
+        throw new Error("Id taken");
       }
+      uploaded = [];
       return reply(201, { id: wishID, url: linkFor(url.origin, wishID), secret });
     } catch {
+      try { await kept.removeImages(uploaded); } catch {}
       return reply(503, { error: "service_unavailable" });
     }
   };

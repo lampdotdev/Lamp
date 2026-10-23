@@ -47,6 +47,7 @@ test("only a checked wish is taken: known fields, plain words within their limit
   assert.equal(readShare({ ...share, name: "Plant\u0000\nPal" }).name, "Plant Pal");
   assert.equal(readShare({ ...share, extra: 1 }), null);
   assert.equal(readShare({ ...share, name: "x".repeat(LIMITS.name + 1) }), null);
+  assert.equal(readShare({ ...share, name: "e\u0301".repeat(LIMITS.name) }).name.length, LIMITS.name * 2, "counted as Lamp counts");
   assert.equal(readShare({ ...share, words: "  " }), null);
   assert.equal(readShare({ ...share, picture: Buffer.from("<svg></svg>").toString("base64") }), null);
   assert.equal(readShare({ ...share, icon: png(64, 32).toString("base64") }), null, "an icon is square");
@@ -73,6 +74,15 @@ test("a wish is shared, changed and taken down only with its secret", async () =
   assert.equal((await send(handler, "DELETE", undefined, { id })).status, 404);
   assert.equal((await send(handler, "DELETE", undefined, { id, secret })).status, 204);
   assert.equal(store.records.has(id), false);
+});
+
+test("pictures that went up are taken back when the wish can't be kept", async () => {
+  const store = memoryStore();
+  const removed = [];
+  store.removeImages = async (urls) => { removed.push(...urls); };
+  store.create = async () => { throw new Error("down"); };
+  assert.equal((await send(createShareHandler({ store, limited: false }), "POST", share)).status, 503);
+  assert.equal(removed.length, 2);
 });
 
 test("browsers on other sites, other kinds of body and oversized ones are refused", async () => {
