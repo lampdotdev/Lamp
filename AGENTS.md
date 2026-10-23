@@ -797,7 +797,14 @@ that answers 204 until it's done (`poll`) and fails with the device's words unle
 Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer Mode, Device Portal's password, and a
 controller-driven web app (`navigator.gamepadInputEmulation = "keyboard"`, arrow focus) wrapped as MSIX. Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
-Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out.
+Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: Babylon.js ships
+with Lamp (`Resources/WebLibraries/babylon`, Apache-2.0 with its notice) as a library a kind asks for like the building
+blocks (`DeviceSupport.Library.babylon`, `"babylon": "Web/babylon.js"`), so nothing loads from the network, and the rules
+keep scenes within what an Xbox One's web view draws and have a game read the controller with the Gamepad API while it's
+played, the keyboard too. A kind that declares `preview` (a web app's folder) is looked at and used in the preview on the
+Mac, the TV preview's window under the device's name (`Store.openDevicePreview`, `TVPreview.show(device:)`, where Back
+is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play still puts
+it on the device.
 
 ## TV apps
 

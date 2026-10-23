@@ -163,6 +163,7 @@ cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lam
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 cp -R Resources/Onboarding "$APP/Contents/Resources/"
 cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
+rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as Babylon.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.

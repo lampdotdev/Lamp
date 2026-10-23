@@ -207,6 +207,15 @@ app at each path before every build, so name those paths in the scaffold's manif
 sure the package step takes them in. Never draw an icon in the scaffold or the package step. A device that shows no icon
 for an app needs none.
 
+`"support"` may also name `"babylon"`, Babylon.js (the 3D engine), as a file in the app's web folder
+(`"babylon": "Web/babylon.js"`): for a device whose web view runs WebGL and whose apps may be games or 3D scenes. Lamp
+writes it with the others; say in the rules to load it before the app's own script.
+
+`"preview": "Web"` is for a web app: the folder whose `index.html` Lamp opens at 1920x1080 in a window on the person's Mac,
+for the builder to look at and try as it works (a TV app's preview), since the device's own screen can only be pictured,
+not played. Play still puts the app on the device. Give one whenever the app is a web page; the rules should then say the
+app must also work with the keyboard (arrows, Enter, Escape for the device's Back), which is how the preview is used.
+
 `"wrap": "msix"` is for a device that takes Windows app packages (an Xbox in Developer Mode, through its Device
 Portal): the package step leaves a `.zip` of the app's files, and Lamp makes the package itself, writing its manifest
 (started at `start`, `index.html` unless said), its logos from the app's icon, and its signature with a certificate of

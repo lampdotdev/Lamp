@@ -310,7 +310,7 @@ enum TVs {
     /// own sandbox, so it reads only the app's folder, links kept as links, then none allowed. What the preview shows and
     /// what goes on a TV are only the app's own files. Its phone page, if it has one, is copied beside them the same way
     /// and never goes in a package. Gives back the copy of the web files.
-    static func stage(_ project: LampProject) async throws -> URL {
+    static func stage(_ project: LampProject, folder: String = TVTemplate.webFolder) async throws -> URL {
         let fm = FileManager.default
         let dir = stagingFolder(for: project)
         let files = dir.appendingPathComponent("web")
@@ -325,7 +325,7 @@ enum TVs {
         }
         defer { try? fm.removeItem(at: incoming) }
         let page = Sandbox.quoted(TVTemplate.phoneFolder)
-        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(TVTemplate.webFolder)) \"$LAMP_TO\""
+        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(folder)) \"$LAMP_TO\""
             + " && if [ -e \(page) ] || [ -L \(page) ]; then /bin/cp -Rp \(page) \"$LAMP_PHONE\"; fi"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the app's files.") }
         var output: [String] = []
@@ -344,7 +344,7 @@ enum TVs {
             throw Failure(message: "Some of the app's files are shortcuts to other files. Put the files themselves in their place.")
         }
         guard fm.fileExists(atPath: files.appendingPathComponent("index.html").path) else {
-            throw Failure(message: "The app has no \(TVTemplate.webFolder)/index.html yet.")
+            throw Failure(message: "The app has no \(folder)/index.html yet.")
         }
         let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
         // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
