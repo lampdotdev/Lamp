@@ -6,12 +6,12 @@ import { summary } from "./shared-wish-page.js";
 // picture of it, on the night sky of the first-idea section (global.css's .wish-night) with the lamp's warm light
 // rising from the bottom. Drawn by @vercel/og; Geist stands in for the Mac's own type, which can't be sent with it.
 
-const file = (path) => readFileSync(new URL(path, import.meta.url));
+// Each file named where it's read, so Vercel's tracing bundles it with the function (vercel.json lists them too).
 const fonts = () => [
-  { name: "Geist", data: file("./fonts/Geist-Regular.ttf"), weight: 400, style: "normal" },
-  { name: "Geist", data: file("./fonts/Geist-Bold.ttf"), weight: 700, style: "normal" },
+  { name: "Geist", data: readFileSync(new URL("./fonts/Geist-Regular.ttf", import.meta.url)), weight: 400, style: "normal" },
+  { name: "Geist", data: readFileSync(new URL("./fonts/Geist-Bold.ttf", import.meta.url)), weight: 700, style: "normal" },
 ];
-const lampIcon = () => `data:image/png;base64,${file("../public/apple-touch-icon.png").toString("base64")}`;
+const lampIcon = () => `data:image/png;base64,${readFileSync(new URL("../public/apple-touch-icon.png", import.meta.url)).toString("base64")}`;
 
 export const WIDTH = 1200;
 export const HEIGHT = 630;
@@ -93,7 +93,9 @@ export function createCardHandler({ env = process.env, fetcher = fetch, store } 
       return new Response(png, {
         headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600, s-maxage=86400", ...cacheTags(wish.id) },
       });
-    } catch {
+    } catch (error) {
+      // Only what went wrong, never the wish.
+      console.error("wish card failed:", error?.name, error?.message);
       return new Response(null, { status: 503, headers: { "Cache-Control": "no-store" } });
     }
   };
