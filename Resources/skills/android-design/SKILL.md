@@ -144,6 +144,13 @@ A game draws itself: a `Canvas` filling the screen, its loop in `LaunchedEffect`
 only. Hide the system bars while playing, keep the game's state in a class the Canvas reads, and save the score and
 progress with LampStore.
 
+A game has sound: a short effect (under a second) for each thing the player does or meets, from `SoundPool` with each
+sound loaded once (files in `app/src/main/res/raw`, .ogg or .wav), and music only when it suits, quiet (0.3 to 0.4)
+under effects at 0.6 to 0.8, from a `MediaPlayer` with `isLooping`. With no sound files, make the effects in code: a
+few hundredths of a second of a wave written into an `AudioTrack` (`MODE_STATIC`), with soft ends so it doesn't click.
+Pause the music when the activity stops and release both when it's destroyed. Its settings turn sound and music on and
+off, kept with LampStore. The emulator plays it on the Mac's speakers.
+
 ## Checking it
 
 Look at each screen with `look_at_app` as you build it, with real-looking content in it (several items, long and short

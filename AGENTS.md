@@ -832,7 +832,9 @@ as WinUI's control does (a controller given the CoreWindow itself ends the app o
 `CoreWebView2` and its DevTools receivers for the app's life (WebView2 drops the handlers of objects let go). The
 console's web view lays a page out at 1280x720 and scales it up, so the host zooms it to 1920x1080 CSS pixels before the
 app's page opens (`fit_page`), as the preview and the rules have it. Only the app's own page may use the host: a link
-to another site opens in the console's browser, and an answer goes only to the page that asked. The page
+to another site opens in the console's browser, and an answer goes only to the page that asked. Its sound plays as the app opens, as a console app's title music does: the host
+turns off Chromium's rule that holds a page's sound back until the first button press (`--autoplay-policy`), which
+left an Xbox web app silent until then. The page
 is https at `https://lamp.example/`, so lamp.js reaches Lamp's plain-http gateway through the host (`http` web
 messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses first: the console reaches the
 `.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. The page's console, uncaught
@@ -856,8 +858,13 @@ found by). `make_app_for` takes either. A kind in `kinds` is Lamp's only: the ch
 builder writes.
 
 A game is C++ against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
-controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`), drawn with
-sokol_gfx, with sokol's shapes, text and GL, HandmadeMath, cgltf and stb_image, all compiled in `lamp_kit.cpp`. Lamp
+controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`, and sound: `lamp_sound_load`,
+`lamp_sound_tone`, `lamp_play`, `lamp_music`, `lamp_volume`), drawn with sokol_gfx, with sokol's shapes, text and GL,
+HandmadeMath, cgltf and stb_image, all compiled in `lamp_kit.cpp`. Sound is the kit's own mix (`lamp_sound.cpp`: effects
+decoded whole, music read as it plays, with stb_vorbis, dr_wav and dr_mp3, 32 voices at 48 kHz), which the console's
+host plays through XAudio2 on a thread of its own and the preview mixes after each frame without playing it, so the
+game's timing never depends on it: the preview reports what played and how loud the mix came out (`lamp_preview`'s
+"Lamp sound:" line), and a fifth argument writes the mix as a WAV file to listen to. Lamp
 writes the kit flat into the game's `Lamp/` before every turn and build (`GameKit.write`, only what changed, and
 `kit.stamp` so the build compiles Lamp's code again only then); the agent writes `Game/` (.cpp and .glsl) and `Assets/`.
 The kit has two hosts, Lamp's too: `lamp_xbox.cpp`, a CoreWindow app with a Direct3D 11 swap chain at 1920x1080,
@@ -908,7 +915,10 @@ made under the app's sandbox, links refused), which is all the preview and the p
 (`DeviceSupport.webJS`, below), then the remote's keys by name, focus moved with the arrows to the nearest thing in that
 direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing handles it (`Lamp.store` is
 `LampStore` under the name it had first). The rules are `Agent.tvPrompt` (`Rules.tv…`: a
-1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). The agent tries the app in
+1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). Sound is the browser's own
+Web Audio (`Rules.webSound`, also given to every declared kind with the web library, the Xbox's included), with no
+building block of Lamp's: every one of these browsers has it, and the preview on the Mac plays it with no click first
+(WebKit on macOS starts audio without one). The agent tries the app in
 the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
 the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
 files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and

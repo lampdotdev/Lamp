@@ -6731,6 +6731,7 @@ final class Store: ObservableObject {
         try? AppFolder.write(played.printed.joined(separator: "\n") + "\n", to: Runtime.logURL(project), in: project.dir)
         var text = said
         if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
+        if let sound = played.sound { text += "\n\nThe preview's sound, mixed but not played: \(sound)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         else { text += played.printed.isEmpty ? "\n\nThe game logged nothing." : "\n\nWhat the game logged:\n" + played.printed.suffix(40).joined(separator: "\n") }
         let pictures = Privacy.sharesPictures ? Array(played.pictures.filter { wanted.contains($0.deletingPathExtension().lastPathComponent) }.suffix(4)) : []

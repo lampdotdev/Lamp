@@ -4,8 +4,11 @@
 // 60 frames a second of game time, as fast as the Mac goes. A play is a script Lamp writes from what the agent asked
 // for: hold the controller this way for so many frames, take a picture now. Every play starts from the beginning
 // with the same random seed, so the same script plays the same way, and Lamp replays the whole of it after a change.
+// Its sound is mixed after each frame as the console's would be, a frame's worth at a time, and played to nobody: it
+// says at the end what was played and how loud the mix came out, and, given a fifth argument, writes the mix there as
+// a WAV file, so the sound itself can be listened to.
 //
-//   lamp_preview <script> <pictures folder> <assets folder> <saves folder>
+//   lamp_preview <script> <pictures folder> <assets folder> <saves folder> [sound.wav]
 //
 // The script's lines:   hold <frames> <lx> <ly> <rx> <ry> <lt> <rt> <buttons>    and    shot <name>
 #include "lamp_game.h"
@@ -99,6 +102,38 @@ static uint64_t g_vertices, g_draws;
 static void count_draw(int base, int elements, int instances, void*) { (void)base; g_draws++; g_vertices += (uint64_t)elements * (uint64_t)(instances > 0 ? instances : 1); }
 static void count_draw_ex(int base, int elements, int instances, int base_vertex, int base_instance, void* user) { (void)base_vertex; (void)base_instance; count_draw(base, elements, instances, user); }
 
+// The mix as a 16-bit stereo WAV file, written as it's made and its sizes filled in at the end.
+struct SoundFile {
+    FILE* file = nullptr;
+    uint32_t bytes = 0;
+    void open(const char* path) {
+        file = fopen(path, "wb");
+        if (!file) return;
+        uint8_t header[44] = {};
+        fwrite(header, 1, 44, file);
+    }
+    void add(const float* mix, int frames) {
+        if (!file) return;
+        int16_t samples[2 * 800];
+        for (int i = 0; i < frames * 2; i++) {
+            float x = mix[i] < -1 ? -1 : mix[i] > 1 ? 1 : mix[i];
+            samples[i] = (int16_t)lrintf(x * 32767);
+        }
+        bytes += (uint32_t)fwrite(samples, 2, (size_t)frames * 2, file) * 2;
+    }
+    void close() {
+        if (!file) return;
+        auto u32 = [](uint8_t* p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; };
+        uint8_t h[44] = { 'R','I','F','F', 0,0,0,0, 'W','A','V','E', 'f','m','t',' ', 16,0,0,0, 1,0, 2,0, 0,0,0,0, 0,0,0,0, 4,0, 16,0,
+                          'd','a','t','a', 0,0,0,0 };
+        u32(h + 4, 36 + bytes); u32(h + 24, 48000); u32(h + 28, 48000 * 4); u32(h + 40, bytes);
+        fseek(file, 0, SEEK_SET);
+        fwrite(h, 1, 44, file);
+        fclose(file);
+        file = nullptr;
+    }
+};
+
 static bool save_png(id<MTLTexture> texture, id<MTLCommandQueue> queue, const std::string& path) {
     NSUInteger w = texture.width, h = texture.height, row = w * 4;
     id<MTLBuffer> buffer = [queue.device newBufferWithLength:row * h options:MTLResourceStorageModeShared];
@@ -127,7 +162,10 @@ static bool save_png(id<MTLTexture> texture, id<MTLCommandQueue> queue, const st
 
 int main(int argc, char** argv) {
     @autoreleasepool {
-        if (argc < 5) { fprintf(stderr, "usage: lamp_preview <script> <pictures> <assets> <saves>\n"); return 2; }
+        if (argc < 5) { fprintf(stderr, "usage: lamp_preview <script> <pictures> <assets> <saves> [sound.wav]\n"); return 2; }
+        SoundFile sound;
+        if (argc > 5) sound.open(argv[5]);
+        float mix[2 * 800];
         FILE* script = fopen(argv[1], "r");
         if (!script) { fprintf(stderr, "Lamp: no script at %s\n", argv[1]); return 2; }
         std::string pictures = argv[2];
@@ -204,6 +242,9 @@ int main(int argc, char** argv) {
                     frame.swapchain.metal.depth_stencil_texture = (__bridge const void*)depth;
                     g_draws = 0; g_vertices = 0;
                     game_frame(&frame);
+                    // A frame's worth of sound, 1/60 of 48,000 frames: the mix keeps to the game's own clock.
+                    lamp_host_mix(mix, 800);
+                    sound.add(mix, 800);
                     if (g_draws > most_draws) most_draws = g_draws;
                     if (g_vertices > most_vertices) most_vertices = g_vertices;
                     total_vertices += g_vertices;
@@ -224,6 +265,10 @@ int main(int argc, char** argv) {
         printf("Lamp stats: %llu frames (%.1f s of play) in %.1f s on this Mac; at most %llu draws and %llu vertices in a frame, %llu vertices a frame on average.\n",
                (unsigned long long)g_frame, g_frame / 60.0, seconds, (unsigned long long)most_draws, (unsigned long long)most_vertices,
                (unsigned long long)(g_frame ? total_vertices / g_frame : 0));
+        char said[2048];
+        lamp_host_sound_report(said, sizeof said);
+        printf("Lamp sound: %s.\n", said);
+        sound.close();
         sg_shutdown();
     }
     return 0;

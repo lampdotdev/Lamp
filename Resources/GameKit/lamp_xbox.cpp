@@ -1,13 +1,14 @@
 // Lamp's game kit: the host on the Xbox. Lamp writes this file before every build.
 //
 // A full-screen app with its own CoreWindow: a Direct3D 11 device and a flip swap chain at 1920x1080 with a depth
-// buffer, the controllers through Windows.Gaming.Input, the game's assets read from the package and its saves and
-// log kept in the app's own folder, which Device Portal reads back. Presented with vsync every frame: without it the
+// buffer, the controllers through Windows.Gaming.Input, the kit's sound mix played through XAudio2, the game's assets
+// read from the package and its saves and log kept in the app's own folder, which Device Portal reads back. Presented with vsync every frame: without it the
 // console ends the app after its first frame.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d11_1.h>
 #include <dxgi1_3.h>
+#include <xaudio2.h>
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -20,7 +21,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <exception>
+#include <thread>
 #include <string>
 #include "lamp_game.h"
 #include "lamp_host.h"
@@ -114,6 +117,74 @@ extern "C" void lamp_rumble(int pad, float low, float high) {
     g_rumble[pad].Vibration(v);
 }
 
+// The kit's mix on the console's speakers: a source voice XAudio2 plays, fed by a thread of the host's own a hundredth
+// of a second at a time, three ahead, so a slow frame of the game's never makes the sound stop.
+struct Speaker : IXAudio2VoiceCallback {
+    IXAudio2* engine = nullptr;
+    IXAudio2MasteringVoice* master = nullptr;
+    IXAudio2SourceVoice* source = nullptr;
+    HANDLE played = nullptr;   // set by XAudio2 as each piece finishes
+    std::atomic<bool> running{ false };
+    static const int FRAMES = 480, AHEAD = 3;
+    float pieces[AHEAD][FRAMES * 2];
+
+    bool start() {
+        HRESULT hr = XAudio2Create(&engine, 0, XAUDIO2_DEFAULT_PROCESSOR);
+        if (FAILED(hr)) { lamp_log("Lamp: the sound couldn't start (XAudio2, 0x%08x); the game plays without it.", (unsigned)hr); return false; }
+        if (FAILED(hr = engine->CreateMasteringVoice(&master))) { lamp_log("Lamp: the sound has no speakers to play on (0x%08x).", (unsigned)hr); return false; }
+        WAVEFORMATEX format{};
+        format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+        format.nChannels = 2;
+        format.nSamplesPerSec = 48000;
+        format.wBitsPerSample = 32;
+        format.nBlockAlign = 8;
+        format.nAvgBytesPerSec = 48000 * 8;
+        if (FAILED(hr = engine->CreateSourceVoice(&source, &format, 0, XAUDIO2_DEFAULT_FREQ_RATIO, this))) { lamp_log("Lamp: the sound couldn't start (0x%08x).", (unsigned)hr); return false; }
+        played = CreateEventExW(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
+        source->Start(0);
+        running = true;
+        // Never joined: it plays until the console ends the app (a thread still joinable at exit would end it with an error).
+        std::thread([this] { feed(); }).detach();
+        return true;
+    }
+
+    void feed() {
+        int next = 0;
+        while (running) {
+            XAUDIO2_VOICE_STATE state{};
+            source->GetState(&state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+            if (state.BuffersQueued >= AHEAD) { WaitForSingleObjectEx(played, 50, FALSE); continue; }
+            lamp_host_mix(pieces[next], FRAMES);
+            XAUDIO2_BUFFER buffer{};
+            buffer.AudioBytes = FRAMES * 2 * sizeof(float);
+            buffer.pAudioData = (const BYTE*)pieces[next];
+            source->SubmitSourceBuffer(&buffer);
+            next = (next + 1) % AHEAD;
+        }
+    }
+
+    // Seconds of sound XAudio2 has sent to the speakers so far.
+    double played_seconds() {
+        if (!source) return 0;
+        XAUDIO2_VOICE_STATE state{};
+        source->GetState(&state, 0);
+        return (double)state.SamplesPlayed / 48000;
+    }
+
+    // Set aside, the console wants the game quiet and still; back, it plays on from where it was.
+    void pause() { if (engine) engine->StopEngine(); }
+    void resume() { if (engine) engine->StartEngine(); }
+
+    void STDMETHODCALLTYPE OnBufferEnd(void*) override { SetEvent(played); }
+    void STDMETHODCALLTYPE OnVoiceProcessingPassStart(UINT32) override {}
+    void STDMETHODCALLTYPE OnVoiceProcessingPassEnd() override {}
+    void STDMETHODCALLTYPE OnStreamEnd() override {}
+    void STDMETHODCALLTYPE OnBufferStart(void*) override {}
+    void STDMETHODCALLTYPE OnLoopEnd(void*) override {}
+    void STDMETHODCALLTYPE OnVoiceError(void*, HRESULT error) override { lamp_log("Lamp: the sound stopped on an error (0x%08x).", (unsigned)error); }
+};
+static Speaker& g_speaker = *new Speaker();   // never destroyed, as its thread never ends
+
 static const int W = 1920, H = 1080;
 
 struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
@@ -140,8 +211,9 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         CoreApplication::Suspending([this](auto const&, auto const&) {
             lamp_log("Lamp: the console set the game aside.");
             if (device) if (auto dxgi = device.try_as<IDXGIDevice3>()) dxgi->Trim();
+            g_speaker.pause();
         });
-        CoreApplication::Resuming([](auto const&, auto const&) { lamp_log("Lamp: the game came back."); });
+        CoreApplication::Resuming([](auto const&, auto const&) { lamp_log("Lamp: the game came back."); g_speaker.resume(); });
     }
 
     void Load(hstring const&) {}
@@ -198,6 +270,8 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         QueryPerformanceCounter(&now);
         lamp_host_seed((uint64_t)now.QuadPart);
         LampSetup setup = { W, H, SG_PIXELFORMAT_BGRA8, SG_PIXELFORMAT_DEPTH_STENCIL, 1 };
+        // Before the game starts, so music it starts in game_init plays from its first note.
+        if (g_speaker.start()) lamp_log("Lamp: the sound is on.");
         game_init(&setup);
         lamp_log("Lamp: game_init done.");
         ready = true;
@@ -249,6 +323,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         int pads_seen = -1;
         double window_time = 0, slowest = 0;
         int window_frames = 0, late = 0;
+        bool told_sound = false;
         for (;;) {
             window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
             QueryPerformanceCounter(&now);
@@ -280,6 +355,11 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
                 if (dt > 1.0 / 50.0) late++;
                 if (window_frames == 600) {
                     lamp_log("Lamp: frames %.1f ms on average, slowest %.1f ms, %d of 600 late.", window_time * 1000 / window_frames, slowest * 1000, late);
+                    // Once, that the speakers are being fed: how much sound has gone out against how long the game ran.
+                    if (!told_sound && g_speaker.source) {
+                        lamp_log("Lamp: %.1f s of sound played in the first %.1f s.", g_speaker.played_seconds(), frame.time);
+                        told_sound = true;
+                    }
                     window_time = 0; window_frames = 0; slowest = 0; late = 0;
                 }
             }

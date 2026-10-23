@@ -9,8 +9,10 @@ commit named, under its own licence.
   domain (CC0 1.0).
 - cgltf.h: https://github.com/jkuhlmann/cgltf at 85cd62382dfea638278962690cf515023f33ed00, MIT licence, Copyright (c)
   2018-2021 Johannes Kuhlmann.
-- stb_image.h: https://github.com/nothings/stb at 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5, MIT licence or public
-  domain, Copyright (c) 2017 Sean Barrett (its licence is at the end of the file).
+- stb_image.h and stb_vorbis.c: https://github.com/nothings/stb at 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5, MIT
+  licence or public domain, Copyright (c) 2017 Sean Barrett (the licence is at the end of each file).
+- dr_wav.h, dr_mp3.h: https://github.com/mackron/dr_libs at dfe8377631000664666519fdb83da193fd8037f4, public domain
+  (Unlicense) or MIT No Attribution, Copyright 2023 David Reid (the licence is at the end of each file).
 
 ## sokol
 
