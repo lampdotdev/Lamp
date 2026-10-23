@@ -1088,8 +1088,15 @@ build folders, sign-ins and place in the lists), as taking a part away does; the
 game. A part never has a turn of its own: Lamp's own requests for it (carrying on after its Reload, fixing its crash) are
 its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by (whose turn has the app, whether the
 person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
-its apps waits. A copy is found by its install place only for an app with a Mac copy there, since a TV wish's Mac app is
-installed under the wish's name. Which kinds a list
+its apps waits. No app of a wish comes first in what a turn and the wish's history do to it. At a turn's end each app the
+agent changed is built, its errors sent back to the agent with its name and folder, before the version is saved, then
+opened as the app at the root is (`Store.settle`); each keeps its own look and crash on launch in the turn
+(`Turn.Look.installed`, `crashes`, `LaunchWatch.app`), and a crash is fixed as that app's (`Store.crashRequest`). A part
+is worked on under the wish's turn (`Store.asPartOf`, and a part's look through `underTurn`, each leaving the hold as it
+found it). Undo and every restore rebuild each part whose files changed, and a copy builds every app, each under a hold of
+its own so its crash is fixed through the wish (`Store.rebuildParts`); a rename puts the new name in every app's code and
+APP.md. Each app's own menu (Open, Rebuild & Open) is still for that app alone. A copy is found by its install place only
+for an app with a Mac copy there, since a TV wish's Mac app is installed under the wish's name. Which kinds a list
 of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), the kind that leads
 a wish (a TV app) is its main one, and the rest are its parts; Android and device apps still stand alone.
 
