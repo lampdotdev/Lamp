@@ -180,6 +180,11 @@ final class PhoneControllers {
         case "message":
             guard let data = message["data"] else { return }
             toHost(session, ["t": "message", "player": number, "data": data, "at": at])
+        case "too-big":
+            // A message the phone's own library refused as over `Limits.message`: said in the TV app's log, where the
+            // builder looks, since the phone's console is out of sight.
+            guard let bytes = message["bytes"] as? Int else { return }
+            toHost(session, ["t": "too-big", "player": number, "bytes": bytes])
         default:
             break
         }

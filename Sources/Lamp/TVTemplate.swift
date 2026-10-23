@@ -330,19 +330,25 @@ extension TVTemplate {
          * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
          * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone's page sent
-         * Lamp.controllers.onError(fn(message))                         it couldn't start, or the link was lost
-         * Lamp.controllers.send(player, data)          to one phone, or to every phone with player 0
+         * Lamp.controllers.onError(fn(message))                         it couldn't start, the link was lost, or a
+         *                                                               message was too big to send (messageLimit)
+         * Lamp.controllers.send(player, data)          to one phone, or to every phone with player 0; false when it
+         *                                              wasn't sent, with the reason in the console
+         * Lamp.controllers.messageLimit                1024: the most bytes one message takes as JSON, either way
          * Lamp.controllers.isHeld(player, name), players()
          * Lamp.controllers.stop()
          *
          * A phone that leaves, or whose link drops, has every button it held let go (onButton with down false) before
-         * onLeave. Movement that arrives late is dropped rather than acted on.
+         * onLeave. Movement that arrives late is dropped rather than acted on. A message over messageLimit isn't sent,
+         * from the TV or from a phone, and the console here says so: send something big (a file, a picture) in numbered
+         * pieces of at most 700 characters of base64, each once the other side has answered the last.
          */
         (function () {
           'use strict';
           var LATE = 300;   // ms after which a stick or tilt reading is dropped as stale
+          var LIMIT = 1024; // bytes of JSON in one message, the most Lamp passes on (PhoneControllers.Limits.message)
           var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], error: [] };
-          var held = {}, seen = {}, joined = {}, offset = null, link = null, transport = null, linkTimer = null, started = false;
+          var held = {}, seen = {}, joined = {}, offset = null, link = null, transport = null, linkTimer = null, started = false, away = false;
 
           function emit(name, args) {
             var list = on[name];
@@ -410,11 +416,21 @@ extension TVTemplate {
               emit('axis', [m.player, m.name, m.x, m.y]);
             } else if (m.t === 'message') {
               emit('message', [m.player, m.data]);
+            } else if (m.t === 'too-big') {
+              tooBig('Player ' + m.player + "'s message", m.bytes);
             } else if (m.t === 'closed') {
               leaveAll();
             }
           }
           window.__lampControllers = receive;
+
+          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+          function tooBig(what, size) {
+            var line = 'Lamp.controllers: ' + what + ' of ' + size + ' bytes was not sent: a message between devices is at most ' +
+              LIMIT + ' bytes as JSON. Send something big in numbered pieces of at most 700 characters, each after the other side has answered the last.';
+            if (window.console) console.error(line);
+            emit('error', [line]);
+          }
 
           function askLink() {
             if (transport) transport.send({ t: 'link' });
@@ -426,7 +442,7 @@ extension TVTemplate {
           function bridgeTransport(handler) {
             handler.postMessage({ op: 'start' });
             return {
-              send: function (message) { handler.postMessage({ op: 'send', message: message }); },
+              send: function (message) { handler.postMessage({ op: 'send', message: message }); return true; },
               stop: function () { handler.postMessage({ op: 'stop' }); }
             };
           }
@@ -454,7 +470,11 @@ extension TVTemplate {
             open();
             beat = setInterval(function () { if (socket && socket.readyState === 1) socket.send('{"t":"beat"}'); }, 5000);
             return {
-              send: function (message) { if (socket && socket.readyState === 1) socket.send(JSON.stringify(message)); },
+              send: function (message) {
+                if (!socket || socket.readyState !== 1) return false;
+                socket.send(JSON.stringify(message));
+                return true;
+              },
               stop: function () { stopped = true; clearInterval(beat); if (socket) socket.close(); }
             };
           }
@@ -473,7 +493,18 @@ extension TVTemplate {
               clearInterval(linkTimer);
               leaveAll();
             },
-            send: function (player, data) { if (transport) transport.send({ t: 'send', player: player || 0, data: data }); },
+            // What isn't sent is said in the console, which the preview keeps in the app's log: the code that sent it
+            // can't tell otherwise why the phone never heard it. Being away is said once until the link is back.
+            send: function (player, data) {
+              var message = { t: 'send', player: player || 0, data: data }, text = JSON.stringify(message);
+              if (data === undefined || text === undefined) { if (window.console) console.error('Lamp.controllers: a message was not sent: it holds nothing JSON can.'); return false; }
+              if (bytes(text) > LIMIT) { tooBig('A message', bytes(text)); return false; }
+              if (transport && transport.send(message)) { away = false; return true; }
+              if (!away && window.console) console.error('Lamp.controllers: a message was not sent: ' + (transport ? 'the link to Lamp is down.' : 'call Lamp.controllers.start() first.'));
+              away = true;
+              return false;
+            },
+            messageLimit: LIMIT,
             isHeld: function (player, name) { return !!(held[player] && held[player][name]); },
             players: function () { var list = []; for (var p in joined) list.push(+p); return list; },
             onLink: adder('link'), onJoin: adder('join'), onLeave: adder('leave'), onButton: adder('button'),
@@ -498,7 +529,11 @@ extension TVTemplate {
          *   });
          *   pad.button('a', true); pad.button('a', false);   // a button held, then let go
          *   pad.axis('stick', x, y);                          // a stick or slider, each from -1 to 1
-         *   pad.send({ ready: true });                        // anything small to the TV app
+         *   pad.send({ ready: true });                        // anything small to the TV app; false when not sent
+         *   LampController.messageLimit                       // 1024: the most bytes one message takes as JSON. A bigger
+         *                                                     // one isn't sent, and the TV app's log says so; send a file
+         *                                                     // in numbered pieces of at most 700 characters of base64,
+         *                                                     // each once the TV app has answered the last
          *   LampController.tilt(pad)                          // from a tap (a Start button): asks for the motion sensors,
          *     .then(function () { ... })                     // then sends the phone's tilt as axis 'tilt' (x: left -1 to
          *     .catch(function (error) { ... });              // right 1, y: away -1 to toward 1) about 30 times a second.
@@ -510,10 +545,12 @@ extension TVTemplate {
           var base = location.pathname.replace(/[^\/]*$/, '');
           var keyName = 'lamp-controller:' + base;
           var socketURL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + base + 'socket';
+          var LIMIT = 1024;   // bytes of JSON in one message, the most Lamp passes on (PhoneControllers.Limits.message)
+          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
 
           function connect(handlers) {
             handlers = handlers || {};
-            var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0, again = null;
+            var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0, again = null, host = false;
             // The link's credential is read once and taken out of the address, so it isn't left in the history or shared
             // by mistake; the phone then keeps the one Lamp gives it, for coming back as the same player.
             var join = (location.hash || '').replace(/^#/, '');
@@ -542,10 +579,12 @@ extension TVTemplate {
                   player = m.player;
                   sessionStorage.setItem(keyName, m.credential);
                   if (handlers.onPlayer) handlers.onPlayer(player);
+                  host = !!m.host;
                   state(m.host ? 'connected' : 'waiting');
                 } else if (m.t === 'credential') {
                   sessionStorage.setItem(keyName, m.credential);
                 } else if (m.t === 'state') {
+                  host = !!m.host;
                   state(m.host ? 'connected' : 'waiting');
                 } else if (m.t === 'message') {
                   if (handlers.onMessage) handlers.onMessage(m.data);
@@ -554,7 +593,7 @@ extension TVTemplate {
                 }
               };
               socket.onclose = function (event) {
-                socket = null;
+                socket = null; host = false;
                 if (event.code === 4003 || event.code === 4005) {
                   sessionStorage.removeItem(keyName);
                   closedForGood = true; state('ended');
@@ -566,10 +605,20 @@ extension TVTemplate {
               };
             }
 
+            // Too big for Lamp to pass on: refused here, with a word to the TV app, whose log the builder reads (this
+            // page's console is on the phone, where nobody looks), rather than sent for Lamp to close the link over.
             function post(message) {
-              if (!socket || socket.readyState !== 1) return false;
-              message.seq = ++seq;
-              socket.send(JSON.stringify(message));
+              // While the TV app isn't there ('waiting'), Lamp has no one to give it to.
+              if (!socket || socket.readyState !== 1 || !host) return false;
+              message.seq = seq + 1;
+              var text = JSON.stringify(message), size = bytes(text);
+              if (size > LIMIT) {
+                if (window.console) console.error('LampController: a message of ' + size + ' bytes was not sent: a message between devices is at most ' + LIMIT + ' bytes as JSON.');
+                socket.send(JSON.stringify({ t: 'too-big', bytes: size }));
+                return false;
+              }
+              seq++;
+              socket.send(text);
               return true;
             }
 
@@ -619,7 +668,7 @@ extension TVTemplate {
             });
           }
 
-          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt };
+          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt, messageLimit: LIMIT };
         })();
 
         """#

@@ -945,6 +945,11 @@ socket), never the app's token for its AI, and ending a session (the preview clo
 included: `PhoneSites.sync`) makes all of them worthless and lets its sockets go. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
 credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
 and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
+A message is at most `Limits.message` (1,024 bytes of JSON), and Lamp closes a socket that sends a bigger one, so every
+library of Lamp's (lamp.js, lamp-controller.js, `LampController` in LampSupport) refuses one before it goes: `send`
+returns false, the reason with the limit goes to the console or the app's log, and a phone's library tells the TV app
+(`too-big`, passed on by Lamp), whose log the builder reads. Nothing a library doesn't send goes unsaid; the
+phone-controllers skill says how to send a file in pieces.
 The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the
 person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for that.
 

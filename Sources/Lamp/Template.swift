@@ -13602,12 +13602,19 @@ enum Template {
     ///     Button("Next") { pad.press("next") }                  // a tap: held, then let go
     ///     pad.button("fire", down: true); pad.button("fire", down: false)
     ///     pad.axis("stick", x: 0.4, y: -1)                      // each from -1 to 1
-    ///     pad.send(["volume": 4])                               // anything small, as JSON
+    ///     pad.send(["volume": 4])                               // anything small, as JSON; false when it wasn't sent
     ///     pad.onMessage { data in … }                           // what the TV app sent with Lamp.controllers.send
     ///     pad.state                                             // .connecting, .connected, .waiting (the TV app isn't open), .ended
+    ///
+    /// Each message, as the JSON that goes out, is at most `messageLimit` (1,024) bytes, the most Lamp passes between
+    /// devices. A bigger one isn't sent: `send` returns false and says why in the app's log, and the TV app's log says
+    /// so too. Send something big (a file, a picture) in pieces of at most 700 characters of base64, each with its
+    /// number, and the next only once the TV app has answered the last; the phone-controllers skill shows how.
     @MainActor final class LampController: ObservableObject {
         enum State: String { case connecting, connected, waiting, ended, full }
-        @Published private(set) var state: State = .connecting
+        /// The most bytes one message may take as JSON, Lamp's own wrapping included (`PhoneControllers.Limits.message`).
+        static let messageLimit = 1024
+        @Published private(set) var state: State = .connecting { didSet { if state == .connected { saidAway = false } } }
         /// The player number the TV app knows this one by (1, 2, …), once it has joined.
         @Published private(set) var player: Int?
 
@@ -13621,6 +13628,7 @@ enum Template {
         private var retry = 0
         private var heard = Date()
         private var beat: Timer?
+        private var saidAway = false
 
         static func connect() -> LampController {
             let pad = LampController()
@@ -13639,11 +13647,12 @@ enum Template {
             button(name, down: true)
             button(name, down: false)
         }
-        func button(_ name: String, down: Bool) { post(["t": "button", "name": name, "down": down]) }
-        func axis(_ name: String, x: Double, y: Double) {
+        @discardableResult func button(_ name: String, down: Bool) -> Bool { post(["t": "button", "name": name, "down": down]) }
+        @discardableResult func axis(_ name: String, x: Double, y: Double) -> Bool {
             post(["t": "axis", "name": name, "x": max(-1, min(1, x)), "y": max(-1, min(1, y))])
         }
-        func send(_ data: Any) { post(["t": "message", "data": data]) }
+        /// Sends `data` (anything JSON can hold) to the TV app; false, with the reason in the app's log, when it wasn't.
+        @discardableResult func send(_ data: Any) -> Bool { post(["t": "message", "data": data]) }
         func onMessage(_ handler: @escaping (Any) -> Void) { listeners.append(handler) }
 
         func close() {
@@ -13654,13 +13663,35 @@ enum Template {
             state = .ended
         }
 
-        private func post(_ message: [String: Any]) {
-            guard let task = link.task, state == .connected || state == .waiting else { return }
+        // Nothing is dropped without a word in the app's log: the code that sent it can't tell otherwise why the TV app
+        // never heard it. Being away from the TV app is said once until it's back, not for every message meanwhile.
+        private func post(_ message: [String: Any]) -> Bool {
+            let what = message["t"] as? String == "message" ? "A message" : "'\(message["name"] as? String ?? "")'"
+            // While the TV app isn't open (.waiting) Lamp has no one to give it to.
+            guard let task = link.task, state == .connected else {
+                if !saidAway { saidAway = true; fputs("LampController: \(what) wasn't sent: not connected to the TV app (\(state.rawValue)). Check pad.state before sending.\n", stderr) }
+                return false
+            }
             var message = message
+            message["seq"] = seq + 1
+            guard JSONSerialization.isValidJSONObject(message), let data = try? JSONSerialization.data(withJSONObject: message) else {
+                fputs("LampController: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                return false
+            }
+            guard data.count <= Self.messageLimit else {
+                fputs("LampController: \(what) of \(data.count) bytes wasn't sent: a message between devices is at most \(Self.messageLimit) bytes as JSON. Send something big in numbered pieces of at most 700 characters, each after the TV app has answered the last.\n", stderr)
+                tell(task, "{\"t\":\"too-big\",\"bytes\":\(data.count)}")
+                return false
+            }
             seq += 1
-            message["seq"] = seq
-            guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
-            task.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
+            tell(task, String(decoding: data, as: UTF8.self))
+            return true
+        }
+
+        private func tell(_ task: URLSessionWebSocketTask, _ text: String) {
+            task.send(.string(text)) { error in
+                if let error { fputs("LampController: a message didn't reach Lamp: \(error.localizedDescription)\n", stderr) }
+            }
         }
 
         // Where to join, from Lamp: the TV app's socket and a link's credential, asked again whenever the one held
