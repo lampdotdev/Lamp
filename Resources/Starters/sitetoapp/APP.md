@@ -13,10 +13,12 @@ grid of the person's sites; each opens in a window with no title bar, and each c
 - **Adding a site** (`AddSiteView`): an address and a name (suggested from the address). The catalog offers sites to
   start with: the ones the person visits most in their browsers (`BrowserHistory`, read on this Mac only), or, with no
   history to read, a fixed list (`SiteSuggestion.all`). Sites whose makers have a Mac app of their own
-  (`SiteSuggestion.hasDesktopApp`: Slack, Notion, Zoom…) are never suggested.
+  (`SiteSuggestion.hasDesktopApp`: Slack, Notion, Zoom…) are never suggested. The fixed list's logos come from
+  Google's favicon service; a suggestion from the person's browsing asks only the site itself (`FaviconCache`), so
+  where they go is never sent to anyone else.
 - **A site's window** (`SiteWindowView`, `WebModel`, `WebView`): a WKWebView filling the window, with its own
   cookies and storage for each site (a `WKWebsiteDataStore` per site id), Safari's user agent, and the camera and
-  microphone allowed for the site's own domain. The traffic lights and a slim bar come in only while the mouse moves
+  microphone allowed without asking for the site's own origin only (its scheme, host and port); any other page asks. The traffic lights and a slim bar come in only while the mouse moves
   near the top (`WindowChrome`), and the bar drags the window. A hairline shows loading. Links that open a new tab on
   another domain go to the default browser; a page's popups (sign-in) get a small window of their own (`WebDelegate`).
   Downloads go to ~/Downloads. A count in the page's title ("(3) Inbox") becomes the Dock badge in a site's own app.

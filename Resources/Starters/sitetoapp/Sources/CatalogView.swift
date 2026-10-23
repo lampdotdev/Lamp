@@ -271,7 +271,7 @@ struct SuggestionChip: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                FaviconView(url: suggestion.url, size: 18)
+                FaviconView(url: suggestion.url, size: 18, fromHistory: suggestion.fromHistory)
                     .frame(width: 30, height: 30)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white))
                     .shadow(color: .black.opacity(0.08), radius: 2, y: 1)

@@ -117,11 +117,15 @@ final class WebDelegate: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloa
     // MARK: Camera, microphone and the page's own dialogs
 
     /// Calls (Meet and the like) get the camera and microphone without a second question from the page; macOS
-    /// still asks once for the app itself.
+    /// still asks once for the app itself. Only the site's own origin (its scheme, host and port) is trusted that
+    /// way: a page the window was led to elsewhere, even under the same domain, is asked about as in a browser.
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-        guard let site = model?.site else { return .prompt }
-        return Site.baseDomain(origin.host) == Site.baseDomain(site.host) ? .grant : .prompt
+        guard let address = model?.site.address, let host = address.host(), let scheme = address.scheme else { return .prompt }
+        let same = origin.protocol.lowercased() == scheme.lowercased()
+            && origin.host.lowercased() == host.lowercased()
+            && origin.port == (address.port ?? 0)
+        return same ? .grant : .prompt
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {

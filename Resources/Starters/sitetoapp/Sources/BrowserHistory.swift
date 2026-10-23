@@ -110,7 +110,7 @@ extension Library {
             .prefix(8)
             .map { visit in
                 let url = "https://\(visit.host)"
-                return SiteSuggestion(name: AddSiteView.suggestedName(for: URL(string: url)), url: url)
+                return SiteSuggestion(name: AddSiteView.suggestedName(for: URL(string: url)), url: url, fromHistory: true)
             }
     }
 }

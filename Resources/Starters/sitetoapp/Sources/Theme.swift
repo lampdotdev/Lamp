@@ -54,6 +54,8 @@ extension Color {
 struct FaviconView: View {
     let url: String
     var size: CGFloat = 18
+    /// A site from the person's own browsing, whose logo is asked of the site alone.
+    var fromHistory = false
     @State private var image: NSImage?
 
     var body: some View {
@@ -66,7 +68,7 @@ struct FaviconView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-        .task(id: url) { image = await FaviconCache.image(for: url) }
+        .task(id: url) { image = await FaviconCache.image(for: url, askingGoogle: !fromHistory) }
     }
 }
 
@@ -75,21 +77,28 @@ struct FaviconView: View {
 enum FaviconCache {
     static var images: [String: NSImage] = [:]
 
-    static func image(for site: String) async -> NSImage? {
+    /// Google's favicon service draws the well-known sites Lamp suggests. A site found in the person's browsing
+    /// is asked for its own icon instead: sending its name to anyone else would tell them where the person goes.
+    static func image(for site: String, askingGoogle: Bool = true) async -> NSImage? {
         if let cached = images[site] { return cached }
-        guard let host = Site.normalized(site)?.host(),
-              let url = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64") else { return nil }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let image = NSImage(data: data) else {
-                print("Favicon: not an image for \(host) (\(data.count) bytes)")
-                return nil
+        guard let host = Site.normalized(site)?.host() else { return nil }
+        let sources = askingGoogle
+            ? ["https://www.google.com/s2/favicons?domain=\(host)&sz=64"]
+            : ["https://\(host)/apple-touch-icon.png", "https://\(host)/favicon.ico"]
+        for source in sources {
+            guard let url = URL(string: source) else { continue }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                guard let image = NSImage(data: data) else {
+                    print("Favicon: not an image for \(host) (\(data.count) bytes)")
+                    continue
+                }
+                images[site] = image
+                return image
+            } catch {
+                print("Favicon: \(host) failed: \(error.localizedDescription)")
             }
-            images[site] = image
-            return image
-        } catch {
-            print("Favicon: \(host) failed: \(error.localizedDescription)")
-            return nil
         }
+        return nil
     }
 }

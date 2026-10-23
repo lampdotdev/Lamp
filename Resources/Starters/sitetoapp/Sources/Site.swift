@@ -48,6 +48,8 @@ struct Site: Codable, Identifiable, Hashable {
 struct SiteSuggestion: Identifiable {
     let name: String
     let url: String
+    /// Found in the person's own browsing: its address stays between this Mac and the site itself.
+    var fromHistory = false
     var id: String { url }
 
     /// Good sites to start with: ones people keep open all day that have no Mac app of their own.
