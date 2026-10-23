@@ -90,6 +90,8 @@ public struct SidebarState: Codable, Equatable {
     /// The wish's file after Share…, for the sidebar's own share menu: sent once, since only the sidebar can show
     /// that menu where the button is, and it can't read Lamp's files.
     public var sharing: SidebarSharing?
+    /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
+    public var wishLink: SidebarWishLink?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -426,6 +428,8 @@ public enum SidebarCommand: Codable, Equatable {
     case nameVersion(String, String)
     /// A button in the info panel.
     case infoAction(String)
+    /// The Share Link card: open it, or what was done on it.
+    case wishLink(SidebarWishLinkCommand)
 }
 
 public struct SidebarFile: Codable, Equatable {
@@ -524,4 +528,72 @@ public struct SidebarProblem: Codable, Equatable {
         self.message = message
         self.settingsButton = settingsButton
     }
+}
+
+/// The Share Link card as Lamp has it (`WishLinkCard`): what's typed on it is the sidebar's while it's open, and goes to
+/// Lamp with Copy Link or Update Link. Lamp's own changes to it (a new picture) come with a new `revision`.
+public struct SidebarWishLink: Codable, Equatable {
+    public var name: String
+    public var line: String
+    public var words: String
+    public var includePicture: Bool
+    public var revision: Int
+    /// The picture, small enough to send with the chat, and the icon.
+    public var picture: Data?
+    public var icon: Data?
+    /// The link that's out, what it shows, and whether the picture on the card is another than the one it shows.
+    public var link: String?
+    public var shown: SidebarWishLinkValues?
+    public var newPicture: Bool
+    public var sending: Bool
+    public var problem: String?
+    public var copied: Bool
+    public var canRetake: Bool
+    public var retaking: Bool
+    public var limits: [Int]
+
+    public init(name: String, line: String, words: String, includePicture: Bool, revision: Int, picture: Data?, icon: Data?,
+                link: String?, shown: SidebarWishLinkValues?, newPicture: Bool, sending: Bool, problem: String?, copied: Bool,
+                canRetake: Bool, retaking: Bool, limits: [Int]) {
+        self.name = name
+        self.line = line
+        self.words = words
+        self.includePicture = includePicture
+        self.revision = revision
+        self.picture = picture
+        self.icon = icon
+        self.link = link
+        self.shown = shown
+        self.newPicture = newPicture
+        self.sending = sending
+        self.problem = problem
+        self.copied = copied
+        self.canRetake = canRetake
+        self.retaking = retaking
+        self.limits = limits
+    }
+}
+
+public struct SidebarWishLinkValues: Codable, Equatable {
+    public var name: String
+    public var line: String
+    public var words: String
+    public var includePicture: Bool
+
+    public init(name: String, line: String, words: String, includePicture: Bool) {
+        self.name = name
+        self.line = line
+        self.words = words
+        self.includePicture = includePicture
+    }
+}
+
+public enum SidebarWishLinkCommand: Codable, Equatable {
+    case open
+    /// Copy Link or Update Link, with what's on the card.
+    case share(SidebarWishLinkValues)
+    case copy
+    case stop
+    case retake
+    case close
 }

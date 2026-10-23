@@ -238,10 +238,14 @@ private struct Chat: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            switch state.panel {
-            case .versions: VersionsPanel(state: state)
-            case .info: InfoPanel(state: state)
-            case nil: chat
+            if let card = state.wishLink {
+                WishLinkPanel(card: card)
+            } else {
+                switch state.panel {
+                case .versions: VersionsPanel(state: state)
+                case .info: InfoPanel(state: state)
+                case nil: chat
+                }
             }
         }
         .chatGround()

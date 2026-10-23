@@ -2191,7 +2191,8 @@ anything that's the same for every app and already in Settings.
 
 ## The website
 
-`site/` is lamp.dev (Astro; `site/FIRST_IDEA.md` and `site/BUG_REPORTS.md` cover its moving parts). Its
+`site/` is lamp.dev (Astro; `site/FIRST_IDEA.md`, `site/BUG_REPORTS.md` and `site/SHARED_WISHES.md` cover its moving
+parts; the last is a wish shared as a link, `WishLink` in the app). Its
 Download buttons (`DownloadButton.astro` and the menu bar's) are the lamp's bright orange with white words, about
 3:1 at their lightest, a faint shadow under the words. That trade-off was weighed and accepted: the brightness is
 the point of the button, and the label is large, bold and the same on every page. About 3:1 is the floor for

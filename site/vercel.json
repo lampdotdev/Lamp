@@ -5,8 +5,15 @@
   "functions": {
     "api/bug-report.js": { "maxDuration": 15 },
     "api/first-idea.js": { "maxDuration": 30 },
-    "api/idea-event.js": { "maxDuration": 5 }
+    "api/idea-event.js": { "maxDuration": 5 },
+    "api/wishes.js": { "maxDuration": 15 },
+    "api/wish-page.js": { "maxDuration": 10 },
+    "api/wish-card.js": { "maxDuration": 15 }
   },
+  "rewrites": [
+    { "source": "/w/:id/card.png", "destination": "/api/wish-card?id=:id" },
+    { "source": "/w/:id", "destination": "/api/wish-page?id=:id" }
+  ],
   "headers": [
     {
       "source": "/_astro/(.*)",

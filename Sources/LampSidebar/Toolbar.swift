@@ -127,6 +127,8 @@ struct ChatBar: View {
         }
         .help(toolbar.usage.map { "Usage, cost and models. \($0)" } ?? "Usage, cost and models")
         Menu {
+            Button("Share Link…") { link.send(.wishLink(.open)) }
+            Divider()
             Button("Copy Wish File") { link.send(.copyWishFile) }
             Button("Share…") { link.send(.share) }
             Button("Export…") { link.send(.export) }
@@ -527,4 +529,60 @@ struct InfoPanel: View {
             if state.info == nil { ProgressView().controlSize(.small) }
         }
     }
+}
+
+/// The Share Link card in the chat's place (`WishLinkCard`, as Lamp's window shows it in a sheet). What's typed is
+/// kept here while it's open, and taken afresh from Lamp only when Lamp changes it (a new picture).
+struct WishLinkPanel: View {
+    @EnvironmentObject private var link: Link
+    let card: SidebarWishLink
+    @State private var values: WishLinkCard.Values
+    @State private var revision: Int
+
+    init(card: SidebarWishLink) {
+        self.card = card
+        _values = State(initialValue: Self.values(of: card))
+        _revision = State(initialValue: card.revision)
+    }
+
+    private static func values(of card: SidebarWishLink) -> WishLinkCard.Values {
+        WishLinkCard.Values(name: card.name, line: card.line, words: card.words, includePicture: card.includePicture)
+    }
+
+    private var changed: Bool {
+        guard let shown = card.shown else { return true }
+        let typed = SidebarWishLinkValues(name: values.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          line: values.line.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          words: values.words.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          includePicture: values.includePicture)
+        return typed != shown || (values.includePicture && card.newPicture)
+    }
+
+    var body: some View {
+        ScrollView {
+            WishLinkCard(icon: card.icon.flatMap(NSImage.init(data:)), picture: card.picture.flatMap(NSImage.init(data:)),
+                         values: $values,
+                         limits: WishLinkCard.Limits(name: card.limits[safe: 0] ?? 60, line: card.limits[safe: 1] ?? 140,
+                                                     words: card.limits[safe: 2] ?? 2000),
+                         link: card.link, changed: changed,
+                         stage: card.sending ? .sending : card.problem.map(WishLinkCard.Stage.failed) ?? .editing,
+                         copied: card.copied && !changed,
+                         retake: card.canRetake ? { link.send(.wishLink(.retake)) } : nil, retaking: card.retaking,
+                         share: {
+                             link.send(.wishLink(.share(SidebarWishLinkValues(name: values.name, line: values.line, words: values.words,
+                                                                               includePicture: values.includePicture))))
+                         },
+                         copy: { link.send(.wishLink(.copy)) }, stop: { link.send(.wishLink(.stop)) },
+                         close: { link.send(.wishLink(.close)) }, width: nil)
+        }
+        .onChange(of: card.revision) {
+            guard card.revision != revision else { return }
+            revision = card.revision
+            values = Self.values(of: card)
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }

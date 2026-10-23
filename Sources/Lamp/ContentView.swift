@@ -290,6 +290,7 @@ struct ProjectView: View {
     @State private var focusRequest = 0
     @State private var dropTargeted = false
     @StateObject private var dictation = Dictation()
+    @ObservedObject private var linkCards = WishLinkCards.shared
     @State private var dictationUndo = Composer.DictationUndo()
     @AppStorage("showDetails") private var showDetails = false
     @AppStorage("showInfo") private var showInfo = false
@@ -734,6 +735,11 @@ struct ProjectView: View {
             Text(problem.message)
         }
         .onChange(of: store.chatFocusRequest) { if store.selection == project.id { focusRequest += 1 } }
+        // Share Link…, opened from this chat's toolbar (the chat beside the app shows the same card in its own place).
+        .sheet(isPresented: Binding(get: { linkCards.card(for: project).map { !$0.inSidebar } ?? false },
+                                    set: { if !$0 { linkCards.close(project) } })) {
+            WishLinkSheet(project: project)
+        }
         .task(id: historyKey) {
             // A read can outlast the change that started it (the git commands it runs finish even when it's
             // cancelled), so one started before a turn ended mustn't land after the read that followed.
@@ -883,6 +889,8 @@ struct ProjectView: View {
             .help("Delete this wish")
             if store.canShare(project) {
                 Menu {
+                    Button("Share Link…") { linkCards.open(project, inSidebar: false) }
+                    Divider()
                     Button("Copy Wish File") { store.copyAppFile(project) }
                     Button { Sharing.share(project, from: .toolbar) } label: {
                         Label("Share…", systemImage: "square.and.arrow.up")
@@ -892,7 +900,7 @@ struct ProjectView: View {
                     Label("Share Wish", systemImage: "square.and.arrow.up")
                 }
                 .disabled(!made)
-                .help(made ? "Send this wish to someone with Lamp" : "Nothing to share until it's made")
+                .help(made ? "Share this wish as a link, or send it to someone with Lamp" : "Nothing to share until it's made")
                 .background(ShareAnchor(origin: .toolbar))
             }
         }
