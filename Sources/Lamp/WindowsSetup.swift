@@ -102,7 +102,7 @@ struct WindowsSetupView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Get ready for Xbox games").font(.title2.weight(.semibold))
                     Text(WindowsTools.supported
-                         ? "Lamp builds Xbox games with free tools from LLVM and Microsoft. They aren't on this Mac yet: about 3 GB to download, 1 GB kept."
+                         ? "Lamp builds Xbox games with free tools from LLVM and Microsoft. They aren't on this Mac yet: about 2 GB to download, 1 GB kept."
                          : "Xbox games are built with tools that run only on Macs with Apple silicon.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }

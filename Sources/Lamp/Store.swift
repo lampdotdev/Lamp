@@ -3268,8 +3268,11 @@ final class Store: ObservableObject {
         await turns[started.id]?.early?.value
         var project = current(started) ?? started
         var errors = await build(project)
-        // The person's Apple account, not the code: build has said so, and the agent has nothing to fix.
-        func isTheAccount() -> Bool { errors != nil && errors == macMembershipProblem(project) }
+        // The person's Apple account or tools that aren't on this Mac yet, not the code: build has said so, with the
+        // window that fixes it, and the agent has nothing to fix.
+        func isTheAccount() -> Bool {
+            errors != nil && [macMembershipProblem(project), androidToolsProblem(project), gameToolsProblem(project)].contains(errors)
+        }
         for _ in 0..<3 where errors != nil && !isTheAccount() {
             // A build the user stopped (or whose app they deleted) isn't a problem for the agent to fix.
             guard turns[project.id]?.stopped != true, exists(project) else { return false }

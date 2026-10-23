@@ -128,7 +128,7 @@ enum WindowsTools {
             try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
             let result = await Subprocess.run("/usr/bin/tar", ["-xf", download.path, "-C", unpacked.path, "--strip-components", "1",
                                                                "--include", "\(top)/bin/clang-23", "--include", "\(top)/bin/lld",
-                                                               "--include", "\(top)/lib/clang/23/include/*", "--include", "\(top)/LICENSE.TXT"],
+                                                               "--include", "\(top)/lib/clang/23/include/*"],
                                               timeout: 1200)
             guard result.ok else { throw Failure(message: "Lamp couldn't unpack LLVM's compiler.\n\n" + result.output.suffix(400)) }
             try? fm.removeItem(at: download)

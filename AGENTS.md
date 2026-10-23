@@ -810,7 +810,7 @@ it on the device.
 
 The Xbox takes two kinds of app: its integration's web app (`app`, menus and pages), and native 3D games, Lamp's own
 kind (`GameKit`, GameKit.swift), offered beside it in the integration's `kinds` (`"game": {"lamp": "native-game"}`).
-A native game needs a 3 GB download, so it's for heavy 3D games only: the web app takes apps and games, 3D ones
+A native game needs a 2 GB download, so it's for heavy 3D games only: the web app takes apps and games, 3D ones
 included, and the native kind only a wish that says it needs the console's full power. Which a wish becomes is the
 naming call's choice, from the wish: each kind is named to it with its `purpose`
 (`AppName.deviceKinds`), "xbox-one" for an app and "xbox-one:game" for a 3D game, and that name is what
