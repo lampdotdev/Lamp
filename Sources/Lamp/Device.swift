@@ -300,7 +300,7 @@ enum DeviceNote {
         let phones = store.devices.filter { $0.kind.isPhone }
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "device"
-            let mine = store.devices.filter { $0.integration != nil && $0.integration == project.integration }
+            let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
             guard !mine.isEmpty else { return "No \(name) of the person's has been found on the network yet; the app goes on one once it's found and set up." }
             return mine.map { device in
                 let state = device.setup() == .ready ? "set up for apps" : "not set up yet (next: \(device.setup().words.lowercased()))"

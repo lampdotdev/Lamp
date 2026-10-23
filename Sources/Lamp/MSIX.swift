@@ -9,7 +9,8 @@ import Security
 /// Device Portal. The package step leaves a plain zip of the app's files; Lamp writes the manifest (so the package's
 /// identity and publisher are Lamp's), the logos, the block map and content types, lays it out as Zip64 (Windows opens
 /// nothing else) and signs it with a certificate of Lamp's own, which Developer Mode accepts once it's installed
-/// beside the package. The key and certificate are in Lamp's folder, which the agent's sandbox closes.
+/// beside the package. The key and certificate are in Lamp's folder, which the agent's sandbox closes. A web app's
+/// package is neutral and starts at its page; a native game's (`GameKit`) is for x64 and starts its App.exe.
 enum MSIX {
     struct Failure: LocalizedError {
         let message: String
@@ -21,7 +22,9 @@ enum MSIX {
         var name: String
         var publisher: String
         var version: String
-        var fullName: String { "\(name)_\(version)_neutral__\(MSIX.publisherID(publisher))" }
+        /// "x64" for a native game; nil (neutral) for a web app, as identities saved before games were.
+        var architecture: String?
+        var fullName: String { "\(name)_\(version)_\(architecture ?? "neutral")__\(MSIX.publisherID(publisher))" }
         var familyName: String { "\(name)_\(MSIX.publisherID(publisher))" }
         var appUserModelID: String { familyName + "!App" }
     }
@@ -65,17 +68,24 @@ enum MSIX {
 
     // MARK: Making a package
 
-    /// A signed package of the app's files (`payload`, read from the package step's zip), started at `start`.
-    static func package(payload: [(path: String, data: Data)], displayName: String, identity: Identity, start: String,
+    /// What a package's app starts: a web app's page, or a native program.
+    enum Start: Equatable {
+        case page(String)
+        case program(String)
+        var path: String { switch self { case .page(let path), .program(let path): path } }
+    }
+
+    /// A signed package of the app's files (`payload`, read from the package step's zip), started at `entry`.
+    static func package(payload: [(path: String, data: Data)], displayName: String, identity: Identity, entry: Start,
                         icon: NSImage?, signer: Signer? = nil) throws -> Data {
-        guard payload.contains(where: { $0.path == start }) else {
-            throw Failure(message: "The package has no \(start) for the app to start at.")
+        guard payload.contains(where: { $0.path == entry.path }) else {
+            throw Failure(message: "The package has no \(entry.path) for the app to start at.")
         }
         var files = payload.filter { !reserved.contains($0.path.lowercased()) && !$0.path.lowercased().hasPrefix("lamplogos/") }
         for (name, width, height) in logos {
             files.append((path: "LampLogos/\(name).png", data: logo(icon, width: width, height: height)))
         }
-        files.append((path: "AppxManifest.xml", data: Data(manifest(identity: identity, displayName: displayName, start: start).utf8)))
+        files.append((path: "AppxManifest.xml", data: Data(manifest(identity: identity, displayName: displayName, entry: entry).utf8)))
         return try assemble(files, signer: try signer ?? Signer.lamp())
     }
 
@@ -87,28 +97,41 @@ enum MSIX {
     private static let logos: [(String, Int, Int)] = [("StoreLogo", 50, 50), ("Square150x150Logo", 150, 150), ("Square44x44Logo", 44, 44),
                                                       ("Wide310x150Logo", 310, 150), ("SplashScreen", 620, 300)]
 
-    static func manifest(identity: Identity, displayName: String, start: String) -> String {
+    static func manifest(identity: Identity, displayName: String, entry: Start) -> String {
         func escaped(_ text: String) -> String {
             text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
         }
         let name = escaped(String(displayName.prefix(80)))
+        // A web app runs in the system's web host and may reach the network; a game is its own program, which asks
+        // for nothing, on the Windows that first ran apps like it on the Xbox.
+        let application: String, minimum: String, capabilities: String
+        switch entry {
+        case .page(let start):
+            application = "StartPage=\"\(escaped(start))\""
+            minimum = "10.0.10240.0"
+            capabilities = "<Capabilities><Capability Name=\"internetClient\"/><Capability Name=\"privateNetworkClientServer\"/></Capabilities>"
+        case .program(let program):
+            application = "Executable=\"\(escaped(program.replacingOccurrences(of: "/", with: "\\")))\" EntryPoint=\"App.App\""
+            minimum = "10.0.17763.0"
+            capabilities = ""
+        }
         return """
         <?xml version="1.0" encoding="utf-8"?>
         <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" IgnorableNamespaces="uap">
-          <Identity Name="\(identity.name)" Publisher="\(escaped(identity.publisher))" Version="\(identity.version)" ProcessorArchitecture="neutral"/>
+          <Identity Name="\(identity.name)" Publisher="\(escaped(identity.publisher))" Version="\(identity.version)" ProcessorArchitecture="\(identity.architecture ?? "neutral")"/>
           <Properties><DisplayName>\(name)</DisplayName><PublisherDisplayName>Lamp</PublisherDisplayName><Logo>LampLogos\\StoreLogo.png</Logo></Properties>
-          <Dependencies><TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.10240.0" MaxVersionTested="10.0.22621.0"/></Dependencies>
+          <Dependencies><TargetDeviceFamily Name="Windows.Universal" MinVersion="\(minimum)" MaxVersionTested="10.0.22621.0"/></Dependencies>
           <Resources><Resource Language="en-us"/></Resources>
           <Applications>
-            <Application Id="App" StartPage="\(escaped(start))">
+            <Application Id="App" \(application)>
               <uap:VisualElements DisplayName="\(name)" Description="\(name)" BackgroundColor="#1b1b3a" Square150x150Logo="LampLogos\\Square150x150Logo.png" Square44x44Logo="LampLogos\\Square44x44Logo.png">
                 <uap:DefaultTile Wide310x150Logo="LampLogos\\Wide310x150Logo.png"/>
                 <uap:SplashScreen Image="LampLogos\\SplashScreen.png"/>
               </uap:VisualElements>
             </Application>
           </Applications>
-          <Capabilities><Capability Name="internetClient"/><Capability Name="privateNetworkClientServer"/></Capabilities>
+          \(capabilities)
         </Package>
 
         """
@@ -207,7 +230,7 @@ enum MSIX {
     }
 
     private static func contentTypes(_ extensions: Set<String>) -> Data {
-        let known = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml",
+        let known = ["exe": "application/x-msdownload", "dll": "application/x-msdownload", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml",
                      "html": "text/html", "htm": "text/html", "js": "application/javascript", "css": "text/css", "json": "application/json",
                      "txt": "text/plain", "woff": "font/woff", "woff2": "font/woff2", "mp3": "audio/mpeg", "mp4": "video/mp4", "wav": "audio/wav"]
         let defaults = extensions.sorted().filter { $0.allSatisfy { $0.isLetter || $0.isNumber } }.map {

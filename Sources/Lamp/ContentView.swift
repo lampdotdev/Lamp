@@ -1773,7 +1773,7 @@ private struct TryOnChoices: View {
     /// not set up is set up when it's chosen, in its setup window.
     @ViewBuilder private var deviceChoices: some View {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
-        let mine = store.devices.filter { $0.integration != nil && $0.integration == project.integration }
+        let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
         Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
             ForEach(mine) { device in
                 let step = device.setup() == .ready ? "" : " (\(device.setup().words))"
@@ -1791,6 +1791,9 @@ private struct TryOnChoices: View {
         Divider()
         ForEach(mine.filter { $0.setup() != .ready }) { device in
             Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
+        }
+        if GameKit.isGame(project) {
+            Button("Check Xbox Games Setup…") { WindowsSetup.shared.show() }
         }
         Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { store.refreshDevices() }

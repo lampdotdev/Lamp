@@ -806,6 +806,49 @@ Mac, the TV preview's window under the device's name (`Store.openDevicePreview`,
 is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play still puts
 it on the device.
 
+## Xbox games
+
+The Xbox takes two kinds of app: its integration's web app (`app`, menus and pages), and native 3D games, Lamp's own
+kind (`GameKit`, GameKit.swift), offered beside it in the integration's `kinds` (`"game": {"lamp": "native-game"}`).
+A native game needs a 3 GB download, so it's for heavy 3D games only: the web app takes apps and games, 3D ones
+included, and the native kind only a wish that says it needs the console's full power. Which a wish becomes is the
+naming call's choice, from the wish: each kind is named to it with its `purpose`
+(`AppName.deviceKinds`), "xbox-one" for an app and "xbox-one:game" for a 3D game, and that name is what
+`LampProject.integration` keeps (`DeviceApps.split`; `deviceIntegration` is the integration's own id, which devices are
+found by). `make_app_for` takes either. A kind in `kinds` is Lamp's only: the check refuses one in an integration the
+builder writes.
+
+A game is C++ against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
+controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`), drawn with
+sokol_gfx, with sokol's shapes, text and GL, HandmadeMath, cgltf and stb_image, all compiled in `lamp_kit.cpp`. Lamp
+writes the kit flat into the game's `Lamp/` before every turn and build (`GameKit.write`, only what changed, and
+`kit.stamp` so the build compiles Lamp's code again only then); the agent writes `Game/` (.cpp and .glsl) and `Assets/`.
+The kit has two hosts, Lamp's too: `lamp_xbox.cpp`, a CoreWindow app with a Direct3D 11 swap chain at 1920x1080,
+Windows.Gaming.Input, the log and saves in the app's LocalState, B kept from leaving the game, and Present with vsync
+(without it the console ends the app after one frame), which logs its frame times every ten seconds; and
+`lamp_preview.mm`, the same game drawn with Metal out of sight at 60 frames of game time a second, from a script of
+the controller's moves (`hold <frames> <sticks> <triggers> <buttons>`, `shot <name>`), the same seed every play, with
+sokol's draws and vertices counted. `build.sh xbox` compiles with clang-cl for x86_64-pc-windows-msvc against the
+Windows SDK and links with lld-link as an app-container exe with a static C++ runtime (so the console needs no package
+of Microsoft's beside it), and zips App.exe with Assets/; `build.sh preview` compiles with the Mac's clang. Shaders are
+annotated GLSL compiled by sokol-shdc into one header with HLSL and Metal; the console compiles the HLSL at launch with
+its own d3dcompiler. Both builds, and every play of the preview, run in the app's sandbox (`Sandbox.run`).
+
+`look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`); `use_app` takes
+`stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
+`Store.useOnGame`), so after a change to the code the same moves show what changed. `look_at_app` with `on_device`,
+Play and the end of a turn build for the console and put it on the Xbox through the integration's bridge: `stop` ends
+the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
+`install` and `launch`; `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. The
+package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
+
+The tools are a download (`WindowsTools`, the setup window `WindowsSetup`), in `Edition.sharedDeveloperFolder`/Windows
+like Android's: clang and lld (with clang's own headers) out of LLVM's release for Apple silicon and sokol-shdc at a
+pinned commit, each against its published SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp
+ships (built by build.sh with cargo, pinned and locked; a release needs it) and which checks Microsoft's packages
+against Microsoft's manifest. Microsoft's licence is the person's to accept, in the setup window, before xwin runs:
+nothing of Microsoft's is passed on. Intel Macs can't build games (LLVM publishes no such build).
+
 ## TV apps
 
 An app can be made for TVs (`Platform.tv`, chosen when a wish names a TV, the Frame or the living room, or by

@@ -129,8 +129,11 @@ struct LampProject: Identifiable, Hashable {
     /// the device's integration.
     var deviceSetup: String?
     var platform: Platform = .mac
-    /// A device app's integration (`Platform.device`), by its id: what it's made as and how it gets on the device.
+    /// A device app's integration (`Platform.device`), by its id: what it's made as and how it gets on the device. An
+    /// app that's one of the integration's further kinds has the kind after a colon ("xbox-one:game", `DeviceApps.split`).
     var integration: String?
+    /// The integration's own id, without the kind: what its devices are found by.
+    var deviceIntegration: String? { integration.map { DeviceApps.split($0).integration } }
     var family: DeviceFamily = .iphone
     /// The person's own iPhone or iPad that Play puts the app on (Devices), instead of the simulator.
     var device: String?
@@ -1673,6 +1676,10 @@ final class Store: ObservableObject {
     /// changes it by asking (`convert`, the agent's `make_app_for`).
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false, integration: String? = nil) async -> LampProject {
         guard !project.scaffolded, kind != project.platform || integration != project.integration else { return project }
+        if kind == .device, let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, !WindowsTools.isReady {
+            // The tools are a long download: the window that gets them opens as the first request starts.
+            WindowsSetup.shared.show()
+        }
         if kind == .android, !AndroidTools.isReady {
             // Not asked for: a Mac app, with the setup a button away. Asked for: an Android app, and the setup
             // window opens now, since the build can't go on without the tools (`androidToolsProblem`).
@@ -4264,6 +4271,7 @@ final class Store: ObservableObject {
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
+        if GameKit.isGame(project) { return await useOnGame(project, actions: actions) }
         if project.onDevice { return await useOnDeviceApp(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
         if Runtime.holdsBuild(project), isRunning(project) {
@@ -4540,7 +4548,7 @@ final class Store: ObservableObject {
                 (status, answer) = arguments["sidebar"] as? Bool == true
                     ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                     : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                                 reopen: arguments["reopen"] as? Bool ?? false)
+                                 reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false)
             case "use_app":
                 let actions = (try? JSONSerialization.data(withJSONObject: arguments)) ?? Data("{}".utf8)
                 (status, answer) = await use(project, request: actions)
@@ -4762,6 +4770,10 @@ final class Store: ObservableObject {
         let words = kind == .mac ? "the Mac" : kind == .iphone ? "iPhone and iPad" : kind == .android ? "Android" : kind == .tv ? "Samsung and LG TVs"
             : kind == .device ? "the person's \(integration.flatMap(Integrations.integration)?.name ?? "device")" : "the Mac, iPhone and iPad"
         guard kind != current.platform || (kind == .device && integration != current.integration) else { return (200, ["text": "It's already made for \(words)."]) }
+        if kind == .device, let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, let problem = WindowsTools.problem {
+            WindowsSetup.shared.show()
+            return (200, ["text": "Not yet: this Mac can't build Xbox games. \(problem) Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
+        }
         if kind == .android, let issue = await AndroidTools.check().issue {
             AndroidSetup.shared.show()
             return (200, ["text": "Not yet: this Mac can't build it for Android. \(issue.title): \(issue.message) Lamp opened its setup steps. " +
@@ -5554,6 +5566,12 @@ final class Store: ObservableObject {
         }
         // A device app's build is its integration's package step, in the app's sandbox; Lamp keeps the package it made.
         if project.platform == .device {
+            // A game's tools aren't here: said once for a request, with the window that gets them open.
+            if let problem = gameToolsProblem(project) {
+                let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
+                if !said { log(project, .error, problem); WindowsSetup.shared.show() }
+                return problem
+            }
             note("Building…", for: project)
             do {
                 try await DeviceApps.build(project, started: { [weak self] in self?.turns[project.id]?.build = $0 })
@@ -6546,7 +6564,11 @@ final class Store: ObservableObject {
         var text = summary + " " + (await deviceAppPicture(project, run: run))
         if let answer = run.installAnswer, !answer.isEmpty { text += "\n\nWhat the \(name) answered when the app was put on it:\n\(answer)" }
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) { text += "\n\nWhat it printed (the device's log):\n\(tail)" }
+        if Privacy.sharesLog, let kept = try? await DeviceApps.log(project, on: run.device) {
+            // The app's own log, read from the device: what a game logged, and how it kept to its frames.
+            let tail = kept.split(separator: "\n", omittingEmptySubsequences: false).suffix(60).joined(separator: "\n").trimmed
+            text += tail.isEmpty ? "\n\nIt has logged nothing yet." : "\n\nWhat it logged on the \(name):\n\(tail)"
+        } else if Privacy.sharesLog, let tail = Runtime.logTail(project, lines: 60) { text += "\n\nWhat it printed (the device's log):\n\(tail)" }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
     }
@@ -6615,6 +6637,79 @@ final class Store: ObservableObject {
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it printed:\n" + tail }
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         return (200, ["text": text, "screenshots": Self.agentPictures(FileManager.default.fileExists(atPath: picture.path) ? [picture] : [], in: project)])
+    }
+
+    // MARK: Games in the preview
+
+    /// `look_at_app` for a native Xbox game: built for the preview on this Mac and played from its start for two
+    /// seconds, untouched; with `motion`, a frame every half second.
+    private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any]) {
+        if let problem = gameToolsProblem(project) {
+            let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
+            if !said { log(project, .error, problem); WindowsSetup.shared.show() }
+            return (200, ["text": "The game can't be built yet, and Lamp has told the person why: \(problem)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
+        }
+        if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
+        let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
+        GameKit.plays[project.id] = script
+        let said = motion ? "Lamp played the game in the preview from its start for two seconds, no one touching the controller; a frame every half second follows, oldest first."
+            : "Lamp played the game in the preview from its start for two seconds, no one touching the controller; the last frame follows."
+        return await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
+    }
+
+    /// `use_app` for a native Xbox game: the controller's moves added to the play so far, and the whole of it played
+    /// again from the start with the code as it is now.
+    private func useOnGame(_ project: LampProject, actions: [[String: Any]]) async -> (Int, [String: Any]) {
+        guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
+        guard let play = GameKit.plays[project.id] else { return (200, ["text": "Call look_at_app first: it builds the preview and starts a play there."]) }
+        let shots = play.filter { $0.hasPrefix("shot ") }.count
+        let moves = GameKit.script(for: actions, startingAt: shots)
+        if let problem = moves.problem { return (200, ["text": problem]) }
+        if let problem = await buildGamePreview(project, owner: owner) { return (200, ["text": problem]) }
+        let script = play + moves.lines
+        GameKit.plays[project.id] = script
+        let mine = Set(moves.lines.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) })
+        let said = "What happened, played again from the start in the preview with the moves before these:\n" + moves.said.joined(separator: "\n")
+            + "\n\nA picture at the end of each follows, oldest first (the last four at most)."
+        return await playGame(project, script: script, owner: owner, said: said, pictures: mine)
+    }
+
+    /// The preview's build, or what stops it, in the words the agent is given.
+    private func buildGamePreview(_ project: LampProject, owner: Turn) async -> String? {
+        note("Building…", for: project)
+        do {
+            try await GameKit.build(project, for: .preview, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+            turns[project.id]?.build = nil
+        } catch {
+            turns[project.id]?.build = nil
+            return "The game doesn't build yet. Fix these compiler errors:\n\n" + error.localizedDescription
+        }
+        guard turns[project.id] === owner, !owner.stopped else { return "Stopped." }
+        return nil
+    }
+
+    private func playGame(_ project: LampProject, script: [String], owner: Turn, said: String, pictures wanted: Set<String>) async -> (Int, [String: Any]) {
+        note("Playing \(project.name)", for: project)
+        let played: GameKit.Played
+        do {
+            played = try await GameKit.play(project, script: script, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+            turns[project.id]?.build = nil
+        } catch {
+            turns[project.id]?.build = nil
+            return (200, ["text": error.localizedDescription])
+        }
+        guard turns[project.id] === owner, !owner.stopped else { return (200, ["text": "Stopped."]) }
+        // What the game logged is its log, for the person's Agent Details as much as the agent.
+        try? AppFolder.write(played.printed.joined(separator: "\n") + "\n", to: Runtime.logURL(project), in: project.dir)
+        var text = said
+        if let stats = played.stats { text += "\n\nThe preview's count: \(stats)" }
+        if !Privacy.sharesLog { text += " " + Privacy.logOff }
+        else { text += played.printed.isEmpty ? "\n\nThe game logged nothing." : "\n\nWhat the game logged:\n" + played.printed.suffix(40).joined(separator: "\n") }
+        let pictures = Privacy.sharesPictures ? Array(played.pictures.filter { wanted.contains($0.deletingPathExtension().lastPathComponent) }.suffix(4)) : []
+        if !Privacy.sharesPictures { text += " " + Privacy.picturesOff }
+        else if pictures.isEmpty { text += "\n\nNo picture came out of the preview." }
+        else { text += "\n\n\(pictures.count == 1 ? "The picture is" : "The pictures are") 1920x1080, as on the TV, drawn on this Mac with Metal: the Xbox draws the same frames slower or faster." }
+        return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
     }
 
     /// One Android app as opened: where it runs (the emulator's or the device's serial), its process on the device,
@@ -6807,6 +6902,12 @@ final class Store: ObservableObject {
     }
 
     /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
+    /// What keeps a native Xbox game from being built on this Mac (its tools), or nil.
+    private func gameToolsProblem(_ project: LampProject) -> String? {
+        guard GameKit.isGame(project) else { return nil }
+        return WindowsTools.problem
+    }
+
     private func androidToolsProblem(_ project: LampProject) -> String? {
         guard project.platform == .android, !AndroidTools.isReady else { return nil }
         return "Android's tools aren't on this Mac yet. Download them in the Android Setup window (also under Settings → Building), then try again."
@@ -8577,7 +8678,7 @@ final class Store: ObservableObject {
             return Self.withPictureData(arguments["sidebar"] as? Bool == true
                 ? await lookAtSidebar(project, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                 : await look(at: project, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                                 reopen: arguments["reopen"] as? Bool ?? false), in: project)
+                                 reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false), in: project)
         }
         if request.path == "/agent/use" { return Self.withPictureData(await use(project, request: request.body), in: project) }
         if request.path.hasPrefix("/agent/versions") {
@@ -9138,11 +9239,12 @@ final class Store: ObservableObject {
     /// way, asking about unsaved work, and opens a fresh copy: for what only a launch shows (how long it takes to
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
-    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen), of: project)
+    /// `onDevice`: for a native Xbox game, on the Xbox rather than in the preview on this Mac (`GameKit`).
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice), of: project)
     }
 
-    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool) async -> (Int, [String: Any]) {
+    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -9175,8 +9277,13 @@ final class Store: ObservableObject {
         }
 
         try? await writeOwnFiles(project, all: false)
+        // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
+        if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project, inPlace: !reopen) {
+            if errors == gameToolsProblem(project) {
+                return (200, ["text": "The game can't be built yet, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
+            }
             if errors == androidToolsProblem(project) {
                 return (200, ["text": "The app can't be built yet, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
             }

@@ -344,6 +344,8 @@ struct IntegrationRunner {
     /// What a sequence gave back: a picture from a look, a stream that's running.
     struct Outcome {
         var picture: Data?
+        /// The app's log, from a bridge's `log` (`keep: "log"`).
+        var log: String?
         var streams: [DeviceStream] = []
         var printed: [String] = []
         /// What each request that kept nothing was answered, as text: where a device says what it made of a package.
@@ -431,6 +433,7 @@ struct IntegrationRunner {
                 }
                 switch request.keep {
                 case "picture": outcome.picture = answer.body
+                case "log": outcome.log = String(decoding: answer.body.suffix(256 << 10), as: UTF8.self)
                 case "key":
                     let file = DeviceFolder.deviceKey(device.id)
                     try answer.body.write(to: file, options: .atomic)

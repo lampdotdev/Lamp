@@ -90,6 +90,23 @@ cp "$BIN" "$APP/Contents/MacOS/$NAME"   # the process is named after the app, so
 mkdir -p "$APP/Contents/Frameworks"
 ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
+# xwin (MIT or Apache-2.0, github.com/Jake-Shadle/xwin) fetches Microsoft's Windows SDK on the person's Mac, once they've
+# accepted Microsoft's licence there, for Xbox games (WindowsTools.swift). It publishes no build for a Mac, so it's built
+# here from its published crate, pinned and with its own lock file, and cached in vendor/. A release can't go without it.
+XWIN_VERSION="0.10.0"
+XWIN="vendor/xwin-$XWIN_VERSION/bin/xwin"
+if [ ! -x "$XWIN" ]; then
+  if PATH="$PATH:$HOME/.cargo/bin" command -v cargo >/dev/null 2>&1; then
+    echo "Building xwin $XWIN_VERSION…"
+    PATH="$PATH:$HOME/.cargo/bin" cargo install xwin --version "$XWIN_VERSION" --locked --root "vendor/xwin-$XWIN_VERSION" --quiet \
+      || { echo "xwin didn't build" >&2; exit 1; }
+  elif [ "$FLAVOR" = release ]; then
+    echo "A release needs xwin, which is built with Rust's cargo: install Rust (rustup.rs) first." >&2
+    exit 1
+  else
+    echo "warning: no cargo here, so this Lamp Dev can't fetch the Windows SDK for Xbox games." >&2
+  fi
+fi
 # Lamp's icon, made with the same pipeline as the apps' icons (see Resources/Icon): the classic .icns,
 # plus the compiled Icon Composer icon that macOS 26 draws in Liquid Glass.
 if [ "$FLAVOR" = release ]; then
@@ -165,6 +182,9 @@ cp -R Resources/Onboarding "$APP/Contents/Resources/"
 cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as Babylon.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
+rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what an Xbox game is written against (GameKit.swift)
+rm -rf "$APP/Contents/Resources/bin"
+if [ -x "$XWIN" ]; then mkdir -p "$APP/Contents/Resources/bin" && install -m 755 "$XWIN" "$APP/Contents/Resources/bin/xwin"; fi
 tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 # Only the server and its libraries (symlinks kept), not llama.cpp's other tools.
 mkdir -p "$APP/Contents/Resources/llama"
@@ -259,6 +279,7 @@ find "$APP/Contents/Resources/llama" -type f \( -name '*.dylib' -o -name 'llama-
   while IFS= read -r -d '' item; do sign "$item"; done
 sign "${PI_ENTITLEMENTS[@]}" "$APP/Contents/Resources/pi/pi"
 sign "$APP/Contents/Resources/LampSidebar"
+if [ -f "$APP/Contents/Resources/bin/xwin" ]; then sign "$APP/Contents/Resources/bin/xwin"; fi
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
