@@ -5,6 +5,10 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.10
+
+- Xbox apps and games can make your controller rumble, and the rumble comes on the controller that's playing.
+
 ## 0.18.9
 
 - Xbox apps and games now get three.js for 3D, which the agent writes more reliably and which makes each app about half
