@@ -52,6 +52,8 @@ final class RecordingSession: ObservableObject {
     private var callWriter: AudioWriter?
     private var callFileName: String?
     private var clock = StreamClock()
+    /// Whether the call played where the microphone could hear it, at any point: only then are echoes looked for.
+    private var mayEcho = false
     private var callLevel: Float = 0
 
     private var micLines: [TranscriptLine] = []
@@ -68,6 +70,7 @@ final class RecordingSession: ObservableObject {
         transcriptNote = nil
         callNote = nil
         hearingCall = false
+        mayEcho = false
         micLines = []; micVolatile = ""; callLines = []; callVolatile = ""
         lines = []
         volatileText = ""
@@ -168,6 +171,7 @@ final class RecordingSession: ObservableObject {
         callCollector = collector
         callWriter = writer
         callFileName = name
+        mayEcho = OutputDevice.mayEcho
         hearingCall = true
     }
 
@@ -187,8 +191,9 @@ final class RecordingSession: ObservableObject {
         var callAudioFileName: String?
         var heard: [TranscriptLine]
         if let callCollector, let callFileName {
+            mayEcho = mayEcho || OutputDevice.mayEcho
             heard = Self.merge(microphone: collector?.finished() ?? micLines, call: callCollector.finished(),
-                               callOffset: clock.callOffset)
+                               callOffset: clock.callOffset, mayEcho: mayEcho)
             let callURL = Library.audioFolder.appendingPathComponent(callFileName)
             if callWriter?.wroteAny == true {
                 let mixedName = "\(UUID().uuidString).m4a"
@@ -258,7 +263,7 @@ final class RecordingSession: ObservableObject {
     func publishLines() {
         lines = callCollector == nil && callLines.isEmpty
             ? micLines
-            : Self.merge(microphone: micLines, call: callLines, callOffset: clock.callOffset)
+            : Self.merge(microphone: micLines, call: callLines, callOffset: clock.callOffset, mayEcho: mayEcho)
         volatileText = [micVolatile, callVolatile].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
@@ -274,10 +279,12 @@ final class RecordingSession: ObservableObject {
         callLevel *= 0.85
     }
 
-    /// Both sides in the order they were said. The call's times move onto the microphone's timeline, and a
-    /// microphone line that repeats what the call said moments before (the speakers heard by the
-    /// microphone, without headphones) is dropped, since the call's own copy is the clean one.
-    nonisolated static func merge(microphone: [TranscriptLine], call: [TranscriptLine], callOffset: Double) -> [TranscriptLine] {
+    /// Both sides in the order they were said. The call's times move onto the microphone's timeline, and, only when
+    /// the call played through speakers (`mayEcho`), a microphone line that repeats what the call said moments
+    /// before is dropped, since the call's own copy is the clean one. With headphones nothing of yours is dropped:
+    /// a reply can share nearly every word with what it answers ("we should not approve the final budget").
+    nonisolated static func merge(microphone: [TranscriptLine], call: [TranscriptLine], callOffset: Double,
+                                  mayEcho: Bool) -> [TranscriptLine] {
         let them = call.map { line in
             var line = line
             line.start = max(0, line.start + callOffset)
@@ -289,7 +296,7 @@ final class RecordingSession: ObservableObject {
             guard !mine.isEmpty else { return false }
             // Only a near copy is an echo: soon after, at least a few words, and nearly the same words both ways,
             // so "I disagree with that plan" after "I agree with that plan", or a short "yes", stays.
-            guard mine.count >= 3 else { return true }
+            guard mayEcho, mine.count >= 3 else { return true }
             return !theirWords.contains { other in
                 let shared = Double(mine.intersection(other.words).count)
                 return line.start >= other.start - 1 && line.start - other.start < 4

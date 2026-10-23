@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
@@ -159,5 +160,36 @@ enum Mixdown {
             print("Transcriber: mixing the call into the recording failed: \(String(describing: export.error))")
         }
         return export.status == .completed
+    }
+}
+
+/// Whether what the Mac plays could reach its microphone: only then can the microphone hear the call, so only then
+/// is a line of yours that repeats the call's taken for an echo. Headphones (the Mac's own headphone jack, or a
+/// Bluetooth headset) can't be heard; anything else may be a speaker.
+enum OutputDevice {
+    static var mayEcho: Bool {
+        guard let device = defaultOutput else { return true }
+        let transport = value(kAudioDevicePropertyTransportType, of: device, scope: kAudioObjectPropertyScopeGlobal)
+        if transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE { return false }
+        if transport == kAudioDeviceTransportTypeBuiltIn {
+            // The built-in output says which of its sources plays: the speakers ('ispk') or the headphone jack ('hdpn').
+            let source = value(kAudioDevicePropertyDataSource, of: device, scope: kAudioDevicePropertyScopeOutput)
+            return source != 0x6864_706E   // 'hdpn'
+        }
+        return true
+    }
+
+    private static var defaultOutput: AudioObjectID? {
+        let id = value(kAudioHardwarePropertyDefaultOutputDevice, of: AudioObjectID(kAudioObjectSystemObject),
+                       scope: kAudioObjectPropertyScopeGlobal)
+        return id.flatMap { $0 == kAudioObjectUnknown ? nil : AudioObjectID($0) }
+    }
+
+    private static func value(_ selector: AudioObjectPropertySelector, of object: AudioObjectID,
+                              scope: AudioObjectPropertyScope) -> UInt32? {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr ? value : nil
     }
 }

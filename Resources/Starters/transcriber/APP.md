@@ -38,7 +38,8 @@ line plays the audio from there. AI is optional: without it the transcript works
   call files into the one .m4a after recording. In `RecordingSession`, each side has its own writer,
   transcriber and `TranscriptCollector(speaker:)`; `StreamClock` aligns them by host time, and `merge` sorts
   both sides and drops a mic line only when it is a near copy of a call line just before it (speakers heard by the mic
-  without headphones). When the mix fails, the call's file is kept as `Recording.callAudioFileName` and the recording
+  without headphones), and only when the call played through speakers (`OutputDevice.mayEcho`: not headphones or
+  a Bluetooth headset). When the mix fails, the call's file is kept as `Recording.callAudioFileName` and the recording
   says so.
 - `Sources/Audio/Transcription.swift`: the `Transcriber` protocol, the choice between the two below, and
   `TranscriptCollector`, which gathers lines from whatever thread they arrive on.
