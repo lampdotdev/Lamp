@@ -1127,7 +1127,8 @@ heading in its binary (`Store.screenTextMarker`): such an app is told to be rebu
 `use_app` happens in plain sight, and the person can take the app back at any moment (`Handover`). While the
 actions run, the window in use glows, Lamp's cursor (a fingertip over the simulator) goes to each spot before
 anything happens there with a word on what it's doing ("Lamp · clicking Add"), and a pill above the window says
-"Lamp is trying <app>" with Stop and esc (`ComputerOverlay`, the same signs an app's use of other apps shows). A
+"Lamp is trying <app>" with Stop and esc (`ComputerOverlay`, the same signs an app's use of other apps shows). The glow and the pill sit just above that window in the stack, not over every app, so a window the person
+brings in front of it covers them too. A
 Mac app says where each action is about to happen (`LampDriver.aimed`, a distributed notification whose object
 carries it, since a sandboxed app may send nothing else) during the pause after the action before it, with the
 time until it happens, so the cursor is there when the action is due and nothing waits for it (`LampDriver.step`;

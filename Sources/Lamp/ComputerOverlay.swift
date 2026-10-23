@@ -71,12 +71,15 @@ final class ComputerOverlay {
         if !window.isVisible { window.orderFront(nil) }
         place(window, around: frame, above: id)
         placeStop(above: frame)
+        stackStop()
     }
 
     // MARK: Stopping
 
     /// A small pill just above the window in use: whose task this is, and Stop. Above the window rather
     /// than on it so it covers none of the window's own controls; below it when there's no room above.
+    /// It belongs to that window in the stack as the glow does: a window the person brings in front of the app
+    /// covers it, so it never floats over whatever else they're doing.
     private func showStop(_ label: String, escape: Bool) {
         let view = StopPill(label: label, escape: escape) { [weak self] in
             guard let self else { return }
@@ -95,7 +98,6 @@ final class ComputerOverlay {
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.hasShadow = true
-            panel.level = .statusBar   // over whatever else is in front: it's how the person stops the task
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
@@ -114,8 +116,17 @@ final class ComputerOverlay {
         if !pill.isVisible {
             pill.alphaValue = 0
             pill.orderFrontRegardless()
+            stackStop()
             NSAnimationContext.runAnimationGroup { $0.duration = 0.25; pill.animator().alphaValue = 1 }
         }
+    }
+
+    /// Just above the glow, which is just above the window in use, so the glow's light never draws over the pill.
+    /// Lamp coming forward raises all its windows over other apps', so this is done again each time the glow follows.
+    private func stackStop() {
+        guard let pill = stopPill, pill.isVisible, let id = glowTarget else { return }
+        if let glow = glowWindow, glow.isVisible { pill.order(.above, relativeTo: glow.windowNumber) }
+        else { pill.order(.above, relativeTo: Int(id)) }
     }
 
     private func placeStop(above frame: CGRect) {
