@@ -829,6 +829,59 @@ enum DeviceSupport {
       window.addEventListener('keydown', padKey, true);
       window.addEventListener('keyup', padKey, true);
 
+      // Chromium's web view on the Xbox never shakes the controller: a page's vibrationActuator takes playEffect and
+      // answers, and nothing happens. In Lamp's host the standard calls go to the host instead, which shakes it itself.
+      if (host && window.Gamepad) {
+        var actuators = {};
+        var actuator = function (index) {
+          var playing = null;
+          var end = function (result) {
+            if (!playing) return;
+            var was = playing;
+            playing = null;
+            clearTimeout(was.timer);
+            was.resolve(result);
+          };
+          var amount = function (v) { v = Number(v); return v > 0 ? Math.min(v, 1) : 0; };
+          var ms = function (v) { v = Number(v); return v > 0 ? Math.min(v, 5000) : 0; };
+          return {
+            type: 'dual-rumble',
+            effects: ['dual-rumble', 'trigger-rumble'],
+            canPlayEffectType: function (type) { return type === 'dual-rumble' || type === 'trigger-rumble'; },
+            playEffect: function (type, params) {
+              if (type !== 'dual-rumble' && type !== 'trigger-rumble') return Promise.reject(new TypeError('Unknown effect ' + type));
+              params = params || {};
+              end('preempted');
+              var delay = ms(params.startDelay), duration = ms(params.duration);
+              // The host numbers controllers in another order than the page, so it's told what this one shows now (its
+              // buttons and sticks) and finds the controller that matches.
+              var pad = navigator.getGamepads()[index], buttons = [], axes = [];
+              if (pad) {
+                for (var i = 0; i < pad.buttons.length; i++) buttons.push(Math.round(pad.buttons[i].value * 100) / 100);
+                for (var j = 0; j < pad.axes.length; j++) axes.push(Math.round(pad.axes[j] * 100) / 100);
+              }
+              host.postMessage({ lamp: 'rumble', pad: index, buttons: buttons, axes: axes, delay: delay, duration: duration,
+                strong: amount(params.strongMagnitude), weak: amount(params.weakMagnitude),
+                leftTrigger: type === 'trigger-rumble' ? amount(params.leftTrigger) : 0,
+                rightTrigger: type === 'trigger-rumble' ? amount(params.rightTrigger) : 0 });
+              return new Promise(function (resolve) {
+                playing = { resolve: resolve, timer: setTimeout(function () { end('complete'); }, delay + duration) };
+              });
+            },
+            reset: function () {
+              end('preempted');
+              host.postMessage({ lamp: 'rumble', pad: index, delay: 0, duration: 0 });
+              return Promise.resolve('complete');
+            }
+          };
+        };
+        try {
+          Object.defineProperty(Gamepad.prototype, 'vibrationActuator', { configurable: true, get: function () {
+            return actuators[this.index] || (actuators[this.index] = actuator(this.index));
+          } });
+        } catch (x) {}
+      }
+
       // Opened by Lamp's install, the app asks for its token now, while Lamp is waiting for it, not at its first call.
       if (installed && !bridge) token().then(null, function () {});
 
