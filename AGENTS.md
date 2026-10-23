@@ -61,7 +61,11 @@ A capability given to one engine must be given to all of them that can take it, 
   built it, or not at all, whatever key is saved): a stretch of steps is asked about once, in a call of its own, as soon as
   the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
   lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
-  failed) in one call after the turn's summary, never waited on. The model is
+  failed) in one call after the turn's summary, never waited on. A stretch whose early call is still out then is asked
+  for when that call comes to nothing. The call at the end is the last: when it fails, or a title it gives isn't fit to
+  show, it's tried once more straight away for the folds still without one, so a fold costs more than one call only
+  when one came to nothing, and never one per message. A call through Claude Code or Codex is ended after 90 seconds
+  (`StepTitles.timeLimit`), and what went wrong is logged, never the steps or titles. The model is
   told only the request and the steps' words, never a command or what it printed, with which steps failed or never ran
   (`StepTitles.words`); a step's words are what the agent set out to do, so the prompt has it say what was done, not
   that its aim was reached, and say when it failed. A fold keeps its
