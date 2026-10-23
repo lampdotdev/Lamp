@@ -823,7 +823,10 @@ staged beside `Web/` the same way (links refused) and never packaged, into a fol
 the served one in one swap only once it has passed (`TVs.publishPhone`), so a request never reads a copy being made or
 one that failed. It's served by Lamp at a port of the app's own (`PhoneSites`, from `Edition.phonePagePorts`, sixteen
 for each Lamp), so each app's page is an origin of its own in the phone's browser and what one app's page keeps is out
-of another's reach. The site answers with the app's files (`Store.phonePage`), reached through no link at any step
+of another's reach. The sixteen are a pool, not a limit: an app keeps its port while it can, and gives it up to an app
+that needs one once its own page isn't served (or it's gone). A site counts as open only once it's listening
+(`PhoneSites.open`), a port another program took meanwhile is left for the next free one, and a page's address is only
+ever given for the port its site holds (`PhoneSites.ready`), sent to the TV page again when the site moves. The site answers with the app's files (`Store.phonePage`), reached through no link at any step
 (`TVs.phoneFile`), only while the app runs, in the preview or set to open on a TV (`Store.servesPhonePage`), from the
 network by the Mac's name or address and on this Mac by a loopback name, with no token, since a phone following a QR
 code has none; it's opened and closed with the rest of the network listening (`Store.syncLocalNetwork`). The TV page

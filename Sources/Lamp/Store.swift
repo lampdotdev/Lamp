@@ -8257,7 +8257,7 @@ final class Store: ObservableObject {
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
-        if route == "/app/controller" { return controllerSession(request, for: project) }
+        if route == "/app/controller" { return await controllerSession(request, for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -8265,11 +8265,11 @@ final class Store: ObservableObject {
     /// A TV app on a TV opening a game for phone controllers (`Lamp.controllers` in lamp.js): a credential for its socket
     /// on this same gateway, by the address the TV reached it at, never anything of Lamp's. The preview joins through its
     /// bridge instead (`TVPreview`).
-    private func controllerSession(_ request: Gateway.Request, for project: LampProject) -> (Int, [String: Any]) {
+    private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         guard project.platform == .tv else { return (403, ["error": "Only TV apps take phone controllers."]) }
         guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
-        guard let port = PhoneSites.port(for: project.id) else { return (503, ["error": "Lamp has no free port for the phone page."]) }
+        guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
         // By the name or address the TV reached Lamp at, at the app's own port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
         return (200, ["socket": "ws://\(host):\(port)/socket", "host": PhoneControllers.shared.hostCredential(for: project)])

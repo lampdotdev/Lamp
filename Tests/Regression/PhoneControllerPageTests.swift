@@ -55,4 +55,60 @@ final class PhoneControllerPageTests: XCTestCase {
             XCTAssertTrue(Edition.phonePagePorts.contains(UInt16(port)))
         }
     }
+
+    @MainActor
+    func testPortsOfAppsWhosePagesArentServedGoBackToThePool() {
+        PhoneSites.forgetAll()
+        defer { PhoneSites.forgetAll() }
+        // As many apps as the range has ports were given one (each staged once), and none is served now.
+        for index in 0..<Edition.phonePagePorts.count { _ = PhoneSites.port(for: "closed\(index)") }
+        XCTAssertNotNil(PhoneSites.port(for: "one-more"), "a port no open page holds is given to the app that needs one")
+    }
+
+    @MainActor
+    func testASiteWhosePortWasTakenOpensOnAnotherAndIsOpenOnlyOnceListening() async throws {
+        PhoneSites.forgetAll()
+        defer { PhoneSites.forgetAll() }
+        let kept = try XCTUnwrap(PhoneSites.port(for: "busy"))
+        // Another program has taken the port the app was given, after it was given it.
+        let holder = try XCTUnwrap(Self.listen(on: kept))
+        defer { close(holder) }
+        let opened = await PhoneSites.open("busy", wanted: { true })
+        XCTAssertTrue(opened)
+        XCTAssertTrue(PhoneSites.isOpen("busy"))
+        let now = try XCTUnwrap(PhoneSites.port(for: "busy"))
+        XCTAssertNotEqual(now, kept, "the site is on a port it could take")
+        XCTAssertFalse(PhoneSites.isFree(now), "and it's listening there")
+    }
+
+    @MainActor
+    func testAPageIsOnlyEverGivenAPortItsSiteHolds() async throws {
+        PhoneSites.forgetAll()
+        defer { PhoneSites.forgetAll() }
+        let kept = try XCTUnwrap(PhoneSites.port(for: "moved"))
+        let holder = try XCTUnwrap(Self.listen(on: kept))
+        defer { close(holder) }
+        let ready = await PhoneSites.ready("moved", wanted: { true })
+        let given = try XCTUnwrap(ready)
+        XCTAssertNotEqual(given, kept, "the address names the port the site took, not the one it lost")
+        XCTAssertTrue(PhoneSites.isOpen("moved"))
+    }
+
+    /// A socket listening on every address at the port, as another program's would.
+    private static func listen(on port: UInt16) -> Int32? {
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        var no: Int32 = 0
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &no, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_port = port.bigEndian
+        address.sin6_addr = in6addr_any
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) == 0 }
+        }
+        guard bound, Darwin.listen(fd, 1) == 0 else { close(fd); return nil }
+        return fd
+    }
 }

@@ -387,6 +387,11 @@ enum TVs {
         guard let port = PhoneSites.port(for: project.id) else { return "" }
         return "http://\(host):\(port)/"
     }
+
+    /// The phone page's address at a port its site is listening on.
+    @MainActor static func phonePage(port: UInt16) -> String {
+        "http://\(Devices.localAddresses.first ?? Devices.macHost):\(port)/"
+    }
 }
 
 // MARK: - Packages

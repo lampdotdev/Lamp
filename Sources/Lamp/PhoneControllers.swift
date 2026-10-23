@@ -184,9 +184,7 @@ final class PhoneControllers {
     private func fromHost(_ session: Session, app: String, message: [String: Any]) {
         switch message["t"] as? String {
         case "link":
-            guard let project = Store.shared.projects.first(where: { $0.id == app }) else { return }
-            let join = ControllerCredential.issue(kind: .join, app: app)
-            toHost(session, ["t": "link", "url": TVs.phonePage(for: project) + "#" + join])
+            sendLink(session, app: app)
         case "send":
             guard let data = message["data"] else { return }
             let to = (message["player"] as? Int).flatMap { $0 == 0 ? nil : $0 }
@@ -195,6 +193,21 @@ final class PhoneControllers {
         default:
             break
         }
+    }
+
+    /// A link for phones, once the app's site is listening and by the port it holds.
+    private func sendLink(_ session: Session, app: String) {
+        Task { @MainActor in
+            guard let port = await PhoneSites.ready(app), sessions[app] === session else { return }
+            let join = ControllerCredential.issue(kind: .join, app: app)
+            toHost(session, ["t": "link", "url": TVs.phonePage(port: port) + "#" + join])
+        }
+    }
+
+    /// The app's site has opened, perhaps at another port than before: its host is given a link to where it is.
+    func siteOpened(_ app: String) {
+        guard let session = sessions[app], session.host != nil else { return }
+        sendLink(session, app: app)
     }
 
     // A phone may send about as often as its screen draws; past that its messages are dropped, and a phone that goes
@@ -502,50 +515,122 @@ final class WebSocketPeer {
 enum PhoneSites {
     private static var ports: [String: UInt16] = [:]
     private static var sites: [String: Gateway] = [:]
+    private static var opening: Set<String> = []
+    private static var waiting: [String: [CheckedContinuation<UInt16?, Never>]] = [:]
 
-    /// The app's port: the one it has, else the first free one in Lamp's range, starting from a place worked out from
-    /// its id so an app tends to keep the same one from run to run.
-    static func port(for app: String) -> UInt16? {
-        if let port = ports[app] { return port }
+    /// The app's port: the one it has, while it's still free or its site holds it, else the first free one in Lamp's
+    /// range, starting from a place worked out from its id so an app tends to keep the same one from run to run. A port
+    /// is kept for an app whose page isn't served only while no other app needs it: the range is a pool, never a limit
+    /// on how many apps have had a page.
+    static func port(for app: String, avoiding avoided: Set<UInt16> = []) -> UInt16? {
+        if let port = ports[app], !avoided.contains(port), sites[app] != nil || opening.contains(app) || isFree(port) { return port }
+        ports[app] = nil
         let range = Edition.phonePagePorts
         let count = Int(range.count)
         let start = Int(app.utf8.reduce(UInt32(2166136261)) { ($0 ^ UInt32($1)) &* 16777619 } % UInt32(count))
-        let taken = Set(ports.values)
-        for step in 0..<count {
-            let port = range.lowerBound + UInt16((start + step) % count)
-            if !taken.contains(port), isFree(port) {
-                ports[app] = port
-                return port
-            }
+        let candidates = (0..<count).map { range.lowerBound + UInt16((start + $0) % count) }.filter { !avoided.contains($0) }
+        let inUse = Set(ports.filter { sites[$0.key] != nil || opening.contains($0.key) }.values)
+        let kept = Set(ports.values)
+        // First a port no other app keeps; then one kept by an app whose page isn't served now, which gives it up.
+        for port in candidates where !kept.contains(port) && isFree(port) {
+            ports[app] = port
+            return port
+        }
+        for port in candidates where !inUse.contains(port) && isFree(port) {
+            for (other, held) in ports where held == port { ports[other] = nil }
+            ports[app] = port
+            return port
         }
         return nil
     }
 
-    /// Opens the sites of the apps whose phone pages are served and closes the rest.
+    /// Whether the app's site is open and listening.
+    static func isOpen(_ app: String) -> Bool { sites[app] != nil }
+
+    /// The port the app's site listens on, once it does: a page's address is only ever given for a port its site holds,
+    /// never one it was given and may yet lose. Nil when its page isn't served.
+    static func ready(_ app: String, wanted: @escaping @MainActor () -> Bool = { false }) async -> UInt16? {
+        if sites[app] != nil { return ports[app] }
+        if opening.contains(app) { return await withCheckedContinuation { waiting[app, default: []].append($0) } }
+        let isWanted: @MainActor () -> Bool = { wanted() || served(app) }
+        guard isWanted() else { return nil }
+        return await open(app, wanted: isWanted) ? ports[app] : nil
+    }
+
+    private static func served(_ app: String) -> Bool {
+        Store.shared.projects.first { $0.id == app }.map(Store.servesPhonePage) ?? false
+    }
+
+    /// Opens the sites of the apps whose phone pages are served and closes the rest; apps that are gone give their
+    /// ports back.
     static func sync(_ projects: [LampProject]) {
         let serving = Set(projects.filter(Store.servesPhonePage).map(\.id))
+        let known = Set(projects.map(\.id))
         for (app, site) in sites where !serving.contains(app) {
             site.stop()
             sites[app] = nil
         }
-        for app in serving where sites[app] == nil {
-            for _ in 0..<2 {
-                guard let port = port(for: app) else { break }
-                let site = Gateway(site: port, pages: { request in
-                    await Store.shared.phonePage(request.within(app))
-                }, sockets: { request, connection, leftover in
-                    Task { @MainActor in Store.shared.phoneSocket(request.within(app), connection: connection, leftover: leftover) }
-                })
-                if (try? site.startSite()) != nil {
-                    sites[app] = site
-                    break
-                }
-                ports[app] = nil   // taken since it was chosen: the next free one
-            }
+        for app in ports.keys where !known.contains(app) { ports[app] = nil }
+        for app in serving where sites[app] == nil && !opening.contains(app) {
+            Task { @MainActor in _ = await open(app, wanted: { served(app) }) }
         }
     }
 
-    private static func isFree(_ port: UInt16) -> Bool {
+    /// Opens the app's site and counts it open only once it's listening. A port that turns out to be taken (by another
+    /// program since it was chosen) is left for the next free one; a site that stops listening later is let go, and
+    /// the next sync opens it again.
+    @discardableResult
+    static func open(_ app: String, wanted: @escaping @MainActor () -> Bool) async -> Bool {
+        guard sites[app] == nil, !opening.contains(app) else { return sites[app] != nil }
+        opening.insert(app)
+        defer {
+            opening.remove(app)
+            let port = sites[app] != nil ? ports[app] : nil
+            for waiter in waiting.removeValue(forKey: app) ?? [] { waiter.resume(returning: port) }
+            // A host that asked for a link while the site was opening, or before it moved, gets one for where it is.
+            if port != nil { PhoneControllers.shared.siteOpened(app) }
+        }
+        var avoided: Set<UInt16> = []
+        for _ in 0..<4 {
+            guard let port = port(for: app, avoiding: avoided) else { return false }
+            let site = Gateway(site: port, pages: { request in
+                await Store.shared.phonePage(request.within(app))
+            }, sockets: { request, connection, leftover in
+                Task { @MainActor in Store.shared.phoneSocket(request.within(app), connection: connection, leftover: leftover) }
+            })
+            let started = await site.startSite(onFailure: {
+                Task { @MainActor in
+                    guard sites[app] === site else { return }
+                    sites[app] = nil
+                    ports[app] = nil
+                    if served(app) { _ = await open(app, wanted: { served(app) }) }
+                }
+            })
+            guard started else {
+                site.stop()
+                ports[app] = nil
+                avoided.insert(port)
+                continue
+            }
+            // Closed while it opened: nothing is to be served there.
+            guard wanted() else { site.stop(); return false }
+            sites[app] = site
+            return true
+        }
+        return false
+    }
+
+    /// For tests: the app keeps this port, as if it had been given it earlier.
+    static func keep(_ port: UInt16, for app: String) { ports[app] = port }
+
+    /// For tests: every site closed and every port given back.
+    static func forgetAll() {
+        for site in sites.values { site.stop() }
+        sites = [:]
+        ports = [:]
+    }
+
+    static func isFree(_ port: UInt16) -> Bool {
         let fd = socket(AF_INET6, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }

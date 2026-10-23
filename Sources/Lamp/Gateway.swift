@@ -58,10 +58,12 @@ final class Gateway: @unchecked Sendable {
     }
 
     /// A site's one listener, on every interface: a request from this Mac's own loopback is told from one from the network.
-    func startSite() throws {
+    /// True once it's listening; false when it couldn't take its port, which `NWListener` says only after it starts.
+    /// The port is never shared: another program listening there keeps it, and the site goes elsewhere.
+    func startSite(onFailure: @escaping @Sendable () -> Void = {}) async -> Bool {
         let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-        let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        params.allowLocalEndpointReuse = false
+        guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!) else { return false }
         listener.newConnectionHandler = { [weak self] connection in
             connection.start(queue: self?.queue ?? .main)
             var loopback = false
@@ -74,8 +76,22 @@ final class Gateway: @unchecked Sendable {
             }
             self?.receive(connection, buffer: Data(), fromNetwork: !loopback)
         }
-        listener.start(queue: queue)
         self.listener = listener
+        return await withCheckedContinuation { continuation in
+            var answered = false
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    if !answered { answered = true; continuation.resume(returning: true) }
+                case .failed, .cancelled:
+                    if !answered { answered = true; continuation.resume(returning: false) } else { onFailure() }
+                    listener.cancel()
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        }
     }
 
     func stop() {
