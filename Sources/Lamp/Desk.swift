@@ -1556,7 +1556,7 @@ extension Store {
             // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat comes.
             if running || !MagicPanel.shared.startWithChat(project) { MagicPanel.shared.openChat(in: project) }
             if !running {
-                openPrepared(project)
+                openWish(project)
                 MagicPanel.shared.showChatIfAppNeverComes(project)
             }
         }
@@ -1637,7 +1637,7 @@ extension Store {
             case .window:
                 break
             }
-            openPrepared(project)
+            openWish(project)
         }
     }
 }

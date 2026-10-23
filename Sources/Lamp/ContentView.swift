@@ -839,14 +839,15 @@ struct ProjectView: View {
     private var appTools: some ToolbarContent {
         ToolbarItem {
             // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
-            // both can be open on this Mac and in a simulator at once).
+            // both can be open on this Mac and in a simulator at once). A wish of several apps plays and stops them
+            // all; each app's own menu uses or quits it alone.
             if store.isOpen(project) {
-                Button { Task { await store.quitApp(project) } } label: {
+                Button { Task { await store.quitWish(project) } } label: {
                     Label("Quit", systemImage: "stop.fill")
                 }
                 .help("Quit \(project.name)")
             } else {
-                Button { store.openPrepared(project) } label: {
+                Button { store.openWish(project) } label: {
                     Label("Use", systemImage: "play.fill")
                 }
                 .disabled(!made)
@@ -857,6 +858,16 @@ struct ProjectView: View {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
+                    if !store.parts(of: project).isEmpty {
+                        // Beside the other app's menu: this app alone, without touching the other device.
+                        let name = Parts.name(of: project.platform).dropFirst(4).dropLast(3) + "App"
+                        if store.isOpen(project) {
+                            Button("Quit the \(name)") { Task { await store.quitApp(project) } }
+                        } else {
+                            Button("Use the \(name)") { store.openPrepared(project) }.disabled(!made)
+                        }
+                        Divider()
+                    }
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }

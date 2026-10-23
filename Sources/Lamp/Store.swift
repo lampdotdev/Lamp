@@ -469,6 +469,24 @@ final class Store: ObservableObject {
     func parts(of wish: LampProject) -> [LampProject] { projects.filter { $0.partOf == wish.id } }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
+    /// Who a line about where an app opens names: the wish, or for one of its several apps that app ("The iPhone app"),
+    /// since every app of a wish has the wish's name.
+    func placeName(_ project: LampProject) -> String {
+        guard project.isPart || !parts(of: project).isEmpty else { return project.name }
+        let name = Parts.name(of: project.platform)
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+    /// Play: the wish's app and each of its other apps not open yet, each on the device chosen for it, so a TV app and
+    /// the iPhone app that controls it come up together. Each app's own menu still opens it alone.
+    func openWish(_ wish: LampProject) {
+        openPrepared(wish)
+        for part in parts(of: wish) where !isOpen(part) { openPrepared(part) }
+    }
+    /// Stop: the wish's app and every other app of it that's open.
+    func quitWish(_ wish: LampProject) async {
+        await quitApp(wish)
+        for part in parts(of: wish) where isOpen(part) { await quitApp(part) }
+    }
     /// The wish whose chat window is in front; nil while the desk is (`LampWindows`).
     @Published var selection: String? {
         didSet { if selection != oldValue { markRead() } }
@@ -1911,8 +1929,8 @@ final class Store: ObservableObject {
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         syncLocalNetwork()
         let name = devices.first(where: { $0.udid == udid })?.name
-        let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
-            ?? "\(changed.name) will open on the \(simulatorName(changed)) simulator from now on."
+        let said = name.map { "\(placeName(changed)) will open on \($0) from now on. Press Play to put it there." }
+            ?? "\(placeName(changed)) will open on the \(simulatorName(changed)) simulator from now on."
         // A new place for the iPhone copy (another simulator, a phone, or back from a phone) retires the copy on
         // the old one, so Play and Stop are about the one chosen; an app for both's Mac copy stays open.
         let otherTarget = project.device != udid || (udid == nil && (project.family != family || otherSimulator))
@@ -1958,7 +1976,7 @@ final class Store: ObservableObject {
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
             let name = devices.first(where: { $0.udid == id })?.name
-            log(changed, .status, name.map { "\(changed.name) will go on \($0) when you press Play." } ?? "\(changed.name) will open in the TV preview from now on.")
+            log(changed, .status, name.map { "\(placeName(changed)) will go on \($0) when you press Play." } ?? "\(placeName(changed)) will open in the TV preview from now on.")
             finish(changed)
             refreshOpenApps()
             syncLocalNetwork()   // the TV reaches Lamp's gateway over the Wi‑Fi

@@ -1019,7 +1019,7 @@ with the request while the wish has that part (`Skills.applying`, so a compacted
 whole in `make_app_for`'s reply when the part is added. So a conversation never carries the rules of a kind its wish
 doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), and run under the wish's turn
 (`Store.underTurn`). `make_app_for` takes the whole list: the main kind is changed by `convert` as before, a part is added
-(`Store.addPart`), changed in place, or taken away. The toolbar has one menu for the other part: use or quit it, and Try On.
+(`Store.addPart`), changed in place, or taken away. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all (`Store.openWish`, `quitWish`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
 
 A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
 (kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
