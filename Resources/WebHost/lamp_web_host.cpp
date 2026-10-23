@@ -40,6 +40,7 @@
 #include <winrt/Microsoft.Web.WebView2.Core.h>
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <cstdio>
 #include <string>
 
@@ -96,6 +97,9 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         Windows::System::Threading::ThreadPoolTimer start{ nullptr }, stop{ nullptr };
     };
     Rumble rumbles[4];
+    // Held over each check of an effect's generation and the write that follows it, from the timers and from `still`, so
+    // a timer can't write an effect's strength after a reset has stilled the controller.
+    std::mutex shaking;
     // Counts the page's top-level navigations, so an answer to a page that has since gone is dropped.
     uint64_t page = 0;
 
@@ -337,7 +341,9 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
                 uint32_t at = 0;
                 if (found != known && list.IndexOf(found, at)) say(L"Lamp: the page's controller %d is the console's %u.", index, at);
                 known = found;
-                for (int i = 0; i < 4; i++) if (i != index && rumbles[i].pad == found) rumbles[i].pad = nullptr;
+                // Another of the page's gamepads that was taken for this controller ends what it played there first, so its
+                // timers neither stop this effect early nor are left with no controller to still.
+                for (int i = 0; i < 4; i++) if (i != index && rumbles[i].pad == found) { still(i); rumbles[i].pad = nullptr; }
             }
         }
         if (known) return known;
@@ -348,9 +354,10 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
     // Ends what's playing for the page's controller, now.
     void still(int index) {
         auto& r = rumbles[index];
-        r.effect++;
         if (r.start) r.start.Cancel();
         if (r.stop) r.stop.Cancel();
+        std::lock_guard held(shaking);
+        r.effect++;
         if (r.pad) r.pad.Vibration({});
     }
 
@@ -377,6 +384,7 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         using Windows::System::Threading::ThreadPoolTimer;
         // The timers' work is skipped once another effect has taken this one's place.
         auto set = [this, index, effect, target](Windows::Gaming::Input::GamepadVibration v) {
+            std::lock_guard held(shaking);
             if (rumbles[index].effect == effect) target.Vibration(v);
         };
         if (delay.count() == 0) set(shake);
