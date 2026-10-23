@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.9
+
+- Xbox apps and games now get three.js for 3D, which the agent writes more reliably and which makes each app about half
+  the size.
+- A new starter wish, Transcriber, transcribes calls with both sides and their sound; add it from Starter wishes at the
+  end of the desk. New desks also get a livelier Buzzer Beater, with a denser scoreboard and team logos.
+
 ## 0.18.8
 
 - Xbox apps and games now run in the console's modern web engine instead of its old one: the same 3D scene went from
