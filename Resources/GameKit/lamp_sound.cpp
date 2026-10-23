@@ -130,7 +130,8 @@ struct Stream {
     void next(float& left, float& right) {
         if (clip) {
             const Clip& c = all_clips()[clip - 1];
-            if (position >= (double)c.frames) position -= (double)c.frames;
+            // A short sound at a high rate can move on by more than its length in one frame: wrapped whole.
+            if (position >= (double)c.frames) position = fmod(position, (double)c.frames);
             size_t at = (size_t)position, after = at + 1 < c.frames ? at + 1 : 0;
             float t = (float)(position - (double)at);
             left = c.data[at * c.channels] + (c.data[after * c.channels] - c.data[at * c.channels]) * t;
@@ -420,7 +421,7 @@ extern "C" void lamp_host_mix(float* out, int frames) {
                 size_t at = (size_t)v.position;
                 if (at >= clip.frames) {
                     if (!v.loop) { v.clip = 0; break; }
-                    v.position -= (double)clip.frames;
+                    v.position = fmod(v.position, (double)clip.frames);   // a short clip at a high pitch can pass its end more than once a frame
                     at = (size_t)v.position;
                 }
                 size_t after = at + 1 < clip.frames ? at + 1 : (v.loop ? 0 : at);
