@@ -9,9 +9,8 @@ plain "Lamp x.y.z" line.
 
 - Xbox apps and games now get three.js for 3D, which the agent writes more reliably and which makes each app about half
   the size.
-- The starter wishes have been refreshed: Transcripts is now Transcriber, which also records the other side of a
-  call, and Buzzer Beater has a denser scoreboard with team logos. Starters you already have stay as they are; add the
-  new ones from Starter wishes at the end of the desk.
+- A new starter wish, Transcriber, transcribes calls with both sides and their sound; add it from Starter wishes at the
+  end of the desk. New desks also get a livelier Buzzer Beater, with a denser scoreboard and team logos.
 
 ## 0.18.8
 
