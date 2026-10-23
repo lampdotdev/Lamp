@@ -38,7 +38,7 @@ extension Target {
                            guard let declared = DeviceApps.integration(for: project)?.app?.declared else { return nil }
                            return declared.package + "\n" + declared.output + "\n" + (project.integration ?? "")
                        },
-                       builtURL: DeviceApps.packageURL(for:), marker: DeviceApps.marker, refills: true, integration: DeviceApps.integrationID(in:),
+                       builtURL: DeviceApps.builtURL(for:), marker: DeviceApps.marker, refills: true, integration: DeviceApps.integrationID(in:),
                        shareRefusal: "Lamp doesn't share apps for devices like this one yet."),
         part: nil,
         // Nothing up front: a native Xbox game is made and played on this Mac with what its preview fetches as it's first

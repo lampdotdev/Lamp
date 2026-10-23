@@ -4285,7 +4285,8 @@ final class Store: ObservableObject {
         // preview on this Mac, as it is now, it comes forward.
         if project.onDevice {
             if DeviceApps.goesToPreview(project), !Runtime.sourcesChanged(project) {
-                if GameKit.Window.isOpen(project) { GameKit.Window.bringForward(project); return }
+                // Only a window playing these sources: one left open from before a build for the Xbox plays older code.
+                if GameKit.Window.plays(project, built: Runtime.fingerprint(project)) { GameKit.Window.bringForward(project); return }
                 if TVPreview.isOpen(project), previewBuilt[project.id] == Runtime.builtFingerprint(project) { TVPreview.bringForward(project); return }
             }
             await run(project)
@@ -6732,16 +6733,20 @@ final class Store: ObservableObject {
 
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
-        guard let device = await deviceForApp(project) else {
+        // With the preview chosen under Try On, only a look asked to be on the device comes here: it goes on the Xbox
+        // that's set up, as it would with nothing chosen.
+        var target = project
+        if target.device == DeviceApps.previewChoice { target.device = nil }
+        guard let device = await deviceForApp(target) else {
             // The one set up, with none chosen, isn't on the network now: the app plays in the preview meanwhile.
-            if project.device == nil, DeviceApps.playsOnMac(project) {
+            if target.device == nil, DeviceApps.playsOnMac(project) {
                 if inFront { return await playOnMac(project, owner: owner, why: "Lamp doesn't find your \(name) on the network now.") }
                 return DeviceApps.setUp(for: project).isEmpty
                     ? "The person has no \(name) set up, so the app is played in the preview on this Mac. That isn't a problem to fix."
                     : "Lamp doesn't find the person's \(name) on the network now, so the app is played in the preview on this Mac meanwhile."
             }
             // Chosen and not found is said plainly, not as something gone wrong: it's usually just off.
-            if project.device != nil {
+            if target.device != nil {
                 let problem = "Lamp doesn't find the \(name) chosen under Try On on your network. Turn it on, then press Play."
                 if inFront { log(project, .status, problem) }
                 return problem
@@ -7226,6 +7231,7 @@ final class Store: ObservableObject {
             problem = await openDevicePreview(project, folder: folder, inFront: true)
         } else if GameKit.isGame(project) {
             note("Building…", for: project)
+            let built = Runtime.fingerprint(project)
             do {
                 try await GameKit.build(project, for: .preview, started: { [weak self] in self?.turns[project.id]?.build = $0 })
                 turns[project.id]?.build = nil
@@ -7236,7 +7242,7 @@ final class Store: ObservableObject {
             }
             guard turns[project.id] === owner, !owner.stopped else { return "Stopped." }
             note("Opening \(project.name) in the \(device) preview…", for: project)
-            problem = await GameKit.Window.open(project, title: "\(project.name) on \(device) Preview") { [weak self] in self?.refreshOpenApps() }
+            problem = await GameKit.Window.open(project, title: "\(project.name) on \(device) Preview", built: built) { [weak self] in self?.refreshOpenApps() }
             refreshOpenApps()
         }
         if let problem {

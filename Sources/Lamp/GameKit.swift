@@ -147,6 +147,9 @@ enum GameKit {
     /// The play the agent has made so far in the preview, by app: every look starts one, every `use_app` adds to it,
     /// and each is played again whole from the start (the preview's frames are always 1/60 s and its random numbers
     /// always the same), so a change to the code is seen in the same moves.
+    /// The preview's build, which the agent's plays and the person's window run.
+    static func previewProgram(_ project: LampProject) -> URL { project.dir.appendingPathComponent("build/preview/lamp_preview") }
+
     @MainActor static var plays: [String: [String]] = [:]
 
     /// Where a play's script, saves and pictures are: Lamp's folder in the app, not its runtime folder, which the sandbox
@@ -199,10 +202,14 @@ enum GameKit {
         private final class Play {
             var process: Process?
             var status: Int32?
+            /// The sources it was built from (`Runtime.fingerprint`).
+            var built = ""
         }
         private static var plays: [String: Play] = [:]
 
         static func isOpen(_ project: LampProject) -> Bool { plays[project.id].map { $0.status == nil } ?? false }
+        /// Open, and playing the build of these sources.
+        static func plays(_ project: LampProject, built: String) -> Bool { isOpen(project) && plays[project.id]?.built == built }
         static var openIDs: [String] { plays.filter { $0.value.status == nil }.map(\.key) }
 
         static func close(_ project: LampProject) {
@@ -215,15 +222,16 @@ enum GameKit {
             NSRunningApplication(processIdentifier: pid)?.activate()
         }
 
-        /// Opens the built preview in its window, closing one already open. Nil once it's open; else why it isn't.
-        /// `closed` runs when the person closes it (not when Lamp does).
-        static func open(_ project: LampProject, title: String, closed: @escaping @MainActor () -> Void) async -> String? {
+        /// Opens the built preview in its window, closing one already open; `built` is the sources it was built from.
+        /// Nil once it's open; else why it isn't. `closed` runs when the person closes it (not when Lamp does).
+        static func open(_ project: LampProject, title: String, built: String, closed: @escaping @MainActor () -> Void) async -> String? {
             close(project)
             let saves = ".lamp/play/saves"
             try? AppFolder.write("", to: project.dir.appendingPathComponent("\(saves)/.keep"), in: project.dir)
             try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
             let log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
             let play = Play()
+            play.built = built
             plays[project.id] = play
             var printed: [String] = []
             Task {

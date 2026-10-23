@@ -110,6 +110,17 @@ enum DeviceApps {
         Edition.supportFolder.appendingPathComponent("Device Builds").appendingPathComponent(project.id)
     }
 
+    /// What a build leaves, which says the app was built: its package, or for a game its preview on this Mac
+    /// (`GameKit.previewProgram`), which is all a turn builds until the game goes on an Xbox. Only a game whose console
+    /// build is all there is (a look on the device) is told by its package.
+    static func builtURL(for project: LampProject) -> URL {
+        let package = packageURL(for: project)
+        guard GameKit.isGame(project) else { return package }
+        let preview = GameKit.previewProgram(project)
+        let fm = FileManager.default
+        return !fm.fileExists(atPath: preview.path) && fm.fileExists(atPath: package.path) ? package : preview
+    }
+
     static func packageURL(for project: LampProject) -> URL {
         if integration(for: project)?.app?.declared?.wrap == "msix" { return buildFolder(for: project).appendingPathComponent("package.msix") }
         let output = integration(for: project)?.app?.declared?.output ?? "package"
