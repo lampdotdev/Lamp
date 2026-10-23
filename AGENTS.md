@@ -839,7 +839,9 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 `Store.useOnGame`), so after a change to the code the same moves show what changed. `look_at_app` with `on_device`,
 Play and the end of a turn build for the console and put it on the Xbox through the integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
-`install` and `launch`; `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. The
+`install` and `launch` (asked again after a few seconds when the console refuses a launch just after an update,
+0x80073D00); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
+takes its app off every device Lamp put it on (the bridge's `remove`, `DeviceApps.removeEverywhere`), web apps too. The
 package is Lamp's (`MSIX.package` with `.program("App.exe")`, an x64 identity, `MSIX.Identity.architecture`).
 
 The tools are a download (`WindowsTools`, the setup window `WindowsSetup`), in `Edition.sharedDeveloperFolder`/Windows

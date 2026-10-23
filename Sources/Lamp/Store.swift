@@ -3836,6 +3836,11 @@ final class Store: ObservableObject {
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
+        // A device app is taken off the devices Lamp put it on, and Lamp's packages of it go.
+        if project.platform == .device {
+            await DeviceApps.removeEverywhere(project, among: devices)
+            try? FileManager.default.removeItem(at: DeviceApps.buildFolder(for: project))
+        }
         let fm = FileManager.default
         if fm.fileExists(atPath: project.installedURL.path) {
             try? fm.trashItem(at: project.installedURL, resultingItemURL: nil)

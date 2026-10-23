@@ -160,6 +160,36 @@
           "port": 11443
         }
       }
+    ],
+    "remove": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "DELETE",
+          "path": "/api/app/packagemanager/package?package={packageFullName}",
+          "port": 11443
+        }
+      }
     ]
   },
   "find": [

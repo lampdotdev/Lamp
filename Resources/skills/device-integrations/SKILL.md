@@ -158,7 +158,7 @@ while it's open. What the device answers to `install` is shown to the builder, s
 made of the package (a compile error) needs nothing more. Lamp presses `home` when the app is stopped. `stop` ends the
 copy on the device before an update goes over it, for a device that can fail to open a package installed over its
 running copy, with the values of the copy that's there. `log` reads a log the app keeps on the device (a file) for the
-builder, for a device with no log to stream.
+builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted.
 
 ```json
 "bridge": {

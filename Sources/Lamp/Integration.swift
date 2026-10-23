@@ -164,6 +164,8 @@ struct Integration: Codable, Hashable {
         var stop: [IntegrationAction]?
         /// Reads the log the app keeps on the device: ends in a request whose answer is kept as the log (`keep: "log"`).
         var log: [IntegrationAction]?
+        /// Takes the app off the device when its wish is deleted, with the values of the copy that's there.
+        var remove: [IntegrationAction]?
         /// Lamp's names for a remote's keys ("home", "up", "select", "back") to the device's own.
         var keys: [String: String]?
     }
@@ -453,7 +455,7 @@ enum IntegrationCheck {
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
-                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "keys": .map]),
+                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "keys": .map]),
             "app": appKind,
             "kinds": .map,
         ])
@@ -565,7 +567,7 @@ enum IntegrationCheck {
         // Bridge
         if let bridge = integration.bridge {
             let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use),
-                                                               ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log)]
+                                                               ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove)]
             for (name, sequence) in sequences {
                 for (n, action) in (sequence ?? []).enumerated() {
                     problems += actionProblems(action, at: "bridge.\(name)[\(n)]", fields: fields, steps: steps, inBridge: true)

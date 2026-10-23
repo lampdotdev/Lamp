@@ -258,7 +258,19 @@ enum DeviceApps {
                 remember(project, on: device)
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                if let launch = bridge.launch, !launch.isEmpty { _ = try await runner.run(launch, extra: values(project)) }
+                if let launch = bridge.launch, !launch.isEmpty {
+                    // A device that has only just taken an update can refuse to open it for a moment (an Xbox answers
+                    // 0x80073D00 to a launch right after an install over a copy it ended): asked again a little later.
+                    var refused = 0
+                    while true {
+                        do { _ = try await runner.run(launch, extra: values(project)); break }
+                        catch let failure as IntegrationRunner.Failure where refused < 2 {
+                            refused += 1
+                            try? await Task.sleep(for: .seconds(3))
+                            guard await stillWanted() else { throw failure }
+                        }
+                    }
+                }
                 break
             } catch let error as URLError where error.code == .networkConnectionLost && tries < 2 {
                 tries += 1
@@ -298,15 +310,35 @@ enum DeviceApps {
     /// Notes which package is on which device once its install went through, for the next install to end it first.
     private static func remember(_ project: LampProject, on device: Device) {
         let identity = buildFolder(for: project).appendingPathComponent("identity.json")
-        let installed = buildFolder(for: project).appendingPathComponent("installed-\(MSIX.publisherID(device.id)).json")
+        let installed = installedRecord(project, device: device.id)
         try? FileManager.default.removeItem(at: installed)
         try? FileManager.default.copyItem(at: identity, to: installed)
+        try? Data(device.id.utf8).write(to: installed.deletingPathExtension().appendingPathExtension("device"))
+    }
+
+    /// Where Lamp notes which package of the app is on a device: the identity, with the device's id beside it.
+    private static func installedRecord(_ project: LampProject, device id: String) -> URL {
+        buildFolder(for: project).appendingPathComponent("installed-\(MSIX.publisherID(id)).json")
     }
 
     /// The bridge's values for the copy last put on this device, when Lamp put one there.
     private static func installedValues(_ project: LampProject, on device: Device) -> [String: String]? {
-        values(project, identity: buildFolder(for: project).appendingPathComponent("installed-\(MSIX.publisherID(device.id)).json"))
-            .flatMap { $0["packageFullName"] == nil ? nil : $0 }
+        values(project, identity: installedRecord(project, device: device.id)).flatMap { $0["packageFullName"] == nil ? nil : $0 }
+    }
+
+    /// Takes the app off every device Lamp put it on, through the bridge's `remove`, as its wish is deleted: what's
+    /// on a device the person can't reach (off, away) stays there, and nothing stops the delete.
+    @MainActor static func removeEverywhere(_ project: LampProject, among devices: [Device]) async {
+        guard let integration = integration(for: project), let remove = integration.bridge?.remove, !remove.isEmpty else { return }
+        let folder = buildFolder(for: project)
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix("installed-") && name.hasSuffix(".device") {
+            guard let id = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8),
+                  let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }),
+                  let installed = values(project, identity: installedRecord(project, device: id)), installed["packageFullName"] != nil else { continue }
+            let runner = IntegrationRunner(integration: integration, device: device)
+            if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: installed) }
+            _ = try? await runner.run(remove, extra: installed)
+        }
     }
 
     /// Lamp's values for the bridge: the app's id, and for a wrapped package the names Windows gives it.
