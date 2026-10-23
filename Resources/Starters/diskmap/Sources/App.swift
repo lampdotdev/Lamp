@@ -36,6 +36,12 @@ struct DiskCommands: Commands {
                 .disabled(!model.canTrashSelection)
         }
         CommandMenu("Go") {
+            Button("Back") { model.goBack() }
+                .keyboardShortcut("[")
+                .disabled(!model.canGoBack)
+            Button("Forward") { model.goForward() }
+                .keyboardShortcut("]")
+                .disabled(!model.canGoForward)
             Button("Enclosing Folder") { model.goUp() }
                 .keyboardShortcut(.upArrow)
                 .disabled(!model.canGoUp)

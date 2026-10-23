@@ -3,36 +3,56 @@ import SwiftUI
 struct BrowserView: View {
     @EnvironmentObject var model: DiskModel
     let folder: Node
-    @State private var hovered: (outer: Node, inner: Node?)?
+    /// Shared with the contents list in the sidebar: what's under the pointer in one lights up in the other.
+    @Binding var hovered: (outer: Node, inner: Node?)?
+    /// Whether the disk's free space is a slice of the sunburst too.
+    @AppStorage("showsFreeSpace") private var showsFree = false
 
     var body: some View {
-        VSplitView {
             VStack(spacing: 0) {
-                PathBar(folder: folder)
-                Divider()
-                TreemapView(folder: folder, revision: model.revision, pending: model.pendingSize(in: folder), selection: $model.selection, hovered: $hovered) { outer, inner in
-                    if outer.kind == .folder {
-                        model.open(outer)
-                        if let inner { model.selection = [inner.id] }
-                    } else {
-                        model.reveal(outer)
+                HStack {
+                    PathBar(folder: folder)
+                    if canShowFree {
+                        Toggle("Free space", isOn: $showsFree)
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .fixedSize()
+                            .help("Show the disk's free space beside what's on it")
                     }
                 }
-                .padding(8)
-                .contextMenu {
-                    // The selection when the pointer is on part of it, else just what's under the pointer.
-                    if let node = hovered?.outer {
-                        ItemMenu(nodes: model.selection.contains(node.id) ? model.selectedNodes : [node])
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                chartView
+                    .id(folder.id)
+                    .transition(.asymmetric(insertion: .scale(scale: model.zoomingIn ? 0.92 : 1.08).combined(with: .opacity),
+                                            removal: .opacity))
+                    .padding(20)
+                    .contextMenu {
+                        // The selection when the pointer is on part of it, else just what's under the pointer.
+                        if let h = hovered {
+                            let node = h.inner ?? h.outer
+                            ItemMenu(nodes: node === h.outer && model.selection.contains(node.id) ? model.selectedNodes : [node])
+                        }
                     }
-                }
-                Divider()
                 statusLine
             }
-            .frame(minHeight: 280, idealHeight: 460, maxHeight: .infinity)
-            .layoutPriority(1)
+            .animation(.spring(duration: 0.35, bounce: 0.15), value: folder.id)
+            .animation(.easeInOut(duration: 0.5), value: showsFree)
+            .clipped()
+    }
 
-            ItemTable(folder: folder)
-                .frame(minHeight: 140, idealHeight: 220, maxHeight: .infinity)
+    /// Free space belongs to a whole disk, so it's drawn only at the top of a disk or volume.
+    private var canShowFree: Bool {
+        folder.parent == nil && (model.location?.kind == .disk || model.location?.kind == .volume)
+    }
+
+    private var chartView: some View {
+        SunburstView(folder: folder, revision: model.revision, pending: model.pendingSize(in: folder),
+                     free: model.diskUsage?.free ?? 0, freeAmount: showsFree && canShowFree ? 1 : 0,
+                     selection: $model.selection, hovered: $hovered) { node in
+            if node.kind == .folder && !node.children.isEmpty { model.open(node) } else { model.reveal(node) }
+        } onUp: {
+            model.goUp()
         }
     }
 
@@ -74,14 +94,6 @@ struct BrowserView: View {
                         .buttonStyle(.link)
                         .help("Measure these folders too. macOS asks once for each.")
                 }
-                if model.unreadableCount > 0 && folder.parent == nil {
-                    Text("·").foregroundStyle(.tertiary)
-                    Button("\(model.unreadableCount.formatted()) folders couldn't be read") {
-                        model.openFullDiskAccessSettings()
-                    }
-                    .buttonStyle(.link)
-                    .help("Give Disk Map Full Disk Access in System Settings to measure these too, then rescan.")
-                }
             }
             Spacer()
             if model.scanning {
@@ -89,9 +101,6 @@ struct BrowserView: View {
                     .controlSize(.small)
                     .keyboardShortcut(.cancelAction)
                     .help("Stop measuring and keep what's been found so far")
-            } else {
-                Text("Double-click to open")
-                    .foregroundStyle(.tertiary)
             }
         }
         .font(.callout)
@@ -119,35 +128,101 @@ struct BrowserView: View {
     }
 }
 
+/// The folder's place on the disk, under the title: each folder above it is a step back. When the trail doesn't
+/// fit, folders from the middle fold into a … menu, so the start and the folder you're in stay readable.
 struct PathBar: View {
     @EnvironmentObject var model: DiskModel
     let folder: Node
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                let chain = folder.ancestors
-                ForEach(Array(chain.enumerated()), id: \.offset) { i, node in
-                    if i > 0 {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    Button { model.go(to: node) } label: {
-                        Text(node.title)
-                            .fontWeight(node === folder ? .semibold : .regular)
-                            .foregroundStyle(node === folder ? .primary : .secondary)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(node === folder)
-                }
-                Text(formatBytes(folder.size))
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 8)
+        let chain = folder.ancestors
+        ViewThatFits(in: .horizontal) {
+            // Fold away one more folder from the middle at a time, until it fits.
+            ForEach(0..<max(1, chain.count - 1), id: \.self) { folded in
+                trail(chain, folded: folded)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func trail(_ chain: [Node], folded: Int) -> some View {
+        let hidden = folded == 0 ? [] : Array(chain[1...min(folded, chain.count - 2)])
+        let shown = folded == 0 ? chain : [chain[0]] + chain.dropFirst(1 + hidden.count)
+        return HStack(spacing: 0) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { i, node in
+                if i > 0 { separator }
+                crumb(node)
+                if i == 0 && !hidden.isEmpty {
+                    separator
+                    foldedMenu(hidden)
+                }
+            }
+        }
+        .fixedSize(horizontal: folded < chain.count - 2, vertical: false)
+    }
+
+    private func foldedMenu(_ nodes: [Node]) -> some View {
+        Menu {
+            ForEach(Array(nodes.reversed().enumerated()), id: \.offset) { _, node in
+                Button { model.go(to: node) } label: {
+                    Label { Text(node.title) } icon: { Image(nsImage: NSWorkspace.shared.icon(forFile: node.path)) }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 22)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(nodes.map(\.title).joined(separator: " › "))
+    }
+
+    private var separator: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 2)
+    }
+
+    private func crumb(_ node: Node) -> some View {
+        Crumb(node: node, isCurrent: node === folder) { model.go(to: node) }
+            .contextMenu {
+                Button("Show in Finder") { model.reveal(node) }
+                Button("Copy Path") { model.copyPath([node]) }
+            }
+    }
+}
+
+private struct Crumb: View {
+    let node: Node
+    let isCurrent: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button { if !isCurrent { action() } } label: {
+            HStack(spacing: 5) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: node.path))
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                Text(node.title)
+                    .font(.body.weight(isCurrent ? .semibold : .regular))
+                    .foregroundStyle(isCurrent ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(.primary.opacity(hovering && !isCurrent ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .layoutPriority(isCurrent ? 1 : 0)
+        .onHover { hovering = $0 }
+        .help(isCurrent ? node.path : "Go to \(node.title)")
     }
 }
 
@@ -180,86 +255,6 @@ struct ItemMenu: View {
         if !trashable.isEmpty {
             Divider()
             Button(trashable.count == 1 ? "Move to Trash…" : "Move \(trashable.count) Items to Trash…") { requestTrash(trashable) }
-        }
-    }
-}
-
-/// One table row, captured with its numbers at a moment so the table updates while measuring.
-struct ItemRow: Identifiable, Equatable {
-    let node: Node
-    let size: Int64
-    let fileCount: Int
-    let measuring: Bool
-    var id: Node.ID { node.id }
-
-    static func == (a: ItemRow, b: ItemRow) -> Bool {
-        a.node === b.node && a.size == b.size && a.fileCount == b.fileCount && a.measuring == b.measuring
-    }
-}
-
-struct ItemTable: View {
-    @EnvironmentObject var model: DiskModel
-    let folder: Node
-
-    var body: some View {
-        let _ = model.revision
-        let rows = folder.sortedChildren.map {
-            ItemRow(node: $0, size: $0.size, fileCount: $0.fileCount, measuring: $0.kind == .folder && !$0.isComplete)
-        }
-        let total = folder.size
-        Table(rows, selection: $model.selection) {
-            TableColumn("Name") { row in
-                HStack(spacing: 6) {
-                    ItemIcon(node: row.node)
-                    Text(row.node.title)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if row.node.notAsked {
-                        Image(systemName: "hand.raised.fill")
-                            .foregroundStyle(.secondary)
-                            .help("Not measured: macOS asks before Disk Map looks in here. Measure Them in the status line asks.")
-                    }
-                    if row.node.unreadable {
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(.secondary)
-                            .help("Disk Map isn't allowed to look inside this folder.")
-                    }
-                    if row.measuring && model.scanning {
-                        ProgressView().controlSize(.mini)
-                            .help("Still measuring")
-                    }
-                }
-            }
-            .width(min: 180, ideal: 320)
-            TableColumn("Size") { row in
-                Text(row.node.notAsked ? "—" : formatBytes(row.size))
-                    .monospacedDigit()
-                    .foregroundStyle(row.measuring && model.scanning ? .secondary : .primary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .width(min: 70, ideal: 90, max: 120)
-            TableColumn("Share") { row in
-                ShareBar(fraction: total > 0 ? Double(row.size) / Double(total) : 0)
-            }
-            .width(min: 80, ideal: 140)
-            TableColumn("Files") { row in
-                Text(row.node.kind == .hidden ? "—" : row.fileCount.formatted())
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .width(min: 50, ideal: 70, max: 100)
-        }
-        .contextMenu(forSelectionType: Node.ID.self) { ids in
-            let nodes = rows.filter { ids.contains($0.id) }.map(\.node)
-            if !nodes.isEmpty { ItemMenu(nodes: nodes) }
-        } primaryAction: { ids in
-            let nodes = rows.filter { ids.contains($0.id) }.map(\.node)
-            if nodes.count == 1, let node = nodes.first {
-                if node.kind == .folder && !node.children.isEmpty { model.open(node) } else { model.reveal(node) }
-            } else {
-                model.openItems(nodes)
-            }
         }
     }
 }
@@ -300,4 +295,9 @@ struct ShareBar: View {
                 .frame(width: 34, alignment: .trailing)
         }
     }
+}
+
+/// 7,680 stays as it is; 119,872 becomes 120K.
+func shortCount(_ n: Int) -> String {
+    n < 10_000 ? n.formatted() : n.formatted(.number.notation(.compactName).precision(.significantDigits(1...3)))
 }
