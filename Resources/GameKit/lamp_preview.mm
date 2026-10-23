@@ -238,6 +238,23 @@ static LampPad controller_pad(GCExtendedGamepad* g) {
     _frame.width = W; _frame.height = H;
     _frame.dt = 1.0 / 60.0;
     _seen = -1;
+    // How to play, over the game for its first seconds: the person may have no controller connected to the Mac.
+    NSTextField* keys = [NSTextField labelWithString:@"Keyboard: WASD or arrows to move · IJKL to look · Space A · Esc B · F X · R Y · Q E bumpers · Z C triggers · P Menu\nA controller connected to this Mac works too."];
+    keys.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium];
+    keys.textColor = NSColor.whiteColor;
+    keys.alignment = NSTextAlignmentCenter;
+    keys.wantsLayer = YES;
+    keys.layer.backgroundColor = [NSColor colorWithWhite:0 alpha:0.6].CGColor;
+    keys.layer.cornerRadius = 8;
+    keys.translatesAutoresizingMaskIntoConstraints = NO;
+    [view addSubview:keys];
+    [NSLayoutConstraint activateConstraints:@[[keys.centerXAnchor constraintEqualToAnchor:view.centerXAnchor],
+                                              [keys.bottomAnchor constraintEqualToAnchor:view.bottomAnchor constant:-16],
+                                              [keys.widthAnchor constraintLessThanOrEqualToAnchor:view.widthAnchor constant:-32]]];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) { context.duration = 1; keys.animator.alphaValue = 0; }
+                            completionHandler:^{ [keys removeFromSuperview]; }];
+    });
     [self.window center];
     [self.window makeKeyAndOrderFront:nil];
     [self.window makeFirstResponder:view];

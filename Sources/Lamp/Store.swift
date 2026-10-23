@@ -7033,8 +7033,7 @@ final class Store: ObservableObject {
             log(project, .error, problem)
             return problem
         }
-        let controls = GameKit.isGame(project) ? " Play with a controller connected to this Mac, or the keyboard: WASD to move, Space and Esc for A and B." : ""
-        log(project, .status, (why.map { $0 + " " } ?? "") + "\(project.name) is playing in the \(device) preview on your Mac." + controls)
+        log(project, .status, (why.map { $0 + " " } ?? "") + "\(project.name) is playing in the \(device) preview on your Mac.")
         offerDeviceSetup(project)
         return nil
     }
