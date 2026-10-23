@@ -451,7 +451,7 @@ extension Agent.Rules {
                     + "with Lamp open. Text from outside the app goes in `options.data`, never into the prompt. Keep the package step zipping that folder. "
                     + "Read Lamp.brs's opening comment before using it; never call an AI service yourself. "
             case .three:
-                let folder = "./" + URL(fileURLWithPath: entry.path).lastPathComponent + "/"
+                let folder = "./" + DeviceSupport.pagePath(entry.path, page: DeviceApps.previewFolder(for: project)) + "/"
                 rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision), the 3D library, with its addons (controls, loaders, "
                     + "geometries, postprocessing, utils): put the import map `<script type=\"importmap\">{ \"imports\": { \"three\": "
                     + "\"\(folder)three.module.js\", \"three/addons/\": \"\(folder)addons/\" } }</script>` in index.html before a "

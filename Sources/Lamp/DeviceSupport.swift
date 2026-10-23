@@ -36,6 +36,13 @@ enum DeviceSupport {
 
     /// three.js as Lamp ships it, every file by its path in the folder, read once; empty in a build without it, which
     /// then writes nothing for it.
+    /// A support path as the page in `page` (the web app's folder, holding index.html) reaches it: "Web/vendor/three" is
+    /// "vendor/three" from "Web". Without a page folder, the path from the app's folder.
+    static func pagePath(_ path: String, page: String?) -> String {
+        guard let page, path.hasPrefix(page + "/") else { return path }
+        return String(path.dropFirst(page.count + 1))
+    }
+
     /// three.js's revision, from the copy Lamp ships, for the rules ("186").
     static var threeRevision: String {
         let core = threeFiles.first { $0.name == "three.core.js" }?.contents ?? ""
