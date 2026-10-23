@@ -450,10 +450,13 @@ struct IPhoneSetupLine: View {
     /// off until it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try
     /// again. Any other turn leaves it on: the line shows during the app's first build, and neither Apple's setup
     /// nor the conversion, which waits its turn, needs that build to be over.
-    static func text(_ app: String, android: Bool = false) -> String {
-        android ? "\(app) is a Mac app for now. This Mac needs a few things from Google to make Android apps."
-            : "\(app) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps."
+    static func text(_ app: String, wanted: Platform = .iphone) -> String {
+        let later = setup(for: wanted)
+        return "\(app) is a Mac app for now. This Mac needs \(later.needs) to make \(later.apps)."
     }
+
+    /// The kind's setup, or the iPhone's for a line about a kind that has none.
+    static func setup(for wanted: Platform) -> SetupLater { wanted.target.setup.later ?? Target.iphone.setup.later! }
 
     @MainActor final class Asked: ObservableObject {
         static let shared = Asked()
@@ -461,13 +464,13 @@ struct IPhoneSetupLine: View {
     }
 
     var body: some View {
-        ChatLook.ActionLine(symbol: wanted == .android ? "smartphone" : "iphone", text: Self.text(project.name, android: wanted == .android), button: "See What's Needed…",
+        ChatLook.ActionLine(symbol: Self.setup(for: wanted).symbol, text: Self.text(project.name, wanted: wanted), button: "See What's Needed…",
                             disabled: asked.ids.contains(project.id) || Self.isOff(for: project),
                             action: setUp)
     }
 
-    /// What the button asks of the agent once setup is done.
-    static let requests = ["Make it work on my iPhone too.", "Make it an iPhone app instead.", "Make it an Android app instead."]
+    /// What the button asks of the agent once setup is done, for each kind.
+    static var requests: [String] { Targets.all.compactMap(\.setup.later?.request) }
 
     /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
     /// waiting or running. The in-app chat's line asks the same.
@@ -479,25 +482,15 @@ struct IPhoneSetupLine: View {
     }
 
     private func setUp() {
-        let id = project.id, both = wanted == .universal
+        let later = Self.setup(for: wanted), id = project.id
         asked.ids.insert(id)
-        if wanted == .android {
-            AndroidSetup.shared.perform(device: nil, cancelled: { Asked.shared.ids.remove(id) }) {
-                Asked.shared.ids.remove(id)
-                guard let current = Store.shared.current(project), current.platform == .mac else { return }
-                Store.shared.send(Self.requests[2], to: current)
-            }
-            return
-        }
-        // Resolved again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for,
-        // and the setup lets go of the request rather than hold up the ones behind it.
-        PhoneSetup.shared.perform(resolve: {
-            guard let current = Store.shared.current(project), current.platform == .mac else { return nil }
-            return PhoneSetup.Context(family: .iphone, requiresTeam: both)
-        }, cancelled: { Asked.shared.ids.remove(id) }) {
+        // Asked again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for, and the
+        // setup lets go of the request rather than hold up the ones behind it.
+        let stillWanted = { @MainActor in Store.shared.current(project)?.platform == .mac }
+        later.open(stillWanted, { Asked.shared.ids.remove(id) }) {
             Asked.shared.ids.remove(id)
             guard let current = Store.shared.current(project), current.platform == .mac else { return }
-            Store.shared.send(both ? Self.requests[0] : Self.requests[1], to: current)
+            Store.shared.send(later.request, to: current)
         }
     }
 }

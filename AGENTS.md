@@ -25,7 +25,9 @@ A capability given to one engine must be given to all of them that can take it, 
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
   entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
-  allowed tools (`Agent.run`), and a `case` in `Store.mcp`.
+  allowed tools (`Agent.run`), and a `case` in `Store.mcp`. The devices `make_app_for` takes are each kind's own:
+  `{{DEVICES}}` in its description is filled once from `Targets.toolDevices` (`Store.toolsJSON`), which the endpoint
+  serves and pi's extension reads from `Store.toolsFile`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
@@ -137,8 +139,8 @@ A capability given to one engine must be given to all of them that can take it, 
   prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
   Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
   the bundle by build.sh. The prompt lists the skills it offers by name and description (`Skills.index`, offered
-  by `Skills.offered` the way a rule is given only to the prompts it fits), or names it in the one short rule that
-  stands for it (`Skills.named`: the building blocks' calls, AI in the app, the person's accounts, App Intents, share
+  by `Skills.offered` from each kind's `guidance.skills`, the way a rule is given only to the prompts it fits), or names it in the one short rule that
+  stands for it (`Skills.named`, each kind's `guidance.named`: the building blocks' calls, AI in the app, the person's accounts, App Intents, share
   extensions, Finder, scripting, 2D games, iCloud), which costs the
   prompt a line instead of a rule and a line; and the agent opens one with
   `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
@@ -152,7 +154,7 @@ A capability given to one engine must be given to all of them that can take it, 
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
-  in `Skills.offered` or `Skills.named`, and, when an app's code can show it applies, a check in `Skills.applying`.
+  in the `skills` or `named` of each kind whose prompt offers or names it, and, when an app's code can show it applies, a check in `Skills.applying`.
   So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
   in a skill, the way `phone-controllers`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
@@ -495,6 +497,27 @@ checkout's instance. The agent's sandbox closes every Lamp's folder (`Edition.la
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
 Xcode, the person's own Claude Code and Codex or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
 
+## Kinds of app
+
+What an app is for (`Platform`, kept in meta.json as "mac", "iphone", "universal", "android", "tv", "device") is one
+`Target` in `Sources/Lamp/Targets/`, listed in `Targets.all`, made of the pieces that differ from kind to kind: its
+`identity` (its names, the device words it's chosen by, which `Targets` puts together for the naming call,
+`make_app_for` and an undecided wish, Try On's help and the desk's place), its `guidance` (prompt, the rules
+`make_app_for` answers with, skills, AI away from the Mac), its `recipe` (its language, scaffold, Lamp's own files, how
+its folder is told apart, what a build is made from, whether it can be shared), its `part` when it can be one of a
+wish's other apps (folder, family, rules), and its `setup` (what this Mac must have to build it, and the chat's setup
+line). Kinds of one language change into each other in place; a wish has one part of a family. Code outside
+`Targets/` asks a kind what it can do (`hasMac`, `hasIOS`, `hasTV`, `hasDevice`, `choosesPlace`), never which kind it is,
+except where an Apple kind's own build and signing differ. Lists of kinds go in `Targets.all`'s order, the kinds that
+stand alone after the rest and the Mac's hint last; a folder or a list of devices is matched with the Swift kinds last,
+since a Package.swift says less than another kind's own mark.
+
+Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, a TV or a device through its
+integration. Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
+destination (`onIOS`, `onAndroid`, `onTV`, `onDevice`), so a kind that opens where another does (an Android TV app on
+Android's emulator and devices) gets all of that from its file and a line in `Targets.all`. A new place to open is a new
+`Destination` and its paths in `Store`.
+
 ## iPhone apps
 
 Nobody picks what a new app runs on. The first request's naming call (`AppName.suggest`) also lists the devices it
@@ -503,7 +526,7 @@ written: a kind the person didn't say only when this Mac can build it now (`Phon
 both), else a Mac app with a line in the chat offering the setup (`IPhoneSetupLine`: once it's done, the app is asked to be made for the iPhone, through the agent), and one they said either way (the build says what's missing). A line in the chat says so for
 anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
 iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
-new kind of device is one more name in `Platform(devices:)` and the tool's schema; "watch" brings the iPhone with it,
+device's word is its kind's, "Kinds of app" below; "watch" brings the iPhone with it,
 and the answer tells the agent to add `Watch/` with the apple-watch skill, or remove it): it checks this Mac can build the new kind (opening the
 setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
 settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
@@ -1054,8 +1077,8 @@ its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by 
 person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
 its apps waits. A copy is found by its install place only for an app with a Mac copy there, since a TV wish's Mac app is
 installed under the wish's name. Which kinds a list
-of devices makes is `Parts.kinds`: Apple's devices are one kind between them, as before, and with a TV they're a part of
-the TV app's wish; Android and device apps still stand alone.
+of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), the kind that leads
+a wish (a TV app) is its main one, and the rest are its parts; Android and device apps still stand alone.
 
 What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
 (`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,

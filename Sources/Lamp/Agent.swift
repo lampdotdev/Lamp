@@ -368,16 +368,7 @@ enum Agent {
         return kindPrompt(for: project) + Parts.rule(for: project, parts: Store.shared.parts(of: project))
     }
 
-    static func kindPrompt(for project: LampProject) -> String {
-        switch project.platform {
-        case .mac: systemPrompt
-        case .iphone: iPhonePrompt(for: project.family)
-        case .universal: universalPrompt(for: project.family)
-        case .android: androidPrompt()
-        case .tv: tvPrompt()
-        case .device: devicePrompt(for: project)
-        }
-    }
+    static func kindPrompt(for project: LampProject) -> String { project.platform.target.guidance.prompt(project) }
 
     /// The Mac prompt, made once for each state of Apps in Chrome: its rule is only for a Lamp where it's on, and the
     /// switch can change while Lamp runs.
@@ -943,7 +934,7 @@ enum Agent {
             "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
-            "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
+            "LAMP_TOOLS_JSON": (Store.toolsFile ?? Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"))?.path ?? "",
             "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",

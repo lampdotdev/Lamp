@@ -57,15 +57,7 @@ enum Skills {
     /// offered to its prompt alone, and a TV app's page for phones to the TV prompt. `device-integrations` isn't
     /// listed: every prompt's rule for devices (`Agent.deviceRules`) names it.
     static func offered(_ platform: Platform, sidebar: Bool = false) -> [String] {
-        let kinds: [String] = switch platform {
-        case .mac: ["app-kinds", "menu-bar", "mac-widgets"] + (Agent.Rules.scenes ? ["scene-3d", "maps"] : [])
-        case .iphone: ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch"]
-        case .universal: ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch"]
-        case .android: ["android-design"]
-        case .tv: ["phone-controllers"]
-        case .device: []
-        }
-        return kinds + (sidebar ? ["chrome-sidebar"] : [])
+        platform.target.guidance.skills() + (sidebar ? ["chrome-sidebar"] : [])
     }
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
@@ -73,15 +65,10 @@ enum Skills {
     /// extensions, scripting and 2D games, for both kinds; Finder for apps with a Mac half; iCloud for apps with an
     /// iPhone half (a Mac app's prompt has no iCloud rule). The Mac's permissions and a change of subject stay whole
     /// in the prompt: their rules are policy the agent must keep without first deciding a skill applies.
-    static func named(_ platform: Platform) -> [String] {
-        let both = ["building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "scripting", "games-2d"]
-        return switch platform {
-        case .mac: both + ["finder-files"]
-        case .iphone: both + ["icloud-sync"]
-        case .universal: both + ["finder-files", "icloud-sync"]
-        case .android, .tv, .device: []
-        }
-    }
+    static func named(_ platform: Platform) -> [String] { platform.target.guidance.named }
+
+    /// The named skills every Swift kind's prompt has.
+    static let swiftNamed = ["building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "scripting", "games-2d"]
 
     /// The rule that lists a prompt's skills; empty when it offers none.
     static func index(_ names: [String], from skills: [String: Skill] = all) -> String {

@@ -51,7 +51,7 @@ enum NextStep {
         if let cached = cache[turn] { return cached }
 
         let conversation = conversationText(lines.filter { $0.kind == .user || $0.kind == .agent }.suffix(historyLimit))
-        let request = "\(prompt)\nThe app is \(AppKind(project).phrase) called \(project.name).\n\nHere is the conversation:\n\(conversation)"
+        let request = "\(prompt)\nThe app is \(project.platform.target.identity.phrase) called \(project.name).\n\nHere is the conversation:\n\(conversation)"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: await AppAI.helperModel()),
               let data = text.data(using: .utf8),
@@ -102,7 +102,8 @@ enum AppName {
     static let exampleNames = ["Lucide Picker", "Build Tally", "Brew Log", "Notes", "Stopwatch", "Calendar", "Photo Booth", "Night Shift"]
     static let exampleParts = ["Your habits, ticked off daily", "A reminder in the evening"]
 
-    private static let prompt = """
+    /// Made when asked: the devices it lists are each kind's own (`Targets.namingDevices`).
+    private static var prompt: String { """
     Name a small app from what its user asked for.
 
     First, check whether the user already named it. A name is usually a capitalized phrase used as a title, \
@@ -118,14 +119,8 @@ enum AppName {
     its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
-    Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, "watch" for Apple Watch \
-    (with "iphone", when they mention a watch or their wrist), "android" (alone) for an Android phone or tablet, "tv" \
-    (alone) for a Samsung or LG TV, ["tv"] when they mention their TV, a Frame TV, the living room screen or watching \
-    from the sofa. \
-    ["android"] when they mention Android, a Pixel, a Samsung phone or Google Play; ["iphone"] when they \
-    mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
-    the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
-    same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs. A wish \
+    Last, list the devices it runs on: \(Targets.namingDevices) Set "devices_by_user" to true only when they said \
+    where it runs. A wish \
     can be for more than one kind at once, apps made to work together: ["tv", "iphone"] when they want a TV app \
     with their phone as its remote or controller, ["tv", "mac"] for a TV app and a Mac app together.
 
@@ -140,7 +135,7 @@ enum AppName {
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
     "devices": ["..."], "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
-    """
+    """ }
 
     struct Suggestion {
         var name: String?
@@ -190,7 +185,7 @@ enum AppName {
         var seen: [String] = []
         for word in value as? [String] ?? [] {
             let word = word.trimmed.lowercased()
-            if ["mac", "iphone", "tv", "android"].contains(word), !seen.contains(word) { seen.append(word) }
+            if Targets.askedWords.contains(word), !seen.contains(word) { seen.append(word) }
         }
         return seen.count >= 2 ? seen : nil
     }
