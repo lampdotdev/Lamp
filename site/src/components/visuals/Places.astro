@@ -1,104 +1,40 @@
 ---
 // For the homepage's places section: four wishes, each on the device it lives on, named by where that is in a
 // home rather than by what runs it. The Mac comes first, where wishes are made; then a phone, a watch and the TV.
-// Drawn by hand as stand-ins until there are pictures of real ones; on a phone the Mac and the TV take a row each, the phone and the watch side by side between them.
+// The pictures are drawn as the ideas page's are (scripts/idea-art), in src/assets/places/, and the cards are the
+// "but" cards' above, so the section reads as more of the same.
+import { Image } from "astro:assets";
+import type { ImageMetadata } from "astro";
+import { together } from "../../lib/text";
+
+const pictures = import.meta.glob<ImageMetadata>("../../assets/places/*.jpg", { eager: true, import: "default" });
 const places = [
-  { id: "mac", where: "On your desk" },
-  { id: "phone", where: "In your pocket" },
-  { id: "watch", where: "On your wrist" },
-  { id: "tv", where: "In the living room" },
-];
+  { picture: "desk", where: "On your desk", what: "What's in the fridge, by when it goes off." },
+  { picture: "pocket", where: "In your pocket", what: "Two big buttons, so Biscuit gets one dinner." },
+  { picture: "wrist", where: "On your wrist", what: "A week-long step race with your brother." },
+  { picture: "living", where: "In the living room", what: "A family quiz, with everyone's phone as a buzzer." },
+].map((place) => ({ ...place, image: pictures[`../../assets/places/${place.picture}.jpg`] }));
 ---
 
-<div aria-hidden="true" class="@container select-none">
-  <ul class="grid grid-cols-2 items-end gap-x-6 gap-y-10 sm:flex sm:justify-center sm:gap-[3cqw]">
-    {
-      places.map((place) => (
-        <li class:list={["flex flex-col items-center", place.id === "mac" || place.id === "tv" ? "col-span-2 px-[4%] sm:flex-[3] sm:px-0" : "sm:flex-[1.2]"]}>
-          {place.id === "mac" && (
-            <div class="w-full">
-              {/* A MacBook's screen, its desktop behind one window: the fridge idea, with what's in it by how soon
-                  it goes off. */}
-              <div class="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-t-[10px] bg-[linear-gradient(160deg,#f3c58b_0%,#e48a5a_45%,#8e5cc7_100%)] ring-[5px] ring-[#1d1d1f]">
-              <div class="w-[84%] overflow-hidden rounded-[8px] bg-[#f6f5f2] shadow-[0_10px_24px_-8px_rgba(0,0,0,0.35)] ring-1 ring-black/10">
-                <div class="flex h-[22px] items-center gap-[4%] bg-white/80 px-[4%] ring-1 ring-black/5">
-                  <span class="flex gap-[6px]">
-                    <span class="size-[8px] rounded-full bg-[#ff5f57]" />
-                    <span class="size-[8px] rounded-full bg-[#febc2e]" />
-                    <span class="size-[8px] rounded-full bg-[#28c840]" />
-                  </span>
-                  <span class="text-[11px] font-semibold text-black/70">Fridge Rescue</span>
-                </div>
-                <div class="grid grid-cols-3 gap-[3%] p-[4%]">
-                  {[
-                    ["Spinach", "Today", "bg-[#e5484d]"],
-                    ["Yoghurt", "Tomorrow", "bg-[#f5a524]"],
-                    ["Chicken", "Tomorrow", "bg-[#f5a524]"],
-                    ["Carrots", "Friday", "bg-[#30a46c]"],
-                    ["Feta", "Sunday", "bg-[#30a46c]"],
-                    ["Milk", "Monday", "bg-[#30a46c]"],
-                  ].map(([food, when, dot]) => (
-                    <div class="rounded-[8px] bg-white p-[8%] shadow-[0_1px_2px_rgba(0,0,0,0.06)] ring-1 ring-black/5">
-                      <p class="text-[12px] leading-tight font-semibold text-ink">{food}</p>
-                      <p class="mt-1 flex items-center gap-1 text-[10px] text-black/55"><span class:list={["size-[6px] rounded-full", dot]} />{when}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              </div>
-              <div class="relative -mx-[6%] mt-[5px] h-[10px] rounded-b-[10px] bg-linear-to-b from-[#d9d9de] to-[#b4b4ba] shadow-[0_14px_24px_-10px_rgba(0,0,0,0.35)]">
-                <span class="absolute top-0 left-1/2 h-[4px] w-[16%] -translate-x-1/2 rounded-b-[4px] bg-black/12" />
-              </div>
-            </div>
-          )}
-          {place.id === "phone" && (
-            <div class="flex aspect-[9/19] w-[62%] max-w-[150px] flex-col overflow-hidden rounded-[22px] bg-white p-[9%] shadow-[0_18px_40px_-14px_rgba(0,0,0,0.35)] ring-[5px] ring-[#1d1d1f] sm:w-full">
-              {/* Two big buttons by the bowl, as in the dog's dinner idea. */}
-              <p class="mt-[12%] text-center text-[11px] font-semibold text-black/55">Has Biscuit eaten?</p>
-              <div class="mt-[10%] flex flex-1 flex-col gap-[8%]">
-                <span class="flex flex-1 items-center justify-center rounded-[14px] bg-[#30a46c] text-[11px] font-bold whitespace-nowrap text-white sm:text-[13px]">Breakfast ✓</span>
-                <span class="flex flex-1 items-center justify-center rounded-[14px] bg-black/6 text-[13px] font-bold text-black/45">Dinner</span>
-              </div>
-              <p class="mt-[10%] text-center text-[9px] text-black/45">Fed by Sam, 7:40</p>
-            </div>
-          )}
-          {place.id === "watch" && (
-            <div class="flex w-[52%] max-w-[110px] flex-col items-center sm:w-full">
-              <div class="h-[14px] w-[58%] rounded-t-[8px] bg-[#3a3a3c]" />
-              <div class="flex aspect-[5/6] w-full flex-col justify-between rounded-[26px] bg-black p-[12%] text-white shadow-[0_18px_40px_-14px_rgba(0,0,0,0.45)] ring-[4px] ring-[#3a3a3c]">
-                {/* Racing a brother's steps from last week. */}
-                <p class="text-[9px] font-semibold text-[#9be15d]">Steps</p>
-                <p class="text-[20px] leading-none font-bold tracking-tight">8,412</p>
-                <div class="flex flex-col gap-[5px]">
-                  <span class="h-[5px] rounded-full bg-[#9be15d]" />
-                  <span class="h-[5px] w-[82%] rounded-full bg-white/30" />
-                </div>
-                <p class="text-[9px] text-white/60">Tom: 6,890</p>
-              </div>
-              <div class="h-[14px] w-[58%] rounded-b-[8px] bg-[#3a3a3c]" />
-            </div>
-          )}
-          {place.id === "tv" && (
-            <div class="w-full">
-              {/* A family quiz on the TV, with everyone's phones as buzzers. */}
-              <div class="aspect-[16/9] w-full overflow-hidden rounded-[6px] bg-[radial-gradient(120%_100%_at_50%_0%,#3b2a8f_0%,#120d33_70%)] p-[5%] text-white shadow-[0_18px_40px_-14px_rgba(0,0,0,0.45)] ring-[5px] ring-[#1d1d1f]">
-                <p class="text-[10px] font-semibold tracking-wide text-white/55 uppercase">Round 3 · Music</p>
-                <p class="mt-[3%] text-[15px] leading-tight font-bold">Which year did Dad see Oasis at Knebworth?</p>
-                <div class="mt-[5%] grid grid-cols-2 gap-[3%] text-[11px] font-semibold">
-                  <span class="rounded-[6px] bg-white/12 px-[6%] py-[4%]">1994</span>
-                  <span class="rounded-[6px] bg-[#cf620c] px-[6%] py-[4%]">1996</span>
-                  <span class="rounded-[6px] bg-white/12 px-[6%] py-[4%]">1997</span>
-                  <span class="rounded-[6px] bg-white/12 px-[6%] py-[4%]">1999</span>
-                </div>
-                <p class="mt-[4%] flex items-center gap-[6px] text-[10px] text-white/60"><span class="size-[6px] animate-pulse rounded-full bg-[#9be15d]" />4 phones buzzed in</p>
-              </div>
-              <div class="mx-auto h-[8px] w-[18%] bg-[#1d1d1f]" />
-              <div class="mx-auto h-[4px] w-[40%] rounded-full bg-[#1d1d1f]" />
-            </div>
-          )}
-          <p class="mt-5 text-lg font-semibold text-muted">{place.where}</p>
-        </li>
-      ))
-    }
-  </ul>
-</div>
+<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  {
+    places.map((place) => (
+      <li class="overflow-hidden rounded-[22px] bg-panel">
+        {place.image && (
+          <Image
+            src={place.image}
+            alt=""
+            widths={[400, 720]}
+            sizes="(min-width: 1024px) 270px, (min-width: 640px) 50vw, 100vw"
+            loading="lazy"
+            class="aspect-[3/2] w-full object-cover"
+          />
+        )}
+        <div class="px-6 pt-4 pb-6">
+          <p class="text-lg leading-snug font-semibold">{place.where}</p>
+          <p class="mt-1 text-[15px] leading-snug text-muted">{together(place.what)}</p>
+        </div>
+      </li>
+    ))
+  }
+</ul>
