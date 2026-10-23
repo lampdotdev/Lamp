@@ -48,7 +48,7 @@ enum DeviceTLS {
         case changed, unsaved
         var errorDescription: String? {
             switch self {
-            case .changed: return "This device isn't the one Lamp set up at that address: its certificate has changed. If you reset it, set it up again."
+            case .changed: return "This device isn't the one Lamp set up at that address: its certificate has changed. If you reset it or turned its developer mode on again, reconnect it."
             case .unsaved: return "Lamp couldn't keep this device's certificate on this Mac, so it sent nothing to it."
             }
         }
@@ -86,6 +86,13 @@ enum DeviceTLS {
                 do { try JSONEncoder().encode(pins).write(to: file, options: .atomic) } catch { return .unsaved }
                 return nil
             }
+        }
+
+        /// Lets go of every certificate kept for the device, for the person's Reconnect: the next request keeps the one the
+        /// device shows then, as at the first setup.
+        func forget() {
+            Self.lock.lock(); defer { Self.lock.unlock() }
+            try? FileManager.default.removeItem(at: file)
         }
 
         /// The certificate kept for a port, for tests and the record.

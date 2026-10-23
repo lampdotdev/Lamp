@@ -478,6 +478,9 @@ enum DeviceFields {
     static func save(_ value: String, as key: String, device: String) -> Bool {
         AppSecrets.save(Data(value.utf8), as: key, app: owner(device), in: place)
     }
+
+    /// Everything typed for a device, for Forget.
+    static func forget(device: String) { AppSecrets.forget(app: owner(device), in: place) }
 }
 
 // MARK: - show, qr
