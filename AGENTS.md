@@ -146,6 +146,10 @@ A capability given to one engine must be given to all of them that can take it, 
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
   in `Skills.offered`, and, when an app's code can show it applies, a check in `Skills.applying`.
+  So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
+  in a skill, the way `phone-controllers`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
+  every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
+  short rule that names the skill.
 - **Approvals and privacy**: shell commands go through `/agent/approve` for every engine (pi's extension,
   Claude Code's hooks, Codex's hooks); file access outside the app's folder is checked the same way.
   Under "Only when risky", Claude Code's own classifier (auto mode, `classifyAllShell`) decides its shell commands:
