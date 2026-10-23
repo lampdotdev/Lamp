@@ -169,7 +169,9 @@ enum GameKit {
         let stats = printed.last { $0.hasPrefix("Lamp stats:") }
         printed.removeAll { $0.hasPrefix("Lamp stats:") }
         guard status == 0 else {
-            throw Failure(message: "The game stopped in the preview (exit \(status))." + (printed.isEmpty ? "" : " What it printed last:\n" + printed.suffix(20).joined(separator: "\n")))
+            // What it printed is the agent's to read only when the person shares what apps print.
+            let said = Privacy.sharesLog && !printed.isEmpty ? " What it printed last:\n" + printed.suffix(20).joined(separator: "\n") : ""
+            throw Failure(message: "The game stopped in the preview (exit \(status))." + said)
         }
         let names = script.compactMap { line -> String? in line.hasPrefix("shot ") ? String(line.dropFirst(5)) : nil }
         let pictures = names.map { folder.appendingPathComponent("pictures/\($0).png") }.filter { AppFile.read($0, in: project, last: 1) != nil }

@@ -53,17 +53,18 @@ sdk="$tools/sdk"
 out=build/xbox
 mkdir -p "$out"
 cl="$tools/llvm/bin/clang-cl"
-flags="--target=x86_64-pc-windows-msvc /std:c++20 /EHsc /O2 /MT /DWINAPI_FAMILY=WINAPI_FAMILY_APP /D_CRT_USE_WINAPI_FAMILY_DESKTOP_APP
-  /DUNICODE /D_UNICODE /DNOMINMAX /DLAMP_XBOX=1 -imsvc $sdk/crt/include -imsvc $sdk/sdk/include/ucrt -imsvc $sdk/sdk/include/um
-  -imsvc $sdk/sdk/include/shared -imsvc $sdk/sdk/include/winrt -imsvc $sdk/sdk/include/cppwinrt -ILamp -Ibuild/shaders -IGame"
-fresh "$out/lamp_kit.obj" Lamp/lamp_kit.cpp || "$cl" $flags /DSOKOL_D3D11 -w /c Lamp/lamp_kit.cpp /Fo"$out/lamp_kit.obj"
-fresh "$out/lamp_xbox.obj" Lamp/lamp_xbox.cpp || "$cl" $flags -w /c Lamp/lamp_xbox.cpp /Fo"$out/lamp_xbox.obj"
+# The flags as the shell's own argument list, so a folder name with a space in it (the home folder's) stays one argument.
+set -- --target=x86_64-pc-windows-msvc /std:c++20 /EHsc /O2 /MT /DWINAPI_FAMILY=WINAPI_FAMILY_APP /D_CRT_USE_WINAPI_FAMILY_DESKTOP_APP \
+  /DUNICODE /D_UNICODE /DNOMINMAX /DLAMP_XBOX=1 -imsvc "$sdk/crt/include" -imsvc "$sdk/sdk/include/ucrt" -imsvc "$sdk/sdk/include/um" \
+  -imsvc "$sdk/sdk/include/shared" -imsvc "$sdk/sdk/include/winrt" -imsvc "$sdk/sdk/include/cppwinrt" -ILamp -Ibuild/shaders -IGame
+fresh "$out/lamp_kit.obj" Lamp/lamp_kit.cpp || "$cl" "$@" /DSOKOL_D3D11 -w /c Lamp/lamp_kit.cpp /Fo"$out/lamp_kit.obj"
+fresh "$out/lamp_xbox.obj" Lamp/lamp_xbox.cpp || "$cl" "$@" -w /c Lamp/lamp_xbox.cpp /Fo"$out/lamp_xbox.obj"
 objects="$out/lamp_kit.obj $out/lamp_xbox.obj"
 for source in Game/*.cpp Game/*.c; do
   [ -e "$source" ] || continue
   object="$out/$(basename "$source").obj"
-  case "$source" in *.c) "$cl" $flags /TC /c "$source" /Fo"$object" ;;
-                    *) "$cl" $flags /c "$source" /Fo"$object" ;; esac
+  case "$source" in *.c) "$cl" "$@" /TC /c "$source" /Fo"$object" ;;
+                    *) "$cl" "$@" /c "$source" /Fo"$object" ;; esac
   objects="$objects $object"
 done
 # A static C++ runtime, so the console needs no package of Microsoft's beside the game's.
