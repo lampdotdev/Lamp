@@ -991,7 +991,10 @@ told where its folder is when it's installed (`folder` in `Template.installValue
 id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
 scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
 never kept in a list beside them, so a rename, an Undo or a restored version can't part a wish from its
-apps; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's
+apps, and every restore takes them in again at once (`Store.followRestored`: a part the version doesn't have is quit
+and forgotten, one it brings back is listed again). Deleting a wish closes each part first (a Mac part may be kept open
+over unsaved work, which stops the delete) and forgets what Lamp keeps for it (`Store.forgetPart`: its installed copy,
+build folders, sign-ins and place in the lists), as taking a part away does; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's
 game. A part never has a turn of its own: Lamp's own requests for it (carrying on after its Reload, fixing its crash) are
 its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by (whose turn has the app, whether the
 person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of

@@ -1827,9 +1827,31 @@ final class Store: ObservableObject {
     private func removePart(_ part: LampProject) async -> Bool {
         guard let part = current(part), let wishID = part.partOf, let wish = projects.first(where: { $0.id == wishID }),
               await quit(part, for: turns[wishID]) else { return false }
+        await forgetPart(part)
         AppFolder.remove(part.dir, in: wish.dir)
         reload()
         return true
+    }
+
+    /// What Lamp keeps for a part that's gone (taken away, Undone, or its wish deleted), beyond its folder: its installed
+    /// copy and widget's process, its phone build and signing folders, its sign-ins, and its place in Lamp's lists. Its
+    /// data goes with its wish's (`trashData`, whose id it starts with); its folder is its wish's to remove.
+    private func forgetPart(_ part: LampProject) async {
+        let fm = FileManager.default
+        if part.platform.hasMac {
+            await WidgetProcess.end(for: part)
+            // Installed under the wish's name, which the wish's own app could only share were it a Mac app too.
+            let shared = projects.contains { $0.id != part.id && $0.platform.hasMac && $0.installedURL == part.installedURL }
+            if !shared, fm.fileExists(atPath: part.installedURL.path) { try? fm.trashItem(at: part.installedURL, resultingItemURL: nil) }
+        }
+        try? fm.removeItem(at: Devices.buildFolder(for: part))
+        try? fm.removeItem(at: Devices.signingFolder(for: part))
+        AppSecrets.forget(app: part.instance)
+        simulatorApps[part.id] = nil
+        queued[part.id] = nil
+        stamps[part.id] = nil
+        projects.removeAll { $0.id == part.id }
+        tokens = tokens.filter { $0.value != part.id }
     }
 
     /// A draft's kind: a draft only says what it will be, so this is a change to that, made while its first
@@ -4001,6 +4023,15 @@ final class Store: ObservableObject {
     func delete(_ project: LampProject) async {
         stop(project)
         iconDesigns.removeValue(forKey: project.id)?.cancel()
+        // Its other parts close first, each the way it closes (a Mac part may ask about unsaved work and be kept open):
+        // a part left running would answer for a folder in the Trash, with no wish to quit it from.
+        let parts = parts(of: project)
+        for part in parts {
+            guard await quit(part) else {
+                log(project, .status, ErrorMessages.notDeleted(project.name))
+                return
+            }
+        }
         guard await quit(project) else {
             log(project, .status, ErrorMessages.notDeleted(project.name))
             return
@@ -4031,6 +4062,7 @@ final class Store: ObservableObject {
             return
         }
         Self.trashData(of: project)
+        for part in parts { await forgetPart(part) }
         try? fm.removeItem(at: Devices.buildFolder(for: project))
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
@@ -4893,6 +4925,23 @@ final class Store: ObservableObject {
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
     }
 
+    /// What an app is after its files were put back to a version: its kind (`followRestoredKind`), and for a wish
+    /// its other parts, which come and go with their files. One the version doesn't have is quit and forgotten
+    /// (`forgetPart`); one it brings back is taken in again, with its toolbar menu and its `part` for the tools.
+    @discardableResult
+    private func followRestored(_ project: LampProject) async -> LampProject {
+        let wish = followRestoredKind(project)
+        guard !wish.isPart else { return wish }
+        let found = Parts.folders(in: wish.dir)
+        guard found != wish.partFolders else { return wish }
+        for part in parts(of: wish) where !found.contains(part.dir.lastPathComponent) {
+            _ = await quit(part, for: turns[wish.id])
+            await forgetPart(part)
+        }
+        reload()
+        return current(wish) ?? wish
+    }
+
     /// After a restore, the app in Lamp's list is what the restored version was made for, as `Versions.restoreFiles`
     /// wrote it to meta.json: an Undo of `make_app_for` puts the kind back with the code.
     /// The app as it is after the restore, for whatever builds it next.
@@ -5500,7 +5549,7 @@ final class Store: ObservableObject {
         // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
         if let current = versions.first, unsaved {
             _ = await Versions.restoreFiles(project, to: current)
-            let restored = followRestoredKind(project)
+            let restored = await followRestored(project)
             log(restored, .status, "Discarded the unfinished change")
             if await build(restored) == nil { await installReportingCrash(restored) }
             return
@@ -5511,7 +5560,7 @@ final class Store: ObservableObject {
             log(project, .status, "Nothing to undo")
             return
         }
-        let restored = followRestoredKind(project)
+        let restored = await followRestored(project)
         Versions.remember(restored, restoredTo: target.label, from: target.date)
         log(restored, .status, "Undid “\(undoing.label)”")
         await rebuild(restored, restoredFrom: target)
@@ -5526,7 +5575,7 @@ final class Store: ObservableObject {
             log(project, .status, "The app is already like “\(version.label)”")
             return
         }
-        let restored = followRestoredKind(project)
+        let restored = await followRestored(project)
         Versions.remember(restored, restoredTo: version.label, from: version.date)
         log(restored, .status, Versions.restoredMessage(to: version))
         await rebuild(restored, restoredFrom: version)
@@ -5560,7 +5609,7 @@ final class Store: ObservableObject {
             log(project, .error, ErrorMessages.restoreFailed)
             return false
         }
-        followRestoredKind(project)
+        await followRestored(project)
         if await Versions.save(project, message: Versions.restoredMessage(to: target)), let head = await Versions.head(project) {
             Versions.copyPicture(in: project, from: target.id, to: head)
             versionsRevision += 1
@@ -9362,7 +9411,7 @@ final class Store: ObservableObject {
             guard await Versions.restoreFiles(project, to: version) else {
                 return (500, ["error": "Lamp couldn't restore that version."])
             }
-            followRestoredKind(project)
+            await followRestored(project)
             log(project, .status, Versions.restoredMessage(to: version))
             return (200, ["text": """
                 The app's files are now as they were in “\(version.label)”. Your changes earlier in this request \
