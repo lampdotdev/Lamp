@@ -5,6 +5,15 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.7
+
+- Setting up a device no longer crashes Lamp: every setup window now opens sized to fit and stays up.
+- Wish for a big, fast 3D game on your Xbox and Lamp makes it as a native game that uses the console's full power.
+  The agent plays it on your Mac as it builds, then puts it on your Xbox. The tools for it are a one-time download of
+  about 2 GB, asked for only when you wish for such a game; other Xbox apps and games need nothing extra.
+- Your Xbox stays connected after Device Portal restarts, instead of asking you to reconnect it each time.
+- Deleting a wish made for a device also takes its app off that device.
+
 ## 0.18.6
 
 - Make 3D games for your Xbox: Lamp comes with a 3D engine for them, the agent tries each game in a window on your Mac
