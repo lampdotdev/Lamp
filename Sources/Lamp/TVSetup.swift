@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 
@@ -14,6 +15,7 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
     @Published var problem: String?
     @Published var passphrase = ""
     private var window: NSWindow?
+    private var resizing: AnyCancellable?
     private var waiting: (() -> Void)?
     /// Which TV the window is for now: work started for another (a check, a connection, a sign-in) that ends after
     /// the person moved on is dropped, so its result can't stand for this TV or resume its Play.
@@ -128,11 +130,8 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     private func present() {
         if window == nil {
-            let content = NSHostingController(rootView: TVSetupView(model: self))
-            content.sizingOptions = [.preferredContentSize]
-            let window = NSWindow(contentViewController: content)
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
+            let (window, resizing) = FittedWindow.make(TVSetupView(model: self), following: objectWillChange)
+            self.resizing = resizing
             window.delegate = self
             window.center()
             self.window = window
