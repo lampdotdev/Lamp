@@ -3838,10 +3838,10 @@ final class Store: ObservableObject {
         await WidgetProcess.end(for: project)
         // A device app is taken off the devices Lamp put it on, and Lamp's packages of it go.
         if project.platform == .device {
-            // An install already under way runs to its end (Stop ends no request mid-upload), so it's let finish, two
-            // minutes at most, before its package is taken off again.
-            let until = Date().addingTimeInterval(120)
-            while installingApps.contains(project.id), Date() < until { try? await Task.sleep(for: .milliseconds(300)) }
+            // An install already under way runs to its end (Stop ends no request mid-upload, and a device may take minutes
+            // to say how it went), so it's let finish before its package is taken off again; its own requests and polls
+            // are bounded, so this ends.
+            while installingApps.contains(project.id) { try? await Task.sleep(for: .milliseconds(300)) }
             await DeviceApps.removeEverywhere(project, among: devices)
             try? FileManager.default.removeItem(at: DeviceApps.buildFolder(for: project))
         }

@@ -254,10 +254,11 @@ enum DeviceApps {
         while true {
             do {
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
-                // Noted before the upload, not after: an install cut short or deleted midway may still land on the
-                // device, and a removal then has the package to name.
-                remember(project, on: device)
+                // Noted as on its way before the upload, and as the installed one only once the device took it: an install cut
+                // short or deleted midway may still land on the device, and a removal then names both.
+                remember(project, on: device, pending: true)
                 let outcome = try await runner.run(install, extra: values(project), files: files(for: project))
+                remember(project, on: device, pending: false)
                 run.installAnswer = outcome.answers.last.map(plain)
                 guard await stillWanted() else { throw Failure(message: "Stopped.") }
                 if let launch = bridge.launch, !launch.isEmpty {
@@ -310,17 +311,20 @@ enum DeviceApps {
     }
 
     /// Notes which package is on which device once its install went through, for the next install to end it first.
-    private static func remember(_ project: LampProject, on device: Device) {
+    /// Notes the package just built for a device: as on its way (`pending`), or as the one the device has.
+    private static func remember(_ project: LampProject, on device: Device, pending: Bool) {
         let identity = buildFolder(for: project).appendingPathComponent("identity.json")
-        let installed = installedRecord(project, device: device.id)
-        try? FileManager.default.removeItem(at: installed)
-        try? FileManager.default.copyItem(at: identity, to: installed)
-        try? Data(device.id.utf8).write(to: installed.deletingPathExtension().appendingPathExtension("device"))
+        let record = installedRecord(project, device: device.id, pending: pending)
+        try? FileManager.default.removeItem(at: record)
+        try? FileManager.default.copyItem(at: identity, to: record)
+        try? Data(device.id.utf8).write(to: installedRecord(project, device: device.id).deletingPathExtension().appendingPathExtension("device"))
+        if !pending { try? FileManager.default.removeItem(at: installedRecord(project, device: device.id, pending: true)) }
     }
 
-    /// Where Lamp notes which package of the app is on a device: the identity, with the device's id beside it.
-    private static func installedRecord(_ project: LampProject, device id: String) -> URL {
-        buildFolder(for: project).appendingPathComponent("installed-\(MSIX.publisherID(id)).json")
+    /// Where Lamp notes which package of the app is on a device (the identity, with the device's id beside it), and
+    /// which one is on its way there.
+    private static func installedRecord(_ project: LampProject, device id: String, pending: Bool = false) -> URL {
+        buildFolder(for: project).appendingPathComponent("installed-\(MSIX.publisherID(id))\(pending ? "-pending" : "").json")
     }
 
     /// The bridge's values for the copy last put on this device, when Lamp put one there.
@@ -335,11 +339,16 @@ enum DeviceApps {
         let folder = buildFolder(for: project)
         for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix("installed-") && name.hasSuffix(".device") {
             guard let id = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8),
-                  let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }),
-                  let installed = values(project, identity: installedRecord(project, device: id)), installed["packageFullName"] != nil else { continue }
+                  let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) else { continue }
             let runner = IntegrationRunner(integration: integration, device: device)
-            if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: installed) }
-            _ = try? await runner.run(remove, extra: installed)
+            // The copy the device took, and one that was on its way and may have landed; the same package twice is asked once.
+            var asked: Set<String> = []
+            for pending in [false, true] {
+                guard let package = values(project, identity: installedRecord(project, device: id, pending: pending)),
+                      let fullName = package["packageFullName"], asked.insert(fullName).inserted else { continue }
+                if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: package) }
+                _ = try? await runner.run(remove, extra: package)
+            }
         }
     }
 
