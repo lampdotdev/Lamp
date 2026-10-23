@@ -16,6 +16,7 @@
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.Gaming.Input.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.System.h>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -131,6 +132,9 @@ struct View : implements<View, IFrameworkViewSource, IFrameworkView> {
         g_installed = std::wstring(Windows::ApplicationModel::Package::Current().InstalledLocation().Path());
         g_log = _wfopen((g_local + L"\\log.txt").c_str(), L"w");
         lamp_log("Lamp: the game started.");
+        // An Xbox gives a package installed as a game about 5 GB and one installed as an app 1 GB: which it got.
+        lamp_log("Lamp: the console lets the game use %llu MB of memory.",
+                 (unsigned long long)(Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
         std::set_terminate([] { lamp_log("Lamp: the game stopped on an exception it didn't catch."); abort(); });
         // A game that's set aside gives back what memory it can, as the console asks.
         CoreApplication::Suspending([this](auto const&, auto const&) {

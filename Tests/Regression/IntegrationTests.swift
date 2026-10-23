@@ -72,6 +72,10 @@ final class IntegrationTests: XCTestCase {
         XCTAssertTrue(problems { json in
             step(0, &json) { $0["check"] = [["http": ["port": 80, "path": "/x@evil.example"]]] }
         }.contains { $0.contains("not an address") })
+        // A setting changed for a sequence and put back after is a change: a PUT or POST with a body.
+        XCTAssertTrue(problems { json in
+            step(0, &json) { $0["check"] = [["http": ["port": 80, "path": "/settings/x", "restore": "Value"]]] }
+        }.contains { $0.contains("restore is for a PUT or POST") })
         // A misspelt key isn't passed over quietly.
         XCTAssertTrue(problems { $0["fnd"] = [] }.contains { $0.contains("fnd isn't part of an integration") })
         // A program that isn't Lamp's needs its checksum.

@@ -1611,6 +1611,9 @@ enum Template {
         var homekit: Bool?
         /// iPhone apps: notifications that break through Focus (`LampNotifications.send(timeSensitive:)`): an entitlement.
         var timeSensitive: Bool?
+        /// Device apps: the app is a game, which a console installs as one (an Xbox gives a game far more memory and
+        /// graphics than an app): `DeviceApps.isGame`.
+        var game: Bool?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -1627,7 +1630,7 @@ enum Template {
                                 backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
                                 background: background == true ? true : nil, icloud: icloud == true ? true : nil,
                                 weather: weather == true ? true : nil, homekit: homekit == true ? true : nil,
-                                timeSensitive: timeSensitive == true ? true : nil)
+                                timeSensitive: timeSensitive == true ? true : nil, game: game == true ? true : nil)
         }
 
         var isEmpty: Bool { checked == Capabilities() }

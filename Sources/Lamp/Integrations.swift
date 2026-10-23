@@ -412,15 +412,86 @@ struct IntegrationRunner {
         pins.keepRoot(root, signing: leaf, port: request.port)
     }
 
-    /// Runs a sequence in order, stopping at the first failure.
-    func run(_ sequence: [IntegrationAction], extra: [String: String] = [:], files: [String: URL] = [:]) async throws -> Outcome {
+    /// Runs a sequence in order, stopping at the first failure. Settings it changed only for itself (`restore`) are put
+    /// back as it ends, however it ends; or, given `changed`, once the caller is done with them (`putBack`): an Xbox
+    /// settles an installed package's type only as it's opened, after the install's own sequence.
+    func run(_ sequence: [IntegrationAction], extra: [String: String] = [:], files: [String: URL] = [:],
+             changed: ChangedSettings? = nil) async throws -> Outcome {
         await prepare()
+        let settings = changed ?? ChangedSettings()
+        // Two sequences changing a device's setting at once would each put back what the other set.
+        if sequence.contains(where: { $0.http?.restore != nil }), !settings.held {
+            await SettingChanges.shared.begin(device.id)
+            settings.held = true
+        }
+        let result: Result<Outcome, Error>
+        do { result = .success(try await run(sequence, extra: extra, files: files, changed: settings)) } catch { result = .failure(error) }
+        if changed == nil { await putBack(settings) }
+        return try result.get()
+    }
+
+    /// Settings sequences changed for themselves, until `putBack` puts them as they were.
+    final class ChangedSettings {
+        fileprivate var restores: [Restore] = []
+        fileprivate var held = false
+    }
+
+    /// Each setting as it was before a sequence changed it, last changed first, sent with the values (the CSRF cookie)
+    /// its change went with. A device that can't be reached by then keeps what the sequence set: there's nothing more
+    /// to do from here.
+    func putBack(_ changed: ChangedSettings) async {
+        for restore in changed.restores.reversed() {
+            guard let field = restore.request.restore, let body = try? JSONSerialization.data(withJSONObject: [field: restore.was]) else { continue }
+            var back = restore.request
+            back.body = String(decoding: body, as: UTF8.self)
+            let answer = try? await DeviceHTTP.send(back, to: try address, values: restore.values, pins: DeviceTLS.Pins(deviceID: device.id))
+            if answer?.ok != true { onLog?("Lamp couldn't set \(restore.request.path) on \(device.name) back to \(restore.was).") }
+        }
+        changed.restores = []
+        if changed.held {
+            changed.held = false
+            await SettingChanges.shared.end(device.id)
+        }
+    }
+
+    fileprivate struct Restore { let request: Request; let was: String; let values: [String: String] }
+
+    /// The devices whose settings a sequence has changed for itself and not yet put back.
+    private actor SettingChanges {
+        static let shared = SettingChanges()
+        private var busy: Set<String> = []
+
+        func begin(_ id: String) async {
+            while busy.contains(id) { try? await Task.sleep(for: .milliseconds(200)) }
+            busy.insert(id)
+        }
+
+        func end(_ id: String) { busy.remove(id) }
+    }
+
+    private func run(_ sequence: [IntegrationAction], extra: [String: String], files: [String: URL],
+                     changed: ChangedSettings) async throws -> Outcome {
         var outcome = Outcome()
         // Cookies the device set earlier in this sequence, sent back as `{cookie:<name>}` (a CSRF token).
         var cookies: [String: String] = [:]
         for action in sequence {
             let values = values(extra).merging(cookies.reduce(into: [:]) { $0["cookie:" + $1.key] = $1.value }) { $1 }
             if let request = action.http {
+                // A setting changed only for this sequence: what it is now, to put back after.
+                if let field = request.restore {
+                    let read = Request(port: request.port, path: request.path, auth: request.auth, https: request.https)
+                    let now = try await DeviceHTTP.send(read, to: try address, values: values, pins: DeviceTLS.Pins(deviceID: device.id))
+                    guard now.ok, let was = DeviceHTTP.value(json: field, xml: nil, in: now),
+                          !was.unicodeScalars.contains(where: { !Placeholders.safe.contains($0) }) else {
+                        throw Failure(message: "\(device.name) didn't say what \(request.path) is set to, so Lamp left it as it was.")
+                    }
+                    // Put back only once, as it was first: a sequence tried again finds its own change there.
+                    let setting = "\(request.port)\(request.path)"
+                    if !changed.restores.contains(where: { "\($0.request.port)\($0.request.path)" == setting }),
+                       was != (try? Placeholders.fill(request.body ?? "", values, in: .body)).flatMap({ DeviceHTTP.json(field, in: Data($0.utf8)) }) {
+                        changed.restores.append(Restore(request: request, was: was, values: values))
+                    }
+                }
                 var answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
                 // A device still working on what it was sent says so with 204 until it's done.
                 if let poll = request.poll {

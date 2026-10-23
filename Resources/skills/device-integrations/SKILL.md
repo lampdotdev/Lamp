@@ -77,6 +77,10 @@ step's `run` for an SSH key the device gives this Mac.
 `poll` (seconds) asks again every two seconds while the device answers 204 (still working on an install), and `expect`
 (`json` or `xml`, with `equals` or `contains`) is what the answer must say for the step to count, else it fails with the
 device's words. A form value `"@{certificate}"` sends Lamp's certificate for a wrapped package (below).
+`restore` (a JSON field's name) on a PUT or POST that changes a setting only for its sequence: Lamp first reads the
+same path with a GET, takes that field's value, and when the sequence ends (in `bridge.install`, once the app has been
+launched after it), however it ends, sends `{"<field>": "<that value>"}` back the same way. For a device-wide setting an install needs (an Xbox installs a package as a game only while
+`/ext/settings/DefaultUWPContentTypeToGame` is `{"Value":"{isGame}"}`), so the person's own choice is left as it was.
 
 ### Values Lamp fills
 
@@ -93,6 +97,8 @@ Write `{name}`; Lamp fills it, checked to a safe alphabet. You never write a val
   then `"X-CSRF-Token": "{cookie:CSRF-Token}"` on the POST)
 - `{packageFullName}` and `{appUserModelID}` a wrapped Windows package's names, and `{base64:<one of Lamp's values>}`
   any of Lamp's values in base64, as some devices take an id in a query
+- `{isGame}` "true" when the app is a game (Lamp's native games, or `{"game": true}` in the app's capabilities.json),
+  else "false", for a device that installs games differently from apps
 
 ### steps
 

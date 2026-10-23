@@ -280,6 +280,11 @@ struct Request: Codable, Hashable {
     var poll: Int?
     /// What the answer must say for the step to count as done; otherwise the step fails with the answer's words.
     var expect: Expect?
+    /// A setting changed only for its sequence: the name of the JSON field holding the setting's value in the device's
+    /// answer to a GET of the same path. Lamp reads it before sending, and once the sequence is over (for a bridge's
+    /// install, once the app has been launched after it), whether it went through or not, sends back
+    /// `{"<field>": "<what it was>"}` the same way (Xbox's "treat apps as games" while a game is installed).
+    var restore: String?
 
     struct Expect: Codable, Hashable {
         var json: String?
@@ -304,7 +309,7 @@ struct Request: Codable, Hashable {
 enum Placeholders {
     /// Lamp's own names. `field:<key>` and `read:<step>` are the others.
     static let lamp: Set<String> = ["address", "mac", "package", "appID", "key", "text", "callback", "signIn", "deviceID", "sshKey",
-                                    "packageFullName", "appUserModelID"]
+                                    "packageFullName", "appUserModelID", "isGame"]
 
     /// Where a placeholder sits, which decides what may go there and how it's written.
     enum Place { case path, command, header, body, auth, form, shown, argument }
@@ -438,7 +443,7 @@ enum IntegrationCheck {
         case object([String: Shape]), array(Shape), map, leaf
         static let request: Shape = .object(["method": .leaf, "https": .leaf, "port": .leaf, "path": .leaf, "headers": .map, "body": .leaf, "form": .map,
                                              "auth": .object(["digest": .leaf, "user": .leaf, "password": .leaf]), "keep": .leaf,
-                                             "poll": .leaf, "expect": .object(["json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf])])
+                                             "poll": .leaf, "restore": .leaf, "expect": .object(["json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf])])
         static let action: Shape = .object([
             "http": request, "probe": .leaf, "stream": .object(["port": .leaf]),
             "ssh": .object(["port": .leaf, "user": .leaf, "command": .leaf, "explanation": .leaf]),
@@ -769,6 +774,13 @@ enum IntegrationCheck {
             }
         }
         if let keep = request.keep, !["picture", "log", "key"].contains(keep) { problems.append("\(at).keep can only be \"picture\", \"log\" or \"key\".") }
+        if let restore = request.restore {
+            if restore.range(of: #"^[A-Za-z0-9_]{1,64}$"#, options: .regularExpression) == nil { problems.append("\(at).restore must be the name of a JSON field.") }
+            if !["PUT", "POST"].contains(request.method?.uppercased() ?? "GET") || request.body == nil {
+                problems.append("\(at).restore is for a PUT or POST with a body that changes a setting.")
+            }
+            if request.keep != nil || request.poll != nil { problems.append("\(at).restore changes a setting: it neither keeps nor polls.") }
+        }
         if let poll = request.poll, !(2...600).contains(poll) { problems.append("\(at).poll is seconds, 2 to 600.") }
         if let expect = request.expect {
             if (expect.json == nil) == (expect.xml == nil) { problems.append("\(at).expect reads the answer with exactly one of json or xml.") }
