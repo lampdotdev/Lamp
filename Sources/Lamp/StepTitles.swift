@@ -15,8 +15,10 @@ import LampSidebarKit
 /// and not what the agent said around a fold, which a model given it turns into claims the steps don't show (a plan
 /// it announced becomes something the fold did). A step's words are what the agent set out to do, so the model is told
 /// which steps failed or never ran, and that a step's words aren't its result: a fold whose command to share a page
-/// failed is not "Shared the page". When there's no such route, the call fails or its answer isn't fit to show, the
-/// fold keeps the words it had.
+/// failed is not "Shared the page". A fold has at most three calls, and more than one only when the one before
+/// came to nothing: its call as it closes, then the turn's end, which tries once more straight away when it fails
+/// or its title isn't fit to show. When there's no such route, or none of them works, the fold keeps the words it
+/// had.
 @MainActor
 enum StepTitles {
     nonisolated static let maxWords = 12
@@ -36,24 +38,51 @@ enum StepTitles {
     /// turned away, isn't asked again at every later message, each a call paid for. The call at the turn's end is
     /// its one more try.
     private static var attempted: Set<UUID> = []
-    /// How a title is asked for: the model, or what a test puts in its place.
-    static var asker: (_ request: String?, _ groups: [Group], _ turn: TurnRoute) async -> [UUID: String]? = { request, groups, turn in
-        await ask(request: request, groups: groups, turn: turn)
+    /// The turn's end for folds whose call was still out when it came: run when that call comes to nothing, so a
+    /// fold that was waiting on it then still has its one more try.
+    private static var lastTries: [UUID: () async -> Void] = [:]
+    /// How long a title may take before it's given up on. Nobody waits on it, but a call that never ends holds
+    /// its fold's one more try back for good.
+    nonisolated static let timeLimit: TimeInterval = 90
+    /// How a title is asked for: the model, or what a test puts in its place. `again` says the titles it gave for
+    /// these folds last time were turned away; nil is a call that failed.
+    static var asker: (_ request: String?, _ groups: [Group], _ turn: TurnRoute, _ again: Bool) async -> [UUID: String]? = { request, groups, turn, again in
+        await ask(request: request, groups: groups, turn: turn, again: again)
     }
 
     /// Titles what's left of the run that just ended, out of the turn's way.
     static func start(for project: LampProject, turn: TurnRoute) {
-        Task { @MainActor in
-            let lines = LogLine.visible(Store.shared.logs[project.id] ?? [], details: false)
-            let (request, all, own) = Self.groups(in: lines)
-            let groups = all.filter { !asking.contains($0.id) }
-            attempted.subtract(groups.map(\.id))
-            var titles = own
-            if !groups.isEmpty, let made = await asker(request, groups, turn) {
-                titles.merge(made) { $1 }
-            }
+        askAtEnd(LogLine.visible(Store.shared.logs[project.id] ?? [], details: false), turn: turn) { titles in
             Store.shared.setFoldTitles(titles, in: project)
         }
+    }
+
+    /// Asks for every fold the run that just ended left untitled, handing what comes back to `apply`: in one call
+    /// for those not being asked about now, and, for each whose call is still out, once that call has come to
+    /// nothing. The call it started, for whoever needs to wait for it.
+    @discardableResult
+    static func askAtEnd(_ lines: [LogLine], turn: TurnRoute, apply: @escaping ([UUID: String]) -> Void) -> Task<Void, Never> {
+        let (request, all, own) = groups(in: lines)
+        for group in all where asking.contains(group.id) {
+            lastTries[group.id] = { apply(await lastTry(request: request, groups: [group], turn: turn)) }
+        }
+        let groups = all.filter { !asking.contains($0.id) }
+        attempted.subtract(groups.map(\.id))
+        return Task { @MainActor in
+            var titles = own
+            if !groups.isEmpty { titles.merge(await lastTry(request: request, groups: groups, turn: turn)) { $1 } }
+            apply(titles)
+        }
+    }
+
+    /// A fold's last call, at its turn's end: when it fails, or a title it gives isn't fit to show, it's asked
+    /// once more for the folds still without one, then left with its words.
+    private static func lastTry(request: String?, groups: [Group], turn: TurnRoute) async -> [UUID: String] {
+        let made = await asker(request, groups, turn, false)
+        let left = groups.filter { made?[$0.id] == nil }
+        guard !left.isEmpty else { return made ?? [:] }
+        let again = await asker(request, left, turn, made != nil) ?? [:]
+        return (made ?? [:]).merging(again) { $1 }
     }
 
     /// Titles the stretches of steps the turn going on has closed by saying something after them, each in a call
@@ -73,9 +102,15 @@ enum StepTitles {
             asking.insert(group.id)
             attempted.insert(group.id)
             return Task { @MainActor in
-                let made = await asker(request, [group], turn)
+                let made = await asker(request, [group], turn, false)
                 asking.remove(group.id)
-                if let made, !made.isEmpty { apply(made) }
+                let last = lastTries.removeValue(forKey: group.id)
+                if let made, !made.isEmpty {
+                    apply(made)
+                } else if let last {
+                    attempted.remove(group.id)
+                    await last()
+                }
             }
         }
     }
@@ -148,12 +183,16 @@ enum StepTitles {
     Respond with JSON: {"titles": {"<group number>": "<title>", ...}}, one title for every group.
     """
 
-    nonisolated static func prompt(request: String?, groups: [Group]) -> String {
+    nonisolated static func prompt(request: String?, groups: [Group], again: Bool = false) -> String {
         var text = request.map { "The person asked: \($0)\n\n" } ?? ""
         for (index, group) in groups.enumerated() {
             text += "Group \(index + 1)\n"
             text += "Steps:\n" + group.steps.map { "- \($0.prefix(200))" }.joined(separator: "\n") + "\n"
             text += "\n"
+        }
+        if again {
+            text += "The titles you gave these groups before couldn't be shown: keep each to 8 plain words, with no "
+                + "file name or path, and not the example's words.\n"
         }
         return text
     }
@@ -212,12 +251,24 @@ enum StepTitles {
         return found.map { ($0, AppAI.fastModel(for: $0)) }
     }
 
-    /// One call for all the groups, on the route that built the turn.
-    private static func ask(request: String?, groups: [Group], turn: TurnRoute) async -> [UUID: String]? {
+    /// One call for all the groups, on the route that built the turn. What went wrong is logged, never the steps
+    /// or the titles, so a fold left with its words can be traced without the chat in the log.
+    private static func ask(request: String?, groups: [Group], turn: TurnRoute, again: Bool) async -> [UUID: String]? {
         guard let (route, model) = route(for: turn, among: AppAI.allTextRoutes) else { return nil }
-        let prompt = prompt(request: request, groups: groups)
-        guard let (reply, _) = try? await AppAI.complete(prompt: prompt, images: [], system: system, json: true,
-                                                         engineModel: model, via: route) else { return nil }
-        return read(reply, groups: groups)
+        let prompt = prompt(request: request, groups: groups, again: again)
+        let reply: String
+        do {
+            (reply, _) = try await AppAI.complete(prompt: prompt, images: [], system: system, json: true,
+                                                  engineModel: model, via: route, timeLimit: timeLimit)
+        } catch {
+            NSLog("Lamp couldn't title %d fold(s) of steps through %@: %@", groups.count, route.label, error.localizedDescription)
+            return nil
+        }
+        let titles = read(reply, groups: groups)
+        if titles.count < groups.count {
+            NSLog("Lamp turned away %d of %d step title(s) from %@: missing, too long, naming a file, or the example",
+                  groups.count - titles.count, groups.count, route.label)
+        }
+        return titles
     }
 }

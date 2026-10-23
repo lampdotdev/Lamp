@@ -508,14 +508,17 @@ enum AppAI {
     /// can't, so a caller that depends on the shape still checks the reply.
     /// `via` is a route the caller has already settled on, for one that must know what answered: the call
     /// goes that way or fails, and nothing is looked up again.
+    /// `timeLimit` ends a call through Claude Code or Codex that hasn't answered by then, for a caller that would
+    /// rather have no answer than wait on a stuck one: their runs have no limit of their own, where the routes over
+    /// the network give up by themselves.
     static func complete(prompt: String, images: [Image], system: String, json: Bool,
                          model: String? = nil, appModel: String? = nil, engineModel: String? = nil,
-                         schema: [String: Any]? = nil, via: TextRoute? = nil) async throws -> (String, Double) {
+                         schema: [String: Any]? = nil, via: TextRoute? = nil, timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         let chosen: TextRoute
         if let via { chosen = via } else { chosen = await route(for: appModel) }
         var system = system
         if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
+        var (text, cost) = try await dispatch(prompt: prompt, images: images, system: system, json: json, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: timeLimit)
         guard json else { return (text, cost) }
         // A JSON reply that doesn't parse (cut off, or wrapped in prose) is useless to the app: ask once more,
         // through the same provider, saying so, before giving up. Both attempts are billed, so the cost goes
@@ -524,7 +527,7 @@ enum AppAI {
         if !isJSON(reply) {
             let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
             do {
-                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema)
+                let (retry, more) = try await dispatch(prompt: again, images: images, system: system, json: true, model: model, chosen: chosen, engineModel: engineModel, schema: schema, timeLimit: timeLimit)
                 cost += more
                 reply = stripFences(retry)
             } catch let failure as Failure {
@@ -543,7 +546,8 @@ enum AppAI {
     /// Lamp's own calls (the icon judge, suggestions) when there's a key; `engineModel` likewise names the
     /// model for Claude Code or Codex (the fast one for decisions by text).
     private static func dispatch(prompt: String, images: [Image], system: String, json: Bool, model: String?,
-                                 chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil) async throws -> (String, Double) {
+                                 chosen: TextRoute, engineModel: String? = nil, schema: [String: Any]? = nil,
+                                 timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         if let model, Provider.hasKey {
             return try await viaOpenRouter(prompt: prompt, images: images, system: system, model: model, json: json, schema: schema)
         }
@@ -554,7 +558,8 @@ enum AppAI {
         case .engine(.pi, _):
             throw Failure(message: noTextRoute, needs: .text)
         case .engine(let engine, let model):
-            return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model)
+            return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model,
+                                       timeLimit: timeLimit)
         case .localModel(_, let model):
             let base = try await LocalModels.shared.ensureServer(for: model)
             return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
@@ -572,7 +577,7 @@ enum AppAI {
     /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
     private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
-                                  system: String, model: String) async throws -> (String, Double) {
+                                  system: String, model: String, timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -620,7 +625,17 @@ enum AppAI {
         var text = ""
         var cost = 0.0
         var failure: String?
-        let status = await Shell.run(command, cwd: folder, env: env) { line in
+        final class Deadline { var passed = false }
+        let deadline = Deadline()
+        let status = await Shell.run(command, cwd: folder, env: env, started: { process in
+            guard let timeLimit else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(timeLimit))
+                guard process.isRunning else { return }
+                deadline.passed = true
+                process.terminate()
+            }
+        }) { line in
             for event in Agent.parse(line, engine: engine) {
                 switch event {
                 case .text(let chunk): text = chunk   // the last message is the answer
@@ -630,6 +645,7 @@ enum AppAI {
                 }
             }
         }
+        if deadline.passed { throw Failure(message: "\(engine.title) took too long to answer.") }
         if let failure { throw Failure(message: Provider.friendlyError(failure, from: engine.title)) }
         guard !text.isEmpty else {
             throw Failure(message: status == 0 ? "The AI didn't answer." : "\(engine.title) didn't answer. Check it's signed in.")

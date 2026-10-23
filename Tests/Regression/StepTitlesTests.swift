@@ -115,7 +115,7 @@ final class StepTitlesTests: XCTestCase {
         let calls = Calls()
         let saved = StepTitles.asker
         defer { StepTitles.asker = saved }
-        StepTitles.asker = { _, groups, _ in
+        StepTitles.asker = { _, groups, _, _ in
             await MainActor.run { calls.groups += groups.map(\.steps) }
             return nil
         }
@@ -126,6 +126,98 @@ final class StepTitlesTests: XCTestCase {
         }
         XCTAssertEqual(calls.groups, [["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"],
                                       ["Painting the shelves oak", "Checking it builds"]])
+    }
+
+    /// The call at the turn's end is a fold's last: when its title is turned away, or the call fails, it's asked
+    /// for once more straight away, told why when its title was turned away, and then left with its words.
+    @MainActor func testTheTurnsEndTriesOnceMoreWhenItsTitleIsTurnedAwayOrTheCallFails() async {
+        final class Calls { var again: [Bool] = [] }
+        let saved = StepTitles.asker
+        defer { StepTitles.asker = saved }
+        let lines = LogLine.visible(turn(timed: true, titled: false), details: false)
+        let (_, groups, _) = StepTitles.groups(in: lines)
+        let first = groups[0].id, second = groups[1].id
+        // A reply that parsed but whose second title wasn't fit to show, then one that failed outright.
+        for firstReply in [[first: "Read the shelf"], nil] as [[UUID: String]?] {
+            let calls = Calls()
+            StepTitles.asker = { _, asked, _, again in
+                await MainActor.run { calls.again.append(again) }
+                if calls.again.count == 1 { return firstReply }
+                return Dictionary(uniqueKeysWithValues: asked.map { ($0.id, "Titled on the second try") })
+            }
+            var applied: [UUID: String] = [:]
+            await StepTitles.askAtEnd(lines, turn: .openRouter) { applied = $0 }.value
+            XCTAssertEqual(calls.again, [false, firstReply != nil])
+            XCTAssertEqual(applied[second], "Titled on the second try")
+            XCTAssertEqual(applied[first], firstReply == nil ? "Titled on the second try" : "Read the shelf")
+        }
+        // Twice turned away is the end of it: no third call.
+        let calls = Calls()
+        StepTitles.asker = { _, _, _, again in
+            await MainActor.run { calls.again.append(again) }
+            return [:]
+        }
+        var applied: [UUID: String]? = nil
+        await StepTitles.askAtEnd(lines, turn: .openRouter) { applied = $0 }.value
+        XCTAssertEqual(calls.again, [false, true])
+        XCTAssertEqual(applied, [:])
+    }
+
+    /// A fold whose call is still out when the turn ends isn't asked about twice at once; if that call then comes
+    /// to nothing, the turn's end is tried for it then, rather than never.
+    @MainActor func testAFoldStillBeingAskedAboutWhenTheTurnEndsIsTriedOnceItsCallFails() async {
+        final class Calls { var groups: [[String]] = []; var held: CheckedContinuation<[UUID: String]?, Never>? }
+        let calls = Calls()
+        let saved = StepTitles.asker
+        defer { StepTitles.asker = saved }
+        StepTitles.asker = { _, groups, _, _ in
+            let first = await MainActor.run { calls.groups += groups.map(\.steps); return calls.groups.count == 1 }
+            // The early call hangs on until the test lets it fail.
+            if first { return await withCheckedContinuation { held in Task { @MainActor in calls.held = held } } }
+            return Dictionary(uniqueKeysWithValues: groups.map { ($0.id, "Read the shelf") })
+        }
+        let whole = turn(timed: true, titled: false)
+        let early = StepTitles.askEarly(LogLine.visible(Array(whole[...8]), details: false), turn: .openRouter, apply: { _ in })
+        while calls.held == nil { await Task.yield() }
+        var applied: [UUID: String] = [:]
+        await StepTitles.askAtEnd(LogLine.visible(whole, details: false), turn: .openRouter) { applied.merge($0) { $1 } }.value
+        // The turn's end asked only for the fold nobody was asking about.
+        XCTAssertEqual(calls.groups, [["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"],
+                                      ["Painting the shelves oak", "Checking it builds"]])
+        calls.held?.resume(returning: nil)
+        for task in early { await task.value }
+        XCTAssertEqual(calls.groups.count, 3)
+        XCTAssertEqual(calls.groups.last, ["Looking at the shelf", "Reading the saved entries", "Finding every hot-sauce word"])
+        XCTAssertEqual(applied[whole[2].id], "Read the shelf")
+    }
+
+    /// A title asked of Claude Code or Codex that doesn't come is given up at its time limit, its engine ended,
+    /// rather than held on to for good.
+    @MainActor func testATitleCallThroughAnEngineEndsAtItsTimeLimit() async throws {
+        let savedFolder = EngineInstall.folder, savedFinder = EngineInstall.finder
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-titles-\(UUID().uuidString)")
+        defer {
+            EngineInstall.folder = savedFolder
+            EngineInstall.finder = savedFinder
+            EngineInstall.lookNow()
+            try? FileManager.default.removeItem(at: root)
+        }
+        let stuck = root.appendingPathComponent("claude")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: stuck.path, contents: Data("#!/bin/sh\nexec sleep 60\n".utf8),
+                                       attributes: [.posixPermissions: 0o755])
+        EngineInstall.folder = root
+        EngineInstall.finder = { $0 == .claude ? stuck.path : nil }
+        EngineInstall.lookNow()
+        let began = Date()
+        do {
+            _ = try await AppAI.complete(prompt: "Group 1", images: [], system: StepTitles.system, json: true,
+                                         via: route("engine:claude:haiku", .engine(.claude, model: "haiku")), timeLimit: 2)
+            XCTFail("a stuck engine answered")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "\(Engine.claude.title) took too long to answer.")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(began), 20)
     }
 
     /// Whatever the turn says, it closes the steps before it, so each closed stretch is titled as it closes: the
