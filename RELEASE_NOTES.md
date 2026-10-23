@@ -5,6 +5,13 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.5
+
+- Settings no longer crashes when you set up a device with a long list of devices: the window stays on your screen as
+  it grows.
+- The agent's steps fold into a line saying what they did as soon as it moves on, and a step that failed says so.
+- When building for a TV, the agent knows whether the app is in the preview on your Mac or on the TV itself.
+
 ## 0.18.4
 
 - A new starter, Disk Map: see where your disk space goes as a map that fills in while it measures, and clear out
