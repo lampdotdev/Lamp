@@ -193,6 +193,29 @@ enum DeviceApps {
         try JSONEncoder().encode(identity).write(to: folder.appendingPathComponent("identity.json"), options: .atomic)
     }
 
+    /// What `LampProject.device` holds when the person chose the preview on this Mac under Try On.
+    static let previewChoice = "lamp-preview"
+
+    /// Whether the app's kind is played on this Mac too: a kind with a preview folder, or a native game.
+    static func playsOnMac(_ project: LampProject) -> Bool { previewFolder(for: project) != nil || GameKit.isGame(project) }
+
+    /// The devices of the app's integration that Lamp has set up for apps: every step passed on them.
+    static func setUp(for project: LampProject) -> [Integrations.Kept] {
+        guard let integration = integration(for: project) else { return [] }
+        let steps = Set(integration.steps.map(\.id))
+        return Integrations.kept().filter { $0.integration == integration.id && steps.isSubset(of: Set($0.passed)) }
+    }
+
+    /// Whether the app goes to its preview on this Mac rather than a device, at the end of a turn and on Play: the
+    /// preview was chosen under Try On, or nothing was and no one device of its kind is set up. So a game is made and
+    /// played on the Mac first, and goes on the Xbox once one is set up or chosen.
+    static func goesToPreview(_ project: LampProject) -> Bool {
+        guard playsOnMac(project) else { return false }
+        if project.device == previewChoice { return true }
+        if project.device != nil { return false }
+        return setUp(for: project).count != 1
+    }
+
     /// The files a bridge's form may send: the package, and for a wrapped one Lamp's certificate.
     static func files(for project: LampProject) -> [String: URL] {
         var files = ["package": packageURL(for: project)]
@@ -203,10 +226,18 @@ enum DeviceApps {
 
     // MARK: On the device
 
-    /// The device the app goes on: the one chosen under Try On, else the only one its integration found.
+    /// The device the app goes on: the one chosen under Try On, else the only one its integration found (for a kind
+    /// that plays on this Mac too, the only one set up: one that isn't goes to the preview, `goesToPreview`). None
+    /// when the preview is chosen.
     @MainActor static func device(for project: LampProject, among devices: [Device]) -> Device? {
         let mine = devices.filter { $0.integration == project.deviceIntegration && $0.integration != nil }
+        if project.device == previewChoice { return nil }
         if let id = project.device { return mine.first { $0.id == id } ?? Integrations.kept(id).map { Integrations.device(from: $0, onNetwork: false) } }
+        if playsOnMac(project) {
+            let ready = setUp(for: project)
+            guard ready.count == 1, let kept = ready.first else { return nil }
+            return mine.first { $0.id == kept.id } ?? Integrations.device(from: kept, onNetwork: false)
+        }
         return mine.count == 1 ? mine.first : nil
     }
 

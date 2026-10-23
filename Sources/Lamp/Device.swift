@@ -307,13 +307,27 @@ enum DeviceNote {
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "device"
             let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
-            guard !mine.isEmpty else { return "No \(name) of the person's has been found on the network yet; the app goes on one once it's found and set up." }
-            return mine.map { device in
+            // A kind that plays on this Mac goes to its preview until a device is set up or chosen: said first, so the
+            // agent never tells the person it's on a console they haven't got.
+            var line = ""
+            if DeviceApps.goesToPreview(project) {
+                line = "Try On points at the \(name) preview on this Mac: at the end of each request Lamp opens the app there for the person to play"
+                    + (GameKit.isGame(project) ? ", in a window of its own with a controller connected to the Mac or the keyboard." : ".")
+                    + " It isn't on their \(name)."
+                if DeviceApps.setUp(for: project).isEmpty {
+                    line += " No \(name) of theirs is set up, so never say it's on one: say it plays on this Mac, and that it goes on their \(name) once they set one up, which the chat offers."
+                        + (GameKit.isGame(project) ? " Don't use on_device until then." : "")
+                }
+            } else if mine.isEmpty {
+                return "No \(name) of the person's has been found on the network yet; the app goes on one once it's found and set up."
+            }
+            let chosenID = DeviceApps.goesToPreview(project) ? nil : DeviceApps.device(for: project, among: store.devices)?.id
+            let devices = mine.map { device in
                 let state = device.setup() == .ready ? "set up for apps" : "not set up yet (next: \(device.setup().words.lowercased()))"
-                let chosen = device.id == project.device || (project.device == nil && mine.count == 1)
                 let place = device.isAway ? " Lamp doesn't find it on the network now, so nothing can be put on it until it's back." : ""
-                return "\(chosen ? "The app goes on" : "Also known:") the person's \(device.name) (\(device.forAgent)), \(state).\(place)"
-            }.joined(separator: " ")
+                return "\(device.id == chosenID ? "The app goes on" : "Also known:") the person's \(device.name) (\(device.forAgent)), \(state).\(place)"
+            }
+            return ([line] + devices).filter { !$0.isEmpty }.joined(separator: " ")
         }
         if project.onTV {
             let onTV = Runtime.onTV(project)

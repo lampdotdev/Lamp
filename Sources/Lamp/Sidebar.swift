@@ -542,6 +542,9 @@ final class SidebarServer {
                     card.button = "See What's Needed…"
                     card.disabled = IPhoneSetupLine.isOff(for: project)
                     out.append(card)
+                case .deviceOffer:
+                    // A device app's chat is in Lamp's window, never beside an app.
+                    continue
                 case .deviceStep:
                     // The step's card has a field and a sign-in, which happen in Lamp's window.
                     let step = DeviceStepLine.text(line.text)

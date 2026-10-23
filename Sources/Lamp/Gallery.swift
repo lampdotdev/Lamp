@@ -311,6 +311,19 @@ enum Gallery {
             AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
                                     content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
         },
+        // A game playing in the Xbox preview on this Mac, with the one offer to set up an Xbox under it.
+        Entry(group: "Device setup", name: "Playing in the preview, an Xbox offered") {
+            AnyView(VStack(alignment: .leading, spacing: 8) {
+                ChatLook.AgentText("The ball rolls and jumps now, and the coins spin.")
+                DeviceOfferLine.Row(app: "Marble Run", device: "Xbox") {}
+            })
+        },
+        Entry(group: "Device setup", name: "The offer, looking for the Xbox") {
+            AnyView(DeviceOfferLine.Row(app: "Marble Run", device: "Xbox", looking: true) {})
+        },
+        Entry(group: "Device setup", name: "The offer, no Xbox found") {
+            AnyView(DeviceOfferLine.Row(app: "Marble Run", device: "Xbox", said: "No Xbox found on this network. Turn yours on, then try again.") {})
+        },
     ]
 
     private static func step(_ name: String, _ step: Integration.Step, known: Integration.Known? = nil, state: DeviceStepCard.State = .idle) -> Entry {

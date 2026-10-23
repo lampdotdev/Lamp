@@ -233,7 +233,9 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep }
+    /// `deviceOffer` offers, once, to set up a device for an app that plays in its preview on this Mac meanwhile
+    /// (`DeviceOfferLine`); its text is the integration's id.
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, deviceOffer }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -1676,10 +1678,6 @@ final class Store: ObservableObject {
     /// changes it by asking (`convert`, the agent's `make_app_for`).
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false, integration: String? = nil) async -> LampProject {
         guard !project.scaffolded, kind != project.platform || integration != project.integration else { return project }
-        if kind == .device, let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, !WindowsTools.isReady {
-            // The tools are a long download: the window that gets them opens as the first request starts.
-            WindowsSetup.shared.show()
-        }
         if kind == .android, !AndroidTools.isReady {
             // Not asked for: a Mac app, with the setup a button away. Asked for: an Android app, and the setup
             // window opens now, since the build can't go on without the tools (`androidToolsProblem`).
@@ -1813,6 +1811,19 @@ final class Store: ObservableObject {
 
     /// Which of the person's devices a device app goes on (`DeviceApps`), by its id as its integration found it. One not
     /// set up yet is set up first, in its setup window, and chosen once it's ready.
+    /// The preview on this Mac, chosen under Try On for a device app whose kind has one: the turn's end and Play open it
+    /// there even with a device set up.
+    func setDeviceAppPreview(_ project: LampProject) {
+        guard project.platform == .device, DeviceApps.playsOnMac(project), let current = current(project),
+              current.device != DeviceApps.previewChoice, begin(current) != nil else { return }
+        var changed = current
+        changed.device = DeviceApps.previewChoice
+        try? Template.saveMeta(changed)
+        if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
+        log(changed, .status, "\(changed.name) will open in the \(previewDevice(changed)) preview on your Mac when you press Play.")
+        finish(changed)
+    }
+
     func setDeviceAppDevice(_ project: LampProject, _ id: String) {
         guard project.platform == .device, let device = devices.first(where: { $0.id == id }) else { return }
         let choose = { [self] in
@@ -1861,6 +1872,7 @@ final class Store: ObservableObject {
     func tryOnName(_ project: LampProject) -> String {
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "Device"
+            if DeviceApps.goesToPreview(project) { return "\(name) Preview" }
             return DeviceApps.device(for: project, among: devices)?.name ?? (project.device == nil ? "Choose a \(name)" : "Your \(name)")
         }
         if project.onTV {
@@ -4115,8 +4127,13 @@ final class Store: ObservableObject {
     /// Opens the installed app, or brings it to the front if it's running. Only builds when there's
     /// nothing installed yet (or the installed copy was deleted).
     func open(_ project: LampProject) async {
-        // Lamp can't tell whether a device app is still open on its device, so Open always puts it there.
+        // Lamp can't tell whether a device app is still open on its device, so Open always puts it there. Open in its
+        // preview on this Mac, as it is now, it comes forward.
         if project.onDevice {
+            if DeviceApps.goesToPreview(project), !Runtime.sourcesChanged(project) {
+                if GameKit.Window.isOpen(project) { GameKit.Window.bringForward(project); return }
+                if TVPreview.isOpen(project), previewBuilt[project.id] == Runtime.builtFingerprint(project) { TVPreview.bringForward(project); return }
+            }
             await run(project)
             return
         }
@@ -4782,10 +4799,6 @@ final class Store: ObservableObject {
         let words = kind == .mac ? "the Mac" : kind == .iphone ? "iPhone and iPad" : kind == .android ? "Android" : kind == .tv ? "Samsung and LG TVs"
             : kind == .device ? "the person's \(integration.flatMap(Integrations.integration)?.name ?? "device")" : "the Mac, iPhone and iPad"
         guard kind != current.platform || (kind == .device && integration != current.integration) else { return (200, ["text": "It's already made for \(words)."]) }
-        if kind == .device, let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, let problem = WindowsTools.problem {
-            WindowsSetup.shared.show()
-            return (200, ["text": "Not yet: this Mac can't build Xbox games. \(problem) Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
-        }
         if kind == .android, let issue = await AndroidTools.check().issue {
             AndroidSetup.shared.show()
             return (200, ["text": "Not yet: this Mac can't build it for Android. \(issue.title): \(issue.message) Lamp opened its setup steps. " +
@@ -5529,17 +5542,18 @@ final class Store: ObservableObject {
     }
 
     /// `inPlace` false builds the whole app without first putting the change into the open one: a look that reopens
-    /// the app installs the whole build anyway.
-    private func build(_ project: LampProject, inPlace: Bool = true) async -> String? {
+    /// the app installs the whole build anyway. `forDevice` builds a device app for its device whatever Try On says (a
+    /// look asked to be on the device).
+    private func build(_ project: LampProject, inPlace: Bool = true, forDevice: Bool = false) async -> String? {
         // The open app glows while its change is built, until it goes in (`reloadInPlace`) or the install that
         // follows settles otherwise; a build that fails lets it go here.
         let glowing = exists(project) && AppTransition.begin(project)
-        let problem = await buildNow(project, inPlace: inPlace)
+        let problem = await buildNow(project, inPlace: inPlace, forDevice: forDevice)
         if glowing, problem != nil { AppTransition.end(project) }
         return problem
     }
 
-    private func buildNow(_ project: LampProject, inPlace: Bool) async -> String? {
+    private func buildNow(_ project: LampProject, inPlace: Bool, forDevice: Bool) async -> String? {
         guard exists(project) else { return "The app was deleted." }
         // A save of the agent's being put in finishes first: both write the live copy. One that hasn't reached the
         // compiler yet, for sources the agent has moved on from, gives way to this build, which takes the newer ones.
@@ -5579,15 +5593,23 @@ final class Store: ObservableObject {
         }
         // A device app's build is its integration's package step, in the app's sandbox; Lamp keeps the package it made.
         if project.platform == .device {
-            // A game's tools aren't here: said once for a request, with the window that gets them open.
-            if let problem = gameToolsProblem(project) {
-                let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
-                if !said { log(project, .error, problem); WindowsSetup.shared.show() }
+            // A game is built for the preview on this Mac until it goes on an Xbox: for the console only when a look asks
+            // for the device, or the turn's end puts it on one with the console's tools here. Without them the turn still
+            // builds the preview, and putting it on the Xbox asks for the tools (`installOnDeviceApp`).
+            let game = GameKit.isGame(project)
+            let console = game && (forDevice || (!DeviceApps.goesToPreview(project) && WindowsTools.isReady))
+            if console, let problem = WindowsTools.problem {
+                askForConsoleTools(project, problem: problem)
                 return problem
             }
             note("Building…", for: project)
             do {
-                try await DeviceApps.build(project, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                if game, !console {
+                    try await GameKit.build(project, for: .preview, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                } else {
+                    try await DeviceApps.build(project, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                    if game { consoleBuilt[project.id] = fingerprint }
+                }
                 turns[project.id]?.build = nil
                 Runtime.markBuilt(project, from: fingerprint)
                 return nil
@@ -6145,8 +6167,12 @@ final class Store: ObservableObject {
         if project.onDevice {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
-            // The agent's looks go to the preview on this Mac when the device's kind has one; Play puts it on the device.
+            // The agent's looks go to the preview on this Mac when the device's kind has one (a game's are played out of
+            // sight, `lookAtGame`). The turn's end and Play put it on the device, or, while none is set up or the preview
+            // is chosen under Try On, open it in the preview for the person to play.
             if !inFront, !onDevice, let folder = DeviceApps.previewFolder(for: project) { return await openDevicePreview(project, folder: folder) }
+            if !inFront, !onDevice, GameKit.isGame(project) { return nil }
+            if !onDevice, DeviceApps.goesToPreview(project) { return await playOnMac(project, owner: owner) }
             return await installOnDeviceApp(project, inFront: inFront, owner: owner)
         }
         if project.onTV {
@@ -6472,14 +6498,14 @@ final class Store: ObservableObject {
     /// up yet gets its next step in the chat instead. Nil when it's open; else what went wrong.
     /// A device app opened in the preview on this Mac, from a copy of its kind's preview folder (`TVs.stage`, as a TV
     /// app's): what the agent looks at and plays. Its LampAI reaches Lamp through the preview, as a TV app's does.
-    private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
+    private func openDevicePreview(_ project: LampProject, folder: String, inFront: Bool = false) async -> String? {
         let device = previewDevice(project)
         do {
             let built = Runtime.builtFingerprint(project)
             let staged = try await TVs.stage(project, folder: folder)
             previewBuilt[project.id] = built
             note("Opening \(project.name) in the \(device) preview…", for: project)
-            let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
+            let problem = await TVPreview.show(project, staged: staged, inFront: inFront, device: device)
             refreshOpenApps()
             return problem
         } catch {
@@ -6499,9 +6525,20 @@ final class Store: ObservableObject {
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let device = await deviceForApp(project) else {
-            let problem = project.device == nil
-                ? "Lamp hasn't found exactly one \(name) on your network. Turn yours on, then choose it under Try On."
-                : "Lamp can't find the \(name) chosen under Try On on your network. Make sure it's on."
+            // The one set up, with none chosen, isn't on the network now: the app plays in the preview meanwhile.
+            if project.device == nil, DeviceApps.playsOnMac(project) {
+                if inFront { return await playOnMac(project, owner: owner, why: "Lamp doesn't find your \(name) on the network now.") }
+                return DeviceApps.setUp(for: project).isEmpty
+                    ? "The person has no \(name) set up, so the app is played in the preview on this Mac. That isn't a problem to fix."
+                    : "Lamp doesn't find the person's \(name) on the network now, so the app is played in the preview on this Mac meanwhile."
+            }
+            // Chosen and not found is said plainly, not as something gone wrong: it's usually just off.
+            if project.device != nil {
+                let problem = "Lamp doesn't find the \(name) chosen under Try On on your network. Turn it on, then press Play."
+                if inFront { log(project, .status, problem) }
+                return problem
+            }
+            let problem = "Lamp hasn't found exactly one \(name) on your network. Turn yours on, then choose it under Try On."
             log(project, .error, problem)
             return problem
         }
@@ -6528,6 +6565,30 @@ final class Store: ObservableObject {
         defer { installingOn.remove(device.id); installingApps.remove(project.id) }
         let stillWanted: @MainActor () -> Bool = { [weak self] in self?.turns[project.id] === owner && !owner.stopped }
         guard stillWanted() else { return "Stopped." }
+        // A game made in the preview is built for the console the first time it goes on the Xbox, and again after each
+        // change: the turn's build was the preview's while no Xbox was set up, or the console's tools weren't here.
+        if GameKit.isGame(project), consoleBuilt[project.id] != Runtime.fingerprint(project) {
+            if let problem = WindowsTools.problem {
+                askForConsoleTools(project, problem: problem) { [weak self] in
+                    guard let self, let now = current(project) else { return }
+                    Task { await self.run(now) }
+                }
+                return problem
+            }
+            let fingerprint = Runtime.fingerprint(project)
+            note("Building \(project.name) for the \(name)…", for: project)
+            do {
+                try await DeviceApps.build(project, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                turns[project.id]?.build = nil
+                consoleBuilt[project.id] = fingerprint
+            } catch {
+                turns[project.id]?.build = nil
+                log(project, .detail, "Build failed:\n" + error.localizedDescription)
+                if inFront { log(project, .error, ErrorMessages.appDoesNotBuild) }
+                return error.localizedDescription
+            }
+            guard stillWanted() else { return "Stopped." }
+        }
         // The device is this app's from the upload on: every run there (another wish's, or this one's last) is over,
         // so a look or a key in flight for it stops rather than reaching what replaces it.
         for (id, other) in deviceRuns where id == project.id || other.device.id == device.id {
@@ -6672,11 +6733,6 @@ final class Store: ObservableObject {
     /// `look_at_app` for a native Xbox game: built for the preview on this Mac and played from its start for two
     /// seconds, untouched; with `motion`, a frame every half second.
     private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any]) {
-        if let problem = gameToolsProblem(project) {
-            let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
-            if !said { log(project, .error, problem); WindowsSetup.shared.show() }
-            return (200, ["text": "The game can't be built yet, and Lamp has told the person why: \(problem)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
-        }
         if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
         let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
         GameKit.plays[project.id] = script
@@ -6930,10 +6986,83 @@ final class Store: ObservableObject {
     }
 
     /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
-    /// What keeps a native Xbox game from being built on this Mac (its tools), or nil.
+    /// What keeps a native Xbox game from being built for the console on this Mac (its tools), or nil. The preview
+    /// needs none of them.
     private func gameToolsProblem(_ project: LampProject) -> String? {
         guard GameKit.isGame(project) else { return nil }
         return WindowsTools.problem
+    }
+
+    /// The fingerprint each game's console package was last built from: a turn may build only the preview.
+    private var consoleBuilt: [String: String] = [:]
+
+    /// The console's tools aren't here, as a game first goes on the Xbox: said once for a request, as a step to take
+    /// rather than something gone wrong, with the window that gets them open. `then` runs once they're here.
+    private func askForConsoleTools(_ project: LampProject, problem: String, then: (() -> Void)? = nil) {
+        let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.text == problem }
+        if !said { log(project, .status, problem) }
+        guard WindowsTools.supported else { return }
+        if let then { WindowsSetup.shared.perform(then: then) } else { WindowsSetup.shared.show() }
+    }
+
+    /// A device app played in its preview on this Mac at the end of a turn or on Play, while no device of its kind is
+    /// set up or the preview is chosen under Try On: a web kind's preview window, or a game's own window. Said as what
+    /// happened, not as a device missing, with the device's setup offered once (`offerDeviceSetup`). `why` says why a
+    /// device that was set up wasn't used.
+    private func playOnMac(_ project: LampProject, owner: Turn, why: String? = nil) async -> String? {
+        let device = previewDevice(project)
+        var problem: String?
+        if let folder = DeviceApps.previewFolder(for: project) {
+            problem = await openDevicePreview(project, folder: folder, inFront: true)
+        } else if GameKit.isGame(project) {
+            note("Building…", for: project)
+            do {
+                try await GameKit.build(project, for: .preview, started: { [weak self] in self?.turns[project.id]?.build = $0 })
+                turns[project.id]?.build = nil
+            } catch {
+                turns[project.id]?.build = nil
+                log(project, .detail, "Build failed:\n" + error.localizedDescription)
+                return error.localizedDescription
+            }
+            guard turns[project.id] === owner, !owner.stopped else { return "Stopped." }
+            note("Opening \(project.name) in the \(device) preview…", for: project)
+            problem = await GameKit.Window.open(project, title: "\(project.name) on \(device) Preview") { [weak self] in self?.refreshOpenApps() }
+            refreshOpenApps()
+        }
+        if let problem {
+            log(project, .error, problem)
+            return problem
+        }
+        let controls = GameKit.isGame(project) ? " Play with a controller connected to this Mac, or the keyboard: WASD to move, Space and Esc for A and B." : ""
+        log(project, .status, (why.map { $0 + " " } ?? "") + "\(project.name) is playing in the \(device) preview on your Mac." + controls)
+        offerDeviceSetup(project)
+        return nil
+    }
+
+    /// Once per app, while no device of its kind is set up: a quiet line offering to set one up, under the preview.
+    private func offerDeviceSetup(_ project: LampProject) {
+        guard project.device == nil, DeviceApps.setUp(for: project).isEmpty, let integration = project.deviceIntegration,
+              !(logs[project.id] ?? []).contains(where: { $0.kind == .deviceOffer }) else { return }
+        log(project, .deviceOffer, integration)
+    }
+
+    /// The offer's button: the device of the app's kind found on the network is set up in its window, and chosen for the
+    /// app once it's ready. Nil when that window opened; else what to say (none found, or more than one).
+    func setUpDevice(for project: LampProject) async -> String? {
+        let name = DeviceApps.integration(for: project)?.name ?? "device"
+        guard let integration = DeviceApps.integration(for: project) else { return nil }
+        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        var found: [Device] = []
+        for address in await Integrations.addresses(for: integration, scan: scan) {
+            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+        }
+        for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
+        guard found.count == 1, let device = found.first else {
+            return found.isEmpty ? "No \(name) found on this network. Turn yours on, then try again."
+                : "More than one \(name) is on this network. Choose yours under Try On."
+        }
+        setDeviceAppDevice(project, device.id)
+        return nil
     }
 
     private func androidToolsProblem(_ project: LampProject) -> String? {
@@ -8295,7 +8424,10 @@ final class Store: ObservableObject {
         androidApps = androidApps.filter { $0.value.alive }
         // A TV app is open while its preview is, unless a TV is chosen: then Play is for putting it on the TV, which
         // Lamp can't watch, so it always offers Play.
-        let previews = TVPreview.openIDs.filter { id in projects.first { $0.id == id }.map { $0.platform == .tv && $0.device == nil } ?? false }
+        // A device app's is the same while the preview is where it goes (`DeviceApps.goesToPreview`), and a game's window.
+        let previews = TVPreview.openIDs.filter { id in
+            projects.first { $0.id == id }.map { ($0.platform == .tv && $0.device == nil) || ($0.platform == .device && DeviceApps.goesToPreview($0)) } ?? false
+        } + GameKit.Window.openIDs
         // A device app is open while it's the one Lamp last put on its device, so Stop can take the device back.
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.
@@ -8344,8 +8476,9 @@ final class Store: ObservableObject {
         // Lamp closing it isn't the app dying on launch.
         retireLaunches(of: project)
         if project.platform == .device {
-            // Its preview on this Mac too, with the page's sound and timers.
+            // Its preview on this Mac too, with the page's sound and timers, and a game's window.
             TVPreview.close(project)
+            GameKit.Window.close(project)
             refreshOpenApps()
             deviceRunBuilt[project.id] = nil
             if let run = deviceRuns.removeValue(forKey: project.id) {
@@ -9309,7 +9442,7 @@ final class Store: ObservableObject {
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
         if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
         let changed = Runtime.sourcesChanged(project)
-        if changed, let errors = await build(project, inPlace: !reopen) {
+        if changed, let errors = await build(project, inPlace: !reopen, forDevice: onDevice) {
             if errors == gameToolsProblem(project) {
                 return (200, ["text": "The game can't be built yet, and Lamp has told the person why: \(errors)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
             }

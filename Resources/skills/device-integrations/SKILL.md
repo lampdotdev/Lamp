@@ -218,7 +218,8 @@ scenes. Lamp writes it with the others; say in the rules to load it through an i
 
 `"preview": "Web"` is for a web app: the folder whose `index.html` Lamp opens at 1920x1080 in a window on the person's Mac,
 for the builder to look at and try as it works (a TV app's preview), since the device's own screen can only be pictured,
-not played. Play still puts the app on the device. Give one whenever the app is a web page; the rules should then say the
+not played. Play puts the app on the device once one is set up or chosen under Try On, and until then opens the preview
+for the person, so an app is made and played on the Mac before anyone has the device. Give one whenever the app is a web page; the rules should then say the
 app must also work with the keyboard (arrows, Enter, Escape for the device's Back), which is how the preview is used.
 
 `"wrap": "msix"` is for a device that takes Windows app packages (an Xbox in Developer Mode, through its Device
