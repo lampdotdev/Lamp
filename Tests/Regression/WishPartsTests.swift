@@ -83,6 +83,16 @@ final class WishPartsKeptTests: XCTestCase {
         XCTAssertEqual(Parts.load(read).map(\.platform), [.universal])
     }
 
+    /// Undo of "make the iPhone app work on the Mac too" puts iPhone/ back to an iPhone app in the same folder: the part
+    /// Lamp has listed (an app for both) no longer matches its files, so a restore lists it again.
+    func testARestoreThatChangesAPartsKindInPlaceIsSeen() throws {
+        let wish = try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv"}"#)
+        let listed = LampProject(id: "remote.iphone", name: "Remote", exe: "Remote", dir: wish.appendingPathComponent("iPhone"),
+                                 platform: .universal, partOf: "remote")
+        XCTAssertFalse(Parts.match([listed], filesOf: wish))
+        XCTAssertTrue(Parts.match(Parts.load(try XCTUnwrap(Store.readWish(at: wish))), filesOf: wish))
+    }
+
     /// A new wish whose request could be for the TV or the Mac waits to be asked. It's named on its first request,
     /// and naming it wrote it again without that, so it was made a Mac app without asking.
     func testNamingAWishKeepsWhatItIsStillToBeToldAndItsParts() {

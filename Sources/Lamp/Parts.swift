@@ -86,6 +86,13 @@ enum Parts {
         return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
     }
 
+    /// Whether the parts Lamp has listed for a wish are what its files hold, folder by folder and kind by kind: an Undo
+    /// of "for the Mac too" keeps the part's folder and changes what it holds.
+    static func match(_ listed: [LampProject], filesOf wish: URL) -> Bool {
+        let found = folders(in: wish).map { "\($0) \(kindOfScaffold(in: wish.appendingPathComponent($0), wish: wish).map(\.rawValue) ?? "")" }
+        return found.sorted() == listed.map { "\($0.dir.lastPathComponent) \($0.platform.rawValue)" }.sorted()
+    }
+
     /// A wish's other parts (`partFolders`), each with what its own meta.json keeps of where it opens. Who a part is
     /// comes from its wish and its folder, never from that file, which the agent could make name another app; and a
     /// part whose file is gone (its folder brought back by a restore, which keeps no `.lamp`) is still the part.

@@ -1079,7 +1079,15 @@ final class Store: ObservableObject {
         // Each wish's other parts follow it, as apps of their own kind in its folders (`Parts`). Set in one go: every
         // change to the list is acted on (the network listening, phones' sessions), and a list of the wishes alone, for
         // a moment, would end the game of every TV app whose phones are its wish's other apps.
-        projects = wishes + wishes.flatMap(Parts.load)
+        let found = wishes + wishes.flatMap(Parts.load)
+        // A part whose files are gone (a restore, a folder the agent took away) that's still open on this Mac, kept by the
+        // person over unsaved work, stays listed so its wish's menu can still quit it; it goes at the first read after
+        // it's closed. Only taking a part away, deleting its wish or a restore that closed it forgets what Lamp keeps for
+        // it (`forgetPart`): a part's files missing for a moment mustn't cost its sign-ins.
+        let kept = projects.filter { part in
+            part.isPart && !found.contains { $0.id == part.id } && (part.partOf.map { id in found.contains { $0.id == id } } ?? false) && isRunning(part)
+        }
+        projects = found + kept
 
         for project in projects {
             tokens[Template.token(for: project)] = project.id
@@ -4932,13 +4940,16 @@ final class Store: ObservableObject {
     private func followRestored(_ project: LampProject) async -> LampProject {
         let wish = followRestoredKind(project)
         guard !wish.isPart else { return wish }
+        guard !Parts.match(parts(of: wish), filesOf: wish.dir) else { return wish }
         let found = Parts.folders(in: wish.dir)
-        guard found != wish.partFolders else { return wish }
+        var keptOpen: [LampProject] = []
         for part in parts(of: wish) where !found.contains(part.dir.lastPathComponent) {
-            _ = await quit(part, for: turns[wish.id])
-            await forgetPart(part)
+            // Forgotten only once it's closed: one the person kept open (unsaved work) stays listed, with its menu to
+            // quit it from (`reload`).
+            if await quit(part, for: turns[wish.id]) { await forgetPart(part) } else { keptOpen.append(part) }
         }
         reload()
+        for part in keptOpen { log(wish, .status, "T\(Parts.name(of: part.platform).dropFirst()) is still open. It goes once it's closed.") }
         return current(wish) ?? wish
     }
 
@@ -8645,7 +8656,9 @@ final class Store: ObservableObject {
             if !project.platform.hasMac || place == .ios { return true }
         }
         // Nobody is waiting once the turn is stopped or over. Not `stopped`, which the agent's exit clears.
-        let stopped = { owner.map { self.turns[project.id] !== $0 || $0.wasStopped } ?? false }
+        // A part's work is its wish's turn (`requestOwner`), never one of its own.
+        let ownerID = Self.requestOwner(of: project, among: projects).id
+        let stopped = { owner.map { self.turns[ownerID] !== $0 || $0.wasStopped } ?? false }
         var closed = true
         for app in macCopies(of: project) {
             let gone = await AppQuit.close(app, id: project.id, runtime: Runtime.macFolder(project), stopped: stopped, asking: {
