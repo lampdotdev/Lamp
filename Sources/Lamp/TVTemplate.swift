@@ -631,7 +631,7 @@ extension Agent {
     static func tvPrompt(skills: [String: Skills.Skill] = Skills.all) -> String {
         let rules = [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI,
                      Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
-                     Skills.index(Skills.offered(mac: false, tv: true), from: skills), Rules.begin, Rules.finish]
+                     Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
         return (Rules.tvHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "TV")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a TV")

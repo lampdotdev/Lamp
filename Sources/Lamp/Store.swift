@@ -4736,10 +4736,11 @@ final class Store: ObservableObject {
         let (status, answer) = await convert(project, to: kind, integration: kind == .device ? devices.first : nil)
         guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
               let now = current(project) else { return (status, answer) }
-        // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, with the rule.
+        // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, and names the skill
+        // that says how, which the prompt this turn began with may not offer.
         let watch = devices.contains("watch")
         if watch, !Template.hasWatch(now) {
-            return (200, ["text": text + "\n\nThen add its Apple Watch app in Watch/:\n" + Agent.Rules.iPhoneWatch])
+            return (200, ["text": text + "\n\nThen add its Apple Watch app in Watch/: open the apple-watch skill with `read_skill` first, and follow it."])
         }
         if !watch, hadWatch || Template.hasWatch(now) {
             return (200, ["text": text + "\n\nThen take its Apple Watch app away: delete the files in Watch/ with delete_file."])

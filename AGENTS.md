@@ -140,7 +140,7 @@ A capability given to one engine must be given to all of them that can take it, 
   it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
   it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a TV app has a page for phones), Lamp names it at
+  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
@@ -493,7 +493,7 @@ both), else a Mac app with a line in the chat offering the setup (`IPhoneSetupLi
 anything but a Mac app. The starter ideas mix Mac and iPhone ones (`Ideas.mixed`). Later, "make it work on my
 iPhone too" is the agent's `make_app_for` (`Store.convert`), given every device the app runs on from then on (a
 new kind of device is one more name in `Platform(devices:)` and the tool's schema; "watch" brings the iPhone with it,
-and the answer tells the agent to add or remove `Watch/` with the watch rule): it checks this Mac can build the new kind (opening the
+and the answer tells the agent to add `Watch/` with the apple-watch skill, or remove it): it checks this Mac can build the new kind (opening the
 setup steps if not), quits every copy, changes the kind in meta.json, rewrites Lamp's own files, copies the Mac
 settings (UserDefaults) to a new signed id, and answers with the rules for the new kind, which stay in the
 conversation; the agent then adapts the code. A Mac app's data doesn't move: LampSupport keeps it under the app's
@@ -958,7 +958,7 @@ sample, samples, last night's sleep and workouts, and to save a sample. It needs
 `capabilities.json`, which is the iPhone's entitlement only (`entitlementsPlist(container:platform:)` leaves
 it off the Mac half's signature, which couldn't carry it): a Mac has no Health data, `isAvailable` is false
 there, and an app for both reads on the iPhone and keeps what the Mac shows in LampSync. The simulator has
-HealthKit with no data in it, so the agent is told to save a sample before reading (`Agent.Rules.iPhoneHardware`).
+HealthKit with no data in it, so the agent is told to save a sample before reading (the iphone-hardware skill).
 `HealthTests` compiles the block out of the template and checks every kind's unit.
 Apple's Developer Program License Agreement (3.3.3(D)) forbids using iCloud or CloudKit for sensitive,
 individually-identifiable health information. The "sensitive" matters: the iCloud rule (`Agent.Rules.icloud`)
@@ -1087,7 +1087,7 @@ wand's symbol beside Settings… and Quit. Either opens the panel as a window of
 is hidden) with the chat beside it (`LampMenuBar.customize`, which Customize with Lamp… does too when there's no
 window), since a panel closes at any click elsewhere; a change that reopens the app opens that window and its chat
 again, only just after such a quit (`chatQuitKey`). A Mac widget has it in its top right corner (`.lampWand()` in
-Lamp's own widget file, which the widget rule asks for): a link the app takes as Customize with Lamp…
+Lamp's own widget file, which the mac-widgets skill asks for): a link the app takes as Customize with Lamp…
 (`LampWidgetLinks`, which passes every other link to SwiftUI, or for a widget-only app to whatever opens it).
 This is how a new app is changed from its first build on:
 as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
@@ -1656,7 +1656,7 @@ the app, used as masks), and the extension draws its strip above the page in the
 colours only). Apps built before pages still publish a
 surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
 `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
-builder decides from the wish (`Agent.Rules.browserCompanion`) and tries the sidebar with `look_at_app` and
+builder decides from the wish (`Agent.Rules.browserCompanion`, which leaves the rest to the `chrome-sidebar` skill) and tries the sidebar with `look_at_app` and
 `use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
 (`PagePreview`), shows it light, dark and at 200% zoom with the app's window beside it, says what it measured there
 (contrast, the system font, small words, pictures and symbols that didn't load, sideways scrolling, words cut off,
@@ -1737,7 +1737,7 @@ single picture hides.
 
 ### Widgets
 
-A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget`,
+A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget` and the `mac-widgets` skill,
 Mac only; an iPhone app's widgets are described under "Home screen widgets and Live Activities" below). Swift in that folder (`Template.hasWidget`,
 asked before every build) gives the app's Package.swift a second program, built as an extension, and build.sh
 puts it in the app as `Contents/PlugIns/<Exe>Widget.appex` with the bundle id `<app's id>.widget`. It is
@@ -1811,7 +1811,8 @@ blank until that process happens to exit.
 An iPhone app, and the iPhone half of an app for both, gets its widgets the same way: Swift in `Widget/`
 (`Template.hasWidget` says yes for every kind; `isWidgetOnly` stays the Mac's) makes a WidgetKit extension
 holding home screen widgets and Live Activities (`ActivityConfiguration`) in one `WidgetBundle`. The rule is
-`Agent.Rules.iPhoneWidget`, given to the iPhone prompt and, marked for its half, to an app for both's.
+`Agent.Rules.iPhoneWidget`, given to the iPhone prompt and, marked for its half, to an app for both's; how to write
+them is the `iphone-widgets` skill.
 
 - **Building.** In the simulator build the extension is a second SwiftPM product (`iPhonePackageSwift(widget:)`,
   `universalPackageSwift(widget:)`), linked with its own entitlements in its binary like the app's, and wrapped
@@ -1847,7 +1848,8 @@ holding home screen widgets and Live Activities (`ActivityConfiguration`) in one
 
 An iPhone app, and the iPhone half of an app for both, can have an Apple Watch app: Swift in `Watch/`
 (`Template.hasWatch`, asked before every build) is a SwiftUI watch app, and Swift in `Watch/Complications/`
-(`hasComplications`) its complications, a WidgetKit extension inside it. The rule is `Agent.Rules.iPhoneWatch`.
+(`hasComplications`) its complications, a WidgetKit extension inside it. The rule is `Agent.Rules.iPhoneWatch`, and how
+to write it the `apple-watch` skill.
 
 - **Building.** `Template.withWatch` adds the watch's targets to Package.swift (`.watchOS(.v10)`, the
   complications as an extension like the widget, the watch app's target excluding Complications/) and to
@@ -1876,8 +1878,8 @@ An iPhone app, and the iPhone half of an app for both, can have an Apple Watch a
 ### App Intents
 
 An app's actions reach Siri, Shortcuts, Spotlight, the Action button, a widget's buttons and Control Center as
-App Intents (`Agent.Rules.intents`, given to every kind of app; the widget parts are in `Rules.widget` and
-`Rules.iPhoneWidget`). The system finds them in `Metadata.appintents` inside the bundle, which Xcode writes from
+App Intents (`Agent.Rules.intents`, given to every kind of app; the widget parts are in the `mac-widgets` and
+`iphone-widgets` skills). The system finds them in `Metadata.appintents` inside the bundle, which Xcode writes from
 the compiler's record of the code's constant values; a package build writes nothing of the sort, so build.sh does
 what Xcode does (`Template.appIntentsSetup`, one for a Mac bundle and one for an iOS one). When some Swift in
 `Sources/` or `Widget/` imports AppIntents and Xcode's `appintentsmetadataprocessor` is there, the compiler is
