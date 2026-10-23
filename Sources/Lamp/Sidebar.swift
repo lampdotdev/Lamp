@@ -153,7 +153,8 @@ final class SidebarServer {
     func start() {
         listener = Listener(server: self)
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
-        watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange).sink { [weak self] _ in
+        watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
+            .merge(with: WishLinkCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -292,8 +293,28 @@ final class SidebarServer {
         case nil: break
         }
         state.sharing = sharing.removeValue(forKey: project.id)
+        if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
         return state
     }
+
+    /// The Share Link card as the chat beside the app draws it, its picture made small once for each picture.
+    private func wishLink(_ card: WishLinkCards.Card, of project: LampProject) -> SidebarWishLink {
+        if wishLinkPictures[project.id]?.digest != card.pictureDigest {
+            wishLinkPictures[project.id] = (card.pictureDigest, card.picture.flatMap(Self.smallPicture))
+        }
+        let shown = card.shared?.shown
+        return SidebarWishLink(
+            name: card.values.name, line: card.values.line, words: card.values.words, includePicture: card.values.includePicture,
+            revision: card.revision, picture: wishLinkPictures[project.id]?.data, icon: card.icon,
+            link: card.shared?.url.absoluteString,
+            shown: shown.map { SidebarWishLinkValues(name: $0.name, line: $0.line, words: $0.words, includePicture: $0.picture != nil) },
+            newPicture: shown?.picture != nil && shown?.picture != card.pictureDigest,
+            sending: card.stage == .sending, problem: { if case .failed(let message) = card.stage { message } else { nil } }(),
+            copied: card.copied, canRetake: WishLinkCards.shared.canRetake(project), retaking: card.retaking,
+            limits: [WishLink.Limit.name, WishLink.Limit.line, WishLink.Limit.words])
+    }
+
+    private var wishLinkPictures: [String: (digest: String?, data: Data?)] = [:]
 
     /// Agent Details, one setting for both chats as in Lamp's window.
     private static var details: Bool { UserDefaults.standard.bool(forKey: "showDetails") }
@@ -364,7 +385,12 @@ final class SidebarServer {
 
     /// A version's picture, small enough to send with the list every time the chat changes.
     private nonisolated static func versionPicture(_ url: URL) -> Data? {
-        guard let image = NSImage(contentsOf: url) else { return nil }
+        NSImage(contentsOf: url).flatMap(smallPicture)
+    }
+
+    private nonisolated static func smallPicture(_ data: Data) -> Data? { NSImage(data: data).flatMap(smallPicture) }
+
+    private nonisolated static func smallPicture(_ image: NSImage) -> Data? {
         let width: CGFloat = 360
         let scale = min(width / max(image.size.width, 1), 1)
         let size = NSSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
@@ -868,6 +894,19 @@ final class SidebarServer {
             Task {
                 guard let version = await Versions.list(project).first(where: { $0.id == id }) else { return }
                 await store.name(version, of: project, as: name.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        case .wishLink(let command):
+            let cards = WishLinkCards.shared
+            switch command {
+            case .open: cards.open(project, inSidebar: true)
+            case .share(let values):
+                cards.update(project, values: WishLinkCard.Values(name: values.name, line: values.line, words: values.words,
+                                                                  includePicture: values.includePicture))
+                cards.share(project)
+            case .copy: cards.copy(project)
+            case .stop: cards.stop(project)
+            case .retake: cards.retake(project)
+            case .close: cards.close(project)
             }
         case .infoAction(let action):
             AppInfoView.perform(action, for: project) { tab in

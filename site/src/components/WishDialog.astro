@@ -77,12 +77,12 @@ const { place } = Astro.props;
   const text = dialog.querySelector<HTMLTextAreaElement>("[data-text]")!;
   const go = dialog.querySelector<HTMLAnchorElement>("[data-finish] a")!;
   const requirement = dialog.querySelector<HTMLElement>("[data-finish] p");
-  const open = dialog.querySelector<HTMLButtonElement>("[data-open]")!;
+  const openLink = dialog.querySelector<HTMLButtonElement>("[data-open]")!;
   // The line under the button says which Macs Lamp runs on everywhere else on the site; here it only says what
   // happens next, once Download has been pressed.
   go.textContent = "Download Lamp";
   // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
-  open.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
+  openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
 
   const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
   text.addEventListener("input", fit);
@@ -95,46 +95,62 @@ const { place } = Astro.props;
   const backdrop = dialog.querySelector<HTMLImageElement>("[data-backdrop]")!;
   const icon = dialog.querySelector<HTMLImageElement>("[data-icon]")!;
   let current: Idea | null = null;
+  // Where the wish came from, for the site's analytics: this page's ideas, or a wish someone shared as a link.
+  let from = place;
+  const open = (idea: Idea, shown: string, opened: string) => {
+    current = idea;
+    from = opened;
+    // The card's own picture straight away, already loaded, so the last wish's never lingers; the larger one
+    // takes its place once it has arrived.
+    stage.hidden = !current.picture;
+    // Every idea has a picture; a shared wish may not, and then the card is as narrow as on a phone, in one column.
+    dialog.style.width = current.picture ? "" : "min(36rem, calc(100vw - 2rem))";
+    dialog.style.gridTemplateColumns = current.picture ? "" : "1fr";
+    picture.src = backdrop.src = shown || current.picture;
+    if (current.picture && current.picture !== shown) {
+      const wanted = current.picture, sharper = new Image();
+      sharper.onload = () => { if (current?.picture === wanted) picture.src = wanted; };
+      sharper.src = wanted;
+    }
+    icon.hidden = !current.icon;
+    if (current.icon) icon.src = current.icon;
+    name.textContent = current.name;
+    about.textContent = current.about;
+    device.hidden = !current.platform || current.platform === "Mac";
+    device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
+    text.value = current.wish;
+    go.textContent = "Download Lamp";
+    if (requirement) requirement.hidden = true;
+    dialog.showModal();
+    fit();
+    // Ready to change straight away, with the cursor at the end, where there's a pointer and a keyboard; on a
+    // touch screen the keyboard would cover the wish before it's been read.
+    if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      text.focus({ preventScroll: true });
+      text.setSelectionRange(text.value.length, text.value.length);
+    }
+    track("idea_opened", { idea: current.name, place: from });
+  };
   document.querySelectorAll<HTMLButtonElement>("[data-idea]").forEach((card) =>
-    card.addEventListener("click", () => {
-      current = JSON.parse(card.dataset.idea!) as Idea;
-      // The card's own picture straight away, already loaded, so the last wish's never lingers; the larger one
-      // takes its place once it has arrived.
-      stage.hidden = !current.picture;
-      const shown = card.querySelector("img")?.currentSrc ?? "";
-      picture.src = backdrop.src = shown || current.picture;
-      if (current.picture && current.picture !== shown) {
-        const wanted = current.picture, sharper = new Image();
-        sharper.onload = () => { if (current?.picture === wanted) picture.src = wanted; };
-        sharper.src = wanted;
-      }
-      icon.hidden = !current.icon;
-      if (current.icon) icon.src = current.icon;
-      name.textContent = current.name;
-      about.textContent = current.about;
-      device.hidden = !current.platform || current.platform === "Mac";
-      device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
-      text.value = current.wish;
-      go.textContent = "Download Lamp";
-      if (requirement) requirement.hidden = true;
-      dialog.showModal();
-      fit();
-      // Ready to change straight away, with the cursor at the end, where there's a pointer and a keyboard; on a
-      // touch screen the keyboard would cover the wish before it's been read.
-      if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
-        text.focus({ preventScroll: true });
-        text.setSelectionRange(text.value.length, text.value.length);
-      }
-      track("idea_opened", { idea: current.name, place });
-    }),
+    card.addEventListener("click", () => open(JSON.parse(card.dataset.idea!) as Idea, card.querySelector("img")?.currentSrc ?? "", place)),
   );
+
+  // A wish shared as a link (lamp.dev/w/<id>) is this page with that wish's card open on it: the server puts it in
+  // the page as #shared-wish (lib/shared-wish-page.js). Lamp opens with it from the card's own link, as for any idea.
+  const shared = document.getElementById("shared-wish")?.textContent;
+  if (shared) {
+    open(JSON.parse(shared) as Idea, "", "shared");
+    // Opened while the page is still loading, the box is sized again once it has its width.
+    requestAnimationFrame(fit);
+    addEventListener("load", fit, { once: true });
+  }
 
   dialog.querySelector("[data-close]")!.addEventListener("click", () => dialog.close());
   // A click on the dimmed page around the card closes it too.
   dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
 
   go.addEventListener("click", () => {
-    if (current) track("idea_download", { idea: current.name, place });
+    if (current) track("idea_download", { idea: current.name, place: from });
     // The download leaves this page where it is, so the copy finishes and the card can say what happens next.
     copyWish(text.value).then((copied) => {
       go.textContent = "Downloading…";
@@ -145,10 +161,10 @@ const { place } = Astro.props;
     });
   });
 
-  open.addEventListener("click", () => {
+  openLink.addEventListener("click", () => {
     const link = wishLink(text.value);
     if (!link) return;
-    if (current) track("idea_sent", { idea: current.name, place });
+    if (current) track("idea_sent", { idea: current.name, place: from });
     location.href = link;
   });
 </script>

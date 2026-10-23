@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -575,6 +575,48 @@ enum Gallery {
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize())
+        }
+    }
+
+    // MARK: Share Link
+
+    /// The card that says what a wish's link will show, before and after it's shared, in Lamp's sheet and at the
+    /// narrow width of the chat beside the app.
+    private static let wishLinkEntries: [Entry] = [
+        wishLink("New link"),
+        wishLink("New link, picture left out", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: false)),
+        wishLink("New link, no picture", picture: false),
+        wishLink("New link, nothing to take again", retake: false),
+        wishLink("Sharing", stage: .sending),
+        wishLink("Couldn't share", stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment.")),
+        wishLink("Shared and copied", link: true, copied: true),
+        wishLink("Shared, changed since", link: true, changed: true),
+        wishLink("Beside the app", link: true, copied: true, width: nil),
+        wishLink("Beside the app, new link", width: nil),
+    ]
+
+    private static let diskMapLine = "Shows where your disk space goes, as rings that fill in while it measures."
+    private static let diskMapWish = "A Mac app that shows where my disk space goes, as rings that fill in while it measures. Clicking a ring opens that folder."
+
+    private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
+                                 stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
+                                 changed: Bool = false, width: CGFloat? = 480) -> Entry {
+        Entry(group: "Share Link", name: name) {
+            let folder = Starters.folder?.appendingPathComponent("diskmap")
+            let card = WishLinkCard(
+                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) },
+                picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
+                values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
+                limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
+                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false,
+                share: {}, copy: {}, stop: {}, close: {}, width: width)
+            return AnyView(card
+                .frame(width: width == nil ? 340 : nil)
+                .background(width == nil ? AnyShapeStyle(ChatLook.paper) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor)),
+                            in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
         }
     }
 
