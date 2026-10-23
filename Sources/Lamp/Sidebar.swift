@@ -238,12 +238,13 @@ final class SidebarServer {
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
         state.workingActivitySince = progress?.activitySince
-        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, details: details, doing: progress?.activity,
+        state.workingSteps = progress == nil ? nil : Self.liveSteps(log, project: project, details: details, doing: progress?.activity,
                                                                                  looking: progress?.looking == true)
         state.pointed = draft.pointed.map { Self.pointed($0, canChooseAgain: store.canPoint(in: project)) }
         let canSendNow = store.canSendNow(in: project)
         let lastWaiting = store.waitingToSend(in: project).last?.id
-        state.queued = (store.queued[project.id] ?? []).map { message in
+        // Not Lamp's own request waiting for Reload (`Store.pause`): the Reload line stands for it.
+        state.queued = (store.queued[project.id] ?? []).filter { !$0.afterReload }.map { message in
             var queued = SidebarQueued(id: message.id, text: message.text,
                                        attachments: message.attachments.map { Self.attachment($0) })
             queued.pointed = message.pointed.map { Self.pointed($0) }
@@ -260,6 +261,7 @@ final class SidebarServer {
             state.lines[index].waitingForSetup = store.setup.ready ? nil : true
         }
         state.waitingForSetup = !store.setup.ready
+        state.waitingForReload = store.queueWaitsForReload(in: project) ? true : nil
         state.approval = store.approvals[project.id].map {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look, request: $0.request,
                             whyAsked: $0.whyAsked)
@@ -427,9 +429,9 @@ final class SidebarServer {
     }
 
     /// The steps of the turn still going, for the line that says what it's doing, as Lamp's window shows them.
-    static func liveSteps(_ log: [LogLine], details: Bool, doing: String? = nil, looking: Bool = false) -> [SidebarLine]? {
+    static func liveSteps(_ log: [LogLine], project: LampProject, details: Bool, doing: String? = nil, looking: Bool = false) -> [SidebarLine]? {
         guard !details else { return nil }
-        let steps = ChatItem.live(LogLine.visible(log, details: false), doing: doing, looking: looking).steps
+        let steps = ChatItem.live(LogLine.visible(log, details: false), dir: project.dir, doing: doing, looking: looking).steps
         return steps.isEmpty ? nil : stepLines(steps)
     }
 
@@ -444,8 +446,8 @@ final class SidebarServer {
         let start = LogLine.recentStart(in: lines, atLeast: reach)
         let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        // While the turn goes on, its steps are in the line that says what it's doing (`liveSteps`), not lines of their own.
-        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+        // While the turn goes on, its steps since it last said something are in the line that says what it's doing (`liveSteps`).
+        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
                                    gather: !details)
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {
@@ -539,6 +541,14 @@ final class SidebarServer {
                     card.symbol = "iphone"
                     card.button = "See What's Needed…"
                     card.disabled = IPhoneSetupLine.isOff(for: project)
+                    out.append(card)
+                case .deviceStep:
+                    // The step's card has a field and a sign-in, which happen in Lamp's window.
+                    let step = DeviceStepLine.text(line.text)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: step.text, gap: gap)
+                    card.symbol = "dot.radiowaves.left.and.right"
+                    card.done = step.done
+                    card.button = step.done ? nil : "Set Up in Lamp…"
                     out.append(card)
                 case .noted:
                     guard let receipt = line.noted else { continue }
@@ -780,6 +790,10 @@ final class SidebarServer {
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
             // Reload is done where the person is, beside the app: nothing to show in Lamp's window.
             if line.kind == .reload { return store.reloadWaiting(project.id) }
+            // A device's setup has a window of its own.
+            if line.kind == .deviceStep, let device = store.devices.first(where: { $0.id == line.text && $0.integration != nil }) {
+                return DeviceSetupWindow.show(device)
+            }
             // In Lamp's window: where the card's keys, downloads and sign-ins are, and what Image Playground
             // opens over, which Lamp may have put away for the sidebar.
             NSApp.activate(ignoringOtherApps: true)

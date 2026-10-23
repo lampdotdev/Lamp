@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Item changed what it holds (Item.aisle: Int); Item.CodingKeys had one case, which takes no room, and with another its values take room the open app's don't)
+== run
+before: saved {"title":"Milk"}
+RELOAD 1: REOPEN Item changed what it holds (Item.aisle: Int); Item.CodingKeys had one case, which takes no room, and with another its values take room the open app's don't
+after1 (want a plain reason: a Codable struct whose CodingKeys has one case gains a second, which changes the keys size): 
+before: saved {"row":3,"title":"Milk"}
+RELOAD 1: in the restart
+after1 (want a plain reason: a Codable struct whose CodingKeys has one case gains a second, which changes the keys size): 

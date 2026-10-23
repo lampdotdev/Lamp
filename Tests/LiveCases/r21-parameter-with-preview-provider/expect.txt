@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.isDone)
+== run
+before: row Milk
+RELOAD 1 (whole): ok
+after1 (want it in, done=true: a row gains a parameter its parent and an old-style preview pass): row Milk done=true

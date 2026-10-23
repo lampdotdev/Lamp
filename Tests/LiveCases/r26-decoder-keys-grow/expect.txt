@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Stats changed what it holds (Stats.streak: Int); Stats's own coding reads the keys Swift makes for it, which would number other than the open app's)
+== run
+before: wins=2
+RELOAD 1: REOPEN Stats changed what it holds (Stats.streak: Int); Stats's own coding reads the keys Swift makes for it, which would number other than the open app's
+after1 (want a plain reason: a struct whose own decoder reads the keys Swift makes gains a third key at their end): 
+before: wins=2
+RELOAD 1: in the restart
+after1 (want a plain reason: a struct whose own decoder reads the keys Swift makes gains a third key at their end): 

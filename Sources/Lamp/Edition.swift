@@ -43,15 +43,71 @@ enum Edition {
     /// ~/Applications/Lamp (Dev) Apps: where built apps are installed.
     static let appsFolder = home.appendingPathComponent("Applications/\(name) Apps")
     static let logsFolder = home.appendingPathComponent("Library/Logs/\(name)")
+    /// ~/Library/Developer/Lamp: tools too large to keep a copy of for each Lamp (Android's SDK, a Java runtime),
+    /// shared by every Lamp on this Mac on purpose, as the app-signing keychain is. The agent's sandbox lets a
+    /// build read the person's developer folder and never write it, so what Lamp runs from here is what Lamp put
+    /// there.
+    static let sharedDeveloperFolder = home.appendingPathComponent("Library/Developer/Lamp")
+    /// ~/Library/Caches/Lamp: what a build fetches and may fetch again (Gradle's dependencies), shared the same way;
+    /// the sandbox opens the caches folder to every command.
+    static let sharedCachesFolder = home.appendingPathComponent("Library/Caches/Lamp")
 
     /// An instance's four ports come from its name, in a range of their own above the two fixed sets, so two
     /// worktrees' builds seldom collide; the apps learn them at install (`Template.installValues`).
-    private static let firstPort: UInt16 = {
-        guard !instance.isEmpty else { return isDev ? 47821 : 47811 }
+    private static let firstPort: UInt16 = instance.isEmpty ? (isDev ? 47821 : 47811) : 48000 + slot(of: instance) * 4
+
+    /// Where an instance's ports go among the others', from its name.
+    private static func slot(of instance: String) -> UInt16 {
         var hash: UInt32 = 2166136261
         for byte in instance.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
-        return 48000 + UInt16(hash % 240) * 4
-    }()
+        return UInt16(hash % 240)
+    }
+
+    /// The ports of Lamp's own adb server and of the emulator it starts (`AndroidTools.environment`, `Emulator.start`).
+    /// Neither is adb's usual: the server on 5037 takes any program on this Mac as its client, and an emulator on
+    /// 5554–5585 is found by every adb server, so with them a command of the agent's could reach the emulator, or
+    /// the person's phone through Lamp's server, by running `adb`. On ports of each Lamp's own the agent's sandbox
+    /// refuses them by number (`Sandbox.profile`), and an adb started anywhere else doesn't come across the
+    /// emulator.
+    struct AndroidPorts: Equatable {
+        let server: Int
+        let console: Int
+        /// The emulator's adb port, which Android has as the one after its console's.
+        var bridge: Int { console + 1 }
+        /// The emulator's control interface (gRPC), which it always starts: it drives the screen for whoever holds
+        /// the token the emulator leaves in the caches folder, which the sandbox opens, so it's refused by port too.
+        let control: Int
+    }
+    static let androidPorts = androidPorts(isDev: isDev, instance: instance)
+
+    static func androidPorts(isDev: Bool, instance: String) -> AndroidPorts {
+        guard isDev else { return AndroidPorts(server: 47815, console: 47818, control: 47816) }
+        guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 47828, control: 47826) }
+        // A range of each for the instances, a pair for the emulator's two: instances whose names land on different
+        // slots never share a port, so never an emulator.
+        let slot = Int(slot(of: instance))
+        return AndroidPorts(server: 49000 + slot, console: 49600 + 2 * slot, control: 49300 + slot)
+    }
+
+    /// The same for the Lamp whose folder has this name (`lampFolderNames`), so each Lamp's sandbox closes every
+    /// Lamp's; nil for a folder that isn't a Lamp's.
+    static func androidPorts(folder name: String) -> AndroidPorts? {
+        if name == "Lamp" { return androidPorts(isDev: false, instance: "") }
+        if name == "Lamp Dev" { return androidPorts(isDev: true, instance: "") }
+        guard name.hasPrefix("Lamp Dev ") else { return nil }
+        return androidPorts(isDev: true, instance: String(name.dropFirst("Lamp Dev ".count)))
+    }
+    /// The ports a TV app's phone page is served on, one app to a port while its page is served (`PhoneSites`), so each
+    /// app's page is an origin of its own in the phone's browser and one app's page can never read what another's
+    /// keeps. Sixteen of each Lamp's own, in a range clear of the others'.
+    static let phonePagePorts = phonePagePorts(isDev: isDev, instance: instance)
+
+    static func phonePagePorts(isDev: Bool, instance: String) -> ClosedRange<UInt16> {
+        guard isDev else { return 47840...47855 }
+        guard !instance.isEmpty else { return 47860...47875 }
+        let start = 50100 + slot(of: instance) * 16
+        return start...(start + 15)
+    }
     static let gatewayPort: UInt16 = firstPort
     static let localModelPort = Int(firstPort) + 1
     static let mlxPort = Int(firstPort) + 2

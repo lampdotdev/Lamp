@@ -1,7 +1,7 @@
-VERDICT 1: REOPEN (Box changed what it holds (no longer Box.payload: some Equatable))
+VERDICT 1: REOPEN (Box changed what it holds (no longer Box.payload: some Equatable); Box lost payload, and Lamp has no value of some Equatable to keep in its place)
 == run
 before: payload=value count=7
-RELOAD 1: REOPEN Box changed what it holds (no longer Box.payload: some Equatable)
+RELOAD 1: REOPEN Box changed what it holds (no longer Box.payload: some Equatable); Box lost payload, and Lamp has no value of some Equatable to keep in its place
 after1 (an opaque stored field taken out of the open box: want a reopen): payload=value count=7
 before: count=7
 RELOAD 1: in the restart

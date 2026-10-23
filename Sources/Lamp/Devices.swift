@@ -14,17 +14,6 @@ enum Devices {
         var errorDescription: String? { message }
     }
 
-    struct Device: Identifiable, Hashable {
-        let udid: String
-        let name: String
-        let model: String          // "iPhone 16 Pro Max"
-        let connected: Bool        // a tunnel to it is open now; it's opened on demand, so false says little
-        let paired: Bool           // trusted this Mac for development; until then nothing can be put on it
-        let developerMode: Bool
-        var id: String { udid }
-        var family: DeviceFamily { model.hasPrefix("iPad") ? .ipad : .iphone }
-    }
-
     /// This Mac's Bonjour name on the local network, which an app on a phone reaches Lamp
     /// at. Bonjour resolves it on the same Wi‑Fi, and it survives the Mac's address changing.
     static var macHost: String {
@@ -108,29 +97,28 @@ enum Devices {
         return (id, name)
     }
 
-    /// The iPhones and iPads the Mac can see: paired ones, and plugged-in ones that haven't yet trusted
-    /// this Mac for development, which Try On offers to pair. Connected ones first.
+    /// The iPhones, iPads and Apple Watches the Mac can see, each as the record Lamp keeps of a device
+    /// (`Device`): paired ones, and plugged-in ones that haven't yet trusted this Mac for development, which
+    /// Try On offers to pair. Connected ones first. This Mac itself is `Device.thisMac()`.
     static func list() async -> [Device] {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-devices-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["list", "devices", "--timeout", "5", "--json-output", file.path],
                                           mergeErrors: false, timeout: 30)
-        guard result.ok, let data = try? Data(contentsOf: file),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let devices = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]] else { return [] }
-        return devices.compactMap { entry -> Device? in
-            let hardware = entry["hardwareProperties"] as? [String: Any] ?? [:]
-            let properties = entry["deviceProperties"] as? [String: Any] ?? [:]
-            let connection = entry["connectionProperties"] as? [String: Any] ?? [:]
-            guard hardware["reality"] as? String == "physical", let udid = hardware["udid"] as? String,
-                  ["iPhone", "iPad"].contains(hardware["deviceType"] as? String ?? "") else { return nil }
-            return Device(udid: udid, name: properties["name"] as? String ?? (hardware["deviceType"] as? String ?? "iPhone"),
-                          model: hardware["marketingName"] as? String ?? (hardware["deviceType"] as? String ?? "iPhone"),
-                          connected: connection["tunnelState"] as? String == "connected" || properties["ddiServicesAvailable"] as? Bool == true,
-                          paired: connection["pairingState"] as? String == "paired",
-                          developerMode: properties["developerModeStatus"] as? String == "enabled")
-        }
-        .sorted { ($0.connected ? 0 : 1, $0.name) < ($1.connected ? 0 : 1, $1.name) }
+        guard result.ok, let data = try? Data(contentsOf: file) else { return [] }
+        return list(devicectl: data)
+    }
+
+    /// The list as read from devicectl's output.
+    static func list(devicectl data: Data) -> [Device] {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = (json["result"] as? [String: Any])?["devices"] as? [[String: Any]] else { return [] }
+        var devices = entries.compactMap(Device.from(devicectl:))
+        // A watch's app goes with its iPhone's (never an iPad's), so it needs an iPhone that's paired with Developer
+        // Mode on; the team is judged when its setup is asked.
+        let phoneUsable = devices.contains { $0.kind == .iphone && $0.paired && $0.developerMode }
+        for index in devices.indices where devices[index].kind == .watch { devices[index].hasCompanionIPhone = phoneUsable }
+        return devices.sorted { ($0.connected ? 0 : 1, $0.kind == .watch ? 1 : 0, $0.name) < ($1.connected ? 0 : 1, $1.kind == .watch ? 1 : 0, $1.name) }
     }
 
     /// Pairs a plugged-in phone with this Mac for development: the phone shows "Trust This Computer?" and
@@ -347,7 +335,8 @@ enum Devices {
 
     /// What Try On is set to and what Lamp's device lookup returned, for an iPhone preview result once per turn. The
     /// lookup holds paired phones that are away too, and one that fails returns nothing, so this says what it holds.
-    static func tryOnNote(chosen udid: String?, among devices: [Device]) -> String {
+    static func tryOnNote(chosen udid: String?, among all: [Device]) -> String {
+        let devices = all.filter { $0.kind.isPhone }
         let simulator = "Try On is set to the simulator."
         if let udid {
             guard let device = devices.first(where: { $0.udid == udid }) else {

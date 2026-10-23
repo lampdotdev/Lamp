@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Box changed what it holds (Box.label: String); Box is Codable, and Lamp can't write its coding out (a generic type, or a property kept by a wrapper))
+== run
+before: saved {"value":1}
+RELOAD 1: REOPEN Box changed what it holds (Box.label: String); Box is Codable, and Lamp can't write its coding out (a generic type, or a property kept by a wrapper)
+after1 (want a plain reason: a generic Codable struct gains a property): 
+before: saved {"label":"","value":1}
+RELOAD 1: in the restart
+after1 (want a plain reason: a generic Codable struct gains a property): 

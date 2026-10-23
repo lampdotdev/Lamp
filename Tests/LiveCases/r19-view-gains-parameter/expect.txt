@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD (Added Row.isDone)
+VERDICT 2: RELOAD (Added Row.note, Row.accent, Row.onTap)
+== run
+before: list hideDone=false help, row Milk
+RELOAD 1 (whole): ok
+after1 (want it in: a row given a new parameter its parent passes, made only in a body): list hideDone=false help, row Milk done=true
+RELOAD 2 (whole): ok
+after2 (want it in, note=Skimmed accent=2 tapped: an optional, a var with a default and an action, all passed): list hideDone=false help, row Milk done=true note=Skimmed accent=2, tapped

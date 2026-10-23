@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (ListView changed what it holds (ListView._hideDone: AppStorage<Bool>); ListView.hideDone is @AppStorage, and the app gives views a defaults store of its own (defaultAppStorage), which a view's spare can't tell it reads from)
+== run
+before: list, row Milk
+RELOAD 1: REOPEN ListView changed what it holds (ListView._hideDone: AppStorage<Bool>); ListView.hideDone is @AppStorage, and the app gives views a defaults store of its own (defaultAppStorage), which a view's spare can't tell it reads from
+after1 (want a plain reason: @AppStorage added under a view given a defaults store of its own, which the spare would not read): 
+before: list hideDone=false, row Milk
+RELOAD 1: in the restart
+after1 (want a plain reason: @AppStorage added under a view given a defaults store of its own, which the spare would not read): 

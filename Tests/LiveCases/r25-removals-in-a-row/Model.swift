@@ -1,0 +1,19 @@
+import SwiftUI
+enum Log {
+    nonisolated(unsafe) static var lines: [String] = []
+    static func add(_ line: String) { if !lines.contains(line) { lines.append(line) } }
+    static func take() -> String { defer { lines = [] }; return lines.sorted().joined(separator: ", ") }
+}
+struct ContentView: View {
+    @State private var name = "Milk"
+    @State private var amount = 2.5
+    private var count = 7
+    var body: some View {
+        let _ = Log.add("count=\(count) name=\(name)")
+        Text("Items").onAppear { if name == "Milk" { name = "Eggs" } }
+    }
+}
+struct Panel: View {
+    var a = 1, b = "x", c = 3
+    var body: some View { Text("\(a) \(b) \(c)") }
+}

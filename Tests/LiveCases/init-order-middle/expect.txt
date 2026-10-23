@@ -1,7 +1,7 @@
-VERDICT 1: REOPEN (Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, where a property kept in a spare can't be set)
+VERDICT 1: REOPEN (Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, which the open app's Chore values were made without, so they'd read 0 where a fresh launch gives what it sets)
 == run
 before: a/false
-RELOAD 1: REOPEN Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, where a property kept in a spare can't be set
+RELOAD 1: REOPEN Chore changed what it holds (Chore.priority: Int); Chore.priority is set in Chore's own initializer, which the open app's Chore values were made without, so they'd read 0 where a fresh launch gives what it sets
 after1: a/false
 before: a/false/1
 RELOAD 1: in the restart

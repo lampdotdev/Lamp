@@ -14,14 +14,14 @@ enum Template {
     /// change its name and kind for free; its scaffold is written (`fill`) when there's first something to build.
     /// `instance` carries an existing app's identity into its replacement (rescaffolding under a new name);
     /// a new app gets a fresh one.
-    static func draft(name rawName: String, untitled: Bool = false, fromWish: Bool = false, finding: Bool = false, platform: Platform = .mac,
+    static func draft(name rawName: String, untitled: Bool = false, fromWish: Bool = false, finding: Bool = false, deviceSetup: String? = nil, platform: Platform = .mac,
                       family: DeviceFamily = .iphone, instance: String? = nil, in root: URL) throws -> LampProject {
         let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
         let exe = identifier(from: name)
         let slug = freeSlug(for: exe, in: root)
         let project = LampProject(id: slug, name: name.isEmpty ? exe : name, exe: exe,
                                    dir: root.appendingPathComponent(slug), instance: instance ?? UUID().uuidString,
-                                   untitled: untitled, fromWish: fromWish, finding: finding, platform: platform, family: family)
+                                   untitled: untitled, fromWish: fromWish, finding: finding, deviceSetup: deviceSetup, platform: platform, family: family)
         try FileManager.default.createDirectory(at: project.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try saveMeta(project)
         return project
@@ -45,7 +45,9 @@ enum Template {
                                              simulator: project.platform.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
-                                             finding: project.untitled && project.finding ? true : nil))
+                                             finding: project.untitled && project.finding ? true : nil,
+                                             deviceSetup: project.deviceSetup,
+                                             integration: project.platform == .device ? project.integration : nil))
             .write(to: project.dir.appendingPathComponent(".lamp/meta.json"))
     }
 
@@ -56,6 +58,9 @@ enum Template {
         case .mac: (app, view, md) = (appSwift, contentViewSwift, appMd)
         case .iphone: (app, view, md) = (iPhoneAppSwift, iPhoneContentViewSwift, iPhoneAppMd)
         case .universal: (app, view, md) = (universalAppSwift, universalContentViewSwift, universalAppMd)
+        case .android: try fillAndroid(project); return
+        case .tv: try TVTemplate.fill(project); return
+        case .device: try DeviceApps.fill(project); return
         }
         try write(app, to: "Sources/App.swift", for: project)
         try write(view, to: "Sources/ContentView.swift", for: project)
@@ -108,6 +113,11 @@ enum Template {
     /// Writes one of Lamp's own files into the app's folder when it isn't already what it should be (so its date
     /// moves only when the app needs a rebuild), without following a link on the way (`AppFolder`), and
     /// executable when asked.
+    /// Lamp's own picture in an app's folder, written only when it differs, as text is.
+    static func put(_ data: Data, at url: URL, for project: LampProject) throws {
+        if AppFile.read(url, in: project) != data { try AppFolder.write(data, to: url, in: project.dir) }
+    }
+
     static func put(_ contents: String, at url: URL, for project: LampProject, executable: Bool = false) throws {
         if AppFile.read(url, in: project) != Data(contents.utf8) {
             try AppFolder.write(contents, to: url, in: project.dir, mode: executable ? 0o755 : 0o644)
@@ -122,6 +132,13 @@ enum Template {
     /// the agent read, put in them ever runs: they're replaced, not checked. A failure to write any of them is
     /// a failure to build, since the old file would be what runs.
     static func writeOwnedFiles(for project: LampProject) throws {
+        // An Android app's own files are the Gradle project's and its Kotlin building blocks.
+        if project.platform == .android { try writeAndroidOwnedFiles(for: project); return }
+        // A TV app's own files are its web code; Lamp's is its building blocks there.
+        if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
+        // A device app's build is the integration's package step, which Lamp holds, not a file in the folder; its own
+        // files are the building blocks its integration asks for.
+        if project.platform == .device { try DeviceSupport.write(for: project); return }
         // Where an earlier Lamp kept the phone's secret, readable by the agent's commands; a new one is made in
         // Lamp's own folder (`phoneSecret(in:)`).
         AppFolder.remove(project.dir.appendingPathComponent(".lamp/phone-secret"), in: project.dir)
@@ -164,6 +181,8 @@ enum Template {
             try write(withWatch(universalBuildSh(widget: widget, share: share), for: project), to: "build.sh", for: project, executable: true)
             try write(withWatch(universalPackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
             try writeDeviceProject(for: project, team: Devices.team)
+        case .android, .tv, .device:
+            break   // above
         }
     }
 
@@ -184,7 +203,7 @@ enum Template {
             .replacingOccurrences(of: appSigningLine, with: watchBuildSteps(complications: complications) + appSigningLine)
     }
 
-    private static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
+    static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
         let contents = template
             .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
@@ -193,6 +212,7 @@ enum Template {
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
             .replacingOccurrences(of: "{{BUNDLE}}", with: project.bundleID)
+            .replacingOccurrences(of: "{{ANDROID_PACKAGE}}", with: androidPackage(for: project))
         let url = project.dir.appendingPathComponent(path)
         // Never makes the app's folder itself, which would leave a folder of build files where an app was.
         guard FileManager.default.fileExists(atPath: project.dir.path) else { throw CocoaError(.fileNoSuchFile) }
@@ -241,6 +261,11 @@ enum Template {
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws {
+        // An Android app's building blocks are Kotlin (`writeAndroidSupport`).
+        if project.platform == .android { try writeAndroidSupport(for: project); return }
+        // A TV app has no Swift: its building blocks are its own script, and a device app's what its integration asks for.
+        if project.platform == .tv { try TVTemplate.writeOwnedFiles(for: project); return }
+        if project.platform == .device { try DeviceSupport.write(for: project); return }
         let contents = lampSupportSwift
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
@@ -2187,6 +2212,9 @@ enum Template {
     /// What an app is made for, read off its Package.swift, which every version keeps: the platforms it lists.
     /// A version restored from before `make_app_for` brings its kind back with its code (`Versions.restoreFiles`).
     static func platform(fromPackageIn dir: URL) -> Platform? {
+        if isAndroid(dir) { return .android }
+        if TVTemplate.isTV(dir) { return .tv }
+        if DeviceApps.isScaffolded(dir) { return .device }
         guard let text = try? String(contentsOf: dir.appendingPathComponent("Package.swift"), encoding: .utf8) else { return nil }
         let mac = text.contains(".macOS("), ios = text.contains(".iOS(")
         return mac && ios ? .universal : ios ? .iphone : mac ? .mac : nil
@@ -3005,22 +3033,6 @@ enum Template {
         /// Entitlement lines this way adds to every widget's signature, as plist XML. None: the app group is
         /// added only for a team's signature (`widgetEntitlementsPlist(appGroup:)`).
         static let entitlements: [String] = []
-
-        /// What the agent is told about the app's data in a widget.
-        static let rule = """
-        It can't read what the app has saved (LampStore, files, settings), so the app hands it over: in the \
-        app, `LampWidget.share(Summary(…), as: "summary")` with any Codable value, at launch and whenever the \
-        data changes (it also redraws the widget); in the widget, `LampWidget.read(Summary.self, from: \
-        "summary") { summary in … }` in getSnapshot and getTimeline, or `await` it. That comes from \
-        Widget/LampWidgetSupport.swift, which Lamp writes: never edit it. It gives what the app shared last, \
-        also while the app is closed, and nil until the app has run once: then show a short line asking to \
-        open the app. Share a small value made for the widget, not everything, and declare its type on both sides. \
-        A button or toggle in the widget changes the app's data through the app: in Widget/, an App Intent \
-        whose `perform()` calls `await LampWidget.perform("addWater", 250)` (a name, and any Codable value or \
-        none) and returns `.result()`, shown with `Button(intent: AddWater()) { … }`; in the app, at launch, \
-        `LampWidget.onAction { name, payload in … }` does it (`payload.decode(Int.self)`) and shares what \
-        changed, and the widget redraws. It works with the app closed too: the app does it when it next starts.
-        """
     }
 
     /// What the widget is signed with. macOS shows no widget that isn't sandboxed, and the sandbox lets it
@@ -3905,7 +3917,7 @@ enum Template {
     /// A view's spare state (LiveSlots): `@State` added to a view while the app is open is kept here by name, so the
     /// view holds what it did. A starting value is worked out on the first read and kept without redrawing anything;
     /// a change redraws the views that read any of it.
-    @Observable final class LampStateBox {
+    @Observable final class LampStateBox: @unchecked Sendable {
         @ObservationIgnored private var values: [String: Any] = [:]
         private var changes = 0
         func get<T>(_ name: String, _ initial: () -> T) -> T {
@@ -3923,6 +3935,57 @@ enum Template {
             values[name] = value
             changes += 1
         }
+
+        /// A view's `@AppStorage` added while the app is open: read from and written to the defaults as AppStorage
+        /// does, and the views that read it drawn again when it changes, whether here or anywhere else in the app.
+        @ObservationIgnored private var seen: [String: NSObject] = [:]
+        @ObservationIgnored private var observer: NSObjectProtocol?
+        private var stored = 0
+        private func watch(_ key: String) {
+            _ = stored
+            if observer == nil {
+                observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: UserDefaults.standard,
+                                                                  queue: .main) { [weak self] _ in self?.recheck() }
+            }
+            if seen.index(forKey: key) == nil { seen[key] = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull() }
+        }
+        private func recheck() {
+            var changed = false
+            for (key, before) in seen {
+                let now = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull()
+                if !now.isEqual(before) { seen[key] = now; changed = true }
+            }
+            if changed { stored += 1 }
+        }
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+        func defaults<T>(_ key: String, _ initial: T) -> T {
+            watch(key)
+            return UserDefaults.standard.object(forKey: key) as? T ?? initial
+        }
+        func defaults<T: RawRepresentable>(_ key: String, _ initial: T) -> T {
+            watch(key)
+            return (UserDefaults.standard.object(forKey: key) as? T.RawValue).flatMap(T.init(rawValue:)) ?? initial
+        }
+        func defaults<T: RawRepresentable>(_ key: String, _ initial: T?) -> T? {
+            watch(key)
+            return (UserDefaults.standard.object(forKey: key) as? T.RawValue).flatMap(T.init(rawValue:)) ?? initial
+        }
+        func defaults(_ key: String, _ initial: URL) -> URL { watch(key); return UserDefaults.standard.url(forKey: key) ?? initial }
+        func defaults(_ key: String, _ initial: URL?) -> URL? { watch(key); return UserDefaults.standard.url(forKey: key) ?? initial }
+        func setDefaults<T>(_ key: String, _ value: T) { UserDefaults.standard.set(Self.unwrapped(value), forKey: key); defaultsSet(key) }
+        func setDefaults<T: RawRepresentable>(_ key: String, _ value: T) { UserDefaults.standard.set(value.rawValue, forKey: key); defaultsSet(key) }
+        func setDefaults<T: RawRepresentable>(_ key: String, _ value: T?) { UserDefaults.standard.set(value?.rawValue, forKey: key); defaultsSet(key) }
+        func setDefaults(_ key: String, _ value: URL?) { UserDefaults.standard.set(value, forKey: key); defaultsSet(key) }
+        private func defaultsSet(_ key: String) {
+            seen[key] = UserDefaults.standard.object(forKey: key) as? NSObject ?? NSNull()
+            stored += 1
+        }
+        /// An optional's value, or nil, which the defaults take as taking the key away (an optional boxed as Any isn't nil).
+        private static func unwrapped(_ value: Any) -> Any? {
+            let mirror = Mirror(reflecting: value)
+            guard mirror.displayStyle == .optional else { return value }
+            return mirror.children.first.flatMap { unwrapped($0.value) }
+        }
     }
 
     /// Changes made while the app is open, put into it without a restart (live builds only: debug, linked
@@ -3934,6 +3997,10 @@ enum Template {
         static let shared = LampLive()
         var generation = 0
         static var generation: Int { shared.generation }
+        /// Read by what SwiftUI keeps besides a body (the copy step adds it), on the main thread where SwiftUI asks.
+        nonisolated static func touch() { if Thread.isMainThread { MainActor.assumeIsolated { _ = shared.generation } } }
+        /// The same around a value made by one expression, where a statement before it would stop it being returned.
+        nonisolated static func touched<T>(_ make: () -> T) -> T { touch(); return make() }
 
         static let start: Void = {
             DistributedNotificationCenter.default().addObserver(
@@ -5114,6 +5181,9 @@ enum Template {
                 glass.hasShadow = false
                 glass.isReleasedWhenClosed = false
                 glass.becomesKeyOnlyIfNeeded = false
+                // It has the window's frame, so the window's own read of itself (`LampDriver.elements`) could take it
+                // for the window, and it has nothing in it to read.
+                glass.setAccessibilityElement(false)
                 // An alert the app runs while the person points would otherwise keep every click for itself.
                 glass.worksWhenModal = true
                 let picker = Picker(frame: NSRect(origin: .zero, size: window.frame.size))
@@ -7275,6 +7345,9 @@ enum Template {
                 isReleasedWhenClosed = false
                 hidesOnDeactivate = false
                 animationBehavior = .none
+                // Its frame is the window's, so the app's own read of the window (`LampDriver.elements`) would take
+                // this empty panel for it while a change goes in.
+                setAccessibilityElement(false)
                 look.cornerRadius = Self.cornerRadius(of: window)
                 contentView = look
                 window.addChildWindow(self, ordered: .above)
@@ -8546,7 +8619,11 @@ enum Template {
                 }
                 guard let view = frame.hitTest(point) else { return "drag: nothing there" }
                 drag(view, from: point, to: end, in: window)
-                return "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
+                let dragged = "dragged from \(Int(x)), \(Int(y)) to \(Int(toX)), \(Int(toY))" + (what.map { ", starting on \($0)" } ?? "")
+                if #available(macOS 27, *), !NSApp.isActive {
+                    return dragged + " (the app isn't in front, so something that only answers drags won't have taken it)"
+                }
+                return dragged
             case "wait":
                 return "waited \(action.amount ?? 1) s"
             default:
@@ -8648,7 +8725,11 @@ enum Template {
                     && abs(size.width - window.frame.width) < 2 && abs(size.height - window.frame.height) < 2
             }
             let windows = axAttribute(AXUIElementCreateApplication(getpid()), kAXWindowsAttribute) as? [AXUIElement] ?? []
-            if let found = windows.first(where: matches) { return found }
+            // A clear window laid over this one (an overlay of the app's own) has its frame too, and nothing in it.
+            let matching = windows.filter(matches)
+            if let found = matching.first(where: { (axAttribute($0, kAXChildrenAttribute) as? [AXUIElement])?.isEmpty == false }) ?? matching.first {
+                return found
+            }
             for parent in windows {
                 for child in axAttribute(parent, kAXChildrenAttribute) as? [AXUIElement] ?? [] where axAttribute(child, kAXRoleAttribute) as? String == kAXSheetRole {
                     if matches(child) { return child }
@@ -8965,11 +9046,32 @@ enum Template {
                 }
             }
             if let up = event(.leftMouseUp, end, steps + 1) { NSApp.postEvent(up, atStart: false) }
+            // From macOS 27 SwiftUI's gestures take the pointer only as the window dispatches it, and only in the key
+            // window, as with a click.
+            if #available(macOS 27, *) {
+                asKey(window) {
+                    window.sendEvent(down)
+                    while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
+                        window.sendEvent(next)
+                        if next.type == .leftMouseUp { break }
+                    }
+                }
+                return
+            }
             view.mouseDown(with: down)
             while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantPast, inMode: .default, dequeue: true) {
                 if next.type == .leftMouseUp { view.mouseUp(with: next); break }
                 view.mouseDragged(with: next)
             }
+        }
+
+        /// A tap or drag gesture takes the pointer only in the key window, as a real press makes it. A panel that had
+        /// the keyboard (the chat beside the window) gets it back, so what the person types there stays there.
+        private static func asKey(_ window: NSWindow, _ body: () -> Void) {
+            let keyBefore = NSApp.keyWindow
+            if NSApp.isActive, !window.isKeyWindow, window.canBecomeKey { window.makeKey() }
+            body()
+            if let keyBefore, keyBefore !== window, keyBefore is NSPanel, keyBefore.isVisible { keyBefore.makeKey() }
         }
 
         private static func click(_ view: NSView, at point: NSPoint, in window: NSWindow, count: Int) -> String {
@@ -8980,14 +9082,24 @@ enum Template {
                                        pressure: type == .leftMouseDown ? 1 : 0)
                 }
                 guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return "couldn't click" }
-                // Straight to the view: through the window, a click on an inactive window would only activate it.
                 // AppKit controls (buttons, fields, column headers) track the mouse and take the mouse-up from the
-                // event queue. SwiftUI's own views (plain buttons, toggles, tap gestures) leave it there and want
-                // it handed to them.
+                // event queue. SwiftUI's own views (plain buttons, toggles) leave it there and want it handed to them.
+                // From macOS 27 SwiftUI presses nothing for a click handed straight to its view, only for one the
+                // window dispatches, which reaches it whether or not the window is key; before, through the window a
+                // click on an inactive window would only activate it, so it went straight to the view.
                 NSApp.postEvent(up, atStart: true)
-                view.mouseDown(with: down)
-                if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                    view.mouseUp(with: unused)
+                if #available(macOS 27, *) {
+                    asKey(window) {
+                        window.sendEvent(down)
+                        if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                            window.sendEvent(unused)
+                        }
+                    }
+                } else {
+                    view.mouseDown(with: down)
+                    if let unused = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                        view.mouseUp(with: unused)
+                    }
                 }
             }
             // A row of a list, table or sidebar: AppKit only selects rows while the real mouse is held down, so
@@ -9004,6 +9116,9 @@ enum Template {
                 guard count == 2 else { return "row \(row + 1) of a list, now selected" }
                 send("\r", code: 36, flags: [], to: window)
                 return "row \(row + 1) of a list, selected and opened"
+            }
+            if #available(macOS 27, *), !NSApp.isActive {
+                return describe(view) + " (the app isn't in front, so something that only answers taps won't have taken the click)"
             }
             return describe(view)
         }
@@ -16549,7 +16664,7 @@ enum Template {
             while ($s =~ /\btypealias\s+(\w+)(?:<[^>]*>)?\s*=\s*([\w.]+)/g) { $alias{$1} = $2 }
             while ($s =~ /\bclass\s+\w+(?:<[^>]*>)?\s*:\s*([\w.]+)/g) { $names{$1} = 1 }
             while ($s =~ /<[^<>]*>/g) { my $g = $&; while ($g =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
-            while ($s =~ /\bwhere\b([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
+            while ($s =~ /\bwhere\b(?!\s*:)([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
         # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
@@ -16597,7 +16712,12 @@ enum Template {
         return $whole if $header =~ /\@propertyWrapper|\@frozen|\b(?:App|Scene|Commands|DynamicProperty|AppIntent|\w*Intent|AppEntity|\w*Query|TimelineProvider|TimelineEntry|Widget\w*)\b/;
         if ($header =~ /\bView\b/) {
             return $whole if $equatable{$name} || $header =~ /\b(?:Equatable|Hashable)\b/;
-            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();";
+            # Its state's box, a place for new parameters, and its environment, which a new `@Environment(\.key)` reads.
+            # The place isn't private: a private stored property with a starting value makes the initializer Swift
+            # writes for the struct private on the Swift Apple ships now (6.4 leaves such a property out of it instead),
+            # so a view made in another file wouldn't build. As a struct's, the place is one more argument with a
+            # default, which a call never notices.
+            return "${whole}${pad}\@State private var __lampState_${name} = LampStateBox();${pad}var __lampSpare_${name} = LampSpare(nil);${pad}\@Environment(\\.self) private var __lampEnv_${name};";
         }
         return $whole if $raw || $nospare{$name} || $header =~ /\b(?:OptionSet|RawRepresentable|BitwiseCopyable)\b/;
         my $mirrored = !$noMirror && !$reflects{$name} && $header !~ /\bCustomReflectable\b|~\s*(?:Copyable|Escapable)/ ? conform($whole, $name) : undef;
@@ -16609,6 +16729,38 @@ enum Template {
         my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
+        @skip = spans($s);
+        # What else SwiftUI keeps until something it reads changes: a modifier's and a style's body, and a layout's
+        # placement. Each reads the generation too, so a change draws it again with the new code. Only a body that
+        # returns `some View` (a view builder, where a statement before the views changes nothing) and a placement,
+        # which returns nothing; never across another declaration (a protocol's requirement has no body, and the
+        # next `{` may be a property's `{ get }`). Not a representable's update: run again on every change, it would
+        # redo what it does each time (a web view reloading, a map going back to where it started).
+        my $sig = qr/(?:(?!\b(?:func|var|let|init|subscript|struct|class|enum|protocol|extension|actor|case)\b)[^{}])*/;
+        $s =~ s{\bfunc\s+(?:body\s*\(\s*content|makeBody\s*\(\s*configuration)$sig->\s*some\s+(?:SwiftUI\.)?View\s*\{|\bfunc\s+placeSubviews\s*\(\s*in$sig\)\s*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        # And the body of content that isn't a view (a toolbar's, a chart's, a map's, a tab's): built by a builder that
+        # takes a statement first as a view builder does, and kept by SwiftUI the same way.
+        @skip = spans($s);
+        $s =~ s{\bvar\s+body\s*:\s*some\s+(?:SwiftUI\.|Charts\.|MapKit\.)?(?:ToolbarContent|CustomizableToolbarContent|ChartContent|MapContent|TabContent|AccessibilityRotorContent)\s*\{}~ inside($-[0]) ? $& : "$&let _ = LampLive.touch(); " ~ge;
+        @skip = spans($s);
+        # A layout's `sizeThatFits` too, which is asked again only when what it read changes. Its body runs inside a
+        # closure that reads it first (`LampLive.touched`), which returns what the body returns, written as one
+        # expression or with `return`; a statement before it would stop a one-expression body returning. The body's
+        # end is found brace by brace outside strings and comments, from the last such method back.
+        @skip = spans($s);
+        my @layouts;
+        while ($s =~ /\bfunc\s+sizeThatFits\s*\(\s*proposal$sig->\s*CGSize\s*\{/g) { push @layouts, pos($s) - 1 unless inside($-[0]) }
+        for my $open (reverse @layouts) {
+            my ($depth, $close) = (0, -1);
+            for (my $i = $open; $i < length($s); $i++) {
+                next if inside($i);
+                my $c = substr($s, $i, 1);
+                if ($c eq chr(123)) { $depth++ } elsif ($c eq chr(125)) { $depth--; if ($depth == 0) { $close = $i; last } }
+            }
+            next if $close < 0;
+            substr($s, $close, 0) = " " . chr(125) . " ";
+            substr($s, $open + 1, 0) = " LampLive.touched " . chr(123) . " ";
+        }
         @skip = spans($s);
         my $main;
         $s =~ s{^([ \t]*(?:(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final)\s+)*)\@main((?:(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:\@\w+(?:\([^)]*\))?|public|internal|fileprivate|private|open|final))*(?:\s|//[^\n]*|/\*[\s\S]*?\*/)+(?:struct|class|enum|actor)\s+(\w+))}{ if (inside($-[0])) { $& } else { $main = $3; "$1$2" } }me;

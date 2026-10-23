@@ -5,6 +5,88 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.18.7
+
+- Setting up a device no longer crashes Lamp: every setup window now opens sized to fit and stays up.
+- Wish for a big, fast 3D game on your Xbox and Lamp makes it as a native game that uses the console's full power.
+  The agent plays it on your Mac as it builds, then puts it on your Xbox. The tools for it are a one-time download of
+  about 2 GB, asked for only when you wish for such a game; other Xbox apps and games need nothing extra.
+- Your Xbox stays connected after Device Portal restarts, instead of asking you to reconnect it each time.
+- Deleting a wish made for a device also takes its app off that device.
+
+## 0.18.6
+
+- Make 3D games for your Xbox: Lamp comes with a 3D engine for them, the agent tries each game in a window on your Mac
+  as it builds, and the game reads your controller's sticks and triggers.
+- A device that was reset or had its developer mode turned on again can be reconnected, and Settings → Your Devices
+  lets you reconnect or forget any device Lamp set up.
+- A TV app can have a page for your phone, as a controller, a buzzer or a second screen, served by Lamp over your home
+  Wi‑Fi while the app runs.
+
+## 0.18.5
+
+- Settings no longer crashes when you set up a device with a long list of devices: the window stays on your screen as
+  it grows.
+- The agent's steps fold into a line saying what they did as soon as it moves on, and a step that failed says so.
+- When building for a TV, the agent knows whether the app is in the preview on your Mac or on the TV itself.
+
+## 0.18.4
+
+- A new starter, Disk Map: see where your disk space goes as a map that fills in while it measures, and clear out
+  what you don't need. It doesn't ask for your private folders until you choose to measure them.
+- On macOS 27, Lamp's taps and drags when it tries your app reach every button and gesture again.
+- TV apps can load their own files in the preview, pictures and sounds included, and the agent knows the preview is
+  on your Mac, not your TV.
+
+## 0.18.3
+
+- A turn built with your Claude subscription no longer shows a dollar amount: that was what it would have cost at API
+  prices, not money spent. Costs show only for what you pay for through OpenRouter.
+- When the agent tries your app while a change is going in, it reads what's on screen again instead of finding nothing.
+
+## 0.18.2
+
+- Switching between Claude, ChatGPT and OpenRouter keeps the conversation: the one you switch to knows what was said
+  before.
+- A new wish knows which devices you have: "make tetris on my TV" is made for the TV that's actually on your network,
+  and apps for devices like a Roku get Lamp's icon on the device.
+- An Android app opens where you were after a change, instead of on its first screen.
+- Drive Anywhere loads the streets ahead of the car, two pieces at a time, and says when the map is still coming.
+- LG TVs take apps more reliably, and closing the TV preview stops the app in it.
+- On macOS 27, Lamp's clicks when it tries your app land again.
+- More changes go into an open app without restarting it, including ones to how an app loads what it saved.
+
+## 0.18.1
+
+- A new starter, Drive Anywhere: a driving game on real streets anywhere in the world, built from the map as you drive.
+  It opens in San Francisco, and Travel takes you anywhere you can search for, with the traffic, people, shops, trains
+  and hills that are really there. It needs macOS 15, so it's offered once your Mac has it.
+- Settings → Building → Your Devices ends in one Add a New Device… button, which shows how to connect an iPhone or
+  iPad, an Android phone or tablet, or a TV, and lists the devices Lamp finds on your network while it looks.
+- LG TVs are found reliably, whichever of their services answers Lamp first.
+
+## 0.18.0
+
+- Lamp makes apps for more than the Mac and the iPhone. Wish for an Android app and it's written in Kotlin, built,
+  and opened in the Android emulator or on your own phone or tablet, with Lamp's building blocks for AI, saving and
+  pictures; Android wishes can be shared as files too. Wish for a TV app and Lamp finds your Samsung or LG TV on the
+  network, walks you through setting it up, tries the app in a preview on your Mac, and puts it on the TV itself. A
+  Roku, or an Xbox in Developer Mode, gets its app the same way.
+- Settings → Building lists every device Lamp knows, by its exact model and whether it's ready, with the one next
+  step for each; Try On lists the same phones. The agent is told which device a wish is for, so it builds for the
+  screen and features that device has. A device Lamp has no kit for can be described to it and set up in one window.
+- When a change needs a Reload and you've stepped away from your Mac, Lamp presses it for you and the agent goes on;
+  while you're there, Reload stays yours.
+- The agent now shows a new look in the open app while it's still working, and keeps the changes that need a Reload
+  for last, so there's one Reload at the end instead of several.
+- Each fold of a finished turn says what it did and how long it took. A new app's build card opens to the steps so
+  far, and the chat shows messages, steps and Reload in the order they happened.
+- A starter added back opens as soon as it's ready, even while the others are still being prepared.
+- Lamp finds Codex where the ChatGPT app now keeps it, and apps' quick decisions go to the newest small models.
+- Far more changes go into an open app without restarting it: new settings, bindings and environment values in a
+  view, new properties in a saved struct, parameters a parent passes, and generic calls; a crash in a live change is
+  caught and said in a sentence.
+
 ## 0.17.0
 
 - Each change the agent makes goes into the open app as soon as it's saved, so you watch the app change while it

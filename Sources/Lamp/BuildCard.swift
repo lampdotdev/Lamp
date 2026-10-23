@@ -240,10 +240,16 @@ struct BuildCard: View {
     @EnvironmentObject private var store: Store
     let project: LampProject
     let progress: TurnProgress
+    /// The chat's lines, for the steps the card opens to while the turn goes on.
+    var lines: [LogLine] = []
+    /// Whether the steps are open, for the chat around the card (which pins the card only while they're folded).
+    var stepsOpen: Binding<Bool>? = nil
+    @AppStorage("showDetails") private var details = false
 
     var body: some View {
+        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity, looking: progress.looking).steps
         BuildCardView(title: project.title, name: project.untitled ? nil : project.name,
-                      iconReady: store.icons[project.id] != nil, progress: progress) {
+                      iconReady: store.icons[project.id] != nil, progress: progress, steps: steps, stepsOpen: stepsOpen) {
             AppIcon(project: project, size: 44)
         }
     }
@@ -258,7 +264,26 @@ struct BuildCardView<Icon: View>: View {
     let name: String?
     let iconReady: Bool
     let progress: TurnProgress
+    /// The turn's steps so far, in the words the live line said while each ran (`ChatItem.live`): under the plan,
+    /// folded, so a long first build (a signing step the agent keeps trying) can be read without Agent Details. A
+    /// later turn has the live line for this; a new app's first turn has the card in its place.
+    var steps: [LogLine] = []
+    /// Where the chat wants to know whether the steps are open; the card keeps it itself otherwise (the gallery).
+    var stepsOpen: Binding<Bool>? = nil
     @ViewBuilder let icon: () -> Icon
+    @State private var ownStepsShown = false
+    private var stepsShown: Binding<Bool> { stepsOpen ?? $ownStepsShown }
+
+    init(title: String, name: String?, iconReady: Bool, progress: TurnProgress, steps: [LogLine] = [],
+         stepsOpen: Binding<Bool>? = nil, @ViewBuilder icon: @escaping () -> Icon) {
+        self.title = title
+        self.name = name
+        self.iconReady = iconReady
+        self.progress = progress
+        self.steps = steps
+        self.stepsOpen = stepsOpen
+        self.icon = icon
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -276,6 +301,10 @@ struct BuildCardView<Icon: View>: View {
             if !progress.asking && progress.finished == nil {
                 Divider()
                 outline.transition(.opacity).padding(14)
+                if !steps.isEmpty {
+                    Divider()
+                    stepsFold.padding(.horizontal, 14).padding(.vertical, 10)
+                }
             }
         }
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
@@ -286,6 +315,35 @@ struct BuildCardView<Icon: View>: View {
         .animation(.easeInOut(duration: 0.35), value: progress.showsFinishing)
         .animation(.easeInOut(duration: 0.35), value: iconReady)
         .animation(.easeInOut(duration: 0.35), value: progress.finished != nil)
+    }
+
+    /// The steps so far, behind one line that opens to them, as "Worked for…" does once the turn is over.
+    private var stepsFold: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { stepsShown.wrappedValue.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(steps.count == 1 ? "1 step so far" : "\(steps.count) steps so far")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(stepsShown.wrappedValue ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHand()
+            .font(ChatLook.stepFont)
+            .foregroundStyle(.secondary)
+            .help(stepsShown.wrappedValue ? "Hide the steps" : "Show the steps")
+            .accessibilityHint(stepsShown.wrappedValue ? "Hides the steps" : "Shows the steps")
+            if stepsShown.wrappedValue {
+                VStack(alignment: .leading, spacing: 4) { StepList(steps: steps) }
+                    .padding(.leading, -ChatLook.stepIndent)
+                    .transition(.opacity)
+            }
+        }
     }
 
     /// What's happening right now, under the app's name; once it's over, how it ended.
@@ -443,16 +501,18 @@ private extension View {
     func shimmering(_ active: Bool) -> some View { modifier(Shimmer(active: active)) }
 }
 
-/// A later turn's progress: one line saying what the agent is doing and for how long, which opens to the turn's steps
-/// so far (they aren't rows of their own while it goes on, `ChatItem.live`).
+/// A later turn's progress: one line saying what the agent is doing and for how long, which opens to the steps since
+/// it last said something (they aren't rows of their own while it goes on, `ChatItem.live`).
 struct ActivityRow: View {
     let progress: TurnProgress
     /// The chat's lines, for the steps the line opens to.
     var lines: [LogLine] = []
+    /// The app's folder: the steps are split from the chat as the transcript shows it (`ChatItem.live(_:dir:)`).
+    let dir: URL
     @AppStorage("showDetails") private var details = false
 
     var body: some View {
-        let steps = details ? [] : ChatItem.live(lines, doing: progress.activity, looking: progress.looking).steps
+        let steps = details ? [] : ChatItem.live(lines, dir: dir, doing: progress.activity, looking: progress.looking).steps
         ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
                               hasSteps: !steps.isEmpty) { StepList(steps: steps) }
     }

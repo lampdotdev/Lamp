@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Meter changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out)
+== run
+before: badge level=3, panel level=4
+RELOAD 1: REOPEN Meter changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out
+after1 (want level=3.0 and level=4.0 if it went in: what's drawn after the change is the new code's reading of a value made the new way): 
+before: badge level=3.0, panel level=4.0
+RELOAD 1: in the restart
+after1 (want level=3.0 and level=4.0 if it went in: what's drawn after the change is the new code's reading of a value made the new way): 

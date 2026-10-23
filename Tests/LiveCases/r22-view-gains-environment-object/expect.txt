@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Row changed what it holds (Row._store: Environment<Store>); Row.store is @Environment read by its type, which can't be asked of the environment Row keeps; one read by its key path (\.key) goes in, or pass the view what it needs)
+== run
+before: row Milk
+RELOAD 1: REOPEN Row changed what it holds (Row._store: Environment<Store>); Row.store is @Environment read by its type, which can't be asked of the environment Row keeps; one read by its key path (\.key) goes in, or pass the view what it needs
+after1 (want a plain reason: a row gains an @Environment read by its type, which Lamp cannot ask of the environment): 
+before: row Milk count=3
+RELOAD 1: in the restart
+after1 (want a plain reason: a row gains an @Environment read by its type, which Lamp cannot ask of the environment): 

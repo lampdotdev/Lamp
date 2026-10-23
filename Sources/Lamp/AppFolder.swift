@@ -44,6 +44,16 @@ enum AppFolder {
         try write(Data(text.utf8), to: url, in: root, mode: mode)
     }
 
+    /// A handle that appends to the file at `url` (made when it isn't there), opened on the same terms: for what
+    /// a process of Lamp's writes as it goes (a device's log), where `write` is for a whole file at once.
+    static func appendHandle(_ url: URL, in root: URL, mode: mode_t = 0o644) throws -> FileHandle {
+        let (parent, name) = try open(parentOf: url, in: root, create: true)
+        defer { close(parent) }
+        let fd = openat(parent, name, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, mode)
+        guard fd >= 0 else { throw errno == ELOOP ? Refused(path: url.path) : failure(url, errno) }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    }
+
     /// Takes away whatever is at `url`: a file, a link (not what it leads to) or a folder and all in it.
     static func remove(_ url: URL, in root: URL) {
         guard let (parent, name) = try? open(parentOf: url, in: root, create: false) else { return }

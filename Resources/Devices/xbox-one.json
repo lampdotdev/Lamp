@@ -1,0 +1,303 @@
+{
+  "app": {
+    "declared": {
+      "files": {
+        "Web/app.js": "// The controller moves focus and presses buttons like a keyboard, not a mouse pointer.\ntry { navigator.gamepadInputEmulation = \"keyboard\"; } catch (e) {}\n\nfunction focusables() { return Array.prototype.slice.call(document.querySelectorAll(\".focusable\")); }\n\n// Moves focus to the nearest focusable thing in the direction of an arrow (the controller's d-pad and stick).\ndocument.addEventListener(\"keydown\", function (e) {\n  var dirs = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],\n               GamepadDPadUp: [0, -1], GamepadDPadDown: [0, 1], GamepadDPadLeft: [-1, 0], GamepadDPadRight: [1, 0] };\n  var d = dirs[e.key];\n  if (!d) return;\n  var current = document.activeElement, items = focusables();\n  if (!current || items.indexOf(current) < 0) { if (items[0]) items[0].focus(); return; }\n  var r = current.getBoundingClientRect(), best = null, bestScore = Infinity;\n  items.forEach(function (el) {\n    if (el === current) return;\n    var o = el.getBoundingClientRect();\n    var dx = (o.left + o.width / 2) - (r.left + r.width / 2), dy = (o.top + o.height / 2) - (r.top + r.height / 2);\n    if (dx * d[0] + dy * d[1] <= 0) return;\n    var score = Math.abs(dx * d[0] + dy * d[1]) + 2 * Math.abs(dx * d[1] + dy * d[0]);\n    if (score < bestScore) { bestScore = score; best = el; }\n  });\n  if (best) { best.focus(); e.preventDefault(); }\n});\n\nwindow.addEventListener(\"load\", function () { var f = focusables()[0]; if (f) f.focus(); });\n",
+        "Web/index.html": "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{{NAME}}</title>\n<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n<main id=\"app\">\n  <h1>{{NAME}}</h1>\n  <p>Made with Lamp.</p>\n  <button class=\"focusable\" autofocus>Start</button>\n</main>\n<script src=\"lamp.js\"></script>\n<script src=\"app.js\"></script>\n</body>\n</html>\n",
+        "Web/style.css": "html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #10131c; color: #f4f5f8;\n  font-family: \"Segoe UI\", sans-serif; }\n#app { padding: 96px 120px; }\nh1 { font-size: 88px; margin: 0 0 24px; }\np { font-size: 40px; opacity: .8; }\nbutton { font: inherit; font-size: 40px; padding: 20px 48px; border-radius: 16px; border: 4px solid transparent;\n  background: #2a3042; color: inherit; }\nbutton:focus { outline: none; border-color: #7aa2ff; transform: scale(1.06); }\n"
+      },
+      "output": "build/app.zip",
+      "package": "rm -f build/app.zip && mkdir -p build && cd Web && zip -qr ../build/app.zip .",
+      "rules": "The app is a web page in Web/ (HTML, CSS and JavaScript, no build step and no frameworks from the network), shown full screen at 1920x1080 on the Xbox and run by its Edge-based web view. Design for a TV across the room: large type (36px and up), high contrast, nothing that scrolls the whole page. It's driven by the controller: keep `navigator.gamepadInputEmulation = \"keyboard\"` in app.js so the d-pad sends arrow keys and A sends Enter, give every control the class `focusable` and a visible :focus style, and use the arrow-focus code in app.js; B is Escape (\"GamepadB\"). index.html loads Lamp's lamp.js before app.js; keep it so. Lamp wraps Web/ into a signed Windows package itself. A 3D game or scene uses Babylon.js, which Lamp puts at Web/babylon.js (the global BABYLON): load it with a script tag before app.js, make the engine with new BABYLON.Engine(canvas, true) on a full-screen canvas and resize it on window resize. An Xbox One is a modest console running a web view, so keep a scene light: low-poly meshes and simple materials, one or two lights, no real-time shadows, and a few hundred objects at most, reusing meshes with instances; aim for 60 frames a second at 1920x1080. In a game, read the controller directly while it's being played: set navigator.gamepadInputEmulation = \"gamepad\" when play starts and back to \"keyboard\" on its menus, and each frame read navigator.getGamepads()[0] (axes 0 and 1 the left stick, 2 and 3 the right, with a dead zone of about 0.15; buttons[0] A, [1] B, [2] X, [3] Y, [6] and [7] the triggers' value, [12] to [15] the d-pad). Take the keyboard too, as the same moves (WASD or the arrows, Space, Enter, Escape for B): that's how the game is played in the preview on the person's Mac, where you try it with use_app, holding a key with amount in seconds.",
+      "start": "index.html",
+      "support": {
+        "web": "Web/lamp.js",
+        "babylon": "Web/babylon.js"
+      },
+      "wrap": "msix",
+      "preview": "Web"
+    },
+    "purpose": "an app or a game, 3D games included: what nearly every Xbox wish is"
+  },
+  "bridge": {
+    "install": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "form": {
+            "app.msix": "@{package}",
+            "lamp.cer": "@{certificate}"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "POST",
+          "path": "/api/app/packagemanager/package?package=app.msix",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "expect": {
+            "equals": "true",
+            "json": "Success"
+          },
+          "https": true,
+          "path": "/api/app/packagemanager/state",
+          "poll": 300,
+          "port": 11443
+        }
+      }
+    ],
+    "launch": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "POST",
+          "path": "/api/taskmanager/app?appid={base64:appUserModelID}&package={base64:packageFullName}",
+          "port": 11443
+        }
+      }
+    ],
+    "look": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "keep": "picture",
+          "path": "/ext/screenshot",
+          "port": 11443
+        }
+      }
+    ],
+    "stop": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "DELETE",
+          "path": "/api/taskmanager/app?package={base64:packageFullName}&forcestop=yes",
+          "port": 11443
+        }
+      }
+    ],
+    "log": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "keep": "log",
+          "path": "/api/filesystem/apps/file?knownfolderid=LocalAppData&packagefullname={packageFullName}&path=%5CLocalState&filename=log.txt",
+          "port": 11443
+        }
+      }
+    ],
+    "remove": [
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "https": true,
+          "path": "/api/os/info",
+          "port": 11443
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": false,
+            "password": "{field:password}",
+            "user": "lamp"
+          },
+          "headers": {
+            "X-CSRF-Token": "{cookie:CSRF-Token}"
+          },
+          "https": true,
+          "method": "DELETE",
+          "path": "/api/app/packagemanager/package?package={packageFullName}",
+          "port": 11443
+        }
+      }
+    ]
+  },
+  "find": [
+    {
+      "contains": "UPnP-Device-Host",
+      "ssdp": "urn:schemas-upnp-org:device:MediaRenderer:1"
+    }
+  ],
+  "id": "xbox-one",
+  "identity": {
+    "id": {
+      "description": true,
+      "xml": "device/UDN"
+    },
+    "model": {
+      "contains": "Xbox",
+      "description": true,
+      "xml": "device/modelName"
+    },
+    "name": {
+      "description": true,
+      "xml": "device/friendlyName"
+    },
+    "os": "Xbox OS"
+  },
+  "kind": "game console",
+  "maker": "Microsoft",
+  "name": "Xbox",
+  "sources": [
+    "https://learn.microsoft.com/en-us/windows/uwp/xbox-apps/devkit-activation",
+    "https://learn.microsoft.com/en-us/windows/uwp/xbox-apps/device-portal-xbox",
+    "https://learn.microsoft.com/en-us/windows/uwp/debug-test-perf/device-portal-api-core"
+  ],
+  "steps": [
+    {
+      "accepts": [
+        "account",
+        "softwareRisk"
+      ],
+      "check": [
+        {
+          "tcp": 11443
+        }
+      ],
+      "id": "dev-mode",
+      "known": {
+        "how": "people",
+        "model": "Xbox Series X",
+        "source": "https://learn.microsoft.com/en-us/windows/uwp/xbox-apps/devkit-activation",
+        "version": "10.0.26100"
+      },
+      "lines": [
+        "Join the Microsoft developer program at the link (one-time fee)",
+        "On the Xbox, install Xbox Dev Mode from the Store",
+        "Open it and enter its code at aka.ms/activatexbox",
+        "Back on the Xbox, choose Switch and restart",
+        "In Dev Home, open Remote Access Settings",
+        "Check Enable Xbox Device Portal"
+      ],
+      "link": "https://partner.microsoft.com/dashboard/registration",
+      "title": "Switch the Xbox to Developer Mode",
+      "wait": true
+    },
+    {
+      "check": [
+        {
+          "field": "password"
+        },
+        {
+          "contains": "Xbox",
+          "http": {
+            "auth": {
+              "digest": false,
+              "password": "{field:password}",
+              "user": "lamp"
+            },
+            "https": true,
+            "path": "/api/os/info",
+            "port": 11443
+          },
+          "json": "Platform"
+        }
+      ],
+      "field": {
+        "key": "password",
+        "label": "Device Portal password",
+        "secret": true
+      },
+      "id": "device-portal",
+      "known": {
+        "how": "people",
+        "model": "Xbox Series X",
+        "source": "https://learn.microsoft.com/en-us/windows/uwp/xbox-apps/device-portal-xbox",
+        "version": "10.0.26100"
+      },
+      "lines": [
+        "In Remote Access Settings, choose Set username and password",
+        "Use lamp as the user name, and pick a password",
+        "Type that password here"
+      ],
+      "title": "Give Lamp the Device Portal password"
+    }
+  ],
+  "kinds": {
+    "game": {
+      "lamp": "native-game",
+      "purpose": "only a heavy 3D game the wish says needs the console's full power (a big world, many things moving at once, fast action) or native code; it needs a 2 GB download first"
+    }
+  },
+  "certificateRoot": "/config/rootcertificate"
+}

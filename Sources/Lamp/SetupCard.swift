@@ -91,7 +91,7 @@ struct SetupCard: View {
         let resolution = AppAI.resolve(offer.capability, for: project, in: offer.context)
         let byHand = resolution.provider == Icons.byHand
         if resolution.tier == .best {
-            return (title(offer), byHand ? "All set. You draw each app's icon with Image Playground." : doneText(offer, resolution.answer ?? ""), true)
+            return (title(offer), byHand ? "All set. Image Playground creates each app's icon with AI, and you pick the one you like." : doneText(offer, resolution.answer ?? ""), true)
         }
         if offer.declined(in: project) {
             return (title(offer), offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
@@ -142,7 +142,7 @@ struct SetupCard: View {
     private func status(_ resolution: Resolution, done: Bool, byHand: Bool) -> some View {
         if done {
             Label {
-                Text(byHand ? "All set. You draw each app's icon with Image Playground." : doneText(resolution.answer ?? ""))
+                Text(byHand ? "All set. Image Playground creates each app's icon with AI, and you pick the one you like." : doneText(resolution.answer ?? ""))
             } icon: {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
@@ -414,8 +414,8 @@ private struct DrawIconsUpgrade: View {
     let compact: Bool
 
     var body: some View {
-        OptionRow(symbol: "paintbrush.pointed", title: "Draw icons yourself",
-                  detail: "Free, with Image Playground. You draw each app's icon.", compact: compact) {
+        OptionRow(symbol: "paintbrush.pointed", title: "Create icons in Image Playground",
+                  detail: "Free. Apple's Image Playground creates each app's icon with AI on this Mac, and you pick the one you like.", compact: compact) {
             Button("Use for All Apps") { Icons.iconChoice = Icons.byHand }
         }
     }
@@ -450,7 +450,10 @@ struct IPhoneSetupLine: View {
     /// off until it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try
     /// again. Any other turn leaves it on: the line shows during the app's first build, and neither Apple's setup
     /// nor the conversion, which waits its turn, needs that build to be over.
-    static func text(_ app: String) -> String { "\(app) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps." }
+    static func text(_ app: String, android: Bool = false) -> String {
+        android ? "\(app) is a Mac app for now. This Mac needs a few things from Google to make Android apps."
+            : "\(app) is a Mac app for now. This Mac needs a few things from Apple to make iPhone apps."
+    }
 
     @MainActor final class Asked: ObservableObject {
         static let shared = Asked()
@@ -458,13 +461,13 @@ struct IPhoneSetupLine: View {
     }
 
     var body: some View {
-        ChatLook.ActionLine(symbol: "iphone", text: Self.text(project.name), button: "See What's Needed…",
+        ChatLook.ActionLine(symbol: wanted == .android ? "smartphone" : "iphone", text: Self.text(project.name, android: wanted == .android), button: "See What's Needed…",
                             disabled: asked.ids.contains(project.id) || Self.isOff(for: project),
                             action: setUp)
     }
 
     /// What the button asks of the agent once setup is done.
-    static let requests = ["Make it work on my iPhone too.", "Make it an iPhone app instead."]
+    static let requests = ["Make it work on my iPhone too.", "Make it an iPhone app instead.", "Make it an Android app instead."]
 
     /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
     /// waiting or running. The in-app chat's line asks the same.
@@ -478,6 +481,14 @@ struct IPhoneSetupLine: View {
     private func setUp() {
         let id = project.id, both = wanted == .universal
         asked.ids.insert(id)
+        if wanted == .android {
+            AndroidSetup.shared.perform(device: nil, cancelled: { Asked.shared.ids.remove(id) }) {
+                Asked.shared.ids.remove(id)
+                guard let current = Store.shared.current(project), current.platform == .mac else { return }
+                Store.shared.send(Self.requests[2], to: current)
+            }
+            return
+        }
         // Resolved again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for,
         // and the setup lets go of the request rather than hold up the ones behind it.
         PhoneSetup.shared.perform(resolve: {

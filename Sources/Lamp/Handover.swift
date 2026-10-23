@@ -18,8 +18,13 @@ final class Handover {
     private var ended = false
     private let label: String
     private let finger: Bool
+    /// Whether the pill offers Esc: only where Lamp hears it (`escape` in `init`).
+    private let escape: Bool
     /// The Simulator's process, whose window the person's own clicks and keys are watched in. Nil for a Mac app.
     private let simulator: pid_t?
+    /// A window of Lamp's own the app is shown in (the TV preview): every click and key in it is the person's, since
+    /// Lamp acts on the page inside without posting events.
+    private weak var lampWindow: NSWindow?
     /// What else taking over does: a Mac app is told to drop the rest of its actions.
     private let halt: () -> Void
     private var window: CGWindowID?
@@ -29,10 +34,16 @@ final class Handover {
 
     /// From now on the person's Esc, or their own press in the simulator, takes the app back: even before any
     /// window is known (a batch that waits before opening a menu bar icon's panel), so that Esc isn't ignored.
-    init(label: String, finger: Bool = false, simulator: pid_t? = nil, halt: @escaping () -> Void = {}) {
+    /// `escape` is false where Lamp can't hear Esc in the window in use: macOS passes another app's keys on only to an
+    /// app allowed to control the computer, so without that Esc is heard only while Lamp is in front, and the pill
+    /// offers Stop alone rather than a key that seems to do nothing.
+    init(label: String, finger: Bool = false, simulator: pid_t? = nil, lampWindow: NSWindow? = nil, escape: Bool = true,
+         halt: @escaping () -> Void = {}) {
         self.label = label
         self.finger = finger
+        self.escape = escape
         self.simulator = simulator
+        self.lampWindow = lampWindow
         self.halt = halt
         listen()
     }
@@ -41,7 +52,7 @@ final class Handover {
     func show(window id: CGWindowID) {
         guard !tookOver, !ended, id != window else { return }
         window = id
-        overlay.focus(window: id, label: label, owner: owner, escape: true) { [weak self] in self?.take() }
+        overlay.focus(window: id, label: label, owner: owner, escape: escape) { [weak self] in self?.take() }
     }
 
     /// Lamp's cursor goes to where the next action happens, and presses there when it's a click or a tap. `due`
@@ -85,6 +96,13 @@ final class Handover {
             }
             return taken ? nil : event
         }) { monitors.append(local) }
+        if lampWindow != nil, let own = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.lampWindow, event.window === window, !self.tookOver else { return }
+                self.take()
+            }
+            return event
+        }) { monitors.append(own) }
         guard let simulator else { return }
         // A click or a key of the person's own in the simulator's window. Seeing other apps' events takes the
         // permission to control the computer, which driving the simulator needs anyway.
@@ -92,11 +110,13 @@ final class Handover {
         if let global = NSEvent.addGlobalMonitorForEvents(matching: watched, handler: { [weak self] event in
             let mark = event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0
             let key = event.type == .keyDown
-            let location = ComputerOverlay.drivers(NSEvent.mouseLocation)
+            let pointer = NSEvent.mouseLocation
+            let location = ComputerOverlay.drivers(pointer)
             MainActor.assumeIsolated {
                 guard let self, let window = self.window, !self.tookOver else { return }
                 let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                if Self.isPersons(key: key, mark: mark, at: location, frontmost: front, window: ComputerOverlay.frame(of: window), of: simulator) {
+                let under = key ? nil : Self.owner(at: pointer)
+                if Self.isPersons(key: key, mark: mark, at: location, frontmost: front, window: ComputerOverlay.frame(of: window), under: under, of: simulator) {
                     self.take()
                 }
             }
@@ -109,11 +129,22 @@ final class Handover {
     }
 
     /// Whether a press seen in another app is the person's own in the simulator: not one Lamp posted, and a click
-    /// inside its window, or a key while it's the app in front (keys go to the front app wherever the pointer is).
-    nonisolated static func isPersons(key: Bool, mark: Int64, at location: CGPoint, frontmost: pid_t?, window: CGRect?, of simulator: pid_t) -> Bool {
+    /// inside its window that landed on it (`under`, the app whose window is on top there: another app's window
+    /// over the simulator takes the click itself), or a key while it's the app in front (keys go to the front app
+    /// wherever the pointer is).
+    nonisolated static func isPersons(key: Bool, mark: Int64, at location: CGPoint, frontmost: pid_t?, window: CGRect?, under: pid_t?, of simulator: pid_t) -> Bool {
         guard mark != Self.mark else { return false }
         if key { return frontmost == simulator }
-        return window?.contains(location) == true
+        return under == simulator && window?.contains(location) == true
+    }
+
+    /// The app whose window a click at a point (AppKit's coordinates) reaches: the window server's own answer,
+    /// which passes over windows that take no clicks (Lamp's glow and cursor over the simulator, other apps'
+    /// overlays), where the window list would give the first window there, seen or not.
+    static func owner(at point: CGPoint) -> pid_t? {
+        let id = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        guard id > 0, let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(id)) as? [[String: Any]])?.first else { return nil }
+        return info[kCGWindowOwnerPID as String] as? pid_t
     }
 
     /// The front window of an app on screen, in the order the window server stacks them: the first with a title,

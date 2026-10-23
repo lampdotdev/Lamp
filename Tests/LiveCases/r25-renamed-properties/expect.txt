@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.detail, Store.name)
+== run
+before: Weekly: ["Milk"], row Milk 2 litres
+RELOAD 1 (whole): ok
+after1 (want it in, row Milk detail=2 litres, Weekly: a row and a model each rename a property): Weekly: ["Milk"], row Milk detail=2 litres

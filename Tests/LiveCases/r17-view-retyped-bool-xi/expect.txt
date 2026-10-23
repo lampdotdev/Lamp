@@ -1,0 +1,16 @@
+VERDICT 1: REOPEN (Dot changed what it holds (Dot.filled: Bool?))
+VERDICT 2: REOPEN (Dot changed what it holds (Dot.filled: UInt8))
+== run
+before: shown shown
+RELOAD 1: REOPEN Dot changed what it holds (Dot.filled: Bool?)
+after1 (want shown shown, or a reopen: an optional holding a Dot is a Dot whatever its field holds): shown shown
+before: shown shown
+RELOAD 1: in the restart
+after1 (want shown shown, or a reopen: an optional holding a Dot is a Dot whatever its field holds): shown shown
+RELOAD 2: REOPEN Dot changed what it holds (Dot.filled: UInt8)
+after2 (want shown shown, or a reopen): shown shown
+before: shown shown
+RELOAD 1: in the restart
+after1 (want shown shown, or a reopen: an optional holding a Dot is a Dot whatever its field holds): shown shown
+RELOAD 2: in the restart
+after2 (want shown shown, or a reopen): shown shown

@@ -246,15 +246,15 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitApp(project) } }
             .disabled(!store.isOpen(project))
-        if project.platform.hasIOS {
+        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
         }
         Divider()
         Button("Rename…") { store.renaming = project }
-            // Still being found: the wish it becomes names it.
-            .disabled(busy || project.finding)
+            // Still being found: the wish it becomes names it. A device's setup is never named.
+            .disabled(busy || project.makesNoApp)
         Button("Duplicate") { Task { await store.duplicate(project) } }
             .disabled(busy || !project.scaffolded || project.untitled)
         Button("New Icon") { Task { await store.newIcon(project) } }
@@ -348,6 +348,9 @@ struct ProjectView: View {
     private func written(_ lines: [LogLine]) -> Int { busy ? lines.last?.text.count ?? 0 : 0 }
     /// The chat area has to be about twice the build card's height before the card is pinned.
     private static let roomToPinCard: CGFloat = 560
+    /// The build card's steps are open: the card is as tall as they make it, so it isn't pinned, or the ones past
+    /// the window's height could never be reached and the card would cover the chat under it.
+    @State private var cardStepsOpen = false
     /// Space above a request held at the top of the chat.
     private static let pinMargin: CGFloat = 16
 
@@ -438,7 +441,7 @@ struct ProjectView: View {
                 // While a new app is being built, its card stays in view above the steps, if there's
                 // room: in a short window a pinned card would fill the chat and hide everything else.
                 chatRows(shown, pin: pin, height: area.size.height,
-                         cardPinned: building != nil && area.size.height >= Self.roomToPinCard)
+                         cardPinned: building != nil && !cardStepsOpen && area.size.height >= Self.roomToPinCard)
                 // Room for the answer to a request just sent. The answer fills it as it comes; once
                 // there's more, the chat follows it down as ever.
                 Color.clear.id("bottom").layoutValue(key: ChatStack.Room.self, value: true)
@@ -532,7 +535,7 @@ struct ProjectView: View {
             // The build card goes straight after the request that began the app, and stays there through
             // the agent's questions and their answers; what the agent says and does follows it.
             transcript(Array(lines[...request]), busy: false, pin: pin)
-            BuildCard(project: project, progress: card)
+            BuildCard(project: project, progress: card, lines: Array(lines[(request + 1)...]), stepsOpen: $cardStepsOpen)
                 .padding(.top, 16).padding(.bottom, 12)
                 .background(ChatLook.paper)
                 // Pinned: once it reaches the top of the chat it stays there, over the steps going by.
@@ -551,7 +554,7 @@ struct ProjectView: View {
             let awaited = pinWanted && lines.last { $0.kind == .user }?.id == pinAfter
             let progress = busy && !awaited && Talk.open(in: lines) == nil ? store.progress[project.id] : nil
             transcript(lines, busy: busy, progressShown: progress != nil, pin: pin)
-            if let progress { ActivityRow(progress: progress, lines: lines).padding(.top, 12) }
+            if let progress { ActivityRow(progress: progress, lines: lines, dir: project.dir).padding(.top, 12) }
         }
         if let change = undoChange {
             ChatLook.UndoChange { Task { await store.undo(project, change: change) } }.padding(.top, 12)
@@ -564,7 +567,8 @@ struct ProjectView: View {
         let canSendNow = store.canSendNow(in: project)
         ForEach(Array(queued.enumerated()), id: \.element.id) { index, message in
             let place = places[index]
-            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready, sending: message.sendNow, place: place,
+            ChatLook.QueuedRow(text: message.text, waitingForSetup: !store.setup.ready,
+                               waitingForReload: store.queueWaitsForReload(in: project), sending: message.sendNow, place: place,
                                onRemove: { store.unqueue(message, from: project) },
                                sendNow: !message.sendNow && place.last && canSendNow ? { store.sendNow(in: project, latest: message.id) } : nil) {
                 if let pointed = message.pointed {
@@ -684,7 +688,7 @@ struct ProjectView: View {
         .navigationSubtitle(usageSummary)
         .toolbarTitleMenu {
             Button("Rename…") { store.renaming = project }
-                .disabled(busy || project.finding)
+                .disabled(busy || project.makesNoApp)
         }
         .toolbar { toolbar }
     }
@@ -825,7 +829,7 @@ struct ProjectView: View {
         }
         // A wish not yet told, or still being found, has nothing to open, undo, share or look into: only its
         // icon, until it does.
-        if !untold && !project.finding { appTools }
+        if !untold && !project.makesNoApp { appTools }
     }
 
     /// Nothing asked yet: a new wish, with no app behind it.
@@ -849,17 +853,20 @@ struct ProjectView: View {
                 .help(made ? "Use \(project.name) (right-click it on the desk to rebuild)" : "Lamp opens it once it's made")
             }
         }
-        if project.platform.hasIOS {
+        if project.platform.hasIOS || project.platform == .android || project.platform == .tv || project.platform == .device {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
+                    Label(store.tryOnName(project), systemImage: project.onDevice ? Device.Kind.other.symbol : project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
                 }
                 .disabled(busy)
-                .help(project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
+                .help(project.platform == .device ? "Where it opens: which of your \(DeviceApps.integration(for: project)?.name ?? "devices") it goes on"
+                      : project.platform == .tv ? "Where it opens: the TV preview on this Mac, or one of your TVs"
+                      : project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
+                      : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
                       : "Where it opens: a simulator, or your own iPhone or iPad")
             }
         }
@@ -1355,7 +1362,8 @@ struct ImportReviewView: View {
     var body: some View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
                          review: pending.review, existing: pending.existing?.name, room: room,
-                         cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate)
+                         cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
+                         android: pending.package.platform == .android)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -1390,6 +1398,8 @@ struct ImportReviewCard: View {
     let cancel: () -> Void
     let open: () -> Void
     let update: () -> Void
+    /// An Android app's reach is the phone's, not the Mac's.
+    var android = false
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -1462,7 +1472,8 @@ struct ImportReviewCard: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 ScrollView {
-                    section("What it can do on your Mac") { capabilities(review) }
+                    // An Android app runs on the emulator or the person's phone, never on the Mac itself.
+                    section(android ? "What it can do" : "What it can do on your Mac") { capabilities(review) }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: limit)
@@ -1706,14 +1717,117 @@ struct StarterIdeas: View {
     }
 }
 
-/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones. The simulator choice is the family the agent builds and looks at; a phone is where
-/// Play puts the app.
+/// The Try On choices: the iPhone and iPad simulators and each of the person's paired phones, by its exact model.
+/// The simulator choice is the family the agent builds and looks at; a phone is where Play puts the app.
 private struct TryOnChoices: View {
     @EnvironmentObject private var store: Store
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsTab") private var settingsTab = "building"
     let project: LampProject
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
+        if project.platform == .device {
+            deviceChoices
+        } else if project.platform == .tv {
+            tvChoices
+        } else if project.platform == .android {
+            androidChoices
+        } else {
+            appleChoices
+        }
+    }
+
+    /// A TV app's places: the preview on this Mac, where it's tried, and the person's TVs, each by its model and what it
+    /// still needs. A TV that isn't set up is set up when it's chosen.
+    @ViewBuilder private var tvChoices: some View {
+        let tvs = store.devices.filter { $0.kind.isTV }
+        Picker("Preview", selection: Binding(get: { project.device == nil ? "preview" : nil }, set: { if $0 != nil { store.setTVDevice(project, nil) } })) {
+            Label("TV Preview", systemImage: "tv").tag(Optional("preview"))
+        }
+        .pickerStyle(.inline)
+        Picker("Your TVs", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setTVDevice(project, id) } })) {
+            ForEach(tvs) { tv in
+                let step = tv.setup() == .ready && !tv.isAway ? "" : " (\(tv.status))"
+                let model = "\(tv.maker) \(tv.model)"
+                Label((tv.name == model ? tv.name : "\(tv.name) · \(model)") + step, systemImage: "tv").tag(Optional(tv.udid))
+            }
+            if let chosen = project.device, !tvs.contains(where: { $0.udid == chosen }) {
+                Label("Chosen TV (not on the network)", systemImage: "tv").tag(Optional(chosen))
+            }
+        }
+        .pickerStyle(.inline)
+        if tvs.isEmpty {
+            Text("No Samsung or LG TV found on this network. Turn one on, then look again.")
+        }
+        Divider()
+        ForEach(tvs.filter { $0.setup() != .ready && !$0.isAway }) { tv in
+            Button("Set Up \(tv.name)…") { TVSetup.shared.show(tv.udid) }
+        }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
+    }
+
+    /// A device app's places: the person's devices its integration finds, each by its model and what it still needs. One
+    /// not set up is set up when it's chosen, in its setup window.
+    @ViewBuilder private var deviceChoices: some View {
+        let name = DeviceApps.integration(for: project)?.name ?? "device"
+        let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
+        Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
+            ForEach(mine) { device in
+                let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
+                Label((device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step, systemImage: device.kind.symbol)
+                    .tag(Optional(device.id))
+            }
+            if let chosen = project.device, !mine.contains(where: { $0.id == chosen }) {
+                Label("Chosen \(name) (not on the network)", systemImage: Device.Kind.other.symbol).tag(Optional(chosen))
+            }
+        }
+        .pickerStyle(.inline)
+        if mine.isEmpty {
+            Text("No \(name) found on this network. Turn one on, then look again.")
+        }
+        Divider()
+        ForEach(mine.filter { $0.setup() != .ready && !$0.isAway }) { device in
+            Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
+        }
+        if GameKit.isGame(project) {
+            Button("Check Xbox Games Setup…") { WindowsSetup.shared.show() }
+        }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
+    }
+
+    /// An Android app's places: the emulator Lamp made, and the person's Android devices adb can see.
+    @ViewBuilder private var androidChoices: some View {
+        let devices = store.devices.filter { $0.kind == .android }
+        Picker("Emulator", selection: Binding(get: { project.device == nil ? "emulator" : nil }, set: { if $0 != nil { store.setAndroidDevice(project, nil) } })) {
+            Label(AndroidTools.avdName, systemImage: "smartphone").tag(Optional("emulator"))
+        }
+        .pickerStyle(.inline)
+        Picker("Your Devices", selection: Binding(get: { project.device }, set: { if let serial = $0 { store.setAndroidDevice(project, serial) } })) {
+            ForEach(devices) { device in
+                let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
+                Label("\(device.name)\(step)", systemImage: "smartphone").tag(Optional(device.udid))
+            }
+            if let chosen = project.device, !devices.contains(where: { $0.udid == chosen }) {
+                Label("Chosen device (not connected)", systemImage: "smartphone").tag(Optional(chosen))
+            }
+        }
+        .pickerStyle(.inline)
+        if devices.isEmpty {
+            Text("No Android device found. Plug one in with USB debugging on, then look again.")
+        }
+        Divider()
+        Button("Check Android Setup…") { AndroidSetup.shared.show(device: project.device) }
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+        Button("Look for Devices Again") { store.refreshDevices() }
+            .onAppear { store.refreshDevices() }
+    }
+
+    @ViewBuilder private var appleChoices: some View {
         if project.platform == .universal {
             // An app for both: this Mac is a place to open it too, beside the simulators and phones.
             Picker("This Mac", selection: Binding(get: { project.onIOS ? nil : Destination.mac },
@@ -1744,12 +1858,16 @@ private struct TryOnChoices: View {
             }
         }
         do {
-            let paired = store.devices.filter(\.paired), unpaired = store.devices.filter { !$0.paired }
+            // The person's phones, each by its exact model, and what it still needs before Play can put the app
+            // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.
+            let phones = store.devices.filter { $0.kind.isPhone }
+            let paired = phones.filter(\.paired), unpaired = phones.filter { !$0.paired }
             Picker("Your Devices", selection: Binding(get: { project.onIOS ? project.device : nil }, set: { chosen in
                 store.choosePreparedDevice(project, chosen)
             })) {
                 ForEach(paired) { device in
-                    Label(device.name + (device.developerMode ? "" : " (Developer Mode is off)"), systemImage: device.family == .ipad ? "ipad" : "iphone")
+                    let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
+                    Label("\(device.name) · \(device.model)\(step)", systemImage: device.kind.symbol)
                         .tag(Optional(device.udid))
                 }
                 if let chosen = project.device, !paired.contains(where: { $0.udid == chosen }) {
@@ -1759,22 +1877,24 @@ private struct TryOnChoices: View {
             .pickerStyle(.inline)
             // A phone that's plugged in but hasn't trusted this Mac yet: pairing puts the question on it.
             ForEach(unpaired) { device in
-                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name)…") {
+                Button(store.pairing.contains(device.udid) ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…") {
                     store.pairDevice(device, for: project)
                 }
                 .disabled(store.pairing.contains(device.udid))
             }
-            ForEach(olderPhones.filter { old in !store.devices.contains(where: { $0.udid == old.id }) }) { phone in
+            ForEach(olderPhones.filter { old in !phones.contains(where: { $0.udid == old.id }) }) { phone in
                 Button("\(phone.name) (needs iOS \(PhoneTools.minimumIOS))…") {
                     PhoneSetup.shared.show(family: phone.family, phone: phone.id)
                 }
             }
-            if store.devices.isEmpty && olderPhones.isEmpty {
+            if phones.isEmpty && olderPhones.isEmpty {
                 Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
             }
         }
         Divider()
         Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
+        // Every device Lamp knows, with where its setup stands, is in Settings → Building.
+        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { refresh() }
             .onAppear { refresh() }
     }
@@ -1790,6 +1910,7 @@ extension Store {
     /// What the app's AI has cost, under its name in the toolbar ("AI: 3 calls · $0.02"); nil before it's used any.
     func usageSummary(_ project: LampProject) -> String? {
         guard let usage = usage[project.id], usage.calls > 0 else { return nil }
-        return String(format: "AI: %d call%@ · $%.2f", usage.calls, usage.calls == 1 ? "" : "s", usage.cost)
+        let calls = "AI: \(usage.calls) call\(usage.calls == 1 ? "" : "s")"
+        return usage.cost < 0.005 ? calls : calls + String(format: " · $%.2f", usage.cost)
     }
 }

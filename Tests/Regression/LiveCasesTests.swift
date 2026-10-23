@@ -53,9 +53,20 @@ final class LiveCasesTests: XCTestCase {
                 continue
             }
             let expected = (try? String(contentsOf: expectation, encoding: .utf8)) ?? ""
-            if got != expected { failures.append("\(name):\n--- expected\n\(expected)\n--- got\n\(got)") }
+            if Self.settled(got) != Self.settled(expected) { failures.append("\(name):\n--- expected\n\(expected)\n--- got\n\(got)") }
         }
         XCTAssertTrue(failures.isEmpty, "\(failures.count) of \(names.count) cases changed\n\n" + failures.joined(separator: "\n\n"))
+    }
+
+    /// What a case printed, without what timing alone decides: trailing spaces, blank lines, and a line said twice in
+    /// a row (a copy whose window hadn't drawn yet printing the same empty reading the copy after it does).
+    private static func settled(_ text: String) -> [String] {
+        var lines: [String] = []
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = String(line.reversed().drop { $0 == " " }.reversed())
+            if !trimmed.isEmpty, trimmed != lines.last { lines.append(trimmed) }
+        }
+        return lines
     }
 
     /// How each case's library reaches its process, by the case's folder.
@@ -127,7 +138,18 @@ final class LiveCasesTests: XCTestCase {
                 // The person pressed Reload: the whole build installs this code and the app opens again with it,
                 // holding every change so far. Built from a fresh live copy, as build.sh makes one: the fit may have
                 // rewritten the copy before the change was refused, and that copy is not what a whole build compiles.
-                try await Task.sleep(for: .milliseconds(300))
+                // Once it has said so and printed what it prints next, as a copy the person reloads goes on until the
+                // click: until its output has held still for a second after the refusal (a window drawing first), up
+                // to six seconds.
+                let marker = "RELOAD \(number): REOPEN"
+                var last = output.current, quiet = 0
+                for _ in 0..<120 {
+                    try await Task.sleep(for: .milliseconds(50))
+                    let now = output.current
+                    quiet = now.contains(marker) && now == last ? quiet + 1 : 0
+                    last = now
+                    if quiet >= 20 { break }
+                }
                 end(process)
                 try await copyLive(project)
                 if let failed = try await build() { output.add(failed + "\n"); return }
@@ -212,6 +234,7 @@ final class LiveCasesTests: XCTestCase {
         private let lock = NSLock()
         private var text = ""
         func add(_ more: String) { lock.withLock { text += more } }
+        var current: String { lock.withLock { text } }
         var lines: [String] { lock.withLock { text.components(separatedBy: "\n").filter { !$0.hasPrefix("objc[") && !$0.isEmpty } } }
     }
 

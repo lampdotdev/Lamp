@@ -96,8 +96,16 @@ enum Builder {
         [("", "ChatGPT's default")] + codexCatalog.map { ($0.slug, $0.name) }
     }
 
-    /// Codex's small, fast model, for quick judgments: the "Luna" line.
-    static var codexFastModel: String? { codexCatalog.first { $0.slug.contains("luna") }?.slug }
+    /// Claude Code's small, fast model, for quick judgments: Haiku 5.5 by its full id, since Claude Code's
+    /// own "haiku" alias still names Haiku 4.5.
+    static let claudeFastModel = "claude-haiku-5-5"
+
+    /// Codex's small, fast model, for quick judgments: Luna 6 when the account has it, else the Luna its
+    /// catalog ranks first.
+    static var codexFastModel: String? {
+        let lunas = codexCatalog.filter { $0.slug.contains("luna") }
+        return (lunas.first { $0.slug == "gpt-6-luna" } ?? lunas.first)?.slug
+    }
 
     private static var codexCatalog: [(slug: String, name: String)] {
         let url = EngineInstall.configFolder(.codex).appendingPathComponent("models_cache.json")
@@ -250,7 +258,7 @@ extension Agent {
     /// app, and left to tell one from the placeholder code on its own, not every model does: some build the whole
     /// app with no checklist at all.
     static func newApp(_ project: LampProject) -> String {
-        guard !project.finding, Template.isScaffold(project) else { return "" }
+        guard !project.makesNoApp, Template.isScaffold(project) else { return "" }
         return "\n\n---\nThis is a new app (from Lamp, not part of the request above): its code is still Lamp's placeholder. Unless you ask first, call `plan` before writing any code."
     }
 
@@ -259,11 +267,13 @@ extension Agent {
     /// agent's own token for this turn (Store.agentTokens), never the app's.
     @MainActor static func run(prompt: String, files: [String], project: LampProject, offered: Set<SetupOffer>,
                                session: String?, token: String) -> AgentRun {
-        // A line on what Lamp remembers, one on what AI the app has and one on the skills that apply to it go
-        // with the request when the conversation needs telling, the same for each engine.
-        let prompt = prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
+        // A line on what Lamp remembers, one on what AI the app has, one on the skills that apply to it and one
+        // on the device it's for go with the request when the conversation needs telling, the same for each engine.
+        // A device's setup has no app for any of those to be about: it's told what the conversation is, every time.
+        let prompt = project.isDeviceSetup ? prompt + Agent.deviceSetupNote(project) : prompt + Memory.brief(for: project, engine: Builder.engine, session: session)
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
+            + DeviceNote.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
             + Agent.newApp(project)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
@@ -282,6 +292,7 @@ extension Agent {
             env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
             env["LAMP_KIND_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/kind"
             env["LAMP_CONNECTORS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/connectors"
+            env["LAMP_INTEGRATION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/integration"
             env["LAMP_TALK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/talk"
             env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
             env["LAMP_SKILL_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/skill"
@@ -302,6 +313,10 @@ extension Agent {
             // replies in Claude Code's hook format. If Lamp can't be reached the hook fails and the command is denied.
             env["LAMP_TOKEN"] = token
             env["LAMP_SYSTEM"] = systemPrompt(for: project) + tryRules + Self.claudeNote + sandboxNote
+            // No background commands, as pi has none: after answering, Claude Code waits for one it started (a
+            // server the agent ran to try something) and takes another turn once it ends, so a server kept the turn
+            // going with nobody to answer to. A command that runs long stops at its time limit instead.
+            env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
             // How commands are approved (Settings → Building):
             // - auto: Claude Code's own classifier (--permission-mode auto) runs routine commands; when it would
             //   ask, its PermissionRequest hook sends the request to Lamp's approval card.
@@ -325,7 +340,7 @@ extension Agent {
                         "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__device_integration,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -476,6 +491,11 @@ extension Agent {
     - (Claude Code) A shell command's description is what the person sees for that step, never the command: \
     write it for them, a few plain words on what you're doing ("Reading how the shelf works", "Checking it \
     builds"), with no file names, paths or commands.
+    - (Claude Code) A command may be refused by Claude Code's own check, which the person never sees and which \
+    never asks them. Then it didn't run, and nothing will ask them about it: don't try another way, and never say \
+    that Lamp will ask them or that they can approve it. Say in a sentence, in their words, what you couldn't do \
+    and why ("I couldn't leave a helper running in the background: it would stay on after the app closes."), never the \
+    command or the check itself.
     """
 
     /// Which tools the "file tools" of the rules above are, for Codex: its own are the shell and apply_patch.
@@ -541,6 +561,15 @@ extension Agent {
         return String(decoding: (try? JSONSerialization.data(withJSONObject: message)) ?? Data(), as: UTF8.self)
     }
 
+    /// The request Lamp sends once the change a turn left waiting for Reload is in: after a pause (`Store.pause`), or
+    /// after Lamp reloaded the app while the person was away (`Store.reloadIfAway`). The next request of the same
+    /// conversation, on every engine, so the agent carries on where it stopped.
+    static let afterReload = """
+        Your change is in: the app was reloaded with it (by the person, or by Lamp while they were away), or the person \
+        closed the app and the new version went in. Look at it now, then carry on with the request from where you stopped, unless a message \
+        below says otherwise. If nothing was left to do, say so in a sentence.
+        """
+
     /// Messages the person sent while Codex worked, as the run that resumes its conversation sends them. Codex
     /// tells the model the person interrupted it on purpose, which reads as "stop": they were only passed on.
     static func carryOn(_ text: String) -> String {
@@ -569,7 +598,8 @@ extension Agent {
                 case "tool_use":
                     let name = block["name"] as? String ?? "Tool", input = block["input"] as? [String: Any] ?? [:]
                     let said = ((input["doing"] as? String) ?? (name == "Bash" ? input["description"] as? String : nil))?.trimmed.nilIfEmpty
-                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said)
+                    let call = AgentEvent.tool(tool(name, input), call: callKey(plainName(name), input), said: said, id: block["id"] as? String,
+                                               command: name == "Bash" ? input["command"] as? String : nil)
                     // Claude Code has the model say what each command is for, in a few words of its own.
                     guard name == "Bash" else { return [call] }
                     return [.naming((input["description"] as? String)?.trimmed ?? ""), call]
@@ -600,10 +630,16 @@ extension Agent {
             if obj["isReplay"] as? Bool == true { return [.received] }
             // A tool result: the tool has finished and the model is thinking about what's next.
             let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
-            if content.contains(where: { $0["type"] as? String == "tool_result" }) { return [.step("")] }
+            let results = content.filter { $0["type"] as? String == "tool_result" }
+            if !results.isEmpty {
+                return [.step("")] + results.compactMap { result in
+                    (result["tool_use_id"] as? String).map { AgentEvent.ended($0, failed: result["is_error"] as? Bool == true) }
+                }
+            }
         case "result":
             var events: [AgentEvent] = []
-            if let cost = obj["total_cost_usd"] as? Double, cost > 0 { events.append(.cost(cost)) }
+            // No cost from Claude Code: Lamp runs it with the person's Claude sign-in, so its `total_cost_usd` is what the
+            // run would have cost at API prices, not money spent. What Lamp shows as spent is what was: OpenRouter's.
             if obj["is_error"] as? Bool == true { events.append(.failed(obj["result"] as? String ?? "Claude failed.")) }
             return events + [.finished]
         default: break
@@ -670,15 +706,18 @@ extension Agent {
             guard let message = item["message"] as? String, !message.contains("--dangerously-bypass-hook-trust") else { return [] }
             return [.raw(message)]
         case ("item.completed", "command_execution"):
-            // "declined": Codex's reviewer refused it, and it never ran.
+            // "declined": Codex's reviewer refused it, and it never ran. "failed": it ran and exited with an error.
             let command = item["command"] as? String ?? ""
-            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined")])
+            let failed = item["status"] as? String == "failed" || (item["exit_code"] as? Int).map { $0 != 0 } == true
+            return [.step("")] + (command.isEmpty ? [] : [.ran(Self.unwrapped(command), refused: item["status"] as? String == "declined",
+                                                               failed: failed, id: item["id"] as? String)])
         case ("item.completed", "mcp_tool_call"):
-            return [.step("")]
+            return [.step("")] + ((item["id"] as? String).map { [.ended($0, failed: item["status"] as? String == "failed")] } ?? [])
         case ("item.started", "mcp_tool_call"):
             let name = item["tool"] as? String ?? "tool"
             let arguments = item["arguments"] as? [String: Any] ?? [:]
-            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty)]
+            return [.tool(tool(name, arguments), call: callKey(name, arguments), said: (arguments["doing"] as? String)?.trimmed.nilIfEmpty,
+                          id: item["id"] as? String)]
         case ("item.started", "command_execution"):
             let command = "Run: \(item["command"] as? String ?? "")"
             return [.tool(command, call: command)]
@@ -686,8 +725,9 @@ extension Agent {
             let paths = (item["changes"] as? [[String: Any]] ?? []).compactMap { $0["path"] as? String }
             // Codex doesn't say what an edit changed, so two edits to one file can't be told apart:
             // each counts as its own step.
-            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))",
-                          call: item["id"] as? String ?? UUID().uuidString)]
+            let id = item["id"] as? String ?? UUID().uuidString
+            return [.tool("Edit \(paths.map { ($0 as NSString).lastPathComponent }.joined(separator: ", "))", call: id, id: id),
+                    .ended(id, failed: item["status"] as? String == "failed")]
         case ("error", _), ("turn.failed", _):
             let raw = obj["message"] as? String ?? ((obj["error"] as? [String: Any])?["message"] as? String) ?? "ChatGPT failed."
             // Codex nests the API error as JSON text; surface its message.

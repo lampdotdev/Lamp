@@ -236,6 +236,7 @@ enum Versions {
             if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
                 project.platform = kind
                 if !kind.hasIOS { project.device = nil }
+                project.integration = kind == .device ? DeviceApps.integrationID(in: project.dir) : nil
                 try? Template.saveMeta(project)
             }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
@@ -433,9 +434,10 @@ enum VersionTitles {
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
         if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.sceneSupportPath || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
                                               || $0 == Template.shareFolder + "/" + Template.shareSupportFile
-                                              || Template.watchSupportPaths.contains($0) }) { return "Lamp update" }
+                                              || Template.watchSupportPaths.contains($0) || Template.isAndroidSupport($0)
+                                              || DeviceSupport.isSupport($0, in: project) }) { return "Lamp update" }
         var diff = ""
-        let watchSupport = Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
+        let watchSupport = (Template.watchSupportPaths + DeviceSupport.paths(for: project)).map { " ':!\($0)'" }.joined()
         _ = await Versions.git("git show --format= --unified=1 \"$LAMP_VERSION\" -- . ':!Sources/LampSupport.swift' ':!\(Template.sceneSupportPath)' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)'\(watchSupport) ':!\(Attachments.folder)'",
                             cwd: project.dir, env: ["LAMP_VERSION": version.id]) { line in
             if diff.count < 8000 { diff += line + "\n" }

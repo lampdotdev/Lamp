@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
+  <specVersion>
+    <major>1</major>
+    <minor>0</minor>
+  </specVersion>
+  <device>
+    <deviceType>urn:dial-multiscreen-org:service:dial:1</deviceType>
+    <friendlyName>[LG] webOS TV NANO80ASA</friendlyName>
+    <manufacturer>LG</manufacturer>
+    <manufacturerURL>http://www.lge.com</manufacturerURL>
+    <modelDescription></modelDescription>
+    <modelName>65NANO80ASA.BWCDLKR</modelName>
+    <modelURL>http://www.lge.com</modelURL>
+    <modelNumber>WEBOS</modelNumber>
+    <serialNumber></serialNumber>
+    <UDN>uuid:11111111-2222-4333-8444-000000002043</UDN>
+    <serviceList>
+      <service>
+        <serviceType>urn:dial-multiscreen-org:service:dial:1</serviceType>
+        <serviceId>urn:dial-multiscreen-org:serviceId:dial</serviceId>
+        <SCPDURL>/WebOS_Dial/11111111-2222-4333-8444-000000002043/scpd.xml</SCPDURL>
+        <controlURL>/WebOS_Dial/11111111-2222-4333-8444-000000002043/control.xml</controlURL>
+        <eventSubURL>/WebOS_Dial/11111111-2222-4333-8444-000000002043/event.xml</eventSubURL>
+      </service>
+    </serviceList>
+  </device>
+</root>

@@ -85,6 +85,25 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     func perform(for project: LampProject, in store: Store, building: Bool = false, cancelled: @escaping () -> Void = {},
                  then: @escaping (LampProject) -> Void) {
         guard let current = store.current(project) else { cancelled(); return }
+        // A TV app's preview needs nothing set up; Play with a TV chosen needs that TV set up.
+        if current.platform == .tv {
+            guard building, let id = current.device else { then(current); return }
+            TVSetup.shared.perform(id) { if let now = store.current(project) { then(now) } else { cancelled() } }
+            return
+        }
+        // A device app needs its device set up before Open puts it there; a request goes to the agent either way.
+        if current.platform == .device {
+            guard building, let device = DeviceApps.device(for: current, among: store.devices), device.setup() != .ready else { then(current); return }
+            DeviceSetupWindow.show(device) { if let now = store.current(project) { then(now) } else { cancelled() } }
+            return
+        }
+        // An Android app's checks are Android's: the tools, the emulator, and the person's device when one is chosen.
+        if current.platform == .android {
+            AndroidSetup.shared.perform(device: current.device, cancelled: cancelled) {
+                if let now = store.current(project) { then(now) } else { cancelled() }
+            }
+            return
+        }
         // An app for both needs Xcode wherever it opens: its Mac build is Xcode's too (Template.universalBuildSh).
         guard current.platform.hasIOS else { then(current); return }
         perform(resolve: {
@@ -218,40 +237,18 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         presented = true
         guard presentsWindow else { return }
         if window == nil {
-            // The window is as tall as what it says: the next step's instructions run from two lines to six.
-            // Its size is set from the content by hand, after each change, rather than left to AppKit's
-            // constraints: a window whose frame follows its content's constraints changes size in the middle
-            // of a layout pass, and on macOS 26 the SwiftUI content then asks for another, which AppKit
-            // answers with an exception (that crashed Lamp when the window appeared for a new iPhone app).
-            let content = NSHostingController(rootView: PhoneSetupView(model: self))
-            content.sizingOptions = []
-            let window = NSWindow(contentViewController: content)
-            window.styleMask = [.titled, .closable]
+            let (window, resizing) = FittedWindow.make(PhoneSetupView(model: self), following: objectWillChange)
             window.delegate = self
             window.title = "iPhone & iPad Setup"
-            window.isReleasedWhenClosed = false
-            self.window = window
-            fit()
             window.center()
-            resizing = objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.fit() } }
+            self.window = window
+            self.resizing = resizing
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }
 
     private var resizing: AnyCancellable?
-
-    /// The window takes the size its content wants now. Called between layout passes, never inside one.
-    private func fit() {
-        guard let window, let controller = window.contentViewController as? NSHostingController<PhoneSetupView> else { return }
-        // What the content would like, asked of SwiftUI directly: the hosting view's own fitting size is
-        // nothing until it has been drawn once.
-        let size = controller.sizeThatFits(in: NSSize(width: 10_000, height: 10_000))
-        guard size.width > 0, size.height > 0, size != window.contentView?.frame.size else { return }
-        let top = window.frame.maxY
-        window.setContentSize(size)
-        window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
-    }
 
     func act() {
         guard let issue = report?.issue else { return }
@@ -507,5 +504,34 @@ extension Store {
 
     func runPrepared(_ project: LampProject) {
         PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.run(current) } }
+    }
+}
+
+/// A setup window as tall as what it says, whatever step it's on. Its size is set from the content by hand, after each
+/// change, rather than left to AppKit's constraints: a window whose frame follows its content's constraints changes size
+/// in the middle of a layout pass, and on macOS 26 and later the SwiftUI content then asks for another, which AppKit
+/// answers with an exception that ends Lamp.
+@MainActor
+enum FittedWindow {
+    /// The window for `content`, sized to it now and again after each of `changes`, its top staying where it is.
+    static func make<Content: View>(_ content: Content, following changes: ObservableObjectPublisher) -> (NSWindow, AnyCancellable) {
+        let controller = NSHostingController(rootView: content)
+        controller.sizingOptions = []
+        let window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        let fit = { [weak window, weak controller] in
+            guard let window, let controller else { return }
+            // What the content would like, asked of SwiftUI directly: the hosting view's own fitting size is nothing
+            // until it has been drawn once.
+            let size = controller.sizeThatFits(in: NSSize(width: 10_000, height: 10_000))
+            guard size.width > 0, size.height > 0, size != window.contentView?.frame.size else { return }
+            let top = window.frame.maxY
+            window.setContentSize(size)
+            window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
+        }
+        fit()
+        // Between layout passes, never inside one: the change is sent before the model changes, too.
+        return (window, changes.sink { _ in DispatchQueue.main.async { fit() } })
     }
 }

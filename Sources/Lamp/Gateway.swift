@@ -16,15 +16,95 @@ final class Gateway: @unchecked Sendable {
         var fromNetwork = false
         /// The port the request came from (host order), which tells Lamp which program on this Mac sent it.
         var peerPort: UInt16?
+        /// The address it came from: for a request from the network, the device that sent it.
+        var peerAddress: String?
+    }
+
+    /// A file the gateway hands out as it is, not JSON: a TV app's phone page (`Store.phonePage`).
+    struct Page {
+        var status: Int
+        var type = "text/plain; charset=utf-8"
+        var body = Data()
+        var location: String?
     }
 
     private var listener: NWListener?
     private var networkListener: NWListener?
     private let queue = DispatchQueue(label: "dev.lamp.gateway")
     private let handler: @Sendable (Request) async -> (Int, [String: Any])
+    private let pages: @Sendable (Request) async -> Page
+    private let sockets: @Sendable (Request, NWConnection, Data) -> Void
+    /// The port it answers on: Lamp's gateway's, or one app's phone page's (`PhoneSites`).
+    let port: UInt16
+    /// A site answers only pages and sockets, on every interface, each request marked by where it came from.
+    private let isSite: Bool
 
-    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any])) {
+    /// One app's phone page on a port of its own (`PhoneSites`): every request is a page or a socket, whatever its path.
+    init(site port: UInt16, pages: @escaping @Sendable (Request) async -> Page, sockets: @escaping @Sendable (Request, NWConnection, Data) -> Void) {
+        self.port = port
+        self.isSite = true
+        self.handler = { _ in (404, ["error": "Not found"]) }
+        self.pages = pages
+        self.sockets = sockets
+    }
+
+    init(handler: @escaping @Sendable (Request) async -> (Int, [String: Any]), pages: @escaping @Sendable (Request) async -> Page,
+         sockets: @escaping @Sendable (Request, NWConnection, Data) -> Void) {
+        self.port = Self.port
+        self.isSite = false
         self.handler = handler
+        self.pages = pages
+        self.sockets = sockets
+    }
+
+    /// A site's one listener, on every interface: a request from this Mac's own loopback is told from one from the network.
+    /// True once it's listening; false when it couldn't take its port, which `NWListener` says only after it starts.
+    /// The port is never shared: another program listening there keeps it, and the site goes elsewhere.
+    func startSite(onFailure: @escaping @Sendable () -> Void = {}) async -> Bool {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = false
+        guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!) else { return false }
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: self?.queue ?? .main)
+            var loopback = false
+            if case .hostPort(let host, _) = connection.endpoint {
+                switch host {
+                case .ipv4(let address): loopback = address.isLoopback
+                case .ipv6(let address): loopback = address.isLoopback || address.asIPv4?.isLoopback == true
+                default: break
+                }
+            }
+            self?.receive(connection, buffer: Data(), fromNetwork: !loopback)
+        }
+        self.listener = listener
+        return await withCheckedContinuation { continuation in
+            var answered = false
+            // The listener keeps this handler, so it holds the listener weakly, and lets go of both handlers (and the
+            // callback with them) once the listener is done: a failed try or a closed site leaves nothing behind.
+            listener.stateUpdateHandler = { [weak listener] state in
+                switch state {
+                case .ready:
+                    if !answered { answered = true; continuation.resume(returning: true) }
+                case .failed, .cancelled:
+                    if !answered { answered = true; continuation.resume(returning: false) } else { onFailure() }
+                    listener?.stateUpdateHandler = nil
+                    listener?.newConnectionHandler = nil
+                    listener?.cancel()
+                default:
+                    break
+                }
+            }
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() {
+        queue.async { [self] in
+            listener?.cancel()
+            networkListener?.cancel()
+            listener = nil
+            networkListener = nil
+        }
     }
 
     func start() throws {
@@ -71,10 +151,37 @@ final class Gateway: @unchecked Sendable {
             if var request = Self.parse(buffer) {
                 if request.method == "BAD" { self.respond(connection, status: 400, json: ["error": "Bad request"]); return }
                 request.fromNetwork = fromNetwork
-                if case .hostPort(_, let port) = connection.endpoint { request.peerPort = port.rawValue }
+                if case .hostPort(let host, let port) = connection.endpoint {
+                    request.peerPort = port.rawValue
+                    switch host {
+                    case .ipv4(let address): request.peerAddress = "\(address)"
+                    case .ipv6(let address): request.peerAddress = address.asIPv4.map { "\($0)" } ?? "\(address)"
+                    default: break
+                    }
+                }
+                // A web app on a TV or a console asks before it sends a request with a token, as browsers do across
+                // origins. Only over the network: nothing on this Mac is answered across origins.
+                if fromNetwork, request.method == "OPTIONS" {
+                    self.respond(connection, status: 204, json: [:], crossOrigin: true)
+                    return
+                }
+                // A phone, or a TV app, opening its socket for phone controllers: the connection is the socket's from here.
+                if request.method == "GET", request.headers["upgrade"]?.lowercased() == "websocket", self.isSite {
+                    let leftover = buffer.range(of: Data("\r\n\r\n".utf8)).map { Data(buffer[$0.upperBound...]) } ?? Data()
+                    self.sockets(request, connection, leftover)
+                    return
+                }
+                // A phone opening a TV app's page: plain files, read by a browser that came by following a link.
+                if request.method == "GET" || request.method == "HEAD", self.isSite {
+                    Task {
+                        let page = await self.pages(request)
+                        self.respond(connection, page: page, head: request.method == "HEAD")
+                    }
+                    return
+                }
                 Task {
                     let (status, json) = await self.handler(request)
-                    self.respond(connection, status: status, json: json)
+                    self.respond(connection, status: status, json: json, crossOrigin: fromNetwork)
                 }
             } else if done || error != nil || buffer.count > 40_000_000 {
                 connection.cancel()
@@ -84,12 +191,26 @@ final class Gateway: @unchecked Sendable {
         }
     }
 
-    private func respond(_ connection: NWConnection, status: Int, json: [String: Any]) {
-        // 202 is how the MCP endpoint acknowledges a notification: no body.
-        let body = status == 202 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
+    /// `crossOrigin` lets a web app on a device read the answer: the app's token is what's checked, never where its page
+    /// came from, which is the device's own package.
+    private func respond(_ connection: NWConnection, status: Int, json: [String: Any], crossOrigin: Bool = false) {
+        // 202 is how the MCP endpoint acknowledges a notification, and 204 a preflight: no body.
+        let body = status == 202 || status == 204 ? Data() : (try? JSONSerialization.data(withJSONObject: json)) ?? Data("{}".utf8)
         let reason = HTTPURLResponse.localizedString(forStatusCode: status).capitalized
-        var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+        let cors = crossOrigin ? "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Max-Age: 600\r\n" : ""
+        var response = Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\n\(cors)Connection: close\r\n\r\n".utf8)
         response.append(body)
+        connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+    }
+
+    /// A page as it is. Never cached, since the app's files change with every build, and never read as another type
+    /// than the one given.
+    private func respond(_ connection: NWConnection, page: Page, head: Bool) {
+        let reason = HTTPURLResponse.localizedString(forStatusCode: page.status).capitalized
+        let location = page.location.map { "Location: \($0)\r\n" } ?? ""
+        var response = Data(("HTTP/1.1 \(page.status) \(reason)\r\nContent-Type: \(page.type)\r\nContent-Length: \(page.body.count)\r\n\(location)"
+            + "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").utf8)
+        if !head { response.append(page.body) }
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
     }
 
@@ -187,7 +308,7 @@ enum AppAI {
         Provider.ListedModel(id: "claude-fable-5-1", name: "Claude Fable", blurb: "Smartest, priciest", openRouter: "anthropic/claude-fable-5.1"),
         Provider.ListedModel(id: "opus", name: "Claude Opus", blurb: "Best at coding", openRouter: "anthropic/claude-opus-5.5"),
         Provider.ListedModel(id: "sonnet", name: "Claude Sonnet", blurb: "Faster & cheaper", openRouter: "anthropic/claude-sonnet-5.5"),
-        Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-4.5"),
+        Provider.ListedModel(id: "haiku", name: "Claude Haiku", blurb: "Fastest, cheapest", openRouter: "anthropic/claude-haiku-5.5"),
     ]
 
     /// Every route there is, whether or not it can answer right now; the pickers show the ones that can,
@@ -472,7 +593,7 @@ enum AppAI {
         case .claude:
             // Claude Code takes images by reading them, so it gets the Read tool and their names.
             if !files.isEmpty { env["LAMP_PROMPT"] = prompt + "\n\n(Images: " + files.joined(separator: ", ") + ". Read them.)" }
-            env["LAMP_MODEL"] = model   // "haiku", "sonnet" or "opus": Claude Code's own aliases
+            env["LAMP_MODEL"] = model   // Claude Code's own aliases ("sonnet", "opus") or a full model id
             command = """
             "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
               --restricted --strict-mcp-config --disable-slash-commands \\
@@ -735,13 +856,11 @@ enum AppAI {
         return (answers, 0)
     }
 
-    /// The fast model of whatever answers for apps, for decisions made by text: Haiku through Claude Code,
-    /// Luna through Codex, and pi's own model otherwise.
-    /// The small model for quick judgments on the route that will run them: Haiku when Claude Code answers,
-    /// Luna when Codex does; any other route uses its own model.
+    /// The small model for quick judgments on the route that will run them: Haiku 5.5 when Claude Code
+    /// answers, Luna 6 when Codex does; any other route uses its own model.
     static func fastModel(for route: TextRoute) -> String? {
         switch route.kind {
-        case .engine(.claude, _): "haiku"
+        case .engine(.claude, _): Builder.claudeFastModel
         case .engine(.codex, _): Builder.codexFastModel
         default: nil
         }
@@ -753,7 +872,7 @@ enum AppAI {
     /// The same for one route: an app's own text choice.
     @MainActor static func fastModelName(for model: TextRoute) -> String {
         switch model.kind {
-        case .engine(.claude, _): "Haiku through Claude"
+        case .engine(.claude, _): "Haiku 5.5 through Claude"
         case .engine(.codex, _): (Builder.codexModels.first { $0.id == Builder.codexFastModel }?.label).map { "\($0) through ChatGPT" } ?? "ChatGPT"
         default: model.label.replacingOccurrences(of: "Your ", with: "your ")
         }

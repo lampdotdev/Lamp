@@ -10,7 +10,11 @@ extension Template {
     /// Such an app needs macOS 15, where RealityView begins.
     static func usesScene(_ project: LampProject) -> Bool {
         guard project.platform == .mac else { return false }
-        let sources = project.dir.appendingPathComponent("Sources")
+        return importsRealityKit(project.dir.appendingPathComponent("Sources"))
+    }
+
+    /// Whether some Swift of the app's own in this Sources folder imports RealityKit (Lamp's files left out).
+    static func importsRealityKit(_ sources: URL) -> Bool {
         let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         return files.contains { file in
             file.pathExtension == "swift" && !["LampSupport.swift", sceneSupportFile].contains(file.lastPathComponent)

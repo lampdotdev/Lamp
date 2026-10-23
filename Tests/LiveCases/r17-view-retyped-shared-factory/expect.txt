@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Meter changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out)
+== run
+before: level=3
+RELOAD 1: REOPEN Meter changed what a field holds, and something other than a view's body makes one, which SwiftUI keeps as the open app laid it out
+after1 (want a reopen: the panel's root came from the factory a body also calls, and keeps the old layout): 
+before: level=3.0
+RELOAD 1: in the restart
+after1 (want a reopen: the panel's root came from the factory a body also calls, and keeps the old layout): 

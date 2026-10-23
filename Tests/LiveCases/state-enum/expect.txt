@@ -1,8 +1,5 @@
-VERDICT 1: REOPEN (ContentView uses Tab in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases)
+VERDICT 1: RELOAD
 == run
 before: home [Case.Tab.home]
-RELOAD 1: REOPEN ContentView uses Tab in code that may still be running (a loop, a timer, a task, an observer), which doesn't know the new cases
-after: home [Case.Tab.home]
-before: home [Case.Tab.home]
-RELOAD 1: in the restart
+RELOAD 1 (whole): ok
 after: home [Case.Tab.home]

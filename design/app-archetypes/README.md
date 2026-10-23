@@ -7,8 +7,9 @@ building, and then follows that kind's defaults. The person makes none of these 
 that already looks right, and they change it by saying so.
 
 The rules the agent reads are `Agent.Rules.kinds(mac:)`, just before the base design (`macDesign` /
-`iPhoneDesign`), and `artRules` for `make_art`. This file is the reasoning behind them: change the two
-together.
+`iPhoneDesign`), which names the kinds, the `app-kinds` skill (`Resources/skills/app-kinds`), which says how
+each one looks and is read when an app is made or changes kind, and `artRules` for `make_art`. This file is the
+reasoning behind them: change them together.
 
 ## How the agent chooses
 
@@ -119,7 +120,9 @@ copy someone is working from. The rule is `Agent.Rules.theme`, at the end of the
 
 - **What follows**: the palette, backgrounds and motifs, the style pictures are drawn in and the pictures, the
   lettering, the symbols things are rated or counted with, the words and their tone, the example content, and the
-  icon. icon.json first, since `make_art` takes its colors from the icon's tint.
+  icon. The new palette and the icon's subject and tint are chosen first, but icon.json is saved at the end of
+  the request with the other changes that reopen the app, and new pictures are painted right after it, since
+  `make_art` takes its colors from the saved icon's tint: so the request ends with one Reload.
 - **As particular as before**: the new look is as specific to the new subject as the old one was to the old
   subject, never a plainer version of the old one.
 - **What stays**: the kind and its structure, whatever still fits the new subject (a wooden bookcase holds

@@ -1,0 +1,259 @@
+HTTP/1.1 200 OK
+CACHE-CONTROL: max-age=1800
+DATE: Thu, 22 Oct 2026 15:26:09 GMT
+EXT:
+LOCATION: http://192.168.1.20:9080
+OPT: "http://schemas.upnp.org/upnp/1/0/"; ns=01
+01-NLS: 00000000-0000-1000-8000-000000000000
+SERVER: Linux/5.4.268-294.24.papikonda.2, UPnP/1.0, Portable SDK for UPnP devices
+X-User-Agent: NRDP MDX
+X-Friendly-Name: W0xHXSB3ZWJPUyBUViBOQU5PODBBU0E=
+X-Accepts-Registration: 3
+X-MSL: 1
+X-MDX-Caps: 
+X-MDX-Registered: 1
+X-MDX-Remote-Login-Supported: 0
+X-MDX-Remote-Login-Requested-By-Witcher: 0
+X-MDX-Link: 00000000000000000000000000
+ST: upnp:rootdevice
+USN: uuid:LGTV20254=00000000000::upnp:rootdevice
+
+HTTP/1.1 200 OK
+CACHE-CONTROL: max-age=1800
+DATE: Thu, 22 Oct 2026 15:26:09 GMT
+EXT:
+LOCATION: http://192.168.1.20:9080
+OPT: "http://schemas.upnp.org/upnp/1/0/"; ns=01
+01-NLS: 00000000-0000-1000-8000-000000000000
+SERVER: Linux/5.4.268-294.24.papikonda.2, UPnP/1.0, Portable SDK for UPnP devices
+X-User-Agent: NRDP MDX
+X-Friendly-Name: W0xHXSB3ZWJPUyBUViBOQU5PODBBU0E=
+X-Accepts-Registration: 3
+X-MSL: 1
+X-MDX-Caps: 
+X-MDX-Registered: 1
+X-MDX-Remote-Login-Supported: 0
+X-MDX-Remote-Login-Requested-By-Witcher: 0
+X-MDX-Link: 00000000000000000000000000
+ST: uuid:LGTV20254=00000000000
+USN: uuid:LGTV20254=00000000000
+
+HTTP/1.1 200 OK
+CACHE-CONTROL: max-age=1800
+DATE: Thu, 22 Oct 2026 15:26:09 GMT
+EXT:
+LOCATION: http://192.168.1.20:9080
+OPT: "http://schemas.upnp.org/upnp/1/0/"; ns=01
+01-NLS: 00000000-0000-1000-8000-000000000000
+SERVER: Linux/5.4.268-294.24.papikonda.2, UPnP/1.0, Portable SDK for UPnP devices
+X-User-Agent: NRDP MDX
+X-Friendly-Name: W0xHXSB3ZWJPUyBUViBOQU5PODBBU0E=
+X-Accepts-Registration: 3
+X-MSL: 1
+X-MDX-Caps: 
+X-MDX-Registered: 1
+X-MDX-Remote-Login-Supported: 0
+X-MDX-Remote-Login-Requested-By-Witcher: 0
+X-MDX-Link: 00000000000000000000000000
+ST: urn:schemas-upnp-org:device:mdxdevice:1
+USN: uuid:LGTV20254=00000000000::urn:schemas-upnp-org:device:mdxdevice:1
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1904/
+Cache-Control: max-age=1800
+Server: WebOS/4.0.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001904::upnp:rootdevice
+ST: upnp:rootdevice
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1904/
+Cache-Control: max-age=1800
+Server: WebOS/4.0.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001904
+ST: uuid:11111111-2222-4333-8444-000000001904
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1904/
+Cache-Control: max-age=1800
+Server: WebOS/4.0.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001904::urn:lge:device:tv:1
+ST: urn:lge:device:tv:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1904/
+Cache-Control: max-age=1800
+Server: WebOS/4.0.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001904::urn:lge:service:virtualSvc:1
+ST: urn:lge:service:virtualSvc:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1601/
+Cache-Control: max-age=1800
+Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001601::upnp:rootdevice
+ST: upnp:rootdevice
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+DLNADeviceName.lge.com: %5bLG%5d%20webOS%20TV%20NANO80ASA
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1601/
+Cache-Control: max-age=1800
+Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001601
+ST: uuid:11111111-2222-4333-8444-000000001601
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+DLNADeviceName.lge.com: %5bLG%5d%20webOS%20TV%20NANO80ASA
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1601/
+Cache-Control: max-age=1800
+Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001601::urn:schemas-upnp-org:device:MediaRenderer:1
+ST: urn:schemas-upnp-org:device:MediaRenderer:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+DLNADeviceName.lge.com: %5bLG%5d%20webOS%20TV%20NANO80ASA
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1601/
+Cache-Control: max-age=1800
+Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001601::urn:schemas-upnp-org:service:AVTransport:1
+ST: urn:schemas-upnp-org:service:AVTransport:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+DLNADeviceName.lge.com: %5bLG%5d%20webOS%20TV%20NANO80ASA
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1601/
+Cache-Control: max-age=1800
+Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001601::urn:schemas-upnp-org:service:ConnectionManager:1
+ST: urn:schemas-upnp-org:service:ConnectionManager:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+DLNADeviceName.lge.com: %5bLG%5d%20webOS%20TV%20NANO80ASA
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1601/
+Cache-Control: max-age=1800
+Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001601::urn:schemas-upnp-org:service:RenderingControl:1
+ST: urn:schemas-upnp-org:service:RenderingControl:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+DLNADeviceName.lge.com: %5bLG%5d%20webOS%20TV%20NANO80ASA
+
+HTTP/1.1 200 OK
+CACHE-CONTROL: max-age=1800
+DATE: Thu, 22 Oct 2026 15:26:09 GMT
+EXT:
+LOCATION: http://192.168.1.20:9080
+OPT: "http://schemas.upnp.org/upnp/1/0/"; ns=01
+01-NLS: 00000000-0000-1000-8000-000000000000
+SERVER: Linux/5.4.268-294.24.papikonda.2, UPnP/1.0, Portable SDK for UPnP devices
+X-User-Agent: NRDP MDX
+X-Friendly-Name: W0xHXSB3ZWJPUyBUViBOQU5PODBBU0E=
+X-Accepts-Registration: 3
+X-MSL: 1
+X-MDX-Caps: 
+X-MDX-Registered: 1
+X-MDX-Remote-Login-Supported: 0
+X-MDX-Remote-Login-Requested-By-Witcher: 0
+X-MDX-Link: 00000000000000000000000000
+ST: urn:mdx-netflix-com:service:target:3
+USN: uuid:LGTV20254=00000000000::urn:mdx-netflix-com:service:target:3
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1390/
+Cache-Control: max-age=1800
+Server: WebOS/4.1.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001390::upnp:rootdevice
+ST: upnp:rootdevice
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1390/
+Cache-Control: max-age=1800
+Server: WebOS/4.1.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001390
+ST: uuid:11111111-2222-4333-8444-000000001390
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1390/
+Cache-Control: max-age=1800
+Server: WebOS/4.1.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001390::urn:schemas-upnp-org:device:Basic:1
+ST: urn:schemas-upnp-org:device:Basic:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:1390/
+Cache-Control: max-age=1800
+Server: WebOS/4.1.0 UPnP/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000001390::urn:lge-com:service:webos-second-screen:1
+ST: urn:lge-com:service:webos-second-screen:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:2043/
+Cache-Control: max-age=1800
+Server: WebOS/1.5 UPnP/1.0 webOSTV/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000002043::upnp:rootdevice
+ST: upnp:rootdevice
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:2043/
+Cache-Control: max-age=1800
+Server: WebOS/1.5 UPnP/1.0 webOSTV/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000002043
+ST: uuid:11111111-2222-4333-8444-000000002043
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:2043/
+Cache-Control: max-age=1800
+Server: WebOS/1.5 UPnP/1.0 webOSTV/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000002043::urn:dial-multiscreen-org:service:dial:1
+ST: urn:dial-multiscreen-org:service:dial:1
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+WAKEUP: MAC=00:00:5E:00:53:00;Timeout=60
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:2043/
+Cache-Control: max-age=1800
+Server: WebOS/1.5 UPnP/1.0 webOSTV/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000002043::upnp:rootdevice
+ST: upnp:rootdevice
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+WAKEUP: MAC=00:00:5E:00:53:00;Timeout=60
+
+HTTP/1.1 200 OK
+Location: http://192.168.1.20:2043/
+Cache-Control: max-age=1800
+Server: WebOS/1.5 UPnP/1.0 webOSTV/1.0
+EXT: 
+USN: uuid:11111111-2222-4333-8444-000000002043
+ST: uuid:11111111-2222-4333-8444-000000002043
+Date: Thu, 22 Oct 2026 15:26:09 GMT
+WAKEUP: MAC=00:00:5E:00:53:00;Timeout=60

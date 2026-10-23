@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Added Panel.open, Row.open)
+VERDICT 2: REOPEN (Row.open is @State the view's initializer is given, and a property kept in a spare can't take a value that way)
+== run
+before: panel, row
+RELOAD 1 (whole): ok
+after1 (want it in: a panel and the row in it each gain @State named open): panel, row
+RELOAD 2: REOPEN Row.open is @State the view's initializer is given, and a property kept in a spare can't take a value that way
+after2 (want a plain reason naming Row.open, not Panel.open: the row inside the panel call is given it): 
+before: panel, row
+RELOAD 1: in the restart
+after1 (want it in: a panel and the row in it each gain @State named open): 
+RELOAD 2: in the restart
+after2 (want a plain reason naming Row.open, not Panel.open: the row inside the panel call is given it): 

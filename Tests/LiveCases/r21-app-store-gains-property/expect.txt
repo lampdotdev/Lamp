@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Store.count)
+== run
+before: items
+RELOAD 1 (whole): ok
+after1 (want it in, count=0: the model the App holds gains a property): items count=0

@@ -164,7 +164,7 @@ extension LogLine {
         // A request Lamp sent itself to fix a crash isn't the person's to see as theirs: the line before it says
         // what Lamp is doing.
         let hidden = Talk.cardMessages(in: lines).union(lines.filter { $0.byLamp == true }.map(\.id))
-        if details { return lines.filter { !hidden.contains($0.id) } }
+        if details { return lines.filter { !hidden.contains($0.id) }.map(\.withOutcome) }
         // After the agent's questions its card is the answer: whatever it says on the way out ("Waiting for
         // your answers.") would sit under the card saying the same.
         var afterAsk: Set<UUID> = []
@@ -180,20 +180,30 @@ extension LogLine {
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
         // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own. A tool call is a step
         // in the words the live line said while it ran (`steps(said:)`).
-        return said(lines.filter {
+        return said(lines.map(\.withOutcome).filter {
             !hidden.contains($0.id)
                 && ($0.kind == .agent ? !afterAsk.contains($0.id)
                     : $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
         })
     }
 
+    /// The line as the chat shows it: a command that failed says so after the name the agent gave it, so its row
+    /// never reads as done. Its own row keeps its name for when it ran fine, and two commands of one name, one failed
+    /// and one not, are two rows (`ChatItem.items`).
+    var withOutcome: LogLine {
+        guard failed == true, kind == .status, ChatLook.ranCommand(in: text) != nil else { return self }
+        var line = self
+        line.said = (said ?? ChatLook.unnamedStep) + ChatLook.failedMark
+        return line
+    }
+
     /// Tool calls as the steps a person reads: what the live line said while each ran ("Looking things over",
-    /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files. Calls in a row
-    /// that said the same are one step, and a call that says nothing of its own (a progress line) is no step. A
-    /// command is no step here either: its own row ("Ran: …", by the name the agent gave it) already is, and commands
-    /// under one name are gathered there; the file work after it is named after it too (`Store`, the agent's latest
-    /// words), so it's part of that row, not the same words again under it. Without this a turn that only read and
-    /// edited files had nothing under its open line.
+    /// "Working on the interface", `TurnProgress.activity`), never the call itself with its files, and that it failed
+    /// when it did. Calls in a row that said the same are one step, and a call that says nothing of its own (a progress
+    /// line) is no step. A command is no step here either: its own row ("Ran: …", by the name the agent gave it)
+    /// already is, and commands under one name are gathered there. For Codex the file work after a command is named
+    /// after it too (`Store`, the heading of its reasoning), so it's part of that row, not the same words again under
+    /// it. Without this a turn that only read and edited files had nothing under its open line.
     private static func said(_ lines: [LogLine]) -> [LogLine] {
         var out: [LogLine] = []
         for line in lines {
@@ -211,10 +221,11 @@ extension LogLine {
             let call = ToolCall(line.text)
             guard call.action != .run else { continue }
             // The agent's own words for the step when it gave some, else what the live line said.
-            let words = line.said ?? TurnProgress.activity(for: call)
-            guard !words.isEmpty else { continue }
+            let said = line.said ?? TurnProgress.activity(for: call)
+            guard !said.isEmpty else { continue }
+            let words = line.failed == true ? said + ChatLook.failedMark : said
             if let last = out.last, last.kind == .status, (last.said ?? last.text) == words { continue }
-            out.append(LogLine(id: line.id, kind: .status, text: words))
+            out.append(LogLine(id: line.id, kind: .status, text: words, at: line.at, foldTitle: line.foldTitle, failed: line.failed))
         }
         return out
     }
@@ -246,8 +257,8 @@ enum ChatItem: Identifiable {
     }
 
     /// With `gather` (the chat without Agent Details), each finished run's steps (what the agent ran, the app built
-    /// and opened) go into one line above its answer, as ChatGPT and Codex show the work behind an answer: the answer
-    /// is what's read, and the steps are a click away. Every finished run ends with its summary, so a run is what
+    /// and opened) fold where they came (`folded`), the ones before its answer into one line above it, as ChatGPT and
+    /// Codex show the work behind an answer: the answer is what's read, and the steps are a click away. Every finished run ends with its summary, so a run is what
     /// comes after the one before it up to its own: requests don't mark them, since a clicked answer to a card is left
     /// out of the chat and Lamp starts runs of its own (a build to fix). What comes after the last summary is a run
     /// still going, whose steps show as they come. Lamp's note that it reopened the app stays out, since it explains
@@ -265,7 +276,32 @@ enum ChatItem: Identifiable {
             result += run.contains { $0.id == waiting } ? items(run) : folded(run, summary: line)
             run = []
         }
-        return result + items(run)
+        return result + (run.contains { $0.id == waiting } ? items(run) : closing(run))
+    }
+
+    /// The run going on: each stretch of more than one step that something said came after folds to its one line,
+    /// as it will when the turn ends, so the chat keeps only what's going on now open. The line reads how many steps
+    /// it was until its title comes, which is asked for as the stretch closes (`StepTitles.closed(in:turn:)`). The
+    /// stretch still going, and a step on its own, stay rows.
+    private static func closing(_ run: [LogLine]) -> [ChatItem] {
+        var result: [ChatItem] = []
+        var stretch: [LogLine] = []
+        for line in run {
+            if isStep(line) {
+                stretch.append(line)
+                continue
+            }
+            if stretch.count > 1 {
+                let seconds = stretch[0].at.flatMap { start in line.at.map { max(0, $0.timeIntervalSince(start)) } }
+                let fold = Fold(steps: stretch, first: stretch[0], isAnswers: false, seconds: seconds)
+                result.append(.work(id: stretch[0].id, title: title(of: fold, untitled: "\(stretch.count) steps"), steps: stretch))
+            } else {
+                result += items(stretch)
+            }
+            result += items([line])
+            stretch = []
+        }
+        return result + items(stretch)
     }
 
     /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it
@@ -274,20 +310,30 @@ enum ChatItem: Identifiable {
         (line.kind == .status && line.text != ChatLook.fixingCrash) || line.kind == .tool
     }
 
-    /// While a turn goes on its steps aren't rows of their own: they're inside the one line that says what it's doing
-    /// (`ActivityRow`, the sidebar's `workingSteps`), which opens to show them. `shown` is the chat without them,
-    /// `steps` what that line opens to. The turn still going is what comes after the last summary, from its
-    /// request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
+    /// While a turn goes on, the steps since the last thing it said aren't rows of their own: they're inside the one
+    /// line at the bottom that says what it's doing (`ActivityRow`, the sidebar's `workingSteps`), which opens to show
+    /// them. Steps that came before something it said (a message, a progress line, Reload) stay where they came, folded
+    /// when there's more than one (`closing`), so the chat reads in the order things happened, newest at the bottom. `shown` is the chat without the live
+    /// line's steps, `steps` what that line opens to. The turn still going is what comes after the last summary, from
+    /// its request on: a status left after the summary before it ("Hot Shelf is ready") belongs to that turn's end.
     /// `doing` is what the line says the turn is doing now (`TurnProgress.activity`), and `looking` whether Lamp is
     /// looking at the app for the agent (`TurnProgress.looking`). The step the line is about is still going and isn't
     /// one of the steps done yet: it joins them once the agent moves on.
     static func live(_ lines: [LogLine], doing: String? = nil, looking: Bool = false) -> (shown: [LogLine], steps: [LogLine]) {
         let end = lines.lastIndex { $0.kind == .summary }.map { $0 + 1 } ?? lines.startIndex
         let start = lines[end...].firstIndex { $0.kind == .user } ?? end
-        var steps = Transcript.withoutStepInProgress(lines[start...].filter(isStep))
-        if let last = steps.last, isGoing(last, in: lines[start...], doing: doing, looking: looking) { steps.removeLast() }
-        let taken = Set(lines[start...].filter(isStep).map(\.id))
-        return (lines.filter { !taken.contains($0.id) }, steps)
+        let latest = lines[start...].lastIndex { !isStep($0) }.map { $0 + 1 } ?? start
+        var steps = Transcript.withoutStepInProgress(lines[latest...].filter(isStep))
+        if let last = steps.last, isGoing(last, in: lines[latest...], doing: doing, looking: looking) { steps.removeLast() }
+        return (Array(lines[..<latest]), steps)
+    }
+
+    /// The same split of the chat as it's shown: without the lines that aren't (a spent Reload, an offer with nothing
+    /// left to offer). Every place that draws a turn going on takes both halves from here: the transcript its `shown`,
+    /// the live line its `steps`. Split over different lines, a line one half drops and the other keeps would divide
+    /// the turn in two places, and the steps between them would be in neither.
+    @MainActor static func live(_ lines: [LogLine], dir: URL, doing: String? = nil, looking: Bool = false) -> (shown: [LogLine], steps: [LogLine]) {
+        live(Transcript.withoutSpentOffers(lines, dir: dir), doing: doing, looking: looking)
     }
 
     /// Whether `step` is the one the turn is still on: nothing came after it but Lamp's own stages of it, and the line
@@ -301,23 +347,95 @@ enum ChatItem: Identifiable {
         return doing == (step.said ?? step.text) || looking
     }
 
-    /// A finished run's lines, its steps under one line at its end: the same place the live line had while it went
-    /// on, so that line turns into "Worked for…" without anything moving. What the agent said on the way (its
-    /// progress lines and messages) stays where it was, a message like any other: what the person has read
-    /// doesn't change form or go when the turn ends, and only what was done goes into the fold.
-    private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
-        let steps = items(run.filter(isStep)).flatMap { item -> [LogLine] in
-            switch item {
-            case .statuses(let lines), .tools(let lines): lines
-            case .line(let line): [line]
-            case .work(_, _, let steps): steps
+    /// A stretch of a finished run's steps, between the things said around it: what folds into one line.
+    struct Fold {
+        /// The steps as the fold opens to them.
+        let steps: [LogLine]
+        /// The stretch's first line, which carries its title (`LogLine.foldTitle`) and names it.
+        let first: LogLine
+        /// The stretch just before the answer, whose fold is the run's "Worked for…".
+        let isAnswers: Bool
+        /// How long its steps took: from the first being logged to what came after it. Nil in a chat from before
+        /// lines were timed.
+        let seconds: TimeInterval?
+        /// Shown as a fold, not as its one step.
+        var folds: Bool { isAnswers || steps.count > 1 }
+    }
+
+    /// The stretches of a finished run's steps, and the run's other lines between them; stretch i
+    /// comes before others[i]. The answer's stretch is the last one with steps up to the run's last message.
+    static func folds(_ run: [LogLine], summary: LogLine) -> (folds: [Fold?], others: [LogLine]) {
+        var stretches: [[LogLine]] = [[]]
+        var others: [LogLine] = []
+        for line in run {
+            if isStep(line) {
+                stretches[stretches.count - 1].append(line)
+            } else {
+                others.append(line)
+                stretches.append([])
             }
         }
-        // Reload, for a change waiting on it, under the answer that says so: the last thing in the run.
-        let reloads = run.filter { $0.kind == .reload }
-        let others = run.filter { !isStep($0) && $0.kind != .reload }
-        guard !steps.isEmpty else { return items(others) + items(reloads) }
-        return items(others) + [.work(id: summary.id, title: workedFor(summary.text), steps: steps)] + items(reloads)
+        let answer = others.lastIndex { $0.kind == .agent } ?? others.count
+        let last = stretches[...min(answer, stretches.count - 1)].lastIndex { !$0.isEmpty } ?? stretches.lastIndex { !$0.isEmpty }
+        let folds = stretches.enumerated().map { index, stretch -> Fold? in
+            guard let first = stretch.first else { return nil }
+            let steps = items(stretch).flatMap { item -> [LogLine] in
+                switch item {
+                case .statuses(let lines), .tools(let lines): lines
+                case .line(let line): [line]
+                case .work(_, _, let steps): steps
+                }
+            }
+            let after = index < others.count ? others[index] : nil
+            let ended = (after ?? summary).at
+            let seconds = first.at.flatMap { start in ended.map { max(0, $0.timeIntervalSince(start)) } }
+            return Fold(steps: steps, first: first, isAnswers: index == last, seconds: seconds)
+        }
+        return (folds, others)
+    }
+
+    /// A finished run's lines, each stretch of its steps folded where it came, between the things the agent said and
+    /// Lamp's lines (Reload), so the chat reads in the order things happened. The stretch just before the answer (the
+    /// run's last message) is its "Worked for…", above the answer, as ChatGPT and Codex show the work behind one; any
+    /// other stretch folds to how many steps it was, or is its one step, as Lamp's note after the answer that the app
+    /// is ready is. A run with no answer has its last stretch for "Worked for…". Once the turn is over each fold is
+    /// given a line saying what it did (`StepTitles`), shown with how long it took in place of those words. What the
+    /// agent said on the way (its progress lines and messages) stays where it was, a message like any other: what the
+    /// person has read doesn't change form or go when the turn ends, and only what was done goes into the folds.
+    private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
+        let (folds, others) = folds(run, summary: summary)
+        var result: [ChatItem] = []
+        for (index, fold) in folds.enumerated() {
+            if let fold {
+                if fold.isAnswers {
+                    result.append(.work(id: summary.id, title: title(of: fold, untitled: workedFor(summary.text)), steps: fold.steps))
+                } else if !fold.folds {
+                    result += items(fold.steps)
+                } else {
+                    result.append(.work(id: fold.first.id, title: title(of: fold, untitled: "\(fold.steps.count) steps"), steps: fold.steps))
+                }
+            }
+            if index < others.count { result += items([others[index]]) }
+        }
+        return result
+    }
+
+    /// A fold's line: what it did and how long that took ("Listed the shelf's entries · 12 s"), or, until that's
+    /// known or when it couldn't be made, `untitled`. A fold from before lines were timed shows no time.
+    static func title(of fold: Fold, untitled: String) -> String {
+        guard let title = fold.first.foldTitle else { return untitled }
+        return fold.seconds.map { "\(title) · \(duration($0))" } ?? title
+    }
+
+    /// "12 s", "3 min", "1 min 5 s".
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = max(1, Int(seconds.rounded()))
+        let minutes = total / 60, rest = total % 60
+        switch (minutes, rest) {
+        case (0, _): return "\(rest) s"
+        case (_, 0): return "\(minutes) min"
+        default: return "\(minutes) min \(rest) s"
+        }
     }
 
     /// "Worked for 2 min 3 s", from a turn's summary ("Worked for 2m 3s · $0.12").
@@ -347,10 +465,11 @@ enum ChatItem: Identifiable {
                     continue
                 }
                 // Commands the agent gave one name to are one step: the name once, their commands under it.
-                // Each command keeps its own "(not run)", whichever came first.
+                // Each command keeps its own "(not run)", whichever came first, and the step whether none of them ran.
                 if let said = line.said, let last = kept.last, last.said == said,
                    let command = ChatLook.ranCommand(in: line.text), let before = ChatLook.ranCommand(in: last.text) {
                     kept[kept.count - 1].text = "Ran: " + before + "\n" + command
+                    kept[kept.count - 1].notRun = last.wasNotRun && line.wasNotRun
                     items[items.count - 1] = .statuses(kept)
                 } else {
                     items[items.count - 1] = .statuses(kept + [line])
@@ -411,8 +530,8 @@ struct Transcript: View {
         let openAsk = Talk.open(in: lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
-        // While the turn goes on, its steps are in the one line that says what it's doing, not rows of their own.
-        let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown).shown) : shown,
+        // While the turn goes on, its steps since it last said something are in the one line that says what it's doing.
+        let items = ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
                                    gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
             let isLast = index == items.count - 1
@@ -563,6 +682,9 @@ struct LogRow: View, Equatable {
                         .font(.caption)
                 }
             }
+            // Set in with the steps' words, past their symbols, as what the step above it said.
+            .padding(.leading, ChatLook.stepIndent + ChatLook.stepSymbolRoom)
+            .padding(.trailing, 32)
         case .needsKey, .offer:
             if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
         case .noted:
@@ -579,6 +701,8 @@ struct LogRow: View, Equatable {
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
                 IPhoneSetupLine(project: project, wanted: Platform(rawValue: line.text) ?? .iphone)
             }
+        case .deviceStep:
+            DeviceStepLine(deviceID: line.text)
         case .ask, .result:
             // Drawn by Transcript, which knows whether they're still waiting.
             EmptyView()

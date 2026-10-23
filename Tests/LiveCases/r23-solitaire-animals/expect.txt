@@ -1,0 +1,11 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD (Gave TableLayout.margin its new value)
+VERDICT 3: RELOAD
+== run
+before: drawn
+RELOAD 1 (whole): ok
+after1 (want it in: face cards gain animals, a real change from a run): drawn
+RELOAD 2 (whole): ok
+after2 (want it in: the table becomes a casino table, a real change from a run): drawn
+RELOAD 3 (whole): ok
+after3 (want it in: the felt and rail get picture textures, a real change from a run): drawn

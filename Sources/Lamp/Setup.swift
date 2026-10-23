@@ -367,10 +367,19 @@ extension View {
 
 private struct SettingsPane: ViewModifier {
     @State private var height: CGFloat = 0
+    @State private var window: NSWindow?
+    /// Goes up when the window moves to another screen, which has room of its own.
+    @State private var screenChanges = 0
 
-    /// Room left on screen once the window's title bar and toolbar are accounted for.
+    /// Room left on the window's own screen once its title bar and toolbar are taken off, as they are, with a little
+    /// to spare. A pane any taller makes a window macOS won't put on screen: it's shrunk to fit, the pane asks for its
+    /// height again, and the two go on until AppKit gives up and Lamp crashes. The screen is the window's (the main
+    /// one can be another size), and the chrome is measured, since a toolbar's height isn't the same everywhere.
     private var maxHeight: CGFloat {
-        ((NSScreen.main?.visibleFrame.height ?? 800) - 100).rounded()
+        _ = screenChanges
+        let screen = window?.screen ?? NSScreen.main
+        let chrome = window.map { $0.frame.height - $0.contentLayoutRect.height } ?? 120
+        return max(200, ((screen?.visibleFrame.height ?? 800) - chrome - 20).rounded(.down))
     }
 
     func body(content: Content) -> some View {
@@ -383,7 +392,39 @@ private struct SettingsPane: ViewModifier {
         }
         .scrollDisabled(height <= maxHeight)
         .frame(height: height == 0 ? nil : min(height, maxHeight))
+        .background(SettingsWindowReader { window = $0; keepOnScreen() })
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { note in
+            if (note.object as? NSWindow) === window { screenChanges += 1 }
+        }
+        // The pane's height as drawn, which a move to another screen changes too (its cap is that screen's).
+        .onChange(of: min(height, maxHeight)) { keepOnScreen() }
     }
+
+    /// The window keeps its top where it is as the pane grows, as Settings windows do, so one opened low on the
+    /// screen grows past its bottom; macOS then fits it back while the pane is still asking for the height, which is
+    /// the loop above. Once the window has taken its new height, it's moved up just enough to be on screen whole.
+    private func keepOnScreen() {
+        DispatchQueue.main.async {
+            guard let window, let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+            var frame = window.frame
+            guard frame.minY < visible.minY else { return }
+            frame.origin.y = min(visible.minY, visible.maxY - frame.height)
+            window.setFrameOrigin(frame.origin)
+        }
+    }
+}
+
+/// Hands back the window a Settings pane is in, once it's in one.
+private struct SettingsWindowReader: NSViewRepresentable {
+    let found: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { if let window = view.window { found(window) } }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }
 
 /// A section's on/off options, as checkboxes with the box first, as Finder's settings have them: in a stack,
@@ -735,7 +776,10 @@ struct BuildingSettings: View {
                     }
                 }
             }
-            PhoneSigningSection(phoneApps: hasPhoneApps)
+            // A phone in the list needs a team before an app can go on it, so the team is chosen here even
+            // before there is an iPhone app.
+            PhoneSigningSection(phoneApps: hasPhoneApps || store.devices.contains { $0.kind.isPhone })
+            DevicesSection()
         }
         .settingsPane()
         .onChange(of: notify) { Notifier.shared.setBadge(store.unread.count) }
@@ -849,7 +893,6 @@ struct PhoneSigningSection: View {
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
-                    if phoneApps { Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show() } }
                 }
             }
         }
@@ -861,6 +904,224 @@ struct PhoneSigningSection: View {
             let signedIn = Devices.xcodeTeams()
             if let first = signedIn.first, !signedIn.contains(where: { $0.id == team }) { team = first.id }
             else if team.isEmpty, let first = teams.first { team = first.id }
+        }
+    }
+}
+
+/// Every device Lamp knows about, in Building: this Mac, and the iPhones, iPads and Apple Watches it can see,
+/// each by its exact model and software, with where its setup stands and the one thing that takes it further.
+/// Nothing is set up in advance: a device is set up when the person asks, here or when a wish needs it. Where
+/// an app opens is chosen per app under Try On, which lists the same phones.
+struct DevicesSection: View {
+    @EnvironmentObject private var store: Store
+    @AppStorage("appleTeam") private var team = ""
+    @State private var adding = false
+    @State private var forgetting: Device?
+
+    var body: some View {
+        Section("Your Devices") {
+            ForEach([store.thisMac].compactMap { $0 } + store.devices) { device in
+                row(device)
+            }
+            HStack {
+                if store.lookingForDevices { LookingForDevices() }
+                Spacer()
+                Button("Add a New Device…") { adding = true }.controlSize(.small)
+            }
+        }
+        .onAppear { store.refreshDevices() }
+        .sheet(isPresented: $adding) { AddDeviceSheet() }
+        .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+            Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
+        } message: {
+            Text("Lamp forgets how to reach it and what you typed for it. To use it again, set it up from the start.")
+        }
+    }
+
+    /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
+    /// Mac's, and an Android device's is the device's own.
+    private func keptByLamp(_ device: Device) -> Bool {
+        device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
+    }
+
+    /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
+    /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
+    private func reconnect(_ device: Device) {
+        if device.kind.isTV {
+            TVs.reconnect(device.id)
+            store.refreshDevices()
+            TVSetup.shared.show(device.udid)
+        } else {
+            DeviceSetupModel.for(device).reconnect()
+            DeviceSetupWindow.show(device)
+        }
+    }
+
+    private func forget(_ device: Device) {
+        if device.kind.isTV {
+            TVs.forget(device.id)
+        } else {
+            DeviceSetupModel.discard(device.id)
+            Integrations.forget(device.id)
+        }
+        forgetting = nil
+        store.refreshDevices()
+    }
+
+    private func row(_ device: Device) -> some View {
+        let setup = device.setup(team: team)
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.name)
+                Text(device.line).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            switch setup {
+            case _ where device.isAway:
+                Text(device.status).foregroundStyle(.secondary)
+                    .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
+            case .ready:
+                Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
+            case .needs(let step) where device.kind == .other && device.integration == nil:
+                // Found on the network, with nothing yet that knows it: not a problem, an offer.
+                Text(step).foregroundStyle(.secondary)
+                DeviceNextStep(device: device)
+            case .needs(let step):
+                Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                DeviceNextStep(device: device)
+            case .talkOnly:
+                Text(setup.words).foregroundStyle(.secondary)
+            }
+            if keptByLamp(device) {
+                Menu {
+                    Button("Reconnect…") { reconnect(device) }
+                    Button("Forget \(device.name)…") { forgetting = device }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Reconnect or forget \(device.name)")
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// A look for devices going on, said where it was asked for.
+struct LookingForDevices: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text("Looking for devices…").foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Where a new device starts, from Your Devices: each kind Lamp can set up, the way it's reached, and what's on the
+/// network now that isn't set up yet. Each kind's setup has a window of its own, checked and taken further there,
+/// so choosing one closes this. The network is looked at again as this opens and when asked.
+struct AddDeviceSheet: View {
+    @EnvironmentObject private var store: Store
+    @Environment(\.dismiss) private var dismiss
+
+    /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet. Phones
+    /// and tablets have their own rows above, whose setup windows take each one further, so a wireless one isn't here.
+    private var waiting: [Device] {
+        store.devices.filter { ($0.kind.isTV || $0.kind == .other) && $0.reach == .network && $0.setup() != .ready }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Add a New Device").font(.headline)
+            VStack(alignment: .leading, spacing: 12) {
+                kind("iPhone or iPad", symbol: "iphone", how: "Plug it into this Mac and unlock it.") {
+                    PhoneSetup.shared.show()
+                }
+                kind("Android phone or tablet", symbol: "smartphone", how: "Plug it into this Mac.") {
+                    AndroidSetup.shared.show()
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "tv").foregroundStyle(.secondary).frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("TV or other device")
+                        Text("Turn it on, on this Mac's network.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(waiting) { device in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(device.name)
+                                Text(device.line).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            DeviceNextStep(device: device, then: { dismiss() })
+                        }
+                    }
+                    HStack {
+                        if store.lookingForDevices {
+                            LookingForDevices()
+                        } else {
+                            Text(waiting.isEmpty ? "Nothing new found." : "").foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Look Again") { store.refreshDevices() }.controlSize(.small).disabled(store.lookingForDevices)
+                    }
+                }
+                .padding(.leading, 30)
+            }
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+        .onAppear { store.refreshDevices() }
+    }
+
+    private func kind(_ name: String, symbol: String, how: String, setUp: @escaping () -> Void) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                Text(how).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Set Up…") { dismiss(); setUp() }.controlSize(.small)
+        }
+    }
+}
+
+/// The one button that takes a device to its next step, where Lamp can do it from here; `then` runs once a window
+/// for it has been asked for.
+struct DeviceNextStep: View {
+    @EnvironmentObject private var store: Store
+    let device: Device
+    var then: () -> Void = {}
+
+    var body: some View { next(for: device) }
+
+    @ViewBuilder private func next(for device: Device) -> some View {
+        if device.kind.isPhone, !device.paired {
+            Button(store.pairing.contains(device.udid) ? "Pairing…" : "Pair…") { store.pairDevice(device, for: nil) }
+                .controlSize(.small).disabled(store.pairing.contains(device.udid))
+        } else if device.kind.isPhone, !device.developerMode {
+            Button("How…") { then(); PhoneSetup.shared.show(family: device.family ?? .iphone, phone: device.udid) }.controlSize(.small)
+        } else if device.kind.isTV {
+            Button("Set Up…") { then(); TVSetup.shared.show(device.udid) }.controlSize(.small)
+        } else if device.kind == .other {
+            // One Lamp has an integration for is set up in the window drawn from it; one it doesn't know yet starts
+            // the work of writing its integration, in a wish of its own.
+            Button("Set Up…") {
+                then()
+                if device.integration != nil { DeviceSetupWindow.show(device) } else { store.setUpDevice(device) }
+            }
+            .controlSize(.small)
         }
     }
 }

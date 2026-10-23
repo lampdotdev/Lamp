@@ -1,0 +1,6 @@
+VERDICT 1: RELOAD (Added ListView.hideDone)
+== run
+before: list, row Milk
+RELOAD 1 (whole): ok
+after1 (want it in: a setting added to an existing view with @AppStorage, as agents add settings): list hideDone=false, row Milk
+after1, set elsewhere (want hideDone=true: the view hears the defaults change): list hideDone=true

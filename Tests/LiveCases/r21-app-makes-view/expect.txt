@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: greeting=Hello
+RELOAD 1: ok
+after1 (want it in, greeting=Goodbye: the window view, made by the App, says something else): greeting=Goodbye

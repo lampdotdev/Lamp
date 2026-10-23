@@ -119,7 +119,10 @@ enum AppName {
     names.
 
     Last, list the devices it runs on: "mac" for this Mac, "iphone" for iPhone and iPad, "watch" for Apple Watch \
-    (with "iphone", when they mention a watch or their wrist). ["iphone"] when they \
+    (with "iphone", when they mention a watch or their wrist), "android" (alone) for an Android phone or tablet, "tv" \
+    (alone) for a Samsung or LG TV, ["tv"] when they mention their TV, a Frame TV, the living room screen or watching \
+    from the sofa. \
+    ["android"] when they mention Android, a Pixel, a Samsung phone or Google Play; ["iphone"] when they \
     mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
     the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
     same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.
@@ -138,6 +141,11 @@ enum AppName {
         /// What it runs on, from the request (`Store.chooseKind`), and whether the person said so.
         var kind: Platform?
         var kindSaid = false
+        /// For a device app (`Platform.device`), the integration it's for.
+        var integration: String?
+        /// For one of the person's devices Lamp can't make apps for yet (`seen`): nothing is made until the agent has
+        /// set the device up and given the wish its kind.
+        var forOtherDevice = false
         /// The person wants an Apple Watch app too (the agent writes it; `chooseKind` says so in the chat).
         var watch = false
         /// The icon's background (`Icons.backgrounds`), chosen here so the blueprint shows it from the start and the
@@ -145,8 +153,8 @@ enum AppName {
         var color: String?
     }
 
-    static func suggest(for brief: String) async -> Suggestion? {
-        let request = "\(prompt)\n\nThe user asked for:\n\(brief.prefix(4000))"
+    static func suggest(for brief: String, devices: [Device] = []) async -> Suggestion? {
+        let request = "\(prompt)\(deviceKinds())\(seen(devices))\n\nThe user asked for:\n\(brief.prefix(4000))"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: await AppAI.helperModel()),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
@@ -156,8 +164,61 @@ enum AppName {
         let devices = Set(object["devices"] as? [String] ?? [])
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kind: Platform(devices: devices), kindSaid: object["devices_by_user"] as? Bool ?? false,
-                          watch: devices.contains("watch"),
+                          integration: Platform(devices: devices) == .device ? devices.first : nil,
+                          forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
                           color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
+    }
+
+    /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone. A device
+    /// that takes more than one kind of app has each named with what it's for ("xbox-one:game" for a 3D game), so the
+    /// kind is chosen from the wish as the device is, never by a setting.
+    static func deviceKinds() -> String {
+        let kinds = DeviceApps.kinds()
+        guard !kinds.isEmpty else { return "" }
+        return "\n\nThese devices of the person's take apps too; each stands alone, for a request that names it or its maker: "
+            + kinds.map { entry in
+                let what = "their \(entry.integration.name) (\(entry.integration.kind ?? "device") by \(entry.integration.maker))"
+                return "[\"\(entry.id)\"] for " + (entry.kind.purpose.map { "\($0) on \(what)" } ?? what)
+            }.joined(separator: ", ") + "."
+    }
+
+    /// The person's devices Lamp found just now, each with what to answer for a wish that's for it, so "my TV" or
+    /// "my Roku" is read as the device they have: a Roku isn't a Samsung or LG TV. A wish to run something on one Lamp
+    /// can't put apps on yet is "other", which leaves the wish a draft for the agent to set the device up
+    /// (`device_integration`) and make the app for it once it can, rather than starting it as something else; a wish
+    /// to control such a device (a remote for the speakers) is an app on this Mac like any other.
+    static func seen(_ devices: [Device]) -> String {
+        let listed = devices.compactMap { device -> String? in
+            guard let answer = answer(for: device) else { return nil }
+            let what = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
+            let name = device.name.isEmpty || device.name == device.model ? what : "\(device.name) (\(what))"
+            // A device that takes more than one kind of app is answered by what the wish is for (a 3D game, or an app).
+            let kinds = DeviceApps.kinds().filter { DeviceApps.split($0.id).integration == answer }
+            let answers = kinds.count > 1 ? kinds.map { "[\"\($0.id)\"]" + ($0.kind.purpose.map { " for \($0)" } ?? "") }.joined(separator: ", or ")
+                : "[\"\(answer)\"]"
+            return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): \(answers)"
+        }
+        guard !listed.isEmpty else { return "" }
+        return "\n\nThe person's devices, found just now, with what to answer when the request is for one of them (by its name, "
+            + "its maker, its model or what it is: \"my TV\" is the TV here). These answers come before the rules above. "
+            + "[\"other\"] is a device Lamp can't put apps on yet: answer it alone, with \"devices_by_user\" true, only when "
+            + "what's asked for runs on that device itself (a game or a channel on it); an app that plays to it, controls it or "
+            + "reads it doesn't run on it, and is answered by the rules above.\n"
+            + listed.prefix(20).joined(separator: "\n")
+    }
+
+    /// What the naming call answers for a wish that's for this device, or nil to leave it off the list: this Mac and
+    /// Apple's phones, iPads and watches, which the rules already name ("my phone"), since listing them drew wishes
+    /// that named no device to the iPhone; and the emulator, which is Lamp's own.
+    static func answer(for device: Device) -> String? {
+        switch device.kind {
+        case .mac, .androidEmulator, .iphone, .ipad, .watch: return nil
+        case .android: return "android"
+        case .samsungTV, .lgTV: return "tv"
+        case .other:
+            guard let id = device.integration, DeviceApps.makesApps(id) else { return "other" }
+            return id
+        }
     }
 
     static func name(_ object: [String: Any], asked brief: String) -> String? {

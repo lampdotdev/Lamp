@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added Row.tint)
+== run
+before: row Milk
+RELOAD 1 (whole): ok
+after1 (want it in, tint=true: a row, made only in a body, gains a let with a colour): row Milk tint=true

@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD
+== run
+before: hero v1
+RELOAD 1: ok
+after1 (want it in, hero v2: a padding and a background added to a part of the view written as its own member, marked private, as the same part not marked private is not): hero v2

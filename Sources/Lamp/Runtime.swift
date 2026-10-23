@@ -52,6 +52,30 @@ enum Runtime {
 
     static func holdsBuild(_ project: LampProject) -> Bool { FileManager.default.fileExists(atPath: heldURL(project).path) }
 
+    /// When Play last put a TV app on each of the person's TVs and opened it there, and from which sources: the agent
+    /// is told it (`DeviceNote`), since nothing else Lamp knows says what the TV has.
+    struct OnTV: Codable {
+        var at: Date
+        var fingerprint: String
+    }
+    private static func onTVURL(_ project: LampProject) -> URL { macFolder(project).appendingPathComponent("on-tv.json") }
+    /// `staged` is what the copy that went to the TV was made from, read before it was sent: the sources may have
+    /// changed since (an edit during a slow upload), and the TV doesn't have that. Without it, the last build's.
+    static func putOnTV(_ project: LampProject, tv: String, staged: String? = nil) {
+        guard let made = staged ?? builtFingerprint(project) else { return }
+        var all = onTV(project)
+        all[tv] = OnTV(at: Date(), fingerprint: made)
+        if let data = try? JSONEncoder().encode(all) { try? AppFolder.write(data, to: onTVURL(project), in: project.dir) }
+    }
+    /// Read as everything Lamp reads in the app's folder is: the agent may leave a link or a pipe in its place.
+    static func onTV(_ project: LampProject) -> [String: OnTV] {
+        AppFile.read(onTVURL(project), in: project).flatMap { try? JSONDecoder().decode([String: OnTV].self, from: $0) } ?? [:]
+    }
+    /// What the last build was made from (`markBuilt`), the fingerprint taken before its copy was staged.
+    static func builtFingerprint(_ project: LampProject) -> String? {
+        AppFile.text(builtURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// What the app is built from, as one hash: the contents of Sources, its widget's folder, Package.swift and the icon design,
     /// and the attached files the app itself uses (they're copied into the bundle, so a new picture for the
     /// app needs a build; a screenshot attached for the agent to look at doesn't). Not file dates, which move
@@ -65,10 +89,20 @@ enum Runtime {
         // change for an app that has them (Store.intentsCanComeBack).
         // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).
         if project.platform == .mac, Store.usesAppIntents(project) || Template.hasShare(project) { hasher.update(data: Data(Devices.team.utf8)) }
-        let roots = ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"].map { project.dir.appendingPathComponent($0) }
+        // An Android app's code is its `app` module, whose `build` folder is what the build makes, not what it's made from.
+        let names = project.platform == .android ? [Template.androidAppFolder, "icon.json"]
+            : project.platform == .tv ? [TVTemplate.webFolder, TVTemplate.phoneFolder, "icon.json"]
+            : project.platform == .device ? DeviceApps.sourceRoots(project).map(\.lastPathComponent)
+            : ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, "Package.swift", "icon.json", "capabilities.json"]
+        let roots = names.map { project.dir.appendingPathComponent($0) }
+        // A device app's package is made from its integration's declared step, so a new step is a change too.
+        if project.platform == .device, let declared = DeviceApps.integration(for: project)?.app?.declared {
+            hasher.update(data: Data((declared.package + "\n" + declared.output + "\n" + (project.integration ?? "")).utf8))
+        }
         for root in roots {
             let files = (FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
                 .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+                .filter { project.platform != .android || !$0.path.hasPrefix(root.appendingPathComponent("build").path + "/") }
             for file in ([root] + files).sorted(by: { $0.path < $1.path }) {
                 guard let data = try? Data(contentsOf: file) else { continue }
                 hasher.update(data: Data(file.path.dropFirst(project.dir.path.count).utf8))
@@ -85,13 +119,14 @@ enum Runtime {
 
     /// Starts a new log for a launch the simulator makes (a Mac app does this itself in LampRuntime.start):
     /// the last one becomes previous-log.txt.
+    /// Written on the app's folder's terms (`AppFolder`, `AppFile`): the runtime folder is the agent's to write, so a
+    /// link left there must not carry the log, or what was in it, anywhere else.
     static func startLog(_ project: LampProject) {
-        let fm = FileManager.default
-        try? fm.createDirectory(at: folder(project), withIntermediateDirectories: true)
         let log = logURL(project), previous = folder(project).appendingPathComponent("previous-log.txt")
-        try? fm.removeItem(at: previous)
-        try? fm.moveItem(at: log, to: previous)
-        fm.createFile(atPath: log.path, contents: nil)
+        try? AppFolder.createDirectory(folder(project), in: project.dir)
+        let last = AppFile.read(log, in: project) ?? Data()
+        try? AppFolder.write(last, to: previous, in: project.dir)
+        try? AppFolder.write(Data(), to: log, in: project.dir)
     }
 
     // MARK: - Launch
@@ -122,7 +157,9 @@ enum Runtime {
 
         /// `alive` is asked every tenth of a second; `died` says what's known once it's false, given whether it came
         /// `late` or while Lamp was closing the app (`retired`), and nil when the going doesn't count as a death after all.
-        init(opened: Date, alive: @escaping @MainActor () -> Bool,
+        /// `confirm`, when given, is asked once more as the window ends, for an app whose life is known only by asking
+        /// its device (Android's), so the verdict never rests on a reading taken before a death in the last moments.
+        init(opened: Date, alive: @escaping @MainActor () -> Bool, confirm: (@MainActor () async -> Bool)? = nil,
              died: @escaping @MainActor (_ late: Bool, _ retired: Bool) async -> String?) {
             self.opened = opened
             self.alive = alive
@@ -131,6 +168,7 @@ enum Runtime {
                 while alive(), clock.now - start < Runtime.launchWindow {
                     try? await Task.sleep(for: .milliseconds(100))
                 }
+                if alive(), let confirm { return !(await confirm()) }
                 return !alive()
             }
             self.window = window
@@ -225,6 +263,16 @@ enum Runtime {
         guard Privacy.sharesPictures, let built = modified(builtURL(project)),
               let taken = modified(folder(project).appendingPathComponent("screenshot.png")), taken > built
         else { return "" }
+        // A TV app's picture is the last look at the TV preview, and the person's TV is never pictured.
+        if project.onTV {
+            return """
+
+
+            Note from Lamp: \(folderPath(project))/screenshot.png is a picture of the TV preview on this Mac (not the \
+            user's TV), taken at \(taken.formatted(date: .omitted, time: .shortened)). If you can view images, look at it \
+            when this request is about how the app looks or behaves.
+            """
+        }
         let more = (2...3).map { "screenshot-\($0).png" }
             .filter { modified(folder(project).appendingPathComponent($0)).map { $0 > built } ?? false }
         return """

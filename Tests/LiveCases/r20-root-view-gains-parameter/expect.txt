@@ -1,0 +1,13 @@
+VERDICT 1: RELOAD (Added ContentView.compact)
+VERDICT 2: REOPEN (ContentView changed what it holds (ContentView.heading: String); ContentView.heading starts as makeHeading(), and ContentView is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as a literal, which it then always is)
+== run
+before: card
+RELOAD 1 (whole): ok
+after1 (want it in, compact=true: the root view, made once, gains a var with a literal nobody passes): card, root compact=true
+RELOAD 2: REOPEN ContentView changed what it holds (ContentView.heading: String); ContentView.heading starts as makeHeading(), and ContentView is made where the open app keeps it (at launch, or outside a view's body), so a new property of it goes in only as a literal, which it then always is
+after2 (want a plain reason: the root view, made once, gains a var made by a call, which only a new copy of it would run): 
+before: card, root compact=true heading=Groceries
+RELOAD 1: in the restart
+after1 (want it in, compact=true: the root view, made once, gains a var with a literal nobody passes): 
+RELOAD 2: in the restart
+after2 (want a plain reason: the root view, made once, gains a var made by a call, which only a new copy of it would run): 
