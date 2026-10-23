@@ -8,8 +8,8 @@ link makes their own version from the words.
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
   the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the homepage's and the
   ideas page's wishes open in, so it has their Download Lamp (which copies the wish with Lamp's mark, FIRST_IDEA.md)
-  and, on a Mac, their "Already have Lamp? Open it with this wish". On a Mac the card also tries `lamp://wish?text=…`
-  once as the page opens. Closed, it leaves the visitor among more ideas. The function serves the built ideas page
+  and, on a Mac, their "Already have Lamp? Open it with this wish" (`lamp://wish?text=…`), which waits for the click
+  as theirs does. Closed, it leaves the visitor among more ideas. The function serves the built ideas page
   (`dist/ideas/index.html`, bundled with it by `includeFiles`) with the wish in `#shared-wish` and its own title,
   description and preview tags in place of the ideas page's; `npm run dev` gives it its own server's ideas page.
 - The preview card (`/w/<id>/card.png`, `lib/wish-card.js`, `api/wish-card.js`): 1200×630, drawn by `@vercel/og`

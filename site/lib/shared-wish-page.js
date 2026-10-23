@@ -4,8 +4,7 @@ import { cacheTags, findWish, isID } from "./shared-wishes.js";
 
 // The page a shared wish's link opens (lamp.dev/w/<id>): the ideas page with that wish's card open on it, the same
 // card the homepage's and the ideas page's wishes open in (WishDialog.astro), so a shared wish takes the site's one
-// way into Lamp: Download copies it with Lamp's mark, and on a Mac the link under it opens Lamp with it (the card
-// also tries that once as the page opens). Closed, the card leaves the visitor among more ideas. The site is static
+// way into Lamp: Download copies it with Lamp's mark, and on a Mac the link under it opens Lamp with it. Closed, the card leaves the visitor among more ideas. The site is static
 // and the wish is only known when the page is asked for, so the page is the built ideas page (vercel.json bundles
 // it with the function) with the wish and its preview put in here.
 
