@@ -148,6 +148,40 @@ final class ControllerMessageSizeTests: XCTestCase {
         XCTAssertTrue(context.evaluateScript("errors.join(' ')")?.toString().contains("at most \(Self.limit) bytes") == true)
     }
 
+    /// A page that says it's ready as soon as it's given its number, on the welcome that says the TV app is there:
+    /// that message goes, on the first link and after a reconnect (Roomote's review of 2f7b3ede).
+    func testAMessageSentWhenThePhoneIsGivenItsNumberGoes() throws {
+        let context = try XCTUnwrap(JSContext())
+        var failure: String?
+        context.exceptionHandler = { _, value in failure = value?.toString() }
+        context.evaluateScript("""
+            var window = this, sent = [], sockets = [], store = {}, later = [], results = [];
+            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860' };
+            var history = { replaceState: function () { location.hash = ''; } };
+            var sessionStorage = {
+              getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
+              setItem: function (k, v) { store[k] = String(v); }, removeItem: function (k) { delete store[k]; }
+            };
+            function WebSocket(url) { this.readyState = 1; sockets.push(this); }
+            WebSocket.prototype.send = function (text) { sent.push(text); };
+            WebSocket.prototype.close = function () {};
+            function setInterval() { return 0; } function clearInterval() {}
+            function setTimeout(fn) { later.push(fn); return later.length; } function clearTimeout() {}
+            """)
+        context.evaluateScript(TVTemplate.phoneControllerJS)
+        context.evaluateScript("""
+            var pad = LampController.connect({ onPlayer: function (n) { results.push(pad.send({ ready: n })); } });
+            var welcome = JSON.stringify({ t: 'welcome', player: 2, host: true, credential: 'kept' });
+            sockets[0].onopen(); sockets[0].onmessage({ data: welcome });
+            sockets[0].onclose({ code: 1006 });   // the Wi-Fi dropped, and the page joins again
+            later.shift()();
+            sockets[1].onopen(); sockets[1].onmessage({ data: welcome });
+            """)
+        XCTAssertNil(failure)
+        XCTAssertEqual(context.evaluateScript("results.join(',')")?.toString(), "true,true")
+        XCTAssertEqual(context.evaluateScript("sent.filter(function (s) { return JSON.parse(s).t === 'message'; }).length")?.toInt32(), 2)
+    }
+
     func testTheTVPageRefusesAMessageOverTheLimitAndLogsAPhonesRefusedOne() throws {
         let context = try XCTUnwrap(JSContext())
         var failure: String?

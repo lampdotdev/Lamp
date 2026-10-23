@@ -578,8 +578,9 @@ extension TVTemplate {
                   retry = 0; join = ''; seq = 0;
                   player = m.player;
                   sessionStorage.setItem(keyName, m.credential);
-                  if (handlers.onPlayer) handlers.onPlayer(player);
+                  // Whether the TV app is there is known before onPlayer, so a page that says it's ready from there is heard.
                   host = !!m.host;
+                  if (handlers.onPlayer) handlers.onPlayer(player);
                   state(m.host ? 'connected' : 'waiting');
                 } else if (m.t === 'credential') {
                   sessionStorage.setItem(keyName, m.credential);

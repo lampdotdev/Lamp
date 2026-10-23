@@ -13755,9 +13755,10 @@ enum Template {
             case "welcome":
                 retry = 0
                 seq = 0
-                player = m["player"] as? Int
-                if let kept = m["credential"] as? String { credential = kept }
+                // The state first, so code that sends as soon as it sees its player number is heard.
                 state = m["host"] as? Bool == true ? .connected : .waiting
+                if let kept = m["credential"] as? String { credential = kept }
+                player = m["player"] as? Int
             case "credential":
                 if let kept = m["credential"] as? String { credential = kept }
             case "state":
