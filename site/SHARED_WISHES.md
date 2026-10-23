@@ -22,8 +22,9 @@ link makes their own version from the words.
 In the **lamp** Vercel project:
 
 1. **Storage → Create Database → Blob**, name it **lamp-shared-wishes**, and connect it to **lamp** for Production
-   (and Preview, to try it on preview deployments). That adds `BLOB_READ_WRITE_TOKEN`. The pictures are public at
-   addresses with a random part, under `production/` or `preview/`.
+   and Preview, with **Public** access. That adds `BLOB_STORE_ID`, which `@vercel/blob` uses with the deployment's
+   OIDC token (a store connected the older way gives `BLOB_READ_WRITE_TOKEN`, which works too). The pictures are
+   public at addresses with a random part, under `production/` or `preview/`.
 2. The bug reports' Upstash database (**lamp-bug-reports**, see BUG_REPORTS.md) keeps each wish's record and the
    quotas. Under Storage → lamp-bug-reports → Projects, the lamp connection's **Update Project Connection** has
    Production and Preview ticked: the site reads the `KV_REST_API_URL` and `KV_REST_API_TOKEN` that connection gives

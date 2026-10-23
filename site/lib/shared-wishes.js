@@ -135,7 +135,9 @@ export function cloudStore(env, fetcher = fetch) {
     if (body.error) throw new Error("Store unavailable");
     return body.result;
   };
-  const token = env.BLOB_READ_WRITE_TOKEN;
+  // A store connected now gives the project its id (BLOB_STORE_ID), and @vercel/blob signs in with the deployment's
+  // own OIDC token; an older connection gave a read-write token instead.
+  const auth = env.BLOB_READ_WRITE_TOKEN ? { token: env.BLOB_READ_WRITE_TOKEN } : {};
   return {
     limiter: { ...db, prefix: `lamp:shared-wish:{${scope}}:quota` },
     async get(id) {
@@ -146,17 +148,16 @@ export function cloudStore(env, fetcher = fetch) {
     async replace(record) { await command(["SET", key(record.id), JSON.stringify(record), "XX"]); },
     async remove(id) { await command(["DEL", key(id)]); },
     async putImage(id, name, image) {
-      if (!token) throw new Error("Store unavailable");
       const { put } = await import("@vercel/blob");
       const blob = await put(`${scope}/w/${id}/${name}.${image.extension}`, image.bytes, {
-        access: "public", contentType: image.type, token, addRandomSuffix: true, cacheControlMaxAge: 300,
+        access: "public", contentType: image.type, addRandomSuffix: true, cacheControlMaxAge: 300, ...auth,
       });
       return blob.url;
     },
     async removeImages(urls) {
-      if (!urls.length || !token) return;
+      if (!urls.length) return;
       const { del } = await import("@vercel/blob");
-      await del(urls, { token });
+      await del(urls, auth);
     },
     // The page and its card are cached by Vercel's CDN, tagged with the wish (see `cacheTags`): a change or a removal
     // takes them out at once rather than when they'd have run out.
