@@ -22,6 +22,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     private let webView: WKWebView
     private let files = StagedFiles()
     private var loaded: CheckedContinuation<Void, Never>?
+    /// When the open page was last pictured, so each picture can say how long after the one before it was taken.
+    private var lastPictured: Date?
     private var log: FileHandle?
 
     static func isOpen(_ project: LampProject) -> Bool { open[project.id]?.window.isVisible == true }
@@ -99,6 +101,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         try? log?.close()
         log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
         files.folder = staged
+        lastPictured = nil
         // WebKit keeps the scripts and styles a page loaded and serves them again for the same address, so an
         // opening after a change would run the app's code as it first was. Its saved data stays: only the caches go.
         await webView.configuration.websiteDataStore.removeData(ofTypes: [WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeDiskCache],
@@ -242,18 +245,39 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     struct Picture {
         let png: Data
         let moving: Bool
+        let at: Date
+        /// Seconds since the previous picture of this page; nil for the first since it opened.
+        let since: TimeInterval?
     }
 
     /// Taken from the window itself, as the screen shows it, where macOS lets Lamp do that for its own windows without
     /// asking the person (14.4 on); WebKit's snapshot otherwise, or when the window can't be captured (minimized, say).
     static func picture(_ project: LampProject) async -> Picture? {
         guard let preview = open[project.id] else { return nil }
-        if #available(macOS 14.4, *), let png = await preview.captured() { return Picture(png: png, moving: true) }
-        let configuration = WKSnapshotConfiguration()
-        configuration.snapshotWidth = 960
-        guard let image = try? await preview.webView.takeSnapshot(configuration: configuration),
-              let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = halfSize(cg) else { return nil }
-        return Picture(png: png, moving: false)
+        var taken: (png: Data, moving: Bool)?
+        if #available(macOS 14.4, *), let png = await preview.captured() { taken = (png, true) }
+        if taken == nil {
+            let configuration = WKSnapshotConfiguration()
+            configuration.snapshotWidth = 960
+            if let image = try? await preview.webView.takeSnapshot(configuration: configuration),
+               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = halfSize(cg) { taken = (png, false) }
+        }
+        guard let taken else { return nil }
+        let now = Date()
+        defer { preview.lastPictured = now }
+        return Picture(png: taken.png, moving: taken.moving, at: now, since: preview.lastPictured.map { now.timeIntervalSince($0) })
+    }
+
+    /// Said with each picture: the time between two pictures includes the agent's own thinking between its calls, so a
+    /// `use_app` wait of one second can be several seconds of animation, and only the times say how many.
+    static func takenNote(_ picture: Picture, timeZone: TimeZone = .current) -> String {
+        let clock = DateFormatter()
+        clock.locale = Locale(identifier: "en_US_POSIX")
+        clock.timeZone = timeZone
+        clock.dateFormat = "HH:mm:ss.S"
+        let when = "This picture was taken at \(clock.string(from: picture.at)) by this Mac's clock"
+        guard let since = picture.since else { return when + ", the first since the app was opened in the preview." }
+        return when + ", \(String(format: "%.1f", since)) s after the previous one."
     }
 
     /// The page drawn 960 pixels across, the size `use_app`'s points are measured in, whatever the screen's scale.
@@ -263,6 +287,9 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                                             hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
         context.cgContext.interpolationQuality = .high
+        // A window's capture has its rounded corners clear; black is a TV's edge.
+        context.cgContext.setFillColor(.black)
+        context.cgContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.cgContext.draw(page, in: CGRect(x: 0, y: 0, width: width, height: height))
         return bitmap.representation(using: .png, properties: [:])
     }
