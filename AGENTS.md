@@ -1007,27 +1007,47 @@ which lamp.js asks for again as the page opens and every half minute (`/app/phon
 when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows the page. The address is plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
 need https.
 
-Phones as controllers go through Lamp itself (`PhoneControllers`), over the home network the phone page is already
-served on, so nothing is hosted and nothing leaves the home. The phone page loads `lamp-controller.js`, which Lamp
-serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s buttons, sticks and messages, and
-tilt asked for from a tap), and opens a WebSocket at `/socket` on the app's own site (`Gateway` hands an upgrade there
-to `Store.phoneSocket`, held to the page's own Host rules; `WebSocketPeer` speaks it). A link just opened always wins
-over a credential the page kept from before. The TV page has
-`Lamp.controllers` in lamp.js (`TVTemplate.controllersJS`): in the preview it is the app's host in Lamp itself, through
-the `lampController` bridge (`TVPreview`); on a TV it asks Lamp's gateway for a host credential (`/app/controller`) and
-opens the same socket, at the app's port, over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
-only in Lamp's memory: a host's for the session, a join link's for fifteen minutes, a phone's for two, renewed over its
-socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen, or the app's page no longer served anywhere, deleted
-included: `PhoneSites.sync`) makes all of them worthless and lets its sockets go. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
-credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
-and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
-A message is at most `Limits.message` (1,024 bytes of JSON), and Lamp closes a socket that sends a bigger one, so every
-library of Lamp's (lamp.js, lamp-controller.js, `LampController` in LampSupport) refuses one before it goes: `send`
-returns false, the reason with the limit goes to the console or the app's log, and a phone's library tells the TV app
-(`too-big`, passed on by Lamp), whose log the builder reads. Nothing a library doesn't send goes unsaid; the
-phone-controllers skill says how to send a file in pieces.
-The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the
-person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for that.
+Phones as controllers never go through Lamp's own process: Lamp introduces the two sides and hands out short-lived
+credentials, and they talk directly or through a relay of Lamp's own (`PhoneControllers`), over the home network the
+phone page is already served on, so nothing is hosted and nothing leaves the home. The relay (`LampRelayKit`'s `Relay`)
+runs as a process of its own, `LampRelay` in Lamp's Helpers, started by `ControllerRelay` while a TV app takes players
+and ended when none does, or when Lamp quits (its input closes). Lamp tells it on its input which apps' sessions are open
+(their generation, phone page port and address, this Mac's names) and gives it the controllers' key; it speaks
+WebSocket with the Network framework on a queue of its own and keeps the port it had while Lamp runs. The phone page
+loads `lamp-controller.js`, which Lamp serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s
+buttons, sticks, messages and files, and tilt asked for from a tap), asks the page's own site where the relay is
+(`lamp-relay.json`, before each try) and opens its socket there, by the name the page was reached at. A link just opened
+always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
+(`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp who its players are (`/app/controller`,
+through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own sockets to each: the
+relay, with a host credential, and each of the wish's iPhone apps listening (below), with a ticket. The preview's page
+reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
+the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own
+(`ControllerCredential`, `ControllerToken`, signed with a key kept only in Lamp's memory and the relay's: a host's for
+the session, marked when it's the preview's so a TV running the same app waits for it; a join link's for fifteen
+minutes; a phone's for two, renewed over its socket), never the app's token for its AI, and ending a session (the
+preview closed with no TV chosen, or the app's page no longer served anywhere, deleted included: `PhoneSites.sync`)
+makes all of them worthless and has the relay let its sockets go. Of web pages, the relay lets in only an app's own
+phone page, by its origin (an http origin at a phone page's port and one of this Mac's names); a TV page (the
+preview's own address, a TV's `file://` or `null`) and anything that isn't a browser (no origin) are let in by their
+credential alone, since such a client could say any origin it liked. A dropped phone keeps its place while its
+credential lasts. The relay keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is
+behind, and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than
+300 ms. A message is at most 16 KB of JSON (`ControllerWire.message`), and the relay closes a socket that sends a
+bigger one, so every library of Lamp's (lamp.js, lamp-controller.js, `LampController` in LampSupport) refuses one before
+it goes: `send` returns false, the reason with the limit goes to the console or the app's log, and a phone's library
+tells the TV app (`too-big`, passed on by the relay), whose log the builder reads. Anything bigger is a file
+(`sendFile`/`onFile` both ways, `TVTemplate.filesJS`, `ControllerWire`): up to 64 MB, in pieces of 64 KB in binary
+messages, the sender never more than 512 KB past what the receiver has acknowledged, two at a time each way per phone.
+The relay holds each file to the size it was announced at and to that window, and cuts off one that doesn't keep to
+them; it and the libraries hand the network one piece at a time and text at once, so a button never waits behind more
+than one piece. The relay never holds more than it must for anyone: a socket that hasn't said hello within five seconds is
+let go (cancelled outright before its handshake ends, since a close frame can't go then), at most 64 wait at once (8 from
+one address, an IPv6 one by its /64), a phone past its rate for ten seconds is let go, what phones send a TV that's
+behind is dropped, any peer more than 256 messages or 2 MB behind is let go, and an acknowledgement goes on only for a
+piece the relay passed. A wish's iPhone app takes each ticket once. The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt
+only where the person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for
+that, and such a page can't reach the relay, which speaks plain ws.
 
 ## Apps for both the Mac and the iPhone
 
@@ -1106,12 +1126,17 @@ A new wish that could be for more than one kind and doesn't say which (the namin
 conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
 starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 
-The parts talk through `PhoneControllers`: an iPhone or Mac part joins its wish's TV app as a player, the way a phone's
-page does, with `LampController` in LampSupport. It asks Lamp's gateway (`/app/controller`, with its own token) for the
-TV app's socket and a join credential, which Lamp gives only to a part of the same wish while the TV app is open. A
-socket with no Origin is let in as a player like one from the app's own page: browsers always send one, so none means
-no browser, and anything that isn't a browser could send any origin it liked, so the credential is what lets it in. A TV
-app with a part takes players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
+The parts talk to their TV app as players of `Lamp.controllers`, with `LampController` in LampSupport. An iPhone part
+listens for the TV page itself (an `NWListener` speaking WebSocket, on the phone or in the simulator) and tells Lamp
+where (`/app/controller` with `as: listener`, its own token, every 20 seconds); Lamp keeps where it is and gives it a key
+of its own for that listener (`PhoneControllers.register`), and the TV page's answer lists it with a ticket signed with
+that key (`PhoneControllers.ticket`: for that listener, for two minutes), so the page opens its socket straight to the
+phone and Lamp carries nothing. A phone in the simulator registers from the loopback address: the preview reaches it
+there, and a TV on the network at this Mac's address on that network. The phone lets in one page at a time, the
+preview's before a TV's, and says who it is (a device id it keeps), so lamp.js gives it its number back when it returns.
+A Mac part, and an iPhone part that can't listen, joins at the relay as a player instead, with a link's credential
+(`as: player`), which Lamp gives only to a part of the same wish while the TV app is open. A TV app with a part takes
+players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
 
 ## iCloud
 

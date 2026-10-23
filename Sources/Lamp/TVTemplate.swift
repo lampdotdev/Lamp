@@ -315,40 +315,225 @@ enum TVTemplate {
 }
 
 extension TVTemplate {
-    /// Phones as controllers (`PhoneControllers`): the TV page's half. In the preview the page is the app's host in Lamp
-    /// itself (the `lampController` bridge); on a TV it asks Lamp for a credential once and opens a socket to Lamp's
-    /// gateway over the Wi‑Fi. What a phone holds down is let go when it leaves or the link drops, and movement that
-    /// arrives late is dropped.
+    /// Files between a phone and the TV in pieces (`ControllerWire`), the same code in lamp.js and lamp-controller.js:
+    /// at most a window ahead of what the receiver has acknowledged, a piece only once the socket has sent the one before,
+    /// so a button pressed meanwhile never waits long, and each file held to the size it was announced at.
+    static let filesJS = #"""
+          // Files in pieces: the same on the TV and on the phone.
+          function lampFiles(onIncoming) {
+            var CHUNK = 65536, HEADER = 8, WINDOW = 524288, LIMIT = 67108864, STALL = 20000;
+            var TAKING = 134217728;   // bytes of files coming in at once, from everyone: a TV's memory is small
+            var nextID = 1, outgoing = {}, incoming = {}, taking = 0;
+            function noop() {}
+            function key(route, id) { return route.key + ':' + id; }
+            function fire(list, args) {
+              for (var i = 0; i < list.length; i++) { try { list[i].apply(null, args); } catch (e) { if (window.console) console.error(e); } }
+            }
+            function bytesOf(data) {
+              if (data instanceof ArrayBuffer) return Promise.resolve(new Uint8Array(data));
+              if (data && data.buffer instanceof ArrayBuffer && typeof data.byteLength === 'number') {
+                return Promise.resolve(new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength));
+              }
+              if (typeof Blob !== 'undefined' && data instanceof Blob) {
+                return new Promise(function (resolve, reject) {
+                  var reader = new FileReader();
+                  reader.onload = function () { resolve(new Uint8Array(reader.result)); };
+                  reader.onerror = function () { reject(new Error('The file couldn\'t be read.')); };
+                  reader.readAsArrayBuffer(data);
+                });
+              }
+              if (typeof data === 'string') {
+                var text = unescape(encodeURIComponent(data)), out = new Uint8Array(text.length);
+                for (var i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
+                return Promise.resolve(out);
+              }
+              return Promise.reject(new Error('sendFile takes a File, a Blob, an ArrayBuffer, bytes or text.'));
+            }
+
+            function send(route, data, info) {
+              info = info || {};
+              var id = nextID++;
+              if (nextID > 2147483646) nextID = 1;
+              var progress = [], settled = false, bytes = null, offset = 0, acked = 0, timer = null, watch = null, resolve, reject;
+              var transfer = {
+                id: id, name: String(info.name || (data && data.name) || 'file'),
+                type: String(info.type || (data && data.type) || 'application/octet-stream'), size: 0, sent: 0,
+                onProgress: function (fn) { progress.push(fn); },
+                cancel: function () { if (!settled) { route.text({ t: 'file-cancel', id: id }); fail('The file was cancelled.'); } }
+              };
+              transfer.done = new Promise(function (yes, no) { resolve = yes; reject = no; });
+              transfer.done.catch(noop);
+              function fail(message) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer); clearTimeout(watch);
+                delete outgoing[key(route, id)];
+                reject(new Error(message));
+              }
+              function stalled() { route.text({ t: 'file-cancel', id: id }); fail('The file stopped moving.'); }
+              function pump() {
+                clearTimeout(timer); timer = null;
+                if (settled) return;
+                while (offset < transfer.size && offset - acked < WINDOW) {
+                  if (route.buffered() > CHUNK) { timer = setTimeout(pump, 10); return; }
+                  var n = Math.min(CHUNK, transfer.size - offset), piece = new Uint8Array(HEADER + n);
+                  piece[0] = 1; piece[1] = route.place || 0;
+                  piece[4] = (id >>> 24) & 255; piece[5] = (id >>> 16) & 255; piece[6] = (id >>> 8) & 255; piece[7] = id & 255;
+                  piece.set(bytes.subarray(offset, offset + n), HEADER);
+                  if (!route.binary(piece.buffer)) return fail('The link was lost.');
+                  offset += n;
+                }
+              }
+              bytesOf(data).then(function (read) {
+                if (settled) return;
+                if (read.length > LIMIT) return fail('The file is too big to send: 64 MB at most.');
+                bytes = read;
+                transfer.size = read.length;
+                outgoing[key(route, id)] = {
+                  ack: function (got) {
+                    if (typeof got !== 'number' || got < acked || got > offset) return;
+                    acked = got;
+                    transfer.sent = got;
+                    clearTimeout(watch); watch = setTimeout(stalled, STALL);
+                    fire(progress, [got, transfer.size]);
+                    if (got === transfer.size) {
+                      settled = true;
+                      clearTimeout(timer); clearTimeout(watch);
+                      delete outgoing[key(route, id)];
+                      resolve(transfer);
+                    } else pump();
+                  },
+                  fail: fail
+                };
+                if (!route.text({ t: 'file', id: id, name: transfer.name, type: transfer.type, size: transfer.size })) return fail('Not connected.');
+                watch = setTimeout(stalled, STALL);
+                pump();
+              }, function (error) { fail(error.message); });
+              return transfer;
+            }
+
+            function receive(route, m) {
+              var id = m.id, size = m.size, k = key(route, id);
+              if (typeof id !== 'number' || typeof size !== 'number' || size < 0 || size > LIMIT || incoming[k] || taking + size > TAKING) {
+                route.text({ t: 'file-refuse', id: id, reason: 'The file is too big to take now.' });
+                return;
+              }
+              taking += size;
+              var parts = [], got = 0, progress = [], settled = false, resolve, reject;
+              var file = {
+                id: id, name: String(m.name || 'file'), type: String(m.type || ''), size: size, received: 0,
+                onProgress: function (fn) { progress.push(fn); },
+                cancel: function () { if (!settled) { route.text({ t: 'file-refuse', id: id, reason: 'Turned down.' }); fail('The file was cancelled.'); } }
+              };
+              file.done = new Promise(function (yes, no) { resolve = yes; reject = no; });
+              file.done.catch(noop);
+              function fail(message) {
+                if (settled) return;
+                settled = true;
+                taking -= size;
+                delete incoming[k];
+                reject(new Error(message));
+              }
+              function finish() {
+                var all = new Uint8Array(size), at = 0;
+                for (var i = 0; i < parts.length; i++) { all.set(parts[i], at); at += parts[i].length; }
+                parts = [];
+                settled = true;
+                taking -= size;
+                delete incoming[k];
+                resolve(all.buffer);
+              }
+              incoming[k] = {
+                piece: function (bytes) {
+                  if (settled) return;
+                  if (got + bytes.length > size) { route.text({ t: 'file-refuse', id: id, reason: 'The file was bigger than it said.' }); return fail('The file was bigger than it said.'); }
+                  parts.push(new Uint8Array(bytes));
+                  got += bytes.length;
+                  file.received = got;
+                  route.text({ t: 'file-ack', id: id, got: got });
+                  fire(progress, [got, size]);
+                  if (got === size) finish();
+                },
+                fail: fail
+              };
+              onIncoming(route, file);
+              if (size === 0 && !settled) { route.text({ t: 'file-ack', id: id, got: 0 }); finish(); }
+            }
+
+            return {
+              send: send,
+              // A file message: true when it was one.
+              text: function (route, m) {
+                var k = key(route, m.id);
+                if (m.t === 'file') { receive(route, m); return true; }
+                if (m.t === 'file-ack') { if (outgoing[k]) outgoing[k].ack(m.got); return true; }
+                if (m.t === 'file-refuse') { if (outgoing[k]) outgoing[k].fail(m.reason || 'The file was turned down.'); return true; }
+                if (m.t === 'file-cancel') { if (incoming[k]) incoming[k].fail('The sender cancelled the file.'); return true; }
+                return false;
+              },
+              binary: function (route, view) {
+                if (view.length < HEADER || view[0] !== 1) return;
+                var id = view[4] * 16777216 + (view[5] << 16) + (view[6] << 8) + view[7];
+                var file = incoming[key(route, id)];
+                if (file) file.piece(view.subarray(HEADER));
+              },
+              // The link to someone is gone: every file on its way to or from them ends.
+              drop: function (route, reason) {
+                var prefix = route.key + ':', k;
+                for (k in outgoing) if (k.indexOf(prefix) === 0) outgoing[k].fail(reason);
+                for (k in incoming) if (k.indexOf(prefix) === 0) incoming[k].fail(reason);
+              }
+            };
+          }
+
+        """#
+
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp who its players are
+    /// (`/app/controller`), as it opens and every few seconds after, and opens its own sockets to them: one to the relay,
+    /// where phones' pages and the wish's Mac app join, and one straight to each of the wish's iPhone apps that's
+    /// listening. Lamp carries none of it. The page numbers the players itself, whichever way they came. What a phone holds
+    /// down is let go when it leaves or its link drops, and movement that arrives late is dropped.
     static let controllersJS = #"""
         /* Phones as controllers. Written by Lamp before every build; don't edit.
          *
          * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
-         *                                              Phone/index.html, loading lamp-controller.js (its own comment says how).
+         *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
+         *                                              the wish's iPhone or Mac app joins with LampController.
          * Lamp.controllers.onLink(fn(url))             the address phones open (show it as a QR code); it changes every
          *                                              few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
          * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
-         * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone's page sent
+         * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone sent (JSON, 16 KB at most)
+         * Lamp.controllers.onFile(fn(player, file))                     a phone is sending a file (up to 64 MB):
+         *     file.name, file.type, file.size; file.onProgress(fn(received, size)); file.cancel();
+         *     file.done.then(fn(arrayBuffer)) once all of it is here, or .catch(fn(error)) when it didn't come
          * Lamp.controllers.onError(fn(message))                         it couldn't start, the link was lost, or a
          *                                                               message was too big to send (messageLimit)
-         * Lamp.controllers.send(player, data)          to one phone, or to every phone with player 0; false when it
+         * Lamp.controllers.send(player, data)          JSON to one phone, or to every phone with player 0; false when it
          *                                              wasn't sent, with the reason in the console
-         * Lamp.controllers.messageLimit                1024: the most bytes one message takes as JSON, either way
+         * Lamp.controllers.messageLimit                16384: the most bytes one message takes as JSON, either way; anything
+         *                                              bigger goes with sendFile
+         * Lamp.controllers.sendFile(player, data, { name, type })       a File, Blob, ArrayBuffer, bytes or text, to one
+         *     phone; gives a transfer: onProgress(fn(sent, size)), cancel(), done (a Promise)
          * Lamp.controllers.isHeld(player, name), players()
          * Lamp.controllers.stop()
          *
          * A phone that leaves, or whose link drops, has every button it held let go (onButton with down false) before
-         * onLeave. Movement that arrives late is dropped rather than acted on. A message over messageLimit isn't sent,
-         * from the TV or from a phone, and the console here says so: send something big (a file, a picture) in numbered
-         * pieces of at most 700 characters of base64, each once the other side has answered the last.
+         * onLeave, and its files end. Movement that arrives late is dropped rather than acted on. A message over
+         * messageLimit isn't sent, from the TV or from a phone, and the console here says so.
          */
         (function () {
           'use strict';
-          var LATE = 300;   // ms after which a stick or tilt reading is dropped as stale
-          var LIMIT = 1024; // bytes of JSON in one message, the most Lamp passes on (PhoneControllers.Limits.message)
-          var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], error: [] };
-          var held = {}, seen = {}, joined = {}, offset = null, link = null, transport = null, linkTimer = null, started = false, away = false;
+          var LATE = 300;          // ms after which a stick or tilt reading is dropped as stale
+          var MESSAGE = 16384;     // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
+          var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], file: [], error: [] };
+          var players = {}, byKey = {}, kept = {}, links = {}, link = null, linkTimer = null, askTimer = null, beatTimer = null, started = false, away = false;
+        /*LAMP_FILES*/
+          var files = lampFiles(function (route, file) {
+            var number = byKey[route.key];
+            if (number) emit('file', [number, file]); else file.cancel();
+          });
 
           function emit(name, args) {
             var list = on[name];
@@ -361,179 +546,268 @@ extension TVTemplate {
               return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
             };
           }
+
+          // Players: numbered here, whichever way they came, the lowest free number first; one who drops off and comes
+          // back within two minutes gets the number they had.
+          function numberFor(key, prefer) {
+            var now = Date.now(), taken = {}, n, mine = kept[key];
+            delete kept[key];
+            for (n in players) taken[n] = true;
+            for (n in kept) { if (kept[n].until > now) taken[kept[n].number] = true; else delete kept[n]; }
+            if (mine && mine.until > now && !taken[mine.number]) return mine.number;
+            if (prefer && !taken[prefer]) return prefer;
+            for (n = 1; taken[n]; n++) {}
+            return n;
+          }
+          function join(key, route) {
+            if (byKey[key]) return byKey[key];
+            var number = numberFor(key, route.place);
+            byKey[key] = number;
+            players[number] = { key: key, route: route, held: {}, seen: {} };
+            route.text({ t: 'player', number: number });
+            emit('join', [number]);
+            return number;
+          }
+          function leave(key) {
+            var number = byKey[key];
+            if (!number) return;
+            var player = players[number];
+            files.drop(player.route, 'The player left.');
+            for (var name in player.held) if (player.held[name]) emit('button', [number, name, false]);
+            delete players[number];
+            delete byKey[key];
+            kept[key] = { number: number, until: Date.now() + 120000 };
+            emit('leave', [number]);
+          }
           // Each phone counts its messages from 1 on every new link, so what's been seen is forgotten when it leaves.
-          function fresh(m) {
-            var mine = seen[m.player] || (seen[m.player] = {});
-            var key = m.t + ':' + m.name;
-            if (mine[key] !== undefined && m.seq <= mine[key]) return false;
-            mine[key] = m.seq;
+          function fresh(player, m) {
+            var name = m.t + ':' + m.name;
+            if (player.seen[name] !== undefined && m.seq <= player.seen[name]) return false;
+            player.seen[name] = m.seq;
             return true;
           }
-          function release(player) {
-            var names = held[player] || {};
-            for (var name in names) if (names[name]) emit('button', [player, name, false]);
-            held[player] = {};
-          }
-          function leave(player) {
-            delete seen[player];
-            if (!joined[player]) return;
-            release(player);
-            delete joined[player];
-            emit('leave', [player]);
-          }
-          function join(player) {
-            delete seen[player];
-            if (joined[player]) return;
-            joined[player] = true;
-            held[player] = {};
-            emit('join', [player]);
-          }
-          function leaveAll() { for (var p in joined) leave(+p); seen = {}; }
-
-          function receive(m) {
-            if (!m || typeof m !== 'object') return;
-            if (m.now) offset = m.now - Date.now();
-            if (m.t === 'welcome') {
-              for (var i = 0; i < (m.players || []).length; i++) join(m.players[i]);
-              askLink();
-            } else if (m.t === 'link') {
-              link = m.url;
-              emit('link', [link]);
-            } else if (m.t === 'joined') {
-              leave(m.player);
-              join(m.player);
-            } else if (m.t === 'left') {
-              leave(m.player);
-            } else if (m.t === 'button') {
-              if (!joined[m.player]) join(m.player);
-              if (!fresh(m)) return;
-              held[m.player][m.name] = !!m.down;
-              emit('button', [m.player, m.name, !!m.down]);
-            } else if (m.t === 'axis') {
-              if (!joined[m.player]) join(m.player);
-              if (!fresh(m)) return;
-              if (offset !== null && Date.now() + offset - m.at > LATE) return;
-              emit('axis', [m.player, m.name, m.x, m.y]);
-            } else if (m.t === 'message') {
-              emit('message', [m.player, m.data]);
-            } else if (m.t === 'too-big') {
-              tooBig('Player ' + m.player + "'s message", m.bytes);
-            } else if (m.t === 'closed') {
-              leaveAll();
-            }
-          }
-          window.__lampControllers = receive;
-
+          function clamp(v) { return typeof v === 'number' && isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0; }
           function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+          // What isn't sent is said in the console, which the preview keeps in the app's log: the code that sent it can't
+          // tell otherwise why the other side never heard it.
           function tooBig(what, size) {
             var line = 'Lamp.controllers: ' + what + ' of ' + size + ' bytes was not sent: a message between devices is at most ' +
-              LIMIT + ' bytes as JSON. Send something big in numbered pieces of at most 700 characters, each after the other side has answered the last.';
+              MESSAGE + ' bytes as JSON. Send something big with sendFile (pad.sendFile on a phone).';
             if (window.console) console.error(line);
             emit('error', [line]);
           }
-
-          function askLink() {
-            if (transport) transport.send({ t: 'link' });
-            clearInterval(linkTimer);
-            linkTimer = setInterval(function () { if (transport) transport.send({ t: 'link' }); }, 10 * 60 * 1000);
+          function input(number, m, offset) {
+            var player = players[number];
+            if (!player || (m.t !== 'message' && !(typeof m.name === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(m.name)))) return;
+            if (m.t === 'button') {
+              if (!fresh(player, m)) return;
+              player.held[m.name] = !!m.down;
+              emit('button', [number, m.name, !!m.down]);
+            } else if (m.t === 'axis') {
+              if (!fresh(player, m)) return;
+              if (offset !== null && typeof m.at === 'number' && Date.now() + offset - m.at > LATE) return;
+              emit('axis', [number, m.name, clamp(m.x), clamp(m.y)]);
+            } else if (m.t === 'message') {
+              emit('message', [number, m.data]);
+            }
           }
 
-          // The preview on the Mac: the page is the app's host in Lamp itself.
-          function bridgeTransport(handler) {
-            handler.postMessage({ op: 'start' });
+          // Links: one socket to the relay, and one to each of the wish's iPhone apps that's listening.
+          function sendOn(l, m) {
+            if (!l.socket || l.socket.readyState !== 1) return false;
+            l.socket.send(JSON.stringify(m));
+            return true;
+          }
+          function routeOn(l, place) {
+            var relay = l.kind === 'relay';
             return {
-              send: function (message) { handler.postMessage({ op: 'send', message: message }); return true; },
-              stop: function () { handler.postMessage({ op: 'stop' }); }
+              key: relay ? 'r' + place : 'd' + l.device, place: relay ? place : 0,
+              text: function (m) { if (relay) m.player = place; return sendOn(l, m); },
+              say: function (data) { return sendOn(l, relay ? { t: 'send', player: place, data: data } : { t: 'message', data: data }); },
+              binary: function (buffer) { if (!l.socket || l.socket.readyState !== 1) return false; l.socket.send(buffer); return true; },
+              buffered: function () { return l.socket ? l.socket.bufferedAmount : 0; }
             };
           }
-
-          // On a TV: a socket to Lamp on the Mac, over the Wi-Fi, opened again when it drops.
-          function socketTransport() {
-            var socket = null, beat = null, stopped = false, session = null;
-            function connect() {
-              if (stopped) return;
-              socket = new WebSocket(session.socket);
-              socket.onopen = function () { socket.send(JSON.stringify({ t: 'hello', credential: session.host })); };
-              socket.onmessage = function (event) { var m; try { m = JSON.parse(event.data); } catch (e) { return; } receive(m); };
-              socket.onclose = function () { leaveAll(); if (!stopped) setTimeout(open, 2000); };
+          function fromLink(l, m) {
+            if (typeof m.now === 'number') l.offset = m.now - Date.now();
+            if (l.kind === 'relay') {
+              if (m.t === 'welcome') {
+                for (var i = 0; i < (m.players || []).length; i++) join('r' + m.players[i], routeOn(l, m.players[i]));
+                askLink();
+              } else if (m.t === 'link') {
+                link = m.url;
+                emit('link', [link]);
+              } else if (m.t === 'joined') {
+                leave('r' + m.player);
+                join('r' + m.player, routeOn(l, m.player));
+              } else if (m.t === 'left') {
+                leave('r' + m.player);
+              } else if (m.t === 'too-big') {
+                tooBig('Player ' + (byKey['r' + m.player] || m.player) + "'s message", m.bytes);
+              } else if (typeof m.player === 'number' && !files.text(routeOn(l, m.player), m) && /^(button|axis|message)$/.test(m.t)) {
+                input(byKey['r' + m.player] || join('r' + m.player, routeOn(l, m.player)), m, l.offset);
+              }
+            } else if (m.t === 'welcome') {
+              l.welcomed = true;
+              join('d' + l.device, routeOn(l, 0));
+            } else if (l.welcomed && m.t === 'too-big') {
+              tooBig('Player ' + byKey['d' + l.device] + "'s message", m.bytes);
+            } else if (l.welcomed && !files.text(routeOn(l, 0), m)) {
+              input(byKey['d' + l.device], m, l.offset);
             }
-            function open() {
-              if (stopped) return;
+          }
+          function connect(l) {
+            clearTimeout(l.again);
+            if (!started || l.socket) return;
+            var socket;
+            try { socket = new WebSocket(l.address); } catch (e) { return lost(l, 0); }
+            socket.binaryType = 'arraybuffer';
+            l.socket = socket;
+            l.heard = Date.now();
+            socket.onopen = function () {
+              socket.send(JSON.stringify(l.kind === 'relay' ? { t: 'hello', app: l.app, credential: l.credential } : { t: 'hello', credential: l.credential }));
+            };
+            socket.onmessage = function (event) {
+              l.heard = Date.now();
+              if (typeof event.data !== 'string') {
+                var view = new Uint8Array(event.data);
+                if (view.length > 1) files.binary(routeOn(l, l.kind === 'relay' ? view[1] : 0), view);
+                return;
+              }
+              var m; try { m = JSON.parse(event.data); } catch (e) { return; }
+              if (m && typeof m === 'object') fromLink(l, m);
+            };
+            socket.onclose = function (event) { if (l.socket === socket) lost(l, event.code); };
+          }
+          // A link that drops lets its players go. The relay's is opened again after a moment (with a fresh credential
+          // once Lamp has given one); a phone's goes, and comes back if Lamp still lists it.
+          function lost(l, code) {
+            l.socket = null;
+            l.welcomed = false;
+            for (var key in byKey) if (l.kind === 'relay' ? key.charAt(0) === 'r' : key === 'd' + l.device) leave(key);
+            if (!started) return;
+            if (l.kind === 'relay') {
+              // Turned away, or the session ended: its credential is no use, and Lamp gives a fresh one.
+              if (code === 4003 || code === 4005) return ask(1000);
+              l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
+            } else {
+              delete links[l.id];
+              ask(2000);
+            }
+          }
+          function ask(after) {
+            clearTimeout(askTimer);
+            askTimer = setTimeout(function () {
+              if (!started) return;
               LampAI._post('/app/controller', {}, 20000).then(function (answer) {
-                session = answer;
-                connect();
+                if (!started) return;
+                var list = answer.links || [];
+                for (var i = 0; i < list.length; i++) {
+                  var info = list[i], id = info.kind === 'relay' ? 'relay' : 'd' + info.device;
+                  var l = links[id] || (links[id] = { id: id, kind: info.kind, device: info.device, socket: null, offset: null });
+                  l.credential = info.credential;
+                  l.app = info.app;
+                  if (!l.socket) { l.address = info.socket; connect(l); }
+                }
+                ask((answer.renew || 15) * 1000);
               }, function (error) {
                 emit('error', [error.message]);
-                if (!stopped) setTimeout(open, 5000);
+                ask(5000);
               });
+            }, after || 0);
+          }
+          function askLink() {
+            if (links.relay) sendOn(links.relay, { t: 'link' });
+            clearInterval(linkTimer);
+            linkTimer = setInterval(function () { if (links.relay) sendOn(links.relay, { t: 'link' }); }, 10 * 60 * 1000);
+          }
+          // A beat both ways: whoever hears nothing for a while lets the other go.
+          function beat() {
+            var now = Date.now();
+            for (var id in links) {
+              var l = links[id];
+              if (!l.socket || l.socket.readyState !== 1) continue;
+              if (now - l.heard > 15000) { l.socket.close(); continue; }
+              l.socket.send('{"t":"beat"}');
             }
-            open();
-            beat = setInterval(function () { if (socket && socket.readyState === 1) socket.send('{"t":"beat"}'); }, 5000);
-            return {
-              send: function (message) {
-                if (!socket || socket.readyState !== 1) return false;
-                socket.send(JSON.stringify(message));
-                return true;
-              },
-              stop: function () { stopped = true; clearInterval(beat); if (socket) socket.close(); }
-            };
           }
 
           var api = {
             start: function () {
               if (started) return Promise.resolve();
               started = true;
-              var handlers = window.webkit && window.webkit.messageHandlers;
-              transport = handlers && handlers.lampController ? bridgeTransport(handlers.lampController) : socketTransport();
+              ask(0);
+              beatTimer = setInterval(beat, 5000);
               return Promise.resolve();
             },
             stop: function () {
-              if (transport) transport.stop();
-              transport = null; started = false; link = null;
-              clearInterval(linkTimer);
-              leaveAll();
+              started = false;
+              clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
+              for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
+              for (var key in byKey) leave(key);
+              links = {}; link = null;
             },
-            // What isn't sent is said in the console, which the preview keeps in the app's log: the code that sent it
-            // can't tell otherwise why the phone never heard it. Being away is said once until the link is back.
             send: function (player, data) {
-              var message = { t: 'send', player: player || 0, data: data }, text = JSON.stringify(message);
+              var text = JSON.stringify({ t: 'send', player: 8, data: data });
               if (data === undefined || text === undefined) { if (window.console) console.error('Lamp.controllers: a message was not sent: it holds nothing JSON can.'); return false; }
-              if (bytes(text) > LIMIT) { tooBig('A message', bytes(text)); return false; }
-              if (transport && transport.send(message)) { away = false; return true; }
-              if (!away && window.console) console.error('Lamp.controllers: a message was not sent: ' + (transport ? 'the link to Lamp is down.' : 'call Lamp.controllers.start() first.'));
+              if (bytes(text) > MESSAGE) { tooBig('A message', bytes(text)); return false; }
+              var went = false;
+              if (player) {
+                went = !!players[player] && players[player].route.say(data);
+              } else {
+                for (var id in links) {
+                  var l = links[id];
+                  if (l.kind === 'relay') went = sendOn(l, { t: 'send', player: 0, data: data }) || went;
+                  else if (l.welcomed) went = sendOn(l, { t: 'message', data: data }) || went;
+                }
+              }
+              // Being away is said once until a message goes again.
+              if (went) { away = false; return true; }
+              if (!away && window.console) console.error('Lamp.controllers: a message was not sent: ' + (!started ? 'call Lamp.controllers.start() first.' : player ? 'there is no player ' + player + ' now.' : 'no phone is connected.'));
               away = true;
               return false;
             },
-            messageLimit: LIMIT,
-            isHeld: function (player, name) { return !!(held[player] && held[player][name]); },
-            players: function () { var list = []; for (var p in joined) list.push(+p); return list; },
+            messageLimit: MESSAGE,
+            sendFile: function (player, data, info) {
+              if (!players[player]) {
+                var none = { onProgress: function () {}, cancel: function () {}, done: Promise.reject(new Error('There is no player ' + player + '.')) };
+                none.done.catch(function () {});
+                return none;
+              }
+              return files.send(players[player].route, data, info);
+            },
+            isHeld: function (player, name) { return !!(players[player] && players[player].held[name]); },
+            players: function () { var list = []; for (var p in players) list.push(+p); return list.sort(function (a, b) { return a - b; }); },
             onLink: adder('link'), onJoin: adder('join'), onLeave: adder('leave'), onButton: adder('button'),
-            onAxis: adder('axis'), onMessage: adder('message'), onError: adder('error')
+            onAxis: adder('axis'), onMessage: adder('message'), onFile: adder('file'), onError: adder('error')
           };
           if (window.Lamp) window.Lamp.controllers = api;
         })();
 
-        """#
+        """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
 
     /// Phones as controllers: the phone page's half, served by Lamp beside the app's Phone/ files as lamp-controller.js
-    /// (`Store.phonePage`). Its socket is the page's own address with `socket` in place of the page, so it's the same
-    /// whichever way the page was reached, http on the Wi‑Fi or https the person put in front.
+    /// (`Store.phonePage`). Its socket goes to the controllers' relay, on this Mac by the name the page was reached at, at
+    /// the port Lamp says before each try (`lamp-relay.json`), never to Lamp.
     static let phoneControllerJS = #"""
         /* Lamp's phone controller. The page is the app's own; this joins it to the TV app as a player and carries its
-         * buttons, sticks and tilt there, through Lamp on the Mac, over this Wi-Fi.
+         * buttons, sticks, tilt and files there, over this Wi-Fi, through Lamp's relay on the Mac.
          *
          *   var pad = LampController.connect({
-         *     onPlayer: function (n) { ... },        // the player number this phone was given (1, 2, ...)
+         *     onPlayer: function (n) { ... },        // the player number the TV app gave this phone (1, 2, ...)
          *     onMessage: function (data) { ... },   // what the TV app sent this phone (or every phone)
+         *     onFile: function (file) { ... },      // the TV app is sending a file: file.name, .type, .size,
+         *                                           // .onProgress(fn(received, size)), .cancel(), .done.then(fn(arrayBuffer))
          *     onState: function (state) { ... }     // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
          *   });
          *   pad.button('a', true); pad.button('a', false);   // a button held, then let go
          *   pad.axis('stick', x, y);                          // a stick or slider, each from -1 to 1
-         *   pad.send({ ready: true });                        // anything small to the TV app; false when not sent
-         *   LampController.messageLimit                       // 1024: the most bytes one message takes as JSON. A bigger
-         *                                                     // one isn't sent, and the TV app's log says so; send a file
-         *                                                     // in numbered pieces of at most 700 characters of base64,
-         *                                                     // each once the TV app has answered the last
+         *   pad.send({ ready: true });                        // JSON to the TV app; false when it wasn't sent
+         *   LampController.messageLimit                       // 16384: the most bytes one message takes as JSON. A bigger
+         *                                                     // one isn't sent, and the TV app's log says so: send it
+         *                                                     // with sendFile
+         *   var t = pad.sendFile(file, { name, type });       // a File (from <input type="file">), Blob, ArrayBuffer, bytes
+         *   t.onProgress(fn(sent, size)); t.cancel();         // or text, up to 64 MB; t.done is a Promise
          *   LampController.tilt(pad)                          // from a tap (a Start button): asks for the motion sensors,
          *     .then(function () { ... })                     // then sends the phone's tilt as axis 'tilt' (x: left -1 to
          *     .catch(function (error) { ... });              // right 1, y: away -1 to toward 1) about 30 times a second.
@@ -542,20 +816,40 @@ extension TVTemplate {
          */
         (function () {
           'use strict';
+          var MESSAGE = 16384;   // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
+          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
           var base = location.pathname.replace(/[^\/]*$/, '');
           var keyName = 'lamp-controller:' + base;
-          var socketURL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + base + 'socket';
-          var LIMIT = 1024;   // bytes of JSON in one message, the most Lamp passes on (PhoneControllers.Limits.message)
-          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+        /*LAMP_FILES*/
+          // Where the relay is: asked of Lamp before each try, since it may have started again elsewhere.
+          function where() {
+            return fetch(base + 'lamp-relay.json', { cache: 'no-store' }).then(function (answer) {
+              if (!answer.ok) throw new Error('Lamp isn\'t there.');
+              return answer.json();
+            });
+          }
 
           function connect(handlers) {
             handlers = handlers || {};
             var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0, again = null, host = false;
+            var route = {
+              key: 'tv', place: 0,
+              text: function (m) { if (!socket || socket.readyState !== 1) return false; socket.send(JSON.stringify(m)); return true; },
+              binary: function (buffer) { if (!socket || socket.readyState !== 1) return false; socket.send(buffer); return true; },
+              buffered: function () { return socket ? socket.bufferedAmount : 0; }
+            };
+            var files = lampFiles(function (r, file) { if (handlers.onFile) handlers.onFile(file); else file.cancel(); });
             // The link's credential is read once and taken out of the address, so it isn't left in the history or shared
             // by mistake; the phone then keeps the one Lamp gives it, for coming back as the same player.
             var join = (location.hash || '').replace(/^#/, '');
             if (join) history.replaceState(null, '', location.pathname + location.search);
             function state(s) { if (handlers.onState) handlers.onState(s); }
+            function later() {
+              if (closedForGood) return;
+              state('connecting');
+              retry = Math.min(retry + 1, 5);
+              again = setTimeout(open, 500 * retry);
+            }
 
             // A link just opened always wins over a credential kept from before: that one may be for a game that has
             // ended, or have run out while the page was away, and the link is what the person just chose.
@@ -566,55 +860,62 @@ extension TVTemplate {
               var credential = join || sessionStorage.getItem(keyName);
               if (!credential) { state('ended'); return; }
               state('connecting');
-              socket = new WebSocket(socketURL);
-              socket.onopen = function () {
-                lastHeard = Date.now();
-                socket.send(JSON.stringify({ t: 'hello', credential: credential }));
-              };
-              socket.onmessage = function (event) {
-                lastHeard = Date.now();
-                var m; try { m = JSON.parse(event.data); } catch (e) { return; }
-                if (m.t === 'welcome') {
-                  retry = 0; join = ''; seq = 0;
-                  player = m.player;
-                  sessionStorage.setItem(keyName, m.credential);
-                  // Whether the TV app is there is known before onPlayer, so a page that says it's ready from there is heard.
-                  host = !!m.host;
-                  if (handlers.onPlayer) handlers.onPlayer(player);
-                  state(m.host ? 'connected' : 'waiting');
-                } else if (m.t === 'credential') {
-                  sessionStorage.setItem(keyName, m.credential);
-                } else if (m.t === 'state') {
-                  host = !!m.host;
-                  state(m.host ? 'connected' : 'waiting');
-                } else if (m.t === 'message') {
-                  if (handlers.onMessage) handlers.onMessage(m.data);
-                } else if (m.t === 'full') {
-                  closedForGood = true; state('full');
-                }
-              };
-              socket.onclose = function (event) {
-                socket = null; host = false;
-                if (event.code === 4003 || event.code === 4005) {
-                  sessionStorage.removeItem(keyName);
-                  closedForGood = true; state('ended');
-                }
+              where().then(function (relay) {
                 if (closedForGood) return;
-                state('connecting');
-                retry = Math.min(retry + 1, 5);
-                again = setTimeout(open, 500 * retry);
-              };
+                var s = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.hostname + ':' + relay.port + '/');
+                s.binaryType = 'arraybuffer';
+                socket = s;
+                s.onopen = function () {
+                  lastHeard = Date.now();
+                  s.send(JSON.stringify({ t: 'hello', app: relay.app, credential: credential }));
+                };
+                s.onmessage = function (event) {
+                  lastHeard = Date.now();
+                  if (typeof event.data !== 'string') { files.binary(route, new Uint8Array(event.data)); return; }
+                  var m; try { m = JSON.parse(event.data); } catch (e) { return; }
+                  if (!m || typeof m !== 'object' || files.text(route, m)) return;
+                  if (m.t === 'welcome') {
+                    retry = 0; join = ''; seq = 0;
+                    sessionStorage.setItem(keyName, m.credential);
+                    host = !!m.host;
+                    state(m.host ? 'connected' : 'waiting');
+                  } else if (m.t === 'player') {
+                    player = m.number;
+                    if (handlers.onPlayer) handlers.onPlayer(player);
+                  } else if (m.t === 'credential') {
+                    sessionStorage.setItem(keyName, m.credential);
+                  } else if (m.t === 'state') {
+                    if (!m.host) files.drop(route, 'The TV app left.');
+                    host = !!m.host;
+                    state(m.host ? 'connected' : 'waiting');
+                  } else if (m.t === 'message') {
+                    if (handlers.onMessage) handlers.onMessage(m.data);
+                  } else if (m.t === 'full') {
+                    closedForGood = true; state('full');
+                  }
+                };
+                s.onclose = function (event) {
+                  if (socket !== s) return;
+                  socket = null; host = false;
+                  files.drop(route, 'The link was lost.');
+                  if (event.code === 4003 || event.code === 4005) {
+                    sessionStorage.removeItem(keyName);
+                    closedForGood = true; state('ended');
+                  }
+                  later();
+                };
+              }, later);
             }
 
-            // Too big for Lamp to pass on: refused here, with a word to the TV app, whose log the builder reads (this
-            // page's console is on the phone, where nobody looks), rather than sent for Lamp to close the link over.
+            // Too big to pass on: refused here, with a word to the TV app, whose log the builder reads (this page's
+            // console is on the phone, where nobody looks), rather than sent for the relay to close the link over.
             function post(message) {
-              // While the TV app isn't there ('waiting'), Lamp has no one to give it to.
+              // While the TV app isn't there ('waiting'), there's no one to give it to.
               if (!socket || socket.readyState !== 1 || !host) return false;
               message.seq = seq + 1;
               var text = JSON.stringify(message), size = bytes(text);
-              if (size > LIMIT) {
-                if (window.console) console.error('LampController: a message of ' + size + ' bytes was not sent: a message between devices is at most ' + LIMIT + ' bytes as JSON.');
+              if (size > MESSAGE) {
+                if (window.console) console.error('LampController: a message of ' + size + ' bytes was not sent: a message between devices is at most ' + MESSAGE + ' bytes as JSON. Send something big with pad.sendFile.');
                 socket.send(JSON.stringify({ t: 'too-big', bytes: size }));
                 return false;
               }
@@ -623,7 +924,7 @@ extension TVTemplate {
               return true;
             }
 
-            // A beat both ways: Lamp lets a quiet phone go, and a phone that hears nothing opens its link again.
+            // A beat both ways: Lamp's relay lets a quiet phone go, and a phone that hears nothing opens its link again.
             var beat = setInterval(function () {
               if (!socket || socket.readyState !== 1) return;
               if (Date.now() - lastHeard > 12000) { socket.close(); return; }
@@ -636,6 +937,7 @@ extension TVTemplate {
               button: function (name, down) { return post({ t: 'button', name: name, down: !!down }); },
               axis: function (name, x, y) { return post({ t: 'axis', name: name, x: x, y: y }); },
               send: function (data) { return post({ t: 'message', data: data }); },
+              sendFile: function (data, info) { return files.send(route, data, info); },
               close: function () { closedForGood = true; clearInterval(beat); clearTimeout(again); again = null; if (socket) socket.close(); }
             };
           }
@@ -669,10 +971,10 @@ extension TVTemplate {
             });
           }
 
-          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt, messageLimit: LIMIT };
+          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt, messageLimit: MESSAGE };
         })();
 
-        """#
+        """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
 
 }
 
@@ -752,8 +1054,8 @@ extension Agent.Rules {
     static let tvParts = """
     - When the wish has an iPhone or Mac app beside the TV app, that app joins the TV app the way a phone's page \
     does, as a player of `Lamp.controllers`: its buttons, sticks and messages arrive in onButton, onAxis and \
-    onMessage, and `Lamp.controllers.send` reaches it. Call `Lamp.controllers.start()` as the TV app opens; it \
-    needs no page in Phone/ for that.
+    onMessage, the files it sends in onFile, and `Lamp.controllers.send` and `sendFile` reach it. Call \
+    `Lamp.controllers.start()` as the TV app opens; it needs no page in Phone/ for that.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.

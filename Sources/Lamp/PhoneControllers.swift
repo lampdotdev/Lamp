@@ -1,523 +1,322 @@
 import CryptoKit
 import Foundation
+import LampRelayKit
 import Network
 
-/// Phones as controllers for a TV app, through Lamp itself: the phone's page comes from Lamp's gateway on the local
-/// network (`Store.phonePage`), and so does its socket (`/phone/<app>/socket`), so nothing leaves the home and nothing
-/// is hosted anywhere. Each running TV app is one session: its host is the TV preview, joined in this process through
-/// its bridge (`TVPreview`), or the app on a TV, which joins over the Wi‑Fi with a credential it asks Lamp for
-/// (`/app/controller`). Phones send buttons, sticks and tilt to the host and get small messages back; Lamp passes them
-/// on and keeps nothing.
+/// Phones as controllers for a TV app. Lamp introduces the two sides and stays out of what they say to each other, so
+/// a game's buttons and files never wait for Lamp, nor Lamp for them:
 ///
+/// - A wish's iPhone app listens on the phone itself (`LampController` in LampSupport) and tells Lamp where
+///   (`register`); Lamp gives it a key of its own for that listener. When the TV app's page asks Lamp who its players
+///   are (`/app/controller`), Lamp gives it that address with a ticket signed with the listener's key, and the page opens
+///   its socket straight to the phone.
+/// - A phone's page in a browser can't listen, so it joins through the relay (`ControllerRelay`, a process of Lamp's
+///   own), and so does the TV page, a wish's Mac app, and an iPhone app that can't listen. Lamp starts the relay, opens
+///   and ends each app's session there and signs who may join it; the relay passes their messages on.
+///
+/// Either way Lamp hands out only short-lived credentials (`ControllerCredential`, `ticket`), and keeps no message.
 /// The page is plain http on the local network, so a phone's browser keeps its motion sensors from it: buttons and
 /// sticks work as they are, and tilt only where the person has put https in front of the page themselves.
 @MainActor
 final class PhoneControllers {
     static let shared = PhoneControllers()
 
-    enum Limits {
-        static let players = 8
-        static let message = 1024          // bytes, any message on a socket
-        static let perSecond = 120.0       // messages a phone may send each second, a little over a screen's rate
-        static let backlog = 32            // messages waiting to go to a TV past which movement is dropped
-        static let silence: TimeInterval = 15
-        static let beat: TimeInterval = 5
+    /// A wish's iPhone app listening for its TV app: where it is, and the key its tickets are signed with, for as long
+    /// as it keeps saying it's there.
+    struct Listener {
+        let wish: String
+        let device: String
+        var address: String
+        var port: UInt16
+        let key: SymmetricKey
+        var renewed: Date
     }
 
-    /// Where a session's host is: the preview in this process, or the app on a TV over its socket.
-    enum Host {
-        case preview((String) -> Void)
-        case socket(WebSocketPeer)
+    /// A listener that hasn't said it's there for this long is forgotten (the app renews every 20 seconds).
+    static let listenerLife: TimeInterval = 60
+    /// A ticket only has to last until the TV page has opened its socket with it.
+    static let ticketLife: TimeInterval = 120
+
+    private var listeners: [String: Listener] = [:]
+
+    // MARK: The TV app's page
+
+    /// A credential for the TV app's page as its game's host at the relay, never the app's token for its AI. The
+    /// preview's says so, so that a TV running the same app meanwhile waits for the preview to close.
+    func hostCredential(for project: LampProject, preview: Bool) -> String {
+        ControllerCredential.issue(kind: .host, app: project.id, preview: preview)
     }
 
-    final class Player {
-        var peer: WebSocketPeer?
-        /// While a phone that dropped off may still come back with its credential, its number stays its own.
-        var heldUntil = Date.distantPast
-        var tokens = Limits.perSecond
-        var refilled = Date()
-        var over: Date?
-        init(peer: WebSocketPeer) { self.peer = peer }
-    }
-
-    final class Session {
-        var host: Host?
-        var players: [Int: Player] = [:]
-        var renewed = Date()
-    }
-
-    private var sessions: [String: Session] = [:]
-    private var ticker: Timer?
-    /// Sockets not yet past their hello: held here, since nothing else holds them until they're a player or a host.
-    private var greeting: [ObjectIdentifier: WebSocketPeer] = [:]
-
-    // MARK: The host
-
-    /// The TV preview joins as its app's host; what comes for it goes to `deliver`, as JSON text.
-    func attachPreview(_ project: LampProject, deliver: @escaping (String) -> Void) {
-        let session = session(for: project.id)
-        if case .socket(let peer) = session.host { peer.close(code: 4000) }
-        session.host = .preview(deliver)
-        welcomeHost(session, app: project.id)
-    }
-
-    /// The preview has gone: phones hear the app isn't there, and with no TV to wait for, they're let go.
-    func detachPreview(_ project: LampProject) {
-        guard let session = sessions[project.id], case .preview = session.host else { return }
-        hostLeft(session, app: project.id)
-        if project.device == nil { end(project.id) }
-    }
-
-    /// What the preview's page sends: a fresh link for phones, a message to them, or its beat.
-    func fromPreview(_ project: LampProject, _ message: [String: Any]) {
-        guard let session = sessions[project.id], case .preview = session.host else { return }
-        fromHost(session, app: project.id, message: message)
-    }
-
-    /// A TV app on a TV opening a game for phones: a credential for its own socket, never Lamp's token for its AI.
-    func hostCredential(for project: LampProject) -> String {
-        _ = session(for: project.id)
-        return ControllerCredential.issue(kind: .host, app: project.id)
-    }
-
-    // MARK: Sockets
-
-    /// A socket from a phone, or from a TV app, at `/phone/<app>/socket`. `pageOrigins` are what a phone's page here
-    /// is served as (the request's own Host, by http or https), the only pages let in as players.
-    func accept(_ peer: WebSocketPeer, app: String, pageOrigins: [String], origin: String?) {
-        var greeted = false
-        let id = ObjectIdentifier(peer)
-        greeting[id] = peer
-        peer.onClose = { [weak self] in self?.greeting[id] = nil }
-        peer.onMessage = { [weak self, weak peer] text in
-            guard let self, let peer, !greeted else { return }
-            greeted = true
-            self.greeting[id] = nil
-            guard let hello = Self.parse(text), hello["t"] as? String == "hello",
-                  let claim = ControllerCredential.check(hello["credential"] as? String, kinds: [.host, .join, .controller], app: app),
-                  let project = Store.shared.projects.first(where: { $0.id == app }), Store.servesPhonePage(project) || claim.kind == .host
-            else { return peer.close(code: 4003) }
-            if claim.kind == .host { return self.joinAsHost(peer, app: app) }
-            // A browser always says which page opened a socket, so a page is let in only from the app's own. No origin
-            // at all is no browser's: the wish's own iPhone or Mac app (`LampController`), whose credential Lamp gave it
-            // by its token. Anything else that isn't a browser could say whatever origin it liked, so the credential is
-            // what lets it in, as it always was.
-            if let origin, !pageOrigins.contains(origin) { return peer.close(code: 4003) }
-            self.joinAsPlayer(peer, app: app, resuming: claim.kind == .controller ? claim.player : nil)
-        }
-        peer.start()
-        startTicking()
-        Task { @MainActor [weak self, weak peer] in
-            try? await Task.sleep(for: .seconds(5))
-            if !greeted { peer?.close(code: 4001); self?.greeting[id] = nil }
-        }
-    }
-
-    private func joinAsHost(_ peer: WebSocketPeer, app: String) {
-        let session = session(for: app)
-        switch session.host {
-        case .socket(let old): old.close(code: 4000)
-        case .preview: return peer.close(code: 4009)   // the preview is this app's host on this Mac
-        case nil: break
-        }
-        session.host = .socket(peer)
-        peer.onMessage = { [weak self] text in
-            guard let self, let message = Self.parse(text) else { return }
-            self.fromHost(session, app: app, message: message)
-        }
-        peer.onClose = { [weak self, weak peer] in
-            guard let self, case .socket(let current) = session.host, current === peer else { return }
-            self.hostLeft(session, app: app)
-        }
-        welcomeHost(session, app: app)
-    }
-
-    private func joinAsPlayer(_ peer: WebSocketPeer, app: String, resuming: Int?) {
-        let session = session(for: app)
+    /// The wish's iPhone apps listening now, each as the page reaches it, with a ticket for it. A phone in the simulator
+    /// listens on this Mac: the preview reaches it at the loopback address it registered from, and a TV on the network
+    /// at this Mac's address on that network.
+    func directLinks(for wish: String, preview: Bool, from asker: String?) -> [[String: Any]] {
         let now = Date()
-        var number = resuming
-        if let resuming, let old = session.players[resuming]?.peer {
-            old.close(code: 4000)   // the same phone, back on a new connection
-        }
-        if number == nil {
-            number = (1...Limits.players).first { n in
-                guard let player = session.players[n] else { return true }
-                return player.peer == nil && player.heldUntil < now
+        listeners = listeners.filter { now.timeIntervalSince($0.value.renewed) < Self.listenerLife }
+        return listeners.filter { $0.value.wish == wish }.sorted { $0.key < $1.key }.compactMap { id, listener in
+            var address = listener.address
+            // A link-local address names its interface, which no page can say in an address: such a phone isn't offered.
+            if address.contains("%") { return nil }
+            if Self.isLoopback(address), let asker, !Self.isLoopback(asker) {
+                guard let mine = IntegrationRunner.macAddress(near: asker) else { return nil }
+                address = mine
             }
-        }
-        guard let number else {
-            peer.send(#"{"t":"full"}"#)
-            return peer.close(code: 4004)
-        }
-        let player = Player(peer: peer)
-        session.players[number] = player
-        peer.send(Self.json(["t": "welcome", "role": "controller", "player": number, "host": session.host != nil,
-                             "credential": ControllerCredential.issue(kind: .controller, app: app, player: number)]))
-        toHost(session, ["t": "joined", "player": number])
-        peer.onMessage = { [weak self] text in self?.fromPlayer(session, number: number, player: player, text: text) }
-        peer.onClose = { [weak self, weak peer] in
-            guard let self, session.players[number] === player, player.peer === peer else { return }
-            player.peer = nil
-            player.heldUntil = Date().addingTimeInterval(ControllerCredential.Kind.controller.lifetime)
-            self.toHost(session, ["t": "left", "player": number])
+            let host = address.contains(":") ? "[\(address)]" : address
+            return ["kind": "direct", "socket": "ws://\(host):\(listener.port)/", "device": listener.device,
+                    "credential": Self.ticket(listener: id, key: listener.key, preview: preview)]
         }
     }
 
-    private func fromPlayer(_ session: Session, number: Int, player: Player, text: String) {
-        guard allowed(player), let message = Self.parse(text), session.host != nil else { return }
-        let at = Int(Date().timeIntervalSince1970 * 1000)
-        let seq = message["seq"] as? Int ?? 0
-        let name = (message["name"] as? String).flatMap { $0.range(of: "^[A-Za-z0-9_-]{1,32}$", options: .regularExpression) != nil ? $0 : nil }
-        switch message["t"] as? String {
-        case "button":
-            guard let name else { return }
-            toHost(session, ["t": "button", "player": number, "name": name, "down": message["down"] as? Bool == true, "seq": seq, "at": at])
-        case "axis":
-            guard let name else { return }
-            // Movement is only worth its latest value: when the TV is behind, it's dropped rather than queued.
-            if case .socket(let peer) = session.host, peer.pending > Limits.backlog { return }
-            toHost(session, ["t": "axis", "player": number, "name": name, "x": Self.clamp(message["x"]), "y": Self.clamp(message["y"]), "seq": seq, "at": at])
-        case "message":
-            guard let data = message["data"] else { return }
-            toHost(session, ["t": "message", "player": number, "data": data, "at": at])
-        case "too-big":
-            // A message the phone's own library refused as over `Limits.message`: said in the TV app's log, where the
-            // builder looks, since the phone's console is out of sight.
-            guard let bytes = message["bytes"] as? Int else { return }
-            toHost(session, ["t": "too-big", "player": number, "bytes": bytes])
-        default:
-            break
-        }
+    /// What the page shows the phone it opens a socket to: signed with the listener's own key, for that listener, so it
+    /// opens no other phone's game and is no use for long.
+    static func ticket(listener: String, key: SymmetricKey, preview: Bool, now: Date = Date()) -> String {
+        ControllerToken.issue(kind: .host, app: listener, generation: 0, preview: preview, lifetime: ticketLife, now: now, key: key)
     }
 
-    private func fromHost(_ session: Session, app: String, message: [String: Any]) {
-        switch message["t"] as? String {
-        case "link":
-            sendLink(session, app: app)
-        case "send":
-            guard let data = message["data"] else { return }
-            let to = (message["player"] as? Int).flatMap { $0 == 0 ? nil : $0 }
-            let text = Self.json(["t": "message", "data": data])
-            for (number, player) in session.players where to == nil || to == number { player.peer?.send(text) }
-        default:
-            break
-        }
-    }
+    // MARK: A wish's iPhone app
 
-    /// A link for phones, once the app's site is listening and by the port it holds.
-    private func sendLink(_ session: Session, app: String) {
-        Task { @MainActor in
-            guard let port = await PhoneSites.ready(app), sessions[app] === session else { return }
-            let join = ControllerCredential.issue(kind: .join, app: app)
-            toHost(session, ["t": "link", "url": TVs.phonePage(port: port) + "#" + join])
-        }
-    }
-
-    /// The app's site has opened, perhaps at another port than before: its host is given a link to where it is.
-    func siteOpened(_ app: String) {
-        guard let session = sessions[app], session.host != nil else { return }
-        sendLink(session, app: app)
-    }
-
-    // A phone may send about as often as its screen draws; past that its messages are dropped, and a phone that goes
-    // on past it for ten seconds is let go.
-    private func allowed(_ player: Player) -> Bool {
+    /// The iPhone app's listener, at `port` on the address its request came from: the key its tickets are signed with,
+    /// the same for as long as that listener lasts.
+    func register(listener id: String, wish: String, device: String, address: String, port: UInt16) -> SymmetricKey? {
         let now = Date()
-        player.tokens = min(Limits.perSecond, player.tokens + now.timeIntervalSince(player.refilled) * Limits.perSecond)
-        player.refilled = now
-        if player.tokens >= 1 { player.tokens -= 1; player.over = nil; return true }
-        if player.over == nil { player.over = now }
-        if let over = player.over, now.timeIntervalSince(over) > 10 { player.peer?.close(code: 4008) }
-        return false
+        // A listener's id is its own, and a ticket names it: one another wish's app has is never taken over.
+        if let known = listeners[id], known.wish != wish, now.timeIntervalSince(known.renewed) < Self.listenerLife { return nil }
+        if var known = listeners[id], known.wish == wish, now.timeIntervalSince(known.renewed) < Self.listenerLife {
+            known.address = address
+            known.port = port
+            known.renewed = now
+            listeners[id] = known
+            return known.key
+        }
+        let key = SymmetricKey(size: .bits256)
+        // A phone that starts listening again (the app reopened) is the same phone: its old listener is gone.
+        listeners = listeners.filter { !($0.value.wish == wish && $0.value.device == device) }
+        listeners[id] = Listener(wish: wish, device: device, address: address, port: port, key: key, renewed: now)
+        return key
+    }
+
+    /// The app's game is over (its page isn't served anywhere): what Lamp handed out for it is no use any more.
+    func forgetListeners(of wish: String) {
+        listeners = listeners.filter { $0.value.wish != wish }
     }
 
     // MARK: Sessions
 
-    private func session(for app: String) -> Session {
-        if let session = sessions[app] { return session }
-        let session = Session()
-        sessions[app] = session
-        startTicking()
-        return session
-    }
-
-    private func welcomeHost(_ session: Session, app: String) {
-        let players = session.players.filter { $0.value.peer != nil }.keys.sorted()
-        toHost(session, ["t": "welcome", "role": "host", "players": players, "now": Self.now])
-        for player in session.players.values { player.peer?.send(#"{"t":"state","host":true}"#) }
-    }
-
-    private func hostLeft(_ session: Session, app: String) {
-        session.host = nil
-        for player in session.players.values { player.peer?.send(#"{"t":"state","host":false}"#) }
-    }
-
     /// Ends the game of every app whose phone page isn't served any more.
     func endAll(except serving: Set<String>) {
-        for app in sessions.keys where !serving.contains(app) { end(app) }
+        for app in ControllerCredential.apps where !serving.contains(app) { end(app) }
     }
 
     /// The app has stopped: its phones are let go, and their links and credentials are no use any more.
     func end(_ app: String) {
-        guard let session = sessions.removeValue(forKey: app) else { return }
-        for player in session.players.values { player.peer?.close(code: 4005) }
-        switch session.host {
-        case .socket(let peer): peer.close(code: 4005)
-        case .preview(let deliver): deliver(#"{"t":"closed"}"#)
-        case nil: break
-        }
         ControllerCredential.forget(app)
+        forgetListeners(of: app)
+        ControllerRelay.end(app)
     }
 
-    private func toHost(_ session: Session, _ message: [String: Any]) {
-        let text = Self.json(message)
-        switch session.host {
-        case .preview(let deliver): deliver(text)
-        case .socket(let peer): peer.send(text)
-        case nil: break
-        }
-    }
-
-    // Every few seconds: a beat on every socket (with Lamp's time, which the host uses to tell how old movement is),
-    // fresh credentials for the phones each minute, and sockets that have gone quiet let go.
-    private func startTicking() {
-        guard ticker == nil else { return }
-        ticker = Timer.scheduledTimer(withTimeInterval: Limits.beat, repeats: true) { _ in
-            MainActor.assumeIsolated { PhoneControllers.shared.tick() }
-        }
-    }
-
-    private func tick() {
-        let now = Date()
-        let beat = Self.json(["t": "beat", "now": Self.now])
-        for (app, session) in sessions {
-            let renew = now.timeIntervalSince(session.renewed) >= 60
-            if renew { session.renewed = now }
-            for (number, player) in session.players {
-                guard let peer = player.peer else {
-                    if player.heldUntil < now { session.players[number] = nil }
-                    continue
-                }
-                if now.timeIntervalSince(peer.heard) > Limits.silence { peer.close(code: 4002); continue }
-                peer.send(beat)
-                if renew {
-                    peer.send(Self.json(["t": "credential", "credential": ControllerCredential.issue(kind: .controller, app: app, player: number)]))
-                }
-            }
-            switch session.host {
-            case .socket(let peer):
-                if now.timeIntervalSince(peer.heard) > Limits.silence { peer.close(code: 4002) } else { peer.send(beat) }
-            case .preview(let deliver):
-                deliver(beat)
-            case nil:
-                break
-            }
-        }
-    }
-
-    private static var now: Int { Int(Date().timeIntervalSince1970 * 1000) }
-    private static func clamp(_ value: Any?) -> Double {
-        guard let n = (value as? NSNumber)?.doubleValue, n.isFinite else { return 0 }
-        return max(-1, min(1, n))
-    }
-    static func parse(_ text: String) -> [String: Any]? {
-        guard text.utf8.count <= Limits.message else { return nil }
-        return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
-    }
-    static func json(_ value: [String: Any]) -> String {
-        String(decoding: (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8), as: UTF8.self)
+    static func isLoopback(_ address: String) -> Bool {
+        address == "::1" || address.hasPrefix("127.") || address == "localhost"
     }
 }
 
-/// The controllers' credentials: short signed tokens, each for one kind of holder in one app's session, signed with a key
-/// that lives only in this Lamp's memory, so none outlives Lamp, and none is the app's token for its AI.
-///
-///   host        the app on a TV, for its socket, for as long as a session may last.
-///   join        what a phone's link carries, after the #, which a browser never sends: for fifteen minutes.
-///   controller  given to a phone once it has joined: its player, for two minutes, renewed while it stays, so a phone
-///               that drops off comes back as the same player.
+/// The controllers' credentials for the relay (`ControllerToken`), signed with a key kept only in this Lamp's memory,
+/// which Lamp gives the relay as it starts it, so none outlives Lamp, and none is the app's token for its AI. Each app's
+/// session has a generation: ending it makes every credential it handed out worthless.
 enum ControllerCredential {
-    enum Kind: String, CaseIterable {
-        case host, join, controller
-        var lifetime: TimeInterval {
-            switch self {
-            case .host: 12 * 3600
-            case .join: 15 * 60
-            case .controller: 2 * 60
-            }
-        }
-    }
-
-    struct Claim: Equatable {
-        let kind: Kind
-        let app: String
-        let player: Int?
-    }
+    typealias Kind = ControllerToken.Kind
+    typealias Claim = ControllerToken.Claim
 
     nonisolated(unsafe) private static var key = SymmetricKey(size: .bits256)
-    /// Each app's generation: ending its session makes every credential it handed out worthless.
     nonisolated(unsafe) private static var generations: [String: Int] = [:]
+    nonisolated(unsafe) private static var known: Set<String> = []
     private static let lock = NSLock()
 
-    static func issue(kind: Kind, app: String, player: Int? = nil, now: Date = Date()) -> String {
-        lock.lock(); defer { lock.unlock() }
-        var payload: [String: Any] = ["k": kind.rawValue, "a": app, "g": generations[app] ?? 0,
-                                      "e": Int(now.addingTimeInterval(kind.lifetime).timeIntervalSince1970),
-                                      "n": Data((0..<9).map { _ in UInt8.random(in: 0...255) }).urlSafeBase64]
-        if let player { payload["p"] = player }
-        let body = ((try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()).urlSafeBase64
-        return body + "." + Data(HMAC<SHA256>.authenticationCode(for: Data(body.utf8), using: key)).urlSafeBase64
+    /// The key, as the relay is given it.
+    static var keyData: Data { lock.withLock { key.withUnsafeBytes { Data($0) } } }
+
+    static func generation(_ app: String) -> Int { lock.withLock { generations[app] ?? 0 } }
+
+    /// The apps credentials have been handed out for since their sessions last ended.
+    static var apps: Set<String> { lock.withLock { known } }
+
+    static func issue(kind: Kind, app: String, player: Int? = nil, preview: Bool = false, now: Date = Date()) -> String {
+        lock.withLock {
+            known.insert(app)
+            return ControllerToken.issue(kind: kind, app: app, generation: generations[app] ?? 0, player: player, preview: preview, now: now, key: key)
+        }
     }
 
     /// What a credential says when this Lamp made it, for this app in its current session, of one of these kinds, and it
     /// hasn't run out; nil otherwise, whatever is wrong with it.
     static func check(_ token: String?, kinds: Set<Kind>, app: String, now: Date = Date()) -> Claim? {
-        guard let token, token.utf8.count <= 1024 else { return nil }
-        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 2, let signature = Data(urlSafeBase64: String(parts[1])) else { return nil }
-        lock.lock(); defer { lock.unlock() }
-        guard HMAC<SHA256>.isValidAuthenticationCode(signature, authenticating: Data(parts[0].utf8), using: key),
-              let body = Data(urlSafeBase64: String(parts[0])),
-              let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-              let kind = (payload["k"] as? String).flatMap(Kind.init(rawValue:)), kinds.contains(kind),
-              payload["a"] as? String == app, payload["g"] as? Int == (generations[app] ?? 0),
-              let expires = payload["e"] as? Int, Double(expires) > now.timeIntervalSince1970 else { return nil }
-        return Claim(kind: kind, app: app, player: payload["p"] as? Int)
+        lock.withLock { ControllerToken.check(token, kinds: kinds, app: app, generation: generations[app] ?? 0, now: now, key: key) }
     }
 
     static func forget(_ app: String) {
-        lock.lock(); defer { lock.unlock() }
-        generations[app, default: 0] += 1
+        lock.withLock {
+            generations[app, default: 0] += 1
+            known.remove(app)
+        }
     }
 }
 
-extension Data {
-    var urlSafeBase64: String {
-        base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    }
-    init?(urlSafeBase64 text: String) {
-        guard text.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else { return nil }
-        var plain = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        plain += String(repeating: "=", count: (4 - plain.count % 4) % 4)
-        self.init(base64Encoded: plain)
-    }
-}
-
-/// The server side of a WebSocket on a connection the gateway has taken (RFC 6455): text messages, pings and closes,
-/// each message capped, small enough to read whole.
+/// The relay between TV apps and their phones (`Relay`), run as a process of its own from Lamp's Helpers while any TV
+/// app takes players, so a game's messages and files never pass through Lamp. Lamp tells it on its input which apps'
+/// sessions are open, with the key their credentials are signed with; it says on its output where it listens, and it
+/// ends when Lamp does (its input closes). It keeps the port it had for as long as Lamp runs, so a phone's page that
+/// lost its socket finds it again where it was.
 @MainActor
-final class WebSocketPeer {
-    private let connection: NWConnection
-    private let key: String
-    private var buffer = Data()
-    private var parts = Data()
-    private(set) var open = true
-    /// Sent messages not yet handed to the network: how far behind the other end is.
-    private(set) var pending = 0
-    private(set) var heard = Date()
-    var onMessage: (String) -> Void = { _ in }
-    var onClose: () -> Void = {}
+enum ControllerRelay {
+    private static var process: Process?
+    private static var input: FileHandle?
+    private static var port: UInt16?
+    private static var lastPort: UInt16 = 0
+    private static var waiting: [UUID: CheckedContinuation<UInt16?, Never>] = [:]
+    /// What each open session is, as the relay is told it; told again to a relay started afresh.
+    private static var sessions: [String: [String: Any]] = [:]
+    private static var restarts: [Date] = []
+    private static var hostsRead: (names: [String], at: Date)?
 
-    init(connection: NWConnection, key: String, leftover: Data) {
-        self.connection = connection
-        self.key = key
-        self.buffer = leftover
+    /// The names and addresses a phone's page can be served as: this Mac's, as the gateway checks a page's Host. Read
+    /// again every half minute at most, since the name comes from a command.
+    private static var hosts: [String] {
+        if let hostsRead, hostsRead.at.timeIntervalSinceNow > -30 { return hostsRead.names }
+        let names = Array(Set([Devices.macHost.lowercased()] + Devices.localAddresses + ["127.0.0.1", "localhost", "::1"])).sorted()
+        hostsRead = (names, Date())
+        return names
+    }
+    /// For tests: the relay to run, when it isn't in this bundle's Helpers.
+    static var executable: URL?
+
+    private static var program: URL? {
+        if let executable { return executable }
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/LampRelay")
+        if FileManager.default.isExecutableFile(atPath: bundled.path) { return bundled }
+        // A build that isn't a bundle (swift run): the relay is built beside Lamp.
+        let beside = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("LampRelay")
+        return beside.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
     }
 
-    func start() {
-        let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
-        connection.send(content: Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n".utf8),
-                        completion: .contentProcessed { _ in })
-        process()
-        receive()
+    /// Where the relay listens, once it does, starting it when it isn't running. Nil when it can't start, when no TV app
+    /// takes players, or when it hasn't said within a few seconds.
+    static func ready() async -> UInt16? {
+        if let port { return port }
+        guard !sessions.isEmpty else { return nil }
+        let id = UUID()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(15))
+            waiting.removeValue(forKey: id)?.resume(returning: nil)
+        }
+        return await withCheckedContinuation { waiting[id] = $0; if process == nil { launch() } }
     }
 
-    func send(_ text: String) {
-        guard open else { return }
-        pending += 1
-        connection.send(content: Self.frame(0x1, Data(text.utf8)), completion: .contentProcessed { [weak self] _ in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.pending -= 1 } }
-        })
+    /// Opens or brings up to date the sessions of the apps that take players now, and ends the rest; with none left the
+    /// relay is let go, so nothing listens for phones while no TV app wants them.
+    static func sync(_ serving: [LampProject]) {
+        let wanted = Dictionary(serving.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for app in sessions.keys where wanted[app] == nil { end(app) }
+        for project in wanted.values { open(project.id) }
+        if sessions.isEmpty { quit() }
     }
 
-    func close(code: UInt16 = 1000) {
-        guard open else { return }
-        let payload = Data([UInt8(code >> 8), UInt8(code & 0xff)])
-        connection.send(content: Self.frame(0x8, payload), completion: .contentProcessed { [connection] _ in connection.cancel() })
-        closed()
+    /// The app's session as it is now: its generation and the address its phone page is at. Sent again when the page moves.
+    static func open(_ app: String) {
+        var line: [String: Any] = ["op": "session", "app": app, "generation": ControllerCredential.generation(app), "hosts": hosts]
+        if PhoneSites.isOpen(app), let pagePort = PhoneSites.port(for: app) {
+            line["pagePort"] = Int(pagePort)
+            line["page"] = TVs.phonePage(port: pagePort)
+        }
+        guard sessions[app].map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: line) }) ?? true else { return }
+        sessions[app] = line
+        if process == nil { launch() } else { send(line) }
     }
 
-    private func closed() {
-        guard open else { return }
-        open = false
-        onClose()
+    /// The app's page has moved: an open session is told where it is now. One that isn't open (its page stopped being
+    /// served while its site opened) stays closed.
+    static func refresh(_ app: String) {
+        guard sessions[app] != nil else { return }
+        open(app)
     }
 
-    private func receive() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, done, error in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, self.open else { return }
-                    if let data { self.buffer.append(data) }
-                    self.process()
-                    if done || error != nil { self.connection.cancel(); self.closed() } else if self.open { self.receive() }
-                }
+    static func end(_ app: String) {
+        guard sessions.removeValue(forKey: app) != nil else { return }
+        send(["op": "end", "app": app])
+        if sessions.isEmpty { quit() }
+    }
+
+    private static func launch() {
+        guard process == nil else { return }
+        guard let program else {
+            NSLog("Lamp's controller relay isn't in this build.")
+            return finish(nil)
+        }
+        let process = Process()
+        process.executableURL = program
+        let input = Pipe(), output = Pipe()
+        // A relay that has quit makes a write fail; without this it would end Lamp with SIGPIPE.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { gone in Task { @MainActor in ended(gone) } }
+        var pending = Data()
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; return }
+            pending.append(data)
+            while let end = pending.firstIndex(of: 0x0A) {
+                let line = pending[..<end]
+                pending.removeSubrange(...end)
+                guard let said = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any], said["op"] as? String == "ready" else { continue }
+                let port = (said["port"] as? Int).flatMap { UInt16(exactly: $0) }
+                Task { @MainActor in if Self.process === process { finish(port) } }
             }
         }
-    }
-
-    private func process() {
-        while open {
-            guard let frame = Self.parse(buffer) else { return }
-            guard frame.length > 0 else { return close(code: 1009) }   // too big, or not masked as a client's must be
-            buffer.removeFirst(frame.length)
-            heard = Date()
-            switch frame.opcode {
-            case 0x8: return close()
-            case 0x9: connection.send(content: Self.frame(0xA, frame.payload), completion: .contentProcessed { _ in })
-            case 0xA: break
-            case 0x0, 0x1:
-                parts.append(frame.payload)
-                guard parts.count <= PhoneControllers.Limits.message else { return close(code: 1009) }
-                if frame.fin {
-                    let text = String(decoding: parts, as: UTF8.self)
-                    parts = Data()
-                    onMessage(text)
-                }
-            default:
-                return close(code: 1003)   // binary isn't spoken here
-            }
+        do {
+            try process.run()
+        } catch {
+            NSLog("Lamp's controller relay didn't start: \(error.localizedDescription)")
+            return finish(nil)
         }
+        self.process = process
+        self.input = input.fileHandleForWriting
+        send(["op": "start", "key": ControllerCredential.keyData.base64EncodedString(), "port": Int(lastPort)])
+        for line in sessions.values { send(line) }
     }
 
-    private static func frame(_ opcode: UInt8, _ payload: Data) -> Data {
-        var head = Data([0x80 | opcode])
-        if payload.count < 126 { head.append(UInt8(payload.count)) }
-        else if payload.count < 65536 { head.append(contentsOf: [126, UInt8(payload.count >> 8), UInt8(payload.count & 0xff)]) }
-        else { head.append(127); head.append(contentsOf: (0..<8).reversed().map { UInt8((UInt64(payload.count) >> ($0 * 8)) & 0xff) }) }
-        return head + payload
+    private static func finish(_ port: UInt16?) {
+        self.port = port
+        if let port { lastPort = port }
+        for waiter in waiting.values { waiter.resume(returning: port) }
+        waiting = [:]
     }
 
-    /// One frame off the front: nil while it hasn't all come, length 0 when it's too big or unmasked.
-    private static func parse(_ data: Data) -> (fin: Bool, opcode: UInt8, payload: Data, length: Int)? {
-        let bytes = [UInt8](data.prefix(14))
-        guard bytes.count >= 2 else { return nil }
-        let fin = bytes[0] & 0x80 != 0, opcode = bytes[0] & 0x0f
-        guard bytes[1] & 0x80 != 0 else { return (fin, opcode, Data(), 0) }
-        var length = Int(bytes[1] & 0x7f), offset = 2
-        if length == 126 {
-            guard bytes.count >= 4 else { return nil }
-            length = Int(bytes[2]) << 8 | Int(bytes[3]); offset = 4
-        } else if length == 127 {
-            return (fin, opcode, Data(), 0)
-        }
-        guard length <= PhoneControllers.Limits.message else { return (fin, opcode, Data(), 0) }
-        guard data.count >= offset + 4 + length else { return nil }
-        let start = data.startIndex
-        let mask = [UInt8](data[(start + offset)..<(start + offset + 4)])
-        var payload = [UInt8](data[(start + offset + 4)..<(start + offset + 4 + length)])
-        for i in payload.indices { payload[i] ^= mask[i & 3] }
-        return (fin, opcode, Data(payload), offset + 4 + length)
+    private static func send(_ line: [String: Any]) {
+        guard let input, var data = try? JSONSerialization.data(withJSONObject: line) else { return }
+        data.append(0x0A)
+        try? input.write(contentsOf: data)
+    }
+
+    /// The relay ended. Wanted still, it's started again, though not more than a few times a minute.
+    private static func ended(_ gone: Process) {
+        guard process === gone else { return }
+        process = nil
+        input = nil
+        port = nil
+        finish(nil)
+        guard !sessions.isEmpty else { return }
+        restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
+        guard restarts.count <= 3 else { return NSLog("Lamp's controller relay keeps ending; it's left off until a TV app opens again.") }
+        launch()
+    }
+
+    private static func quit() {
+        guard let process else { return }
+        self.process = nil
+        try? input?.close()
+        input = nil
+        finish(nil)
+        process.terminate()
     }
 }
 
@@ -584,9 +383,10 @@ enum PhoneSites {
             site.stop()
             sites[app] = nil
         }
-        // Stopping the listener leaves the sockets it took open, so the game ends too: its phones and host are let go
-        // and its credentials are worthless, whether the app was deleted or is no longer set to open anywhere.
+        // The game ends too: its phones and host are let go and its credentials are worthless, whether the app was
+        // deleted or is no longer set to open anywhere.
         PhoneControllers.shared.endAll(except: serving)
+        ControllerRelay.sync(projects.filter(Store.servesPhonePage))
         for app in ports.keys where !known.contains(app) { ports[app] = nil }
         for app in serving where sites[app] == nil && !opening.contains(app) {
             Task { @MainActor in _ = await open(app, wanted: { served(app) }) }
@@ -606,7 +406,7 @@ enum PhoneSites {
             for waiter in waiting.removeValue(forKey: app) ?? [] { waiter.resume(returning: port) }
             // A host that asked for a link while the site was opening, or before it moved, gets one for where it is.
             if let port {
-                PhoneControllers.shared.siteOpened(app)
+                ControllerRelay.refresh(app)
                 TVPreview.phonePageMoved(app, to: TVs.phonePage(port: port))
             }
         }
@@ -615,8 +415,6 @@ enum PhoneSites {
             guard let port = port(for: app, avoiding: avoided) else { return false }
             let site = Gateway(site: port, pages: { request in
                 await Store.shared.phonePage(request.within(app))
-            }, sockets: { request, connection, leftover in
-                Task { @MainActor in Store.shared.phoneSocket(request.within(app), connection: connection, leftover: leftover) }
             })
             // Weakly: the listener keeps this callback, and the site keeps the listener.
             let started = await site.startSite(onFailure: { [weak site] in

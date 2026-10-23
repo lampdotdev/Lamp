@@ -127,6 +127,10 @@ else
   ICON_NAME_KEY=''
   UPDATE_KEYS=''   # a development build never updates itself
 fi
+# The relay between TV apps and their phones (ControllerRelay): a process of its own, so a game's messages and files
+# never pass through Lamp's.
+mkdir -p "$APP/Contents/Helpers"
+cp "$(dirname "$BIN")/LampRelay" "$APP/Contents/Helpers/LampRelay"
 # One generic browser companion, installed through Lamp's setup guide, never generated per app.
 if [ "$FLAVOR" = dev ]; then
   mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/BrowserCompanion"
@@ -286,6 +290,7 @@ sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
 if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
+sign "$APP/Contents/Helpers/LampRelay"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
 # Lamp ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with

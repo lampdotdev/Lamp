@@ -1,3 +1,4 @@
+import LampRelayKit
 import XCTest
 @testable import Lamp
 
