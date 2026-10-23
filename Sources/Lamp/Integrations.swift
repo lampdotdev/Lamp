@@ -479,7 +479,9 @@ struct IntegrationRunner {
             if let request = action.http {
                 // A setting changed only for this sequence: what it is now, to put back after.
                 if let field = request.restore {
-                    let read = Request(port: request.port, path: request.path, auth: request.auth, https: request.https)
+                    // Read as it's written, with the same sign-in and headers, but for a cookie the device sets only now.
+                    let headers = request.headers?.filter { $0.key.lowercased() != "content-type" && !$0.value.contains("{cookie:") }
+                    let read = Request(port: request.port, path: request.path, headers: headers, auth: request.auth, https: request.https)
                     let now = try await DeviceHTTP.send(read, to: try address, values: values, pins: DeviceTLS.Pins(deviceID: device.id))
                     guard now.ok, let was = DeviceHTTP.value(json: field, xml: nil, in: now),
                           !was.unicodeScalars.contains(where: { !Placeholders.safe.contains($0) }) else {

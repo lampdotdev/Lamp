@@ -728,6 +728,8 @@ enum IntegrationCheck {
         if kinds != 1 { problems.append("\(at) must have exactly one of http, tcp, field or signedIn.") }
         if let request = condition.http {
             problems += requestProblems(request, at: "\(at).http", fields: fields, steps: steps)
+            // A check asks; it changes nothing it would have to put back, and runs again and again while it waits.
+            if request.restore != nil { problems.append("\(at).http.restore is for a bridge's or a step's sequence: a check only asks.") }
             if (condition.equals != nil || condition.contains != nil), condition.json == nil, condition.xml == nil {
                 problems.append("\(at) compares a value, so it must read it with json or xml.")
             }

@@ -76,6 +76,9 @@ final class IntegrationTests: XCTestCase {
         XCTAssertTrue(problems { json in
             step(0, &json) { $0["check"] = [["http": ["port": 80, "path": "/settings/x", "restore": "Value"]]] }
         }.contains { $0.contains("restore is for a PUT or POST") })
+        XCTAssertTrue(problems { json in
+            step(0, &json) { $0["check"] = [["http": ["method": "PUT", "port": 80, "path": "/settings/x", "body": "{}", "restore": "Value"]]] }
+        }.contains { $0.contains("a check only asks") })
         // A misspelt key isn't passed over quietly.
         XCTAssertTrue(problems { $0["fnd"] = [] }.contains { $0.contains("fnd isn't part of an integration") })
         // A program that isn't Lamp's needs its checksum.
