@@ -1000,7 +1000,10 @@ apps, and every restore takes them in again at once (`Store.followRestored`, com
 `Parts.match`: a part the version doesn't have is quit and then forgotten, one the person keeps open over unsaved work
 stays listed until it's closed, and one it brings back or changes is listed again). A wish's name is in its meta.json,
 which no version holds, so the versions that change it carry it (`Lamp-Name`, `Lamp-Renamed-From`), and Undo or going
-back to a version gives back the name that version had (`Versions.name(at:in:)`), its parts with it. A part's quit is judged by its
+back to a version gives back the name that version had (`Versions.name(at:in:)`), its parts with it. Lamp's own files
+(build.sh, the Info.plist lines) carry the name, so a rename and a restore that gives one back write them, the parts'
+too, under that name before the version is saved (`Versions.restoreFiles(name:)`): written after, the next build left
+the app unsaved and Undo could never get past the rename. A part's quit is judged by its
 wish's turn, which is the only one it has. Deleting a wish closes each part first (a Mac part may be kept open
 over unsaved work, which stops the delete) and forgets what Lamp keeps for it (`Store.forgetPart`: its installed copy,
 build folders, sign-ins and place in the lists), as taking a part away does; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's

@@ -248,7 +248,9 @@ enum Versions {
 
     /// Puts the app's files back as they were in a version, without committing. Attachments stay:
     /// they're what people gave Lamp, and the chat still shows them.
-    static func restoreFiles(_ project: LampProject, to version: AppVersion) async -> Bool {
+    /// `name` is the name the restore gives back, when it gives one: Lamp's own files carry the app's name, so they're
+    /// written under it before the restore is saved, or the next build writes them again and leaves the app unsaved.
+    static func restoreFiles(_ project: LampProject, to version: AppVersion, name: String? = nil) async -> Bool {
         // Attachments and Lamp's own folder are left alone: a version from before the rename ignores .forge/,
         // not .lamp/, and clean would otherwise take the chat, token and sessions with it.
         let keep = "':!\(Attachments.folder)' ':!.lamp'"
@@ -261,7 +263,7 @@ enum Versions {
             Migration.normalize(project.dir, commit: false)
             // A version from before the app was made for other devices brings back its kind with its code, so
             // Lamp's own files and its next build are for what that code was written for (Store.followRestoredKind).
-            var project = project
+            var project = name.map { project.named($0) } ?? project
             if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
                 project.platform = kind
                 if !kind.hasIOS { project.device = nil }
@@ -269,6 +271,11 @@ enum Versions {
                 try? Template.saveMeta(project)
             }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
+            // A wish's other parts too, as the restore left them: they carry the wish's name.
+            if name != nil, !project.isPart {
+                project.partFolders = Parts.folders(in: project.dir)
+                for part in Parts.load(project) { try? Template.writeOwnedFiles(for: part) }
+            }
         }
         return ok
     }
@@ -285,7 +292,7 @@ enum Versions {
     /// come back the same, as a rename's own version may have changed nothing else.
     static func restore(_ project: LampProject, to version: AppVersion, message: String, trailer: String? = nil,
                         renaming: (from: String, to: String)? = nil) async -> Bool {
-        guard await restoreFiles(project, to: version) else { return false }
+        guard await restoreFiles(project, to: version, name: renaming?.to) else { return false }
         let trailers = [trailer, renaming.map { nameTrailers(from: $0.from, to: $0.to) }].compactMap { $0 }
         return await save(project, message: message, trailer: trailers.isEmpty ? nil : trailers.joined(separator: "\n"),
                           allowEmpty: renaming != nil)

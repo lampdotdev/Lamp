@@ -2198,6 +2198,10 @@ final class Store: ObservableObject {
 
         let renamed = await giveName(unique, to: current)
         Self.retitle(current.dir, from: current.name, to: unique)
+        // Lamp's own files carry the name: written under the new one before the version is saved, so the next build
+        // doesn't leave the app unsaved, and going back to this version brings them back as they go with its name.
+        try? Template.writeOwnedFiles(for: renamed)
+        for part in Parts.load(renamed) { try? Template.writeOwnedFiles(for: part) }
         // A version of its own even when no file named the app, carrying both names, so Undo gives the old one back.
         _ = await Versions.save(current, message: "Rename to \(unique)",
                                 trailer: Versions.nameTrailers(from: current.name, to: unique), allowEmpty: true)

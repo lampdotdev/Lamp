@@ -36,6 +36,34 @@ final class UndoRenameTests: XCTestCase {
         XCTAssertEqual(Versions.name(at: earlier, in: versions), "Coin Flip")
     }
 
+    /// Lamp's own files carry the app's name. Undo of a rename saved them under the name it was leaving, and the build
+    /// after it wrote them under the name it gave back: the app was left unsaved, so the next Undo only discarded that
+    /// and rebuilt, and Undo never got past the rename (Roomote's review of #615).
+    func testUndoOfARenameLeavesNothingUnsavedForTheNextBuild() async throws {
+        let app = try escape.app()
+        try Template.writeOwnedFiles(for: app.project)
+        let made = await Versions.save(app.project, message: "Make it")
+        XCTAssertTrue(made)
+        // The rename, as Lamp saves it: its own files under the new name.
+        let renamed = app.project.named("Heads or Tails")
+        try Template.writeOwnedFiles(for: renamed)
+        let saved = await Versions.save(renamed, message: "Rename to Heads or Tails",
+                                        trailer: Versions.nameTrailers(from: "Coin Flip", to: "Heads or Tails"), allowEmpty: true)
+        XCTAssertTrue(saved)
+        var unsaved = await Versions.hasUnsavedChanges(renamed)
+        XCTAssertFalse(unsaved, "the rename's own build finds its files as saved")
+
+        let versions = await Versions.list(renamed)
+        let (undoing, target) = try XCTUnwrap(Versions.undoTarget(in: versions))
+        let undone = await Versions.restore(renamed, to: target, message: "Undid “\(undoing.label)”",
+                                            trailer: "Lamp-Undid: \(undoing.id)", renaming: ("Heads or Tails", "Coin Flip"))
+        XCTAssertTrue(undone)
+        // What the build after Undo writes, under the name given back.
+        try Template.writeOwnedFiles(for: renamed.named("Coin Flip"))
+        unsaved = await Versions.hasUnsavedChanges(renamed)
+        XCTAssertFalse(unsaved, "the build after Undo finds Lamp's files as the Undo saved them")
+    }
+
     /// A name may hold what a shell reads inside quotes; it's saved as it is.
     func testANameIsSavedAsWritten() async throws {
         let app = try escape.app()
