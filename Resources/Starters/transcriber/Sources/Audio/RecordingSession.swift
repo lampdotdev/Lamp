@@ -294,22 +294,20 @@ final class RecordingSession: ObservableObject {
         let me = microphone.filter { line in
             let mine = words(in: line.text)
             guard !mine.isEmpty else { return false }
-            // Only what can be nothing but the call heard again is dropped: it begins within two seconds of the
-            // call's line, has a few words, says no word the call's line didn't, and shares most of them. Anything
-            // less certain stays, since a repeated line is a small cost and a lost reply isn't: "we should not
-            // approve the final budget" adds a word and stays, and so does a short "yes".
-            guard mayEcho, mine.count >= 3 else { return true }
+            // Only the call's line said again, word for word, within two seconds, is dropped: that loses nothing.
+            // Any difference, even one word left out or added ("we should not approve…" and "we should approve…"),
+            // can change what was meant, so the line stays; an echo heard a little wrong stays as a repeat.
+            guard mayEcho else { return true }
             return !theirWords.contains { other in
-                line.start >= other.start - 1 && line.start - other.start < 2
-                    && mine.isSubset(of: other.words)
-                    && Double(mine.count) / Double(other.words.count) >= 0.8
+                line.start >= other.start - 1 && line.start - other.start < 2 && mine == other.words
             }
         }
         return (me + them).sorted { $0.start < $1.start }
     }
 
-    private nonisolated static func words(in text: String) -> Set<String> {
-        Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+    /// The words of a line in order, without case or punctuation.
+    private nonisolated static func words(in text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
     }
 
     /// The microphone's tap, made outside the main actor because it runs on the audio thread.
