@@ -125,13 +125,21 @@ enum AppName {
     ["android"] when they mention Android, a Pixel, a Samsung phone or Google Play; ["iphone"] when they \
     mention a phone, an iPhone or iPad, or what's done away from a desk (out walking or running, the camera on \
     the go, tilting or shaking it); ["mac", "iphone"] when they want it on their Mac and their phone, or kept the \
-    same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs.
+    same on each; ["mac"] otherwise. Set "devices_by_user" to true only when they said where it runs. A wish \
+    can be for more than one kind at once, apps made to work together: ["tv", "iphone"] when they want a TV app \
+    with their phone as its remote or controller, ["tv", "mac"] for a TV app and a Mac app together.
+
+    Only when the wish is for something people do as much on a TV as on another of these devices, and nothing in \
+    it points to one (a slideshow of family photos, a dashboard for the whole household, a game for the family), \
+    also give "candidates": the two or three devices it could be for, likeliest first (["tv", "mac"]). Leave \
+    "candidates" out for everything else, and always when they said where it runs: most wishes are plainly for \
+    this Mac.
 
     And the color of its icon's background, one of: \(Icons.backgrounds.map(\.name).joined(separator: ", ")). Pick \
     what suits its mood, like Apple's own icons: mostly one vivid color, sometimes white or graphite.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "devices": ["..."], "devices_by_user": true or false, "color": "..."}
+    "devices": ["..."], "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
     """
 
     struct Suggestion {
@@ -148,6 +156,11 @@ enum AppName {
         var forOtherDevice = false
         /// The person wants an Apple Watch app too (the agent writes it; `chooseKind` says so in the chat).
         var watch = false
+        /// A wish that could be for more than one kind of device and didn't say which: the devices it could be for,
+        /// likeliest first. Nothing is made until the agent has asked (`LampProject.undecided`).
+        var undecided: [String]?
+        /// The kinds beside the main one, for a wish that's more than one app (`Parts.kinds`).
+        var parts: [Platform] = []
         /// The icon's background (`Icons.backgrounds`), chosen here so the blueprint shows it from the start and the
         /// icon keeps it.
         var color: String?
@@ -162,11 +175,24 @@ enum AppName {
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
         let devices = Set(object["devices"] as? [String] ?? [])
+        let said = object["devices_by_user"] as? Bool ?? false
+        let kinds = Parts.kinds(for: devices)
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
-                          kind: Platform(devices: devices), kindSaid: object["devices_by_user"] as? Bool ?? false,
-                          integration: Platform(devices: devices) == .device ? devices.first : nil,
+                          kind: kinds?.main, kindSaid: said,
+                          integration: kinds?.main == .device ? devices.first : nil,
                           forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
+                          undecided: said ? nil : candidates(object["candidates"]), parts: kinds?.parts ?? [],
                           color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
+    }
+
+    /// The devices an unclear wish could be for, as the naming call gave them: only Lamp's own kinds, at least two.
+    static func candidates(_ value: Any?) -> [String]? {
+        var seen: [String] = []
+        for word in value as? [String] ?? [] {
+            let word = word.trimmed.lowercased()
+            if ["mac", "iphone", "tv", "android"].contains(word), !seen.contains(word) { seen.append(word) }
+        }
+        return seen.count >= 2 ? seen : nil
     }
 
     /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone. A device

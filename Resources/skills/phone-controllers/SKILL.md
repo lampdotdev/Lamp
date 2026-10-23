@@ -19,12 +19,48 @@ var pad = LampController.connect({
 });
 pad.button('a', true); pad.button('a', false);  // a button held, then let go
 pad.axis('stick', x, y);                         // a stick or slider, each from -1 to 1
-pad.send({ ready: true });                       // anything small to the TV app
+pad.send({ ready: true });                       // anything small to the TV app: at most 1,024 bytes (below)
 ```
 
 Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped.
 
 On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game: `Lamp.controllers.start()`, then `onLink(fn(url))` for the address phones open, to show as a QR code (it changes every few minutes, and `fn` is called again each time), `onJoin`/`onLeave(fn(player))`, `onButton(fn(player, name, down))`, `onAxis(fn(player, name, x, y))`, `onMessage(fn(player, data))`, `onError(fn(message))`, `send(player, data)` (player 0 for every phone), `isHeld(player, name)`, `players()` and `stop()`. A phone that leaves or drops has every button it held let go before `onLeave`, and movement that arrives late is dropped, so the game never acts on a stale stick.
+
+## Messages, and sending a file
+
+One message, as the JSON that goes out (Lamp's own few bytes of wrapping included), is at most 1,024 bytes (`LampController.messageLimit`, `Lamp.controllers.messageLimit`), either way. A bigger one isn't sent: `send` returns false, and the TV app's log (and its `onError`) says so with its size. `send` also returns false while the other side isn't there. Over about 120 messages a second from one phone, Lamp drops the rest.
+
+Something big (a file, a picture, a long list) goes in pieces: base64 cut into pieces of at most 700 characters, each sent with its number and the count, and the next only once the other side has answered the last one. The receiver puts them together when it has them all.
+
+```js
+// Sender, on a phone's page (on the TV: Lamp.controllers.send(player, ...) and onMessage(fn(player, data)))
+var outgoing = null;
+function sendFile(base64) {
+  outgoing = { id: String(Date.now()), b64: base64, next: 0, count: Math.ceil(base64.length / 700) };
+  sendPiece();
+}
+function sendPiece() {
+  var f = outgoing;
+  if (f.next === f.count) { outgoing = null; return; }  // the TV has it all
+  pad.send({ file: f.id, i: f.next, of: f.count, b64: f.b64.substr(f.next * 700, 700) });
+}
+// in the pad's onMessage: the TV's answer to a piece sends the next
+function onMessage(data) {
+  if (outgoing && data.got === outgoing.id && data.i === outgoing.next) { outgoing.next++; sendPiece(); }
+}
+
+// Receiver, on the TV: keep pieces by number, answer each, and put them together once all are in
+var files = {};
+Lamp.controllers.onMessage(function (player, data) {
+  if (!data || !data.file) return;
+  var f = files[data.file] || (files[data.file] = { parts: [], got: 0 });
+  if (f.parts[data.i] === undefined) { f.parts[data.i] = data.b64; f.got++; }
+  Lamp.controllers.send(player, { got: data.file, i: data.i });
+  if (f.got === data.of) { delete files[data.file]; useFile(f.parts.join('')); }
+});
+```
+
+From the wish's iPhone or Mac app it's the same with `LampController` (Swift): `data.base64EncodedString()`, then `pad.send(["file": id, "i": i, "of": count, "b64": piece])` for each piece once `pad.onMessage` has heard the answer to the one before. Show how far it's got, and send again a piece whose answer hasn't come after a few seconds.
 
 ## Tilt
 

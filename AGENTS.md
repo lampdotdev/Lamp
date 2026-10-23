@@ -984,6 +984,11 @@ socket), never the app's token for its AI, and ending a session (the preview clo
 included: `PhoneSites.sync`) makes all of them worthless and lets its sockets go. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
 credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
 and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
+A message is at most `Limits.message` (1,024 bytes of JSON), and Lamp closes a socket that sends a bigger one, so every
+library of Lamp's (lamp.js, lamp-controller.js, `LampController` in LampSupport) refuses one before it goes: `send`
+returns false, the reason with the limit goes to the console or the app's log, and a phone's library tells the TV app
+(`too-big`, passed on by Lamp), whose log the builder reads. Nothing a library doesn't send goes unsaid; the
+phone-controllers skill says how to send a file in pieces.
 The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the
 person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for that.
 
@@ -1016,6 +1021,60 @@ certificate. Those entitlements never include `get-task-allow`, which would let 
 holds its secrets. The agent gets
 both kinds' rules, each marked for its half, after one rule on sharing the code (`Agent.universalPrompt`). An app
 for both is shared as a `.lampapp` like any other (the file says what it's made for, format 6, and carries `Watch/` when it has one); its widgets and Live Activities are the iPhone half's (below).
+
+## Wishes of more than one app
+
+A wish can be more than one app made to work together: a TV app with an iPhone app that controls it (`Parts`). Its main
+part is the app at its root, as every wish has; each other part is an app of its own kind in a folder of the wish's
+(`iPhone/`, `Mac/`, `Apple/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
+opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
+wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat, versions or icon of its own: what's logged
+for it goes to its wish's chat (`Store.log`), the wish's history keeps its folder, and its icon is the wish's
+(`Icons.home`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
+told where its folder is when it's installed (`folder` in `Template.installValues`, read by `LampInstall.app`), since its
+id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
+scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
+never kept in a list beside them, so a rename, an Undo or a restored version can't part a wish from its
+apps, and every restore takes them in again at once (`Store.followRestored`, comparing folders and kinds,
+`Parts.match`: a part the version doesn't have is quit and then forgotten, one the person keeps open over unsaved work
+stays listed until it's closed, and one it brings back or changes is listed again). A wish's name is in its meta.json,
+which no version holds, so the versions that change it carry it (`Lamp-Name`, `Lamp-Renamed-From`), and Undo or going
+back to a version gives back the name that version had (`Versions.name(at:in:)`), its parts with it. Lamp's own files
+(build.sh, the Info.plist lines) carry the name, so a rename and a restore that gives one back write them, the parts'
+too, under that name before the version is saved (`Versions.restoreFiles(name:)`): written after, the next build left
+the app unsaved and Undo could never get past the rename. A part's quit is judged by its
+wish's turn, which is the only one it has. Deleting a wish closes each part first (a Mac part may be kept open
+over unsaved work, which stops the delete) and forgets what Lamp keeps for it (`Store.forgetPart`: its installed copy,
+build folders, sign-ins and place in the lists), as taking a part away does; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's
+game. A part never has a turn of its own: Lamp's own requests for it (carrying on after its Reload, fixing its crash) are
+its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by (whose turn has the app, whether the
+person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
+its apps waits. A copy is found by its install place only for an app with a Mac copy there, since a TV wish's Mac app is
+installed under the wish's name. Which kinds a list
+of devices makes is `Parts.kinds`: Apple's devices are one kind between them, as before, and with a TV they're a part of
+the TV app's wish; Android and device apps still stand alone.
+
+What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
+(`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,
+`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole), named
+with the request while the wish has that part (`Skills.applying`, so a compacted conversation is told again), and given
+whole in `make_app_for`'s reply when the part is added. So a conversation never carries the rules of a kind its wish
+doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), and run under the wish's turn
+(`Store.underTurn`). `make_app_for` takes the whole list: the main kind is changed by `convert` as before, a part is added
+(`Store.addPart`), changed in place, or taken away. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all (`Store.openWish`, `quitWish`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
+
+A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
+(kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
+`ask`, and gives it its kinds with `make_app_for`, whose reply carries the chosen kind's whole prompt. Each engine's
+conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
+starts one with the wish's own prompt, told the chat so far (`CatchUp`).
+
+The parts talk through `PhoneControllers`: an iPhone or Mac part joins its wish's TV app as a player, the way a phone's
+page does, with `LampController` in LampSupport. It asks Lamp's gateway (`/app/controller`, with its own token) for the
+TV app's socket and a join credential, which Lamp gives only to a part of the same wish while the TV app is open. A
+socket with no Origin is let in as a player like one from the app's own page: browsers always send one, so none means
+no browser, and anything that isn't a browser could send any origin it liked, so the credential is what lets it in. A TV
+app with a part takes players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
 
 ## iCloud
 

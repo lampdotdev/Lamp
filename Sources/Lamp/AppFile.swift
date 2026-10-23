@@ -42,15 +42,16 @@ enum AppFile {
     /// Opens the file step by step from the folder holding the app's, which is Lamp's: the app's folder by its
     /// name and every step below it refused when it's a link.
     private static func open(_ url: URL, inFolder folder: URL) -> Int32? {
-        let project = LampProject(id: folder.lastPathComponent, name: "", exe: "", dir: folder)
         let path = url.standardizedFileURL.path
-        let named = project.dir.standardizedFileURL.path, real = project.realDir.path
+        let way = AppFolder.way(to: folder)
+        let named = folder.standardizedFileURL.path
+        let real = way.steps.reduce(way.above) { $0.appendingPathComponent($1) }.path
         let inside: Substring
         if path.hasPrefix(named + "/") { inside = path.dropFirst(named.count + 1) }
         else if path.hasPrefix(real + "/") { inside = path.dropFirst(real.count + 1) }
         else { return nil }
-        let steps = [project.realDir.lastPathComponent] + inside.split(separator: "/").map(String.init)
-        var fd = Darwin.open(project.realDir.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        let steps = way.steps + inside.split(separator: "/").map(String.init)
+        var fd = Darwin.open(way.above.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         for (index, step) in steps.enumerated() {
             let last = index == steps.count - 1

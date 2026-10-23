@@ -98,7 +98,11 @@ final class PhoneControllers {
                   let project = Store.shared.projects.first(where: { $0.id == app }), Store.servesPhonePage(project) || claim.kind == .host
             else { return peer.close(code: 4003) }
             if claim.kind == .host { return self.joinAsHost(peer, app: app) }
-            guard let origin, pageOrigins.contains(origin) else { return peer.close(code: 4003) }
+            // A browser always says which page opened a socket, so a page is let in only from the app's own. No origin
+            // at all is no browser's: the wish's own iPhone or Mac app (`LampController`), whose credential Lamp gave it
+            // by its token. Anything else that isn't a browser could say whatever origin it liked, so the credential is
+            // what lets it in, as it always was.
+            if let origin, !pageOrigins.contains(origin) { return peer.close(code: 4003) }
             self.joinAsPlayer(peer, app: app, resuming: claim.kind == .controller ? claim.player : nil)
         }
         peer.start()
@@ -176,6 +180,11 @@ final class PhoneControllers {
         case "message":
             guard let data = message["data"] else { return }
             toHost(session, ["t": "message", "player": number, "data": data, "at": at])
+        case "too-big":
+            // A message the phone's own library refused as over `Limits.message`: said in the TV app's log, where the
+            // builder looks, since the phone's console is out of sight.
+            guard let bytes = message["bytes"] as? Int else { return }
+            toHost(session, ["t": "too-big", "player": number, "bytes": bytes])
         default:
             break
         }

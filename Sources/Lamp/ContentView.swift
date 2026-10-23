@@ -845,14 +845,15 @@ struct ProjectView: View {
     private var appTools: some ToolbarContent {
         ToolbarItem {
             // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
-            // both can be open on this Mac and in a simulator at once).
+            // both can be open on this Mac and in a simulator at once). A wish of several apps plays and stops them
+            // all; each app's own menu uses or quits it alone.
             if store.isOpen(project) {
-                Button { Task { await store.quitApp(project) } } label: {
+                Button { Task { await store.quitWish(project) } } label: {
                     Label("Quit", systemImage: "stop.fill")
                 }
                 .help("Quit \(project.name)")
             } else {
-                Button { store.openPrepared(project) } label: {
+                Button { store.openWish(project) } label: {
                     Label("Use", systemImage: "play.fill")
                 }
                 .disabled(!made)
@@ -863,6 +864,16 @@ struct ProjectView: View {
             ToolbarItem {
                 // Which simulator the app opens in, beside the Play button where Xcode keeps its destination.
                 Menu {
+                    if !store.parts(of: project).isEmpty {
+                        // Beside the other app's menu: this app alone, without touching the other device.
+                        let name = Parts.name(of: project.platform).dropFirst(4).dropLast(3) + "App"
+                        if store.isOpen(project) {
+                            Button("Quit the \(name)") { Task { await store.quitApp(project) } }
+                        } else {
+                            Button("Use the \(name)") { store.openPrepared(project) }.disabled(!made)
+                        }
+                        Divider()
+                    }
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
@@ -874,6 +885,26 @@ struct ProjectView: View {
                       : project.platform == .android ? "Where it opens: the emulator, or your own Android phone or tablet"
                       : project.platform == .universal ? "Where it opens: this Mac, a simulator, or your own iPhone or iPad"
                       : "Where it opens: a simulator, or your own iPhone or iPad")
+            }
+        }
+        if let part = store.parts(of: project).first {
+            ToolbarItem {
+                // The wish's other app (an iPhone app beside its TV app): used, quit and given a place here, as the
+                // wish's own app is beside it.
+                let name = part.platform == .mac ? "Mac App" : "iPhone App"
+                Menu {
+                    if store.isOpen(part) {
+                        Button("Quit the \(name)") { Task { await store.quitApp(part) } }
+                    } else {
+                        Button("Use the \(name)") { store.openPrepared(part) }
+                    }
+                    Divider()
+                    TryOnChoices(project: part)
+                } label: {
+                    Label(name, systemImage: part.platform == .mac ? "laptopcomputer" : "iphone")
+                }
+                .disabled(busy)
+                .help("The \(part.platform == .mac ? "Mac app" : "iPhone app") that goes with \(project.name): use it, and choose where it opens")
             }
         }
         gap
@@ -1321,7 +1352,7 @@ struct NewAppIntro: View {
     }
 
     private func drawIdeas() {
-        let others = store.projects.filter { $0.id != project.id && !$0.untitled }
+        let others = store.wishes.filter { $0.id != project.id && !$0.untitled }
         ideas = Ideas.starters(made: others.map(\.name))
     }
 
