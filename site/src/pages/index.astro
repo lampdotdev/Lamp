@@ -7,6 +7,7 @@ import QuickLook from "../components/QuickLook.astro";
 import FirstIdea from "../components/FirstIdea.astro";
 import Bento, { type Point } from "../components/Bento.astro";
 import AICards from "../components/AICards.astro";
+import ChangeStory from "../components/ChangeStory.astro";
 import { together } from "../lib/text";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
@@ -22,9 +23,6 @@ import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
 
-// A window of an app Lamp built, taken from Lamp Dev with made-up data (see RELEASING.md), beside the chat that
-// changes it.
-import habitStreaks from "../assets/apps/habit-streaks.png";
 
 // Icons Lamp made for apps it built, in one row under "No localhost shenanigans.", all the same size. The row is centred
 // on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
@@ -216,31 +214,9 @@ const buts = [
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Change it while you're using&nbsp;it.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp apps are like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
+        {together("Lamp makes real apps, but they are malleable like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
       </p>
-      <!--
-        A stand-in until there's a real picture from Lamp: an app's window with the chat that opens beside it, a
-        change already made and the next one under way. Beside the window from sm, against its edge: the picture
-        has room for the window's shadow around it, so the window runs from 4% to 79% of its height and ends at 81%
-        of its width. Under the window on a phone.
-      -->
-      <div aria-hidden="true" class="relative mx-auto mt-10 max-w-5xl sm:ml-[3%] sm:w-[80%]">
-        <Image
-          src={habitStreaks}
-          alt=""
-          widths={[640, 1024, 1600]}
-          sizes="(min-width: 1024px) 780px, 100vw"
-          loading="lazy"
-          class="h-auto w-full"
-        />
-        <div class="mx-4 -mt-4 flex flex-col gap-3 rounded-[22px] bg-white/70 p-4 text-left text-[15px] leading-snug shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/10 backdrop-blur-xl sm:absolute sm:top-[4%] sm:bottom-[21%] sm:left-[82%] sm:mx-0 sm:mt-0 sm:w-[30%] sm:justify-end">
-          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">Make no phone after 10pm count double on weekends.</p>
-          <p class="mr-6 text-ink">Weekends now count double.</p>
-          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">And put today's streak in the menu bar.</p>
-          <p class="flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Changing it…</p>
-          <div class="mt-2 rounded-full bg-white px-4 py-2.5 text-muted ring-1 ring-black/10">Ask for a change</div>
-        </div>
-      </div>
+      <div class="mx-auto mt-10 max-w-5xl"><ChangeStory /></div>
       </div>
     </section>
 

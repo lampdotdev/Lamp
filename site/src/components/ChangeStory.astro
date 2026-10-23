@@ -1,0 +1,342 @@
+---
+// The homepage's "Change it while you're using it": one app changed four times from its chat, as a story that loops.
+// It isn't a recording: the steps come quicker than they would, and the chat shows only what was asked and what
+// came of it. A recipes app becomes a plan for the week (a big change), gains a shopping list (something it does),
+// then gets a cosier look and bigger photos (two tweaks). Each change goes in the way it does in Lamp: coloured light
+// rises from the bottom of the window while it's made, then a band of white sweeps up with the new version behind it.
+// Last, Lamp uses the app rather than changing it: its pointer swaps one dinner and adds another, as it does when it
+// tries an app, with the window lit and nothing rebuilt.
+// The window is drawn in its own width (cqw), so it's the same picture at every size; the photos are drawn by an
+// image model, as the ideas page's pictures are. Without motion, the finished app sits beside the whole chat.
+import { Image } from "astro:assets";
+import type { ImageMetadata } from "astro";
+import pasta from "../assets/story/pasta.jpg";
+import curry from "../assets/story/curry.jpg";
+import tacos from "../assets/story/tacos.jpg";
+import salmon from "../assets/story/salmon.jpg";
+import risotto from "../assets/story/risotto.jpg";
+import stirfry from "../assets/story/stirfry.jpg";
+import pizza from "../assets/story/pizza.jpg";
+
+type Dish = { photo: ImageMetadata; name: string; time: string };
+const recipes: Dish[] = [
+  { photo: tacos, name: "Fish tacos", time: "25 min" },
+  { photo: pasta, name: "Lemon spaghetti", time: "20 min" },
+  { photo: curry, name: "Chicken curry", time: "40 min" },
+  { photo: stirfry, name: "Veggie stir-fry", time: "15 min" },
+  { photo: salmon, name: "Salmon and greens", time: "30 min" },
+  { photo: risotto, name: "Mushroom risotto", time: "35 min" },
+];
+const week = ["Mon", "Tue", "Wed", "Thu", "Fri"].map((day, index) => ({ day, ...recipes[index] }));
+// What Lamp does when it uses the app: Wednesday's curry becomes the risotto, and Saturday, empty until then, gets a
+// pizza. `use` names the move that changes a card, and which shopping goes with it.
+const bigWeek = [
+  ...week.map((dish) => ({ ...dish, use: dish.day === "Wed" ? "wed" : undefined, then: dish.day === "Wed" ? recipes[5] : undefined })),
+  { day: "Sat", photo: undefined, name: "", time: "", use: "sat", then: { photo: pizza, name: "Pizza night", time: "30 min" } },
+];
+const shopping = [
+  { item: "Tortillas", got: false },
+  { item: "Limes", got: true },
+  { item: "Spaghetti", got: true },
+  { item: "Lemons", got: false },
+  { item: "Chicken thighs", got: false, out: "wed" },
+  { item: "Coconut milk", got: false, out: "wed" },
+  { item: "Noodles", got: false },
+  { item: "Salmon fillets", got: false },
+  { item: "Green beans", got: false },
+  { item: "Arborio rice", got: false, in: "wed" },
+  { item: "Mushrooms", got: false, in: "wed" },
+  { item: "Pizza dough", got: false, in: "sat" },
+  { item: "Mozzarella", got: false, in: "sat" },
+] as { item: string; got: boolean; out?: string; in?: string }[];
+
+// What's asked and what Lamp says once it's done, one pair for each change.
+const chat = [
+  { ask: "Turn my recipes into a plan for the week.", done: "Done: a dinner for each weeknight." },
+  { ask: "Add a shopping list for the week.", done: "Added. It fills itself from the plan." },
+  { ask: "Make it feel cosier.", done: "Warmer colours and a softer type." },
+  { ask: "Bigger photos, please.", done: "Done." },
+  { ask: "Swap the curry for the risotto, and add pizza on Saturday.", done: "Done: risotto on Wednesday, pizza on Saturday.", uses: true },
+] as { ask: string; done: string; uses?: boolean }[];
+
+// The five versions of the app, plain to cosy. `cosy` is the warm look; `list` the shopping list beside the week.
+const states = [
+  { kind: "recipes" },
+  { kind: "week", list: false, cosy: false, big: false },
+  { kind: "week", list: true, cosy: false, big: false },
+  { kind: "week", list: true, cosy: true, big: false },
+  { kind: "week", list: true, cosy: true, big: true },
+] as const;
+const serif = "font-[ui-serif,'New_York',Georgia,serif]";
+---
+
+<div data-story class="relative">
+  <p class="sr-only">
+    An app's window beside its chat. A recipes app becomes a plan for the week, gains a shopping list, then gets a
+    cosier look and bigger photos, one request at a time. Then Lamp uses the app itself, swapping one dinner and
+    adding another.
+  </p>
+
+  <div data-window aria-hidden="true" class="@container relative aspect-[16/10] sm:w-[74%] lg:w-[79%] overflow-hidden rounded-[1.4cqw] bg-white shadow-[0_24px_60px_-20px_rgba(0,0,0,0.35)] ring-1 ring-black/10 select-none">
+    {
+      states.map((state, index) => (
+        <div data-state={index} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.kind === "week" && state.cosy ? "bg-[#f7efe2]" : "bg-white"]}>
+          <div class:list={["flex h-[5cqw] shrink-0 items-center gap-[0.9cqw] px-[1.8cqw]", state.kind === "week" && state.cosy ? "bg-[#efe3cf]" : "bg-[#f3f3f5]"]}>
+            <span class="size-[1.15cqw] rounded-full bg-[#ff5f57]" />
+            <span class="size-[1.15cqw] rounded-full bg-[#febc2e]" />
+            <span class="size-[1.15cqw] rounded-full bg-[#28c840]" />
+            <span class="ml-[1cqw] text-[1.45cqw] font-semibold text-black/60">{state.kind === "recipes" ? "Recipes" : "Dinners"}</span>
+          </div>
+
+          {state.kind === "recipes" ? (
+            <div class="flex flex-1 flex-col px-[3.5cqw] pt-[2.8cqw]">
+              <div class="flex items-center justify-between">
+                <p class="text-[3cqw] font-bold tracking-tight text-ink">Recipes</p>
+                <span class="w-[22cqw] rounded-full bg-black/5 px-[1.6cqw] py-[0.7cqw] text-[1.3cqw] text-black/40">Search</span>
+              </div>
+              <div class="mt-[2.4cqw] grid grid-cols-3 gap-[2cqw]">
+                {recipes.map((dish) => (
+                  <div>
+                    <Image src={dish.photo} alt="" loading="eager" width={320} densities={[1, 2]} class="aspect-[16/9] w-full rounded-[1cqw] object-cover" />
+                    <p class="mt-[0.9cqw] text-[1.5cqw] font-semibold text-ink">{dish.name}</p>
+                    <p class="text-[1.25cqw] text-black/45">{dish.time}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div class="flex min-h-0 flex-1">
+              <div class="flex flex-1 flex-col px-[3.5cqw] pt-[2.8cqw] pb-[3cqw]">
+                <p class:list={["text-[3cqw] font-bold tracking-tight", state.cosy ? `${serif} text-[#5a2e1b]` : "text-ink"]}>This week</p>
+                <p class:list={["text-[1.4cqw]", state.cosy ? "text-[#9a6a4f]" : "text-black/45"]}>
+                  {state.big ? <><span data-use-out="sat">Five</span><span data-use-in="sat">Six</span></> : "Five"} dinners, planned from your recipes
+                </p>
+                <div class:list={["mt-[2.4cqw] min-h-0 flex-1", state.big ? "grid grid-cols-6 gap-[1.2cqw]" : "flex flex-col gap-[1.1cqw]"]}>
+                  {(state.big ? bigWeek : week).map((dish) =>
+                    state.big ? (
+                      <div data-card={dish.use} class="relative min-h-0 overflow-hidden rounded-[1.4cqw] shadow-[0_0.6cqw_1.6cqw_rgba(90,46,27,0.18)]">
+                        {[dish, dish.then].map((shown, layer) => shown && (
+                          <div data-layer={layer === 0 ? "before" : "after"} class="absolute inset-0 transition-opacity duration-500">
+                            {shown.photo ? (
+                              <>
+                                <Image src={shown.photo} alt="" loading="eager" width={320} densities={[1, 2]} class="absolute inset-0 size-full object-cover" />
+                                <div class="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/70 to-transparent px-[1.1cqw] pt-[4cqw] pb-[1.1cqw] text-white">
+                                  <p class="text-[1.1cqw] font-bold tracking-wide uppercase opacity-80">{dish.day}</p>
+                                  <p class={`text-[1.4cqw] leading-tight font-semibold ${serif}`}>{shown.name}</p>
+                                </div>
+                              </>
+                            ) : (
+                              /* An empty day, waiting for a dinner. */
+                              <div class="flex size-full flex-col items-center justify-center gap-[0.8cqw] rounded-[1.4cqw] border-[0.2cqw] border-dashed border-[#c2562f]/40 bg-white/50 text-[#c2562f]">
+                                <p class="text-[1.1cqw] font-bold tracking-wide uppercase">{dish.day}</p>
+                                <span class="text-[3cqw] leading-none font-light">+</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div class:list={["flex items-center gap-[1.6cqw]", state.cosy ? "rounded-[1.4cqw] bg-white p-[0.7cqw] shadow-[0_0.4cqw_1.2cqw_rgba(90,46,27,0.12)]" : "border-b border-black/6 pb-[1.1cqw] last:border-0"]}>
+                        <p class:list={["w-[4.5cqw] text-[1.25cqw] font-bold tracking-wide uppercase", state.cosy ? "text-[#c2562f]" : "text-black/40"]}>{dish.day}</p>
+                        <Image src={dish.photo} alt="" loading="eager" width={160} densities={[1, 2]} class="size-[6.2cqw] rounded-[0.9cqw] object-cover" />
+                        <div>
+                          <p class:list={["text-[1.6cqw] leading-tight font-semibold", state.cosy ? `${serif} text-[#5a2e1b]` : "text-ink"]}>{dish.name}</p>
+                          <p class:list={["text-[1.25cqw]", state.cosy ? "text-[#9a6a4f]" : "text-black/45"]}>{dish.time}</p>
+                        </div>
+                      </div>
+                    ),
+                  )}
+                </div>
+              </div>
+              {state.list && (
+                <div class:list={["w-[24cqw] shrink-0 px-[2.2cqw] pt-[2.8cqw]", state.cosy ? "bg-[#efe3cf]" : "bg-[#f5f5f7]"]}>
+                  <p class:list={["text-[1.9cqw] font-bold tracking-tight", state.cosy ? `${serif} text-[#5a2e1b]` : "text-ink"]}>Shopping list</p>
+                  <ul class="mt-[1.4cqw] flex flex-col gap-[1cqw]">
+                    {shopping.filter((line) => state.big || !line.in).map((line) => (
+                      <li data-use-out={state.big ? line.out : undefined} data-use-in={line.in} class:list={["flex items-center gap-[1cqw] text-[1.35cqw]", line.got ? "text-black/35 line-through" : state.cosy ? "text-[#5a2e1b]" : "text-ink"]}>
+                        <span class:list={["flex size-[1.6cqw] shrink-0 items-center justify-center rounded-full", line.got ? (state.cosy ? "bg-[#c2562f]" : "bg-[#0a84ff]") : "ring-[0.15cqw] ring-black/25"]}>
+                          {line.got && <svg viewBox="0 0 12 12" class="size-[1cqw] fill-none stroke-white stroke-[2]"><path d="M2.5 6.2 5 8.5 9.5 3.5" /></svg>}
+                        </span>
+                        {line.item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))
+    }
+    <!-- While a change is made: light in Lamp's colours rising from the bottom edge. -->
+    <div data-glow class="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] opacity-0 transition-opacity duration-700 [background:radial-gradient(60%_90%_at_20%_100%,rgba(64,128,255,0.55),transparent_70%),radial-gradient(50%_80%_at_50%_100%,rgba(255,97,173,0.5),transparent_70%),radial-gradient(60%_90%_at_80%_100%,rgba(255,153,56,0.55),transparent_70%)] blur-[3cqw]"></div>
+    <!-- While Lamp uses the app: the window lit, a pill saying so, and Lamp's pointer with what it's doing. -->
+    <div data-handover class="pointer-events-none absolute inset-0 rounded-[1.4cqw] opacity-0 shadow-[inset_0_0_0_0.35cqw_rgba(207,98,12,0.9),inset_0_0_3cqw_rgba(255,153,56,0.45)] transition-opacity duration-500">
+      <p class="absolute top-[6.5cqw] left-1/2 -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-[1.8cqw] py-[0.7cqw] text-[1.3cqw] font-semibold whitespace-nowrap text-white backdrop-blur">Lamp is trying Dinners</p>
+    </div>
+    <div data-pointer class="pointer-events-none absolute top-[60%] left-[55%] z-10 opacity-0 transition-[top,left,opacity] duration-[900ms] ease-[cubic-bezier(0.45,0,0.2,1)]">
+      <svg viewBox="0 0 24 24" class="size-[3cqw] -translate-x-[15%] -translate-y-[5%] drop-shadow-[0_0.3cqw_0.6cqw_rgba(0,0,0,0.35)]"><path d="M5 3 L19 12 L12.5 13.5 L9.5 20 Z" fill="#1d1d1f" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
+      <span data-pointer-label class="absolute top-[2.6cqw] left-[2cqw] rounded-full bg-[#cf620c] px-[1.2cqw] py-[0.5cqw] text-[1.2cqw] font-semibold whitespace-nowrap text-white shadow-[0_0.3cqw_0.8cqw_rgba(0,0,0,0.25)]"></span>
+      <span data-tap class="absolute -top-[1.5cqw] -left-[1.5cqw] size-[3cqw] rounded-full bg-[#cf620c]/40 opacity-0"></span>
+    </div>
+    <!-- As it goes in: a band of white sweeping up, a soft shadow just ahead of it. -->
+    <div data-band class="pointer-events-none absolute inset-x-0 top-full h-[24%] opacity-0 [background:linear-gradient(to_bottom,rgba(0,0,0,0),rgba(0,0,0,0.06)_25%,rgba(255,255,255,0.95)_45%,#fff_55%,rgba(255,255,255,0))]"></div>
+  </div>
+
+  <!-- The chat beside the app, as in Lamp: what's asked on the right in orange, what Lamp says on the left. It
+       floats a little over the window's right edge (over its foot on a phone), and keeps its size, scrolling to
+       what was said last. -->
+  <div aria-hidden="true" class="relative z-20 mx-4 -mt-8 flex h-72 flex-col rounded-[22px] bg-white/80 p-4 text-[15px] leading-snug shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/10 backdrop-blur-xl select-none sm:absolute sm:top-[7%] sm:right-0 sm:bottom-[3%] sm:mx-0 sm:mt-0 sm:h-auto sm:w-[30%] lg:w-[25%]">
+    <div data-messages class="flex min-h-0 flex-1 flex-col overflow-y-auto [scrollbar-width:none]">
+      <div class="mt-auto flex flex-col gap-3">
+      {
+        chat.flatMap((pair, index) => [
+          <p data-step={index} data-role="ask" class="story-message ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">{pair.ask}</p>,
+          <p data-step={index} data-role="done" class="story-message mr-6 text-ink">{pair.done}</p>,
+        ])
+      }
+      <p data-changing class="story-message flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Changing it…</p>
+      <p data-using class="story-message flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Trying the app…</p>
+      </div>
+    </div>
+    <!-- The message box, with the talk button the app has beside it; here neither does anything. -->
+    <div class="mt-3 flex items-center justify-between rounded-full bg-white py-2.5 pr-3 pl-4 text-muted ring-1 ring-black/10">
+      Ask for a change
+      <svg viewBox="0 0 24 24" class="size-5 shrink-0 fill-none stroke-current stroke-[1.7] [stroke-linecap:round]"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></svg>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* A message takes no room until it's said, then comes up into place. */
+  .story-message { display: none; }
+  .story-message[data-shown] { display: flex; animation: story-say 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  p.story-message[data-shown]:not([data-changing]):not([data-using]) { display: block; }
+  @keyframes story-say { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { .story-message[data-shown] { animation: none; } }
+
+  /* What Lamp's use of the app changes, shown once it has done each move. */
+  [data-use-in] { display: none; }
+  [data-story][data-wed] [data-use-out="wed"], [data-story][data-sat] [data-use-out="sat"] { display: none; }
+  [data-story][data-wed] li[data-use-in="wed"], [data-story][data-sat] li[data-use-in="sat"] { display: flex; animation: story-say 0.45s both; }
+  [data-story][data-sat] span[data-use-in="sat"] { display: inline; }
+  [data-layer="after"] { opacity: 0; }
+  [data-story][data-wed] [data-card="wed"] [data-layer="after"], [data-story][data-sat] [data-card="sat"] [data-layer="after"] { opacity: 1; }
+  [data-story][data-wed] [data-card="wed"] [data-layer="before"], [data-story][data-sat] [data-card="sat"] [data-layer="before"] { opacity: 0; }
+  [data-story][data-handing] [data-handover] { opacity: 1; }
+</style>
+
+<script>
+  // Plays the story while it's on screen, and again from the top once it's over. Without motion, it shows the
+  // finished app and the whole chat, and nothing moves.
+  for (const story of document.querySelectorAll<HTMLElement>("[data-story]")) {
+    const states = [...story.querySelectorAll<HTMLElement>("[data-state]")];
+    const glow = story.querySelector<HTMLElement>("[data-glow]")!;
+    const band = story.querySelector<HTMLElement>("[data-band]")!;
+    const changing = story.querySelector<HTMLElement>("[data-changing]")!;
+    const using = story.querySelector<HTMLElement>("[data-using]")!;
+    const messages = story.querySelector<HTMLElement>("[data-messages]")!;
+    const view = story.querySelector<HTMLElement>("[data-window]")!;
+    const pointer = story.querySelector<HTMLElement>("[data-pointer]")!;
+    const label = story.querySelector<HTMLElement>("[data-pointer-label]")!;
+    const tap = story.querySelector<HTMLElement>("[data-tap]")!;
+    const said = (step: number, role: string) => story.querySelector<HTMLElement>(`[data-step="${step}"][data-role="${role}"]`)!;
+    const show = (element: HTMLElement, shown: boolean) => {
+      element.toggleAttribute("data-shown", shown);
+      if (shown) messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
+    };
+    // Lamp's moves on the app, each shown once done: Wednesday's swap, then Saturday's new dinner.
+    const done = (move: string, made: boolean) => story.toggleAttribute(`data-${move}`, made);
+    const only = (index: number) => states.forEach((state, i) => { state.style.visibility = i === index ? "visible" : "hidden"; state.style.clipPath = ""; state.style.opacity = ""; });
+
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      only(states.length - 1);
+      done("wed", true);
+      done("sat", true);
+      story.querySelectorAll<HTMLElement>("[data-step]").forEach((message) => show(message, true));
+      continue;
+    }
+
+    // Time passes only while the story is on screen, so nobody scrolls back to find it half over.
+    let onScreen = false;
+    let wake: (() => void) | undefined;
+    new IntersectionObserver(([entry]) => { onScreen = entry.isIntersecting; if (onScreen) wake?.(); }, { threshold: 0.35 }).observe(story);
+    const seen = () => (onScreen ? Promise.resolve() : new Promise<void>((resolve) => { wake = resolve; }));
+    const pause = async (ms: number) => { await seen(); await new Promise((resolve) => setTimeout(resolve, ms)); await seen(); };
+
+    // The new version is uncovered from the bottom up, behind the band, which travels with its edge.
+    const wipe = async (index: number) => {
+      const next = states[index];
+      const timing = { duration: 950, easing: "cubic-bezier(0.55, 0, 0.25, 1)", fill: "forwards" as const };
+      next.style.visibility = "visible";
+      band.style.opacity = "1";
+      const uncover = next.animate([{ clipPath: "inset(100% 0 0 0)" }, { clipPath: "inset(0 0 0 0)" }], timing);
+      band.animate([{ top: "88%" }, { top: "-12%" }], timing);
+      glow.style.opacity = "0";
+      await uncover.finished;
+      band.style.opacity = "0";
+      only(index);
+    };
+
+    // Lamp's pointer goes to the middle of a card in the window, says what it's doing there, and taps.
+    const tapOn = async (move: string, words: string) => {
+      const card = states[states.length - 1].querySelector<HTMLElement>(`[data-card="${move}"]`)!.getBoundingClientRect();
+      const box = view.getBoundingClientRect();
+      label.textContent = words;
+      pointer.style.left = `${card.left - box.left + card.width / 2}px`;
+      pointer.style.top = `${card.top - box.top + card.height / 2}px`;
+      await pause(1100);
+      tap.animate([{ opacity: 0.9, transform: "scale(0.4)" }, { opacity: 0, transform: "scale(1.6)" }], { duration: 500, easing: "ease-out" });
+      done(move, true);
+      await pause(1100);
+    };
+
+    const useTheApp = async (step: number) => {
+      show(said(step, "ask"), true);
+      await pause(800);
+      show(using, true);
+      story.toggleAttribute("data-handing", true);
+      pointer.style.left = "55%";
+      pointer.style.top = "60%";
+      pointer.style.opacity = "1";
+      await pause(500);
+      await tapOn("wed", "Swapping the curry");
+      await tapOn("sat", "Adding pizza");
+      pointer.style.opacity = "0";
+      story.toggleAttribute("data-handing", false);
+      show(using, false);
+      show(said(step, "done"), true);
+    };
+
+    const play = async () => {
+      for (;;) {
+        only(0);
+        done("wed", false);
+        done("sat", false);
+        story.querySelectorAll<HTMLElement>(".story-message").forEach((message) => show(message, false));
+        messages.scrollTop = 0;
+        await pause(1800);
+        for (let step = 0; step < states.length - 1; step++) {
+          show(said(step, "ask"), true);
+          await pause(800);
+          show(changing, true);
+          glow.style.opacity = "1";
+          await pause(1500);
+          await wipe(step + 1);
+          show(changing, false);
+          show(said(step, "done"), true);
+          await pause(2200);
+        }
+        await useTheApp(states.length - 1);
+        await pause(3200);
+        // Back to the start: the window fades to where the story began while the chat clears.
+        const first = states[0];
+        first.style.visibility = "visible";
+        first.style.zIndex = "1";
+        await first.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 700, easing: "ease" }).finished;
+        first.style.zIndex = "";
+      }
+    };
+    play();
+  }
+</script>
