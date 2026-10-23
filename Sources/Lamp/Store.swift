@@ -3023,8 +3023,9 @@ final class Store: ObservableObject {
         // Artwork that arrived during the turn, for an icon that was installed without it: applied now, still
         // owning the app, so nothing else builds or installs meanwhile. With more work queued, the next
         // install picks the artwork up itself.
-        if pendingIconArt.contains(project.id), (queued[project.id] ?? []).isEmpty,
-           let spec = Icons.load(project), artApplied[project.id] != spec {
+        // Its other apps too: the wish's own look may have drawn the artwork already while a part still shows the blueprint.
+        if pendingIconArt.contains(project.id), (queued[project.id] ?? []).isEmpty, let spec = Icons.load(project),
+           artApplied[project.id] != spec || parts(of: project).contains(where: { artApplied[$0.id] != spec }) {
             pendingIconArt.remove(project.id)
             Task {
                 await applyIconArt(project, spec: spec)
@@ -3064,8 +3065,7 @@ final class Store: ObservableObject {
     private func applyIconArt(_ project: LampProject, spec: IconSpec) async {
         await renderIcon(project, spec: spec)
         await iconToParts(of: project, spec: spec)
-        let executable = project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)")
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else { return }
+        guard hasMacBuild(project) else { return }
         log(project, .status, await installIcon(project) ? "New icon artwork is in."
             : "New icon artwork is in. \(project.name) gets it the next time it closes.")
     }
@@ -8129,7 +8129,7 @@ final class Store: ObservableObject {
             return
         }
         await renderIcon(project, spec: spec)
-        if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+        if hasMacBuild(project) { await installIcon(project) }
         await iconToParts(of: project, spec: spec)
         finish(project)
     }
@@ -8140,13 +8140,20 @@ final class Store: ObservableObject {
     /// its own does. One busy now draws it at its next install (`prepareIcon`), from the design as it is then.
     private func iconToParts(of project: LampProject, spec: IconSpec) async {
         guard !project.isPart else { return }
-        for part in parts(of: project) where begin(part) != nil {
+        for part in parts(of: project) {
+            // A part busy on its own (opened from its menu) takes it when it's given back (`finish`).
+            guard begin(part) != nil else { pendingIconArt.insert(part.id); continue }
             await renderIcon(part, spec: spec)
-            if FileManager.default.isExecutableFile(atPath: part.builtURL.appendingPathComponent("Contents/MacOS/\(part.exe)").path) {
-                await installIcon(part)
-            }
+            if hasMacBuild(part) { await installIcon(part) }
             release(part)
+            installHeldIcons(for: [part.id])
         }
+    }
+
+    /// Whether the app has a Mac build an icon can be installed into: an iPhone or TV app's build is no Mac app, and
+    /// takes its icon when it opens.
+    private func hasMacBuild(_ project: LampProject) -> Bool {
+        FileManager.default.isExecutableFile(atPath: project.builtURL.appendingPathComponent("Contents/MacOS/\(project.exe)").path)
     }
 
     /// What `Icons.waitingURL` says: the icon drawn is the blueprint, or the icon that replaces it, drawn but not yet
@@ -8166,10 +8173,15 @@ final class Store: ObservableObject {
         for project in projects where FileManager.default.fileExists(atPath: Icons.waitingURL(project).path) {
             guard let spec = Icons.load(project) else { continue }
             if (try? String(contentsOf: Icons.waitingURL(project), encoding: .utf8)) == Self.iconReady {
-                // Drawn already, and only the install is missing: the app takes it now, or when it next closes.
+                // Drawn already, and only the install is missing: the app takes it now, or when it next closes. An app
+                // that isn't installed on this Mac (an iPhone app, a TV app) took it when it last opened, or does next time.
+                guard hasMacBuild(project) else {
+                    try? FileManager.default.removeItem(at: Icons.waitingURL(project))
+                    continue
+                }
                 Task {
                     guard begin(project) != nil else { return }
-                    if FileManager.default.fileExists(atPath: project.builtURL.path) { await installIcon(project) }
+                    await installIcon(project)
                     finish(project)
                 }
             } else if Icons.artwork(project, spec: spec) != nil {
