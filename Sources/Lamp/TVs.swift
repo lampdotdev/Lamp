@@ -48,6 +48,13 @@ enum TVs {
         try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
     }
 
+    /// Forgets a TV, as the person asks in Settings: found again, it's set up from the start. Samsung's certificates
+    /// for it stay, since they name the TV's own id and are as good after a reconnect.
+    static func forget(_ id: String) {
+        let all = kept().filter { $0.id != id }
+        try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
+    }
+
     static func record(_ id: String) -> Record? { kept().first { $0.id == id } ?? lastFound.first { $0.id == id } }
     nonisolated(unsafe) private(set) static var lastFound: [Record] = []
 

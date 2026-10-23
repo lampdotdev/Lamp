@@ -116,6 +116,29 @@ enum Integrations {
 
     static func kept(_ id: String) -> Kept? { kept().first { $0.id == id } }
 
+    /// Forgets a device Lamp set up, as the person asks in Settings: its record and what it read, the certificates kept for
+    /// it and the keys in its folder, what was typed for it, and the commands approved on it. Found on the network
+    /// again, it's a device to set up from the start.
+    static func forget(_ id: String) {
+        lock.lock()
+        var all = (try? Data(contentsOf: keptURL)).flatMap { try? JSONDecoder().decode([Kept].self, from: $0) } ?? []
+        all.removeAll { $0.id == id }
+        try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
+        lock.unlock()
+        try? FileManager.default.removeItem(at: DeviceFolder.of(id))
+        DeviceFields.forget(device: id)
+        DeviceApprovals.forget(id)
+    }
+
+    /// Starts a kept device's setup over, for Reconnect: its steps are to be done again, the first sign-in included, so
+    /// nothing secret goes to it before its new certificate has been kept.
+    static func startOver(_ id: String) {
+        guard var device = kept(id) else { return }
+        device.passed = []
+        device.reads = [:]
+        keep(device)
+    }
+
     /// The step a device is at: the first whose check hasn't passed on it. Nil when it's set up.
     static func next(for device: Device) -> Integration.Step? {
         guard let id = device.integration, let integration = integration(id) else { return nil }

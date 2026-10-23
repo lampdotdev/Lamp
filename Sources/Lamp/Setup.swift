@@ -916,6 +916,7 @@ struct DevicesSection: View {
     @EnvironmentObject private var store: Store
     @AppStorage("appleTeam") private var team = ""
     @State private var adding = false
+    @State private var forgetting: Device?
 
     var body: some View {
         Section("Your Devices") {
@@ -930,6 +931,34 @@ struct DevicesSection: View {
         }
         .onAppear { store.refreshDevices() }
         .sheet(isPresented: $adding) { AddDeviceSheet() }
+        .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
+            Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
+        } message: {
+            Text("Lamp forgets how to reach it and what you typed for it. To use it again, set it up from the start.")
+        }
+    }
+
+    /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
+    /// Mac's, and an Android device's is the device's own.
+    private func keptByLamp(_ device: Device) -> Bool {
+        device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
+    }
+
+    /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
+    /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
+    private func reconnect(_ device: Device) {
+        if device.kind.isTV {
+            TVSetup.shared.show(device.udid)
+        } else {
+            DeviceSetupModel.for(device).reconnect()
+            DeviceSetupWindow.show(device)
+        }
+    }
+
+    private func forget(_ device: Device) {
+        if device.kind.isTV { TVs.forget(device.id) } else { Integrations.forget(device.id) }
+        forgetting = nil
+        store.refreshDevices()
     }
 
     private func row(_ device: Device) -> some View {
@@ -954,8 +983,20 @@ struct DevicesSection: View {
             case .talkOnly:
                 Text(setup.words).foregroundStyle(.secondary)
             }
+            if keptByLamp(device) {
+                Menu {
+                    Button("Reconnect…") { reconnect(device) }
+                    Button("Forget \(device.name)…") { forgetting = device }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Reconnect or forget \(device.name)")
+            }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 
