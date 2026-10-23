@@ -11,8 +11,8 @@ plain "Lamp x.y.z" line.
   about 21 to about 57 frames a second, with WebGL 2 and today's JavaScript.
 - A device Lamp can't find on this network, because it's off or at another home, says "Not on this network" instead
   of Ready.
-- Two new starter wishes: Disk Map, which shows what fills your disk as a sunburst you can click through, and
-  Site-to-App, which turns websites without a Mac app into apps of their own.
+- A new starter wish, Site-to-App, turns websites without a Mac app into apps of their own, and Disk Map now shows
+  what fills your disk as a sunburst you can click through.
 - While you write a wish, the desk's icons step back behind the bar.
 
 ## 0.18.7
