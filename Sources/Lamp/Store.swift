@@ -2166,7 +2166,7 @@ final class Store: ObservableObject {
 
     /// Renames while the app is marked busy, so nothing else starts on it meanwhile.
     private func performRename(_ project: LampProject, to rawName: String) async -> LampProject {
-        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) }
+        let name = rawName.trimmed.filter { !"\"\\<>&/:".contains($0) && !$0.isNewline }
         guard !name.isEmpty, name != project.name || project.untitled,
               let current = projects.first(where: { $0.id == project.id }) else { return project }
         let unique = uniqueName(name, ignoring: current.id)
@@ -2178,20 +2178,43 @@ final class Store: ObservableObject {
             return await rescaffold(current, as: unique)
         }
 
+        let renamed = await giveName(unique, to: current)
+        Self.retitle(current.dir, from: current.name, to: unique)
+        // A version of its own even when no file named the app, carrying both names, so Undo gives the old one back.
+        _ = await Versions.save(current, message: "Rename to \(unique)",
+                                trailer: Versions.nameTrailers(from: current.name, to: unique), allowEmpty: true)
+        reload()
+        log(renamed, .status, "Renamed to \(unique)")
+        return renamed
+    }
+
+    /// The app under another name in Lamp: its meta.json, and its installed copy moved to the new name. The bundle ID
+    /// stays, so it keeps its settings and data. Its other parts take the wish's name as Lamp reads them again.
+    private func giveName(_ name: String, to current: LampProject) async -> LampProject {
         let fm = FileManager.default
-        let renamed = current.named(unique)
+        let renamed = current.named(name)
         try? Template.saveMeta(renamed)
         if fm.fileExists(atPath: current.installedURL.path) {
             try? fm.moveItem(at: current.installedURL, to: renamed.installedURL)
             _ = await Shell.run(Self.lsregister + " -f \"$LAMP_APP\"", cwd: current.dir,
                                 env: ["LAMP_APP": renamed.installedURL.path]) { _ in }
         }
-        Self.retitle(current.dir, from: current.name, to: unique)
-        _ = await Versions.git("git add -A && \(Self.commit) -qm \"$LAMP_MESSAGE\"", cwd: current.dir,
-                            env: ["LAMP_MESSAGE": "Rename to \(unique)"]) { _ in }
-        reload()
-        log(renamed, .status, "Renamed to \(unique)")
         return renamed
+    }
+
+    /// The name a restore to `target` gives back (`Versions.name(at:in:)`), when it isn't the app's name now: an Undo of
+    /// a rename, or going back to a version from before one. Unique among the other apps, as a rename's is.
+    private func renaming(_ project: LampProject, to target: AppVersion, in versions: [AppVersion]) -> (from: String, to: String)? {
+        guard let name = Versions.name(at: target, in: versions), name != project.name else { return nil }
+        return (project.name, uniqueName(name, ignoring: project.id))
+    }
+
+    /// After a restore that gave a name back, the app under that name.
+    private func takeName(_ renaming: (from: String, to: String)?, _ restored: LampProject) async -> LampProject {
+        guard let renaming, let now = current(restored) else { return restored }
+        let renamed = await giveName(renaming.to, to: now)
+        reload()
+        return current(renamed) ?? renamed
     }
 
     /// The old name in window titles and APP.md. Anything subtler is left for the agent.
@@ -2398,7 +2421,8 @@ final class Store: ObservableObject {
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
-        let taken = Set(projects.filter { $0.id != id }.map { $0.name.lowercased() })
+        // A wish's other parts carry its name, and are no other app holding it.
+        let taken = Set(projects.filter { $0.id != id && ($0.partOf == nil || $0.partOf != id) }.map { $0.name.lowercased() })
         let base = name.trimmed
         var candidate = base
         var n = 2
@@ -5565,13 +5589,15 @@ final class Store: ObservableObject {
             if await build(restored) == nil { await installReportingCrash(restored) }
             return
         }
-        guard let (undoing, target) = Versions.undoTarget(in: versions),
+        let undo = Versions.undoTarget(in: versions)
+        let renaming = undo.flatMap { self.renaming(project, to: $0.target, in: versions) }
+        guard let (undoing, target) = undo,
               await Versions.restore(project, to: target, message: "Undid “\(undoing.label)”",
-                                     trailer: "Lamp-Undid: \(undoing.id)") else {
+                                     trailer: "Lamp-Undid: \(undoing.id)", renaming: renaming) else {
             log(project, .status, "Nothing to undo")
             return
         }
-        let restored = await followRestored(project)
+        let restored = await takeName(renaming, await followRestored(project))
         Versions.remember(restored, restoredTo: target.label, from: target.date)
         log(restored, .status, "Undid “\(undoing.label)”")
         await rebuild(restored, restoredFrom: target)
@@ -5582,11 +5608,12 @@ final class Store: ObservableObject {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         dropPausedRequest(project)
-        guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version)) else {
+        let renaming = self.renaming(project, to: version, in: await Versions.list(project))
+        guard await Versions.restore(project, to: version, message: Versions.restoredMessage(to: version), renaming: renaming) else {
             log(project, .status, "The app is already like “\(version.label)”")
             return
         }
-        let restored = await followRestored(project)
+        let restored = await takeName(renaming, await followRestored(project))
         Versions.remember(restored, restoredTo: version.label, from: version.date)
         log(restored, .status, Versions.restoredMessage(to: version))
         await rebuild(restored, restoredFrom: version)

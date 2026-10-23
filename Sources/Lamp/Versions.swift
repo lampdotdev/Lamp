@@ -15,6 +15,11 @@ struct AppVersion: Identifiable, Hashable {
     var title: String?
     /// The version an Undo took back, so pressing Undo again keeps going back instead of redoing it.
     let undid: String?
+    /// The app's name from this version on and the one it had before, when this version changed it (a rename, or
+    /// an Undo or restore across one). The name is kept in Lamp's own folder, which versions don't hold, so the
+    /// versions that change it carry it, and going back to a version brings back the name it had (`name(at:in:)`).
+    var renamedTo: String? = nil
+    var renamedFrom: String? = nil
 
     var label: String { name ?? title ?? message }
 
@@ -170,13 +175,17 @@ enum Versions {
         }
         let titles = VersionTitles.saved(in: project)
         var versions: [AppVersion] = []
-        _ = await git("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
+        _ = await git("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Name,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Renamed-From,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
                             cwd: project.dir) { line in
-            let parts = line.split(separator: "\u{1f}", maxSplits: 4, omittingEmptySubsequences: false).map(String.init)
-            guard parts.count == 5, let seconds = TimeInterval(parts[2]) else { return }
+            let parts = line.split(separator: "\u{1f}", maxSplits: 6, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 7, let seconds = TimeInterval(parts[2]) else { return }
+            let message = parts[6]
+            // A rename saved before versions carried the name says the new one in its message, and not the old.
+            let older = message.hasPrefix("Rename to ") && message != "Rename to Lamp" ? String(message.dropFirst("Rename to ".count)) : nil
             versions.append(AppVersion(id: parts[0], parent: parts[1].split(separator: " ").first.map(String.init),
-                                       date: Date(timeIntervalSince1970: seconds), message: parts[4],
-                                       name: names[parts[0]], title: titles[parts[0]], undid: parts[3].nilIfEmpty))
+                                       date: Date(timeIntervalSince1970: seconds), message: message,
+                                       name: names[parts[0]], title: titles[parts[0]], undid: parts[3].nilIfEmpty,
+                                       renamedTo: parts[4].trimmed.nilIfEmpty ?? older, renamedFrom: parts[5].trimmed.nilIfEmpty))
         }
         return versions
     }
@@ -206,6 +215,26 @@ enum Versions {
         }
         guard let target = current.parent.flatMap({ byID[$0] }).map(pastRenames) else { return nil }
         return (current, target)
+    }
+
+    /// The app's name in `version`: the name given by the latest version at or before it that changed the name, else
+    /// the name the first one after it changed from. Nil when no version says (an app never renamed, or renamed only
+    /// by a Lamp from before versions carried the name), and the name stays as it is.
+    static func name(at version: AppVersion, in versions: [AppVersion]) -> String? {
+        let byID = Dictionary(versions.map { ($0.id, $0) }) { first, _ in first }
+        var walked: AppVersion? = version
+        while let at = walked {
+            if let name = at.renamedTo { return name }
+            walked = at.parent.flatMap { byID[$0] }
+        }
+        // `versions` is newest first: the first one after `version` to change the name is the nearest above it.
+        guard let index = versions.firstIndex(where: { $0.id == version.id }) else { return nil }
+        return versions[..<index].last { $0.renamedTo != nil }?.renamedFrom
+    }
+
+    /// What a version that changes the app's name carries, for `name(at:in:)`.
+    static func nameTrailers(from old: String, to new: String) -> String {
+        "Lamp-Name: \(new)\nLamp-Renamed-From: \(old)"
     }
 
     /// Names a version, replacing any earlier name. An empty name removes it.
@@ -252,15 +281,23 @@ enum Versions {
     }
 
     /// Restores a version's files and saves the result as a new version. False when nothing changed.
-    static func restore(_ project: LampProject, to version: AppVersion, message: String, trailer: String? = nil) async -> Bool {
+    /// `renaming` is a name the restore gives back (`name(at:in:)`): a version is saved for it even when the files
+    /// come back the same, as a rename's own version may have changed nothing else.
+    static func restore(_ project: LampProject, to version: AppVersion, message: String, trailer: String? = nil,
+                        renaming: (from: String, to: String)? = nil) async -> Bool {
         guard await restoreFiles(project, to: version) else { return false }
-        return await save(project, message: message, trailer: trailer)
+        let trailers = [trailer, renaming.map { nameTrailers(from: $0.from, to: $0.to) }].compactMap { $0 }
+        return await save(project, message: message, trailer: trailers.isEmpty ? nil : trailers.joined(separator: "\n"),
+                          allowEmpty: renaming != nil)
     }
 
     /// Saves the app's files as they are now as a new version. False when nothing changed.
-    static func save(_ project: LampProject, message: String, trailer: String? = nil) async -> Bool {
-        let trailerArgument = trailer.map { " -m \"\($0)\"" } ?? ""
-        return await commitAll("-q -m \"$LAMP_MESSAGE\"\(trailerArgument)", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved
+    static func save(_ project: LampProject, message: String, trailer: String? = nil, allowEmpty: Bool = false) async -> Bool {
+        // In the environment rather than the command: a name may hold anything the shell reads in quotes.
+        var env = ["LAMP_MESSAGE": message]
+        if let trailer { env["LAMP_TRAILER"] = trailer }
+        let arguments = "-q\(allowEmpty ? " --allow-empty" : "") -m \"$LAMP_MESSAGE\"" + (trailer == nil ? "" : " -m \"$LAMP_TRAILER\"")
+        return await commitAll(arguments, in: project.dir, env: env) == .saved
     }
 
     /// How a save ended. `failed` is a save that had something to save and couldn't: not the same as nothing
