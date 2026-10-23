@@ -7,7 +7,9 @@ import Foundation
 /// sokol_gfx for drawing, with sokol's shapes and text, HandmadeMath, cgltf and stb_image, and the kit's own sound mix
 /// with stb_vorbis, dr_wav and dr_mp3), compiled on this Mac for
 /// the console with LLVM and Microsoft's SDK (`WindowsTools`) into an x64 app Lamp packages itself (`MSIX`), and put
-/// on the Xbox through its integration's bridge like the web app is.
+/// on the Xbox through its integration's bridge like the web app is. Until then it's made and played on the Mac: the
+/// agent plays it out of sight (`play`), and the person in a window of its own (`Window`), neither of which needs the
+/// console's tools or an Xbox.
 ///
 /// A data-declared kind can't hold this: the kit's host code and the libraries are Lamp's own files, the build needs
 /// a toolchain Lamp downloads with Microsoft's licence accepted, and the agent plays the game in a preview on the Mac
@@ -89,7 +91,7 @@ enum GameKit {
     # {{NAME}}
 
     A 3D game for the Xbox, built and changed with Lamp: C++ in Game/ against Lamp's game kit (Lamp/lamp_game.h), with
-    its models, pictures and sounds in Assets/. Lamp plays it in a preview on the Mac and puts it on the person's own Xbox.
+    its models, pictures and sounds in Assets/. It's played in a preview on the Mac, and on the person's own Xbox once one is set up.
 
     ## What it does
     Nothing yet: fresh scaffold, a ball the left stick rolls on a lit floor.
@@ -103,7 +105,12 @@ enum GameKit {
     /// Runs the kit's build in the app's sandbox, with the tools where Lamp keeps them. The console's build leaves
     /// build/xbox.zip (App.exe and Assets/) for `DeviceApps` to package; the preview's, build/preview/lamp_preview.
     static func build(_ project: LampProject, for target: Target, started: (@MainActor (Process) -> Void)? = nil) async throws {
-        if let problem = WindowsTools.problem { throw Failure(message: problem) }
+        if target == .xbox, let problem = WindowsTools.problem { throw Failure(message: problem) }
+        if target == .preview {
+            do { try await WindowsTools.installPreview() } catch {
+                throw Failure(message: "Lamp couldn't get the shader compiler the preview is built with: \(error.localizedDescription)")
+            }
+        }
         try write(for: project)
         var printed: [String] = []
         let status = await Sandbox.run("/bin/sh Lamp/build.sh \(target.rawValue)", for: project, env: WindowsTools.buildEnvironment, started: started) { line in
@@ -182,6 +189,65 @@ enum GameKit {
                       sound: sound.map { String($0.dropFirst("Lamp sound: ".count)) })
     }
 
+    // MARK: The window the person plays in
+
+    /// The game in a window of its own on this Mac, played with a controller connected to the Mac or with the keyboard:
+    /// where the person plays it until it goes on an Xbox, and after, while no Xbox is chosen. It's the agent's code, so
+    /// it runs in the app's sandbox like a build (`Sandbox.run`), from what the preview's build left; what it logs goes to
+    /// the app's log. Closing the window ends it, and Lamp ends it to open a newer build.
+    @MainActor enum Window {
+        private final class Play {
+            var process: Process?
+            var status: Int32?
+        }
+        private static var plays: [String: Play] = [:]
+
+        static func isOpen(_ project: LampProject) -> Bool { plays[project.id].map { $0.status == nil } ?? false }
+        static var openIDs: [String] { plays.filter { $0.value.status == nil }.map(\.key) }
+
+        static func close(_ project: LampProject) {
+            plays.removeValue(forKey: project.id)?.process?.terminate()
+        }
+
+        /// The sandbox's launcher and shells exec into the game, so the process Lamp started is the game's window.
+        static func bringForward(_ project: LampProject) {
+            guard let pid = plays[project.id]?.process?.processIdentifier else { return }
+            NSRunningApplication(processIdentifier: pid)?.activate()
+        }
+
+        /// Opens the built preview in its window, closing one already open. Nil once it's open; else why it isn't.
+        /// `closed` runs when the person closes it (not when Lamp does).
+        static func open(_ project: LampProject, title: String, closed: @escaping @MainActor () -> Void) async -> String? {
+            close(project)
+            let saves = ".lamp/play/saves"
+            try? AppFolder.write("", to: project.dir.appendingPathComponent("\(saves)/.keep"), in: project.dir)
+            try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
+            let log = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
+            let play = Play()
+            plays[project.id] = play
+            var printed: [String] = []
+            Task {
+                let status = await Sandbox.run("exec build/preview/lamp_preview --window \(Sandbox.quoted(title)) Assets \(saves)", for: project,
+                                               started: { play.process = $0 }) { line in
+                    printed.append(line)
+                    if printed.count > 40 { printed.removeFirst(20) }
+                    log?.write(Data((line + "\n").utf8))
+                }
+                try? log?.close()
+                play.status = status
+                if plays[project.id] === play {
+                    plays[project.id] = nil
+                    closed()
+                }
+            }
+            // A game that ends as it opens (a crash in game_init) says so, rather than a window that never came.
+            for _ in 0..<15 where play.status == nil { try? await Task.sleep(for: .milliseconds(100)) }
+            guard let status = play.status, status != 0 else { return nil }
+            let said = Privacy.sharesLog && !printed.isEmpty ? " What it printed last:\n" + printed.suffix(12).joined(separator: "\n") : ""
+            return "The game stopped as it opened on this Mac (exit \(status))." + said
+        }
+    }
+
     /// The script for `use_app`'s actions on the controller, or why one can't be played. Each action ends with a picture.
     static func script(for actions: [[String: Any]], startingAt shot: Int) -> (lines: [String], said: [String], problem: String?) {
         var lines: [String] = [], said: [String] = []
@@ -237,23 +303,26 @@ extension Agent {
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Xbox")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "an Xbox")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: "puts it on the Xbox again and opens it")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points (the Xbox, or the preview on this Mac)")
     }
 }
 
 extension Agent.Rules {
     static let gameHeader = """
-    You are Lamp's builder agent. The current directory is a 3D game for the person's own Xbox, in Developer Mode, \
-    which Lamp reaches over their network: C++ written against Lamp's game kit, which Lamp compiles on this Mac into \
-    an Xbox app, packages and puts on the console. You play it in a preview on this Mac, the same code drawn with \
-    Metal; the person plays it on their TV with the controller. Read APP.md first for context.
+    You are Lamp's builder agent. The current directory is a 3D game for the Xbox: C++ written against Lamp's game kit, \
+    which Lamp builds on this Mac. You play it in a preview on this Mac, the same code drawn with Metal. The person \
+    plays it on this Mac too, in a window of its own with a controller connected to the Mac or the keyboard, until \
+    they set up their Xbox (in Developer Mode, reached over their network); then Lamp compiles it into an Xbox app, \
+    packages it and puts it on the console, and they play it on their TV. The request's device line says which it is \
+    now: never say it's on their Xbox when it isn't. Read APP.md first for context.
     """
 
     static let gameEdit = """
     - Make the change the user asks for by editing the game's files: its C++ (.cpp and .h) and shaders (.glsl) in \
     Game/, and what it loads in Assets/. Every .cpp and .glsl in Game/ is built. Lamp/ is Lamp's (the kit, written \
-    before every build): read it, never edit or delete it. Lamp builds by itself when you look and puts the game on \
-    the Xbox at the end of your turn, so don't run the build or reach the console yourself, and leave .lamp/ alone.
+    before every build): read it, never edit or delete it. Lamp builds by itself when you look and, at the end of your \
+    turn, opens the game where Try On points (the Xbox, or the preview window on this Mac), so don't run the build or \
+    reach the console yourself, and leave .lamp/ alone.
     """
 
     static let gameKit = """
@@ -321,8 +390,12 @@ extension Agent.Rules {
     the same moves show what changed. Play it as the person would before you finish: a game that only looks right \
     isn't done. The preview is this Mac drawing, not the Xbox: it can't show speed, so keep to the budget above. \
     `look_at_app` with `on_device` builds the game for the console, puts it on the person's Xbox and opens it there, \
-    and shows the Xbox's own picture of its screen and the game's log from the console; do that once the game plays \
-    right in the preview, to see it start there and to read its frame times. Lamp can't press the Xbox's \
-    controller: only the person can play it there.
+    and shows the Xbox's own picture of its screen and the game's log from the console; when the person has an Xbox \
+    set up (the request's device line says so), do that once the game plays right in the preview, to see it start \
+    there and to read its frame times. Without one, don't: the preview is where it's played. Lamp can't press the \
+    Xbox's controller: only the person can play it there. The person's window on this Mac takes a controller \
+    connected to the Mac, or the keyboard as the first controller (WASD or the arrows the left stick, IJKL the right, \
+    Space or Return A, Esc B, F X, R Y, Q and E the bumpers, Z and C the triggers, P Menu, Tab View): read the \
+    controller only through `LampFrame`, and the keyboard needs nothing of the game.
     """
 }

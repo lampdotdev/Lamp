@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Getting ready to build Xbox games: one window, like Android's (`AndroidSetup`), with the one download Lamp makes
+/// Getting ready to put games on an Xbox: one window, like Android's (`AndroidSetup`), with the one download Lamp makes
 /// (`WindowsTools.install`). Microsoft's part can't be passed on, so the person reads and accepts its licence here
 /// before anything of Microsoft's is fetched; the box is theirs to check, and nothing downloads until they do. What
-/// asked for the tools (a build) waits until they're here, or is let go when the window closes.
+/// asked for the tools (the first time a game goes on an Xbox) waits until they're here, or is let go when the window
+/// closes. The preview on the Mac never needs it.
 @MainActor
 final class WindowsSetup: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = WindowsSetup()
@@ -82,7 +83,7 @@ final class WindowsSetup: NSObject, ObservableObject, NSWindowDelegate {
             let window = NSWindow(contentViewController: content)
             window.styleMask = [.titled, .closable]
             window.delegate = self
-            window.title = "Xbox Games Setup"
+            window.title = "Xbox Setup for Games"
             window.isReleasedWhenClosed = false
             window.center()
             self.window = window
@@ -100,10 +101,10 @@ struct WindowsSetupView: View {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "gamecontroller").font(.system(size: 30, weight: .light)).foregroundStyle(.secondary).frame(width: 44)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Get ready for Xbox games").font(.title2.weight(.semibold))
+                    Text("Get ready to put games on your Xbox").font(.title2.weight(.semibold))
                     Text(WindowsTools.supported
-                         ? "Lamp builds Xbox games with free tools from LLVM and Microsoft. They aren't on this Mac yet: about 2 GB to download, 1 GB kept."
-                         : "Xbox games are built with tools that run only on Macs with Apple silicon.")
+                         ? "Lamp builds games for the console with free tools from LLVM and Microsoft. They aren't on this Mac yet: about 1.7 GB to download, 1 GB kept."
+                         : "Games are put on an Xbox with tools that run only on Macs with Apple silicon. They still play in the Xbox preview on this Mac.")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }

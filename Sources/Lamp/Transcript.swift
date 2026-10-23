@@ -559,7 +559,7 @@ struct Transcript: View {
     /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
     /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
     @MainActor static func withoutSpentOffers(_ lines: [LogLine], dir: URL) -> [LogLine] {
-        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup || $0.kind == .reload }) else { return lines }
+        guard lines.contains(where: { $0.kind == .drawIcon || $0.kind == .widget || $0.kind == .iphoneSetup || $0.kind == .reload || $0.kind == .deviceOffer }) else { return lines }
         let project = Store.shared.projects.first { $0.dir == dir }
         return lines.filter { line in
             switch line.kind {
@@ -568,6 +568,8 @@ struct Transcript: View {
             case .widget: project.map { WidgetCard.isShown(for: $0) } ?? false
             // The offer to set up iPhone apps, while the app is still only a Mac app.
             case .iphoneSetup: project?.platform == .mac
+            // The offer to set up a device, while the app is still made for one and none of its kind is set up.
+            case .deviceOffer: project.map { $0.onDevice && DeviceApps.setUp(for: $0).isEmpty } ?? false
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
             // A wish's line is for its other parts' changes too.
             case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload) } ?? false
@@ -705,6 +707,8 @@ struct LogRow: View, Equatable {
             }
         case .deviceStep:
             DeviceStepLine(deviceID: line.text)
+        case .deviceOffer:
+            if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DeviceOfferLine(project: project) }
         case .ask, .result:
             // Drawn by Transcript, which knows whether they're still waiting.
             EmptyView()

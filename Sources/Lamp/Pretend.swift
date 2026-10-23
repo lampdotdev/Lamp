@@ -12,6 +12,8 @@ import Foundation
 /// - `xcode`: the full Xcode app and every step of setting it up for iPhone apps (below), and the icon
 ///   tools that come with it.
 /// - `watch`: any Apple Watch simulator to open an iPhone app's watch app on, and the watchOS to make one.
+/// - `windows`: the tools that build a game for the Xbox (LLVM and Microsoft's SDK); the preview's shader compiler
+///   is still used when it's here.
 /// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`), and for
 ///   `claude` and `codex` the copies in the Claude and ChatGPT apps too, so Lamp uses its own copy (or
 ///   downloads it) as on a Mac without them.

@@ -41,18 +41,9 @@ extension Target {
                        builtURL: DeviceApps.packageURL(for:), marker: DeviceApps.marker, refills: true, integration: DeviceApps.integrationID(in:),
                        shareRefusal: "Lamp doesn't share apps for devices like this one yet."),
         part: nil,
-        setup: Setup(
-            // A native Xbox game's tools are a long download: the window that gets them opens as the first request starts.
-            canChoose: { _, integration in
-                if let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, !WindowsTools.isReady { WindowsSetup.shared.show() }
-                return true
-            },
-            notReady: { integration, _ in
-                guard let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, let problem = WindowsTools.problem else { return nil }
-                WindowsSetup.shared.show()
-                return "this Mac can't build Xbox games. \(problem)"
-            },
-            later: nil))
+        // Nothing up front: a native Xbox game is made and played on this Mac with what its preview fetches as it's first
+        // built, and the console's tools are asked for only when it goes on an Xbox (`Store.askForConsoleTools`).
+        setup: .none)
 }
 
 extension Language {

@@ -1,9 +1,11 @@
 import CryptoKit
 import Foundation
 
-/// The tools that build a native game for the Xbox on this Mac (`GameKit`): LLVM's clang-cl and lld-link, Microsoft's
-/// Windows SDK and C runtime, and sokol-shdc for the game's shaders. Nothing of these is on a Mac by itself, so Lamp
-/// gets them the first time a game is built (`install`, from the setup window, `WindowsSetup`), each checked: LLVM's
+/// The tools that build a native game (`GameKit`), in two parts. The preview on this Mac needs only sokol-shdc, the
+/// game's shader compiler (the Mac's own clang does the rest): a small download fetched by itself the first time a game
+/// is built (`installPreview`), with nothing to accept. The console's build also needs LLVM's clang-cl and lld-link
+/// and Microsoft's Windows SDK and C runtime, about 1.7 GB, fetched only when a game first goes on an Xbox (`install`,
+/// from the setup window, `WindowsSetup`), so a game is made and played on the Mac first. Each is checked: LLVM's
 /// release and sokol-shdc against the SHA-256 their makers publish, and Microsoft's packages by xwin, which Lamp ships
 /// and which checks each against the hash in Microsoft's own manifest, after the person has accepted Microsoft's
 /// licence for them (`licenseAccepted`): they can't be passed on, so every Mac fetches its own. Of LLVM only clang,
@@ -44,9 +46,16 @@ enum WindowsTools {
     /// itself, where it hands zstd (the smaller download) to a zstd program a Mac doesn't have.
     static let llvm = Release(url: URL(string: "https://github.com/llvm/llvm-project/releases/download/llvmorg-\(llvmVersion)/LLVM-\(llvmVersion)-macOS-ARM64.tar.xz")!,
                               sha256: "5d3179db39adeca5b17a34d82708fe976bc60e055b05fe557878fb3fb64d39ef", size: 1_570_051_292)
-    /// sokol-shdc for Apple silicon, from the repository its author publishes the binaries in, at one commit.
-    static let shdcRelease = Release(url: URL(string: "https://raw.githubusercontent.com/floooh/sokol-tools-bin/b975d5642093d62e76a1e088bdae945d6d8b8ff2/bin/osx_arm64/sokol-shdc")!,
-                                     sha256: "2a807d62dffcc67a50a6ab51df57cde2fc8b23a3daf6207177d79e00fbd4086b", size: 12_014_840)
+    /// sokol-shdc for this Mac's processor, from the repository its author publishes the binaries in, at one commit.
+    static var shdcRelease: Release {
+        #if arch(arm64)
+        Release(url: URL(string: "https://raw.githubusercontent.com/floooh/sokol-tools-bin/b975d5642093d62e76a1e088bdae945d6d8b8ff2/bin/osx_arm64/sokol-shdc")!,
+                sha256: "2a807d62dffcc67a50a6ab51df57cde2fc8b23a3daf6207177d79e00fbd4086b", size: 12_014_840)
+        #else
+        Release(url: URL(string: "https://raw.githubusercontent.com/floooh/sokol-tools-bin/b975d5642093d62e76a1e088bdae945d6d8b8ff2/bin/osx/sokol-shdc")!,
+                sha256: "67e5c841a4ca58488e6592560dd8795c7b232a8805d2350ca346028541716252", size: 12_370_536)
+        #endif
+    }
 
     /// xwin, which fetches Microsoft's packages: built with Lamp and shipped inside it (it publishes no build for a Mac).
     static var xwin: String? {
@@ -60,7 +69,7 @@ enum WindowsTools {
 
     // MARK: What's there
 
-    /// LLVM publishes these for Apple silicon only.
+    /// The console's build: LLVM publishes this version for Apple silicon only. The preview works on every Mac.
     static var supported: Bool {
         #if arch(arm64)
         true
@@ -79,6 +88,7 @@ enum WindowsTools {
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("crt/lib/onecore/x86_64/libcmt.lib").path)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("sdk/include/cppwinrt/winrt/base.h").path)
     }
+    /// What the console's build needs, all of it. `LAMP_PRETEND_MISSING=windows` makes Lamp Dev act as if it weren't here.
     static var isReady: Bool { !Pretend.isMissing("windows") && hasLLVM && hasShdc && hasSDK }
 
     /// Whether the person accepted Microsoft's licence on this Mac: asked once, before the first download.
@@ -88,16 +98,45 @@ enum WindowsTools {
     }
     private static let licenseKey = "windowsSDKLicenseAccepted"
 
-    /// What's in the way of building a game now, in the person's words, or nil.
+    /// What's in the way of building a game for the console now, in the person's words, or nil.
     static var problem: String? {
-        guard supported else { return "Native Xbox games are built with tools that run on Macs with Apple silicon only." }
-        guard isReady else { return "The tools that build Xbox games aren't on this Mac yet. The window that gets them is open." }
+        guard supported else { return "Games are put on an Xbox with tools that run on Macs with Apple silicon only. This one plays in the Xbox preview on your Mac." }
+        guard isReady else { return "The tools that put games on an Xbox aren't on this Mac yet. The window that gets them is open." }
         return nil
+    }
+
+    // MARK: The preview's one tool
+
+    @MainActor private static var fetchingShdc: Task<Void, Error>?
+
+    /// Gets sokol-shdc when it isn't here: a small download, checked, with nothing to accept. Builds that ask while it's
+    /// coming wait for the same download.
+    @MainActor static func installPreview() async throws {
+        if hasShdc { return }
+        if let fetchingShdc { return try await fetchingShdc.value }
+        let task = Task { try await fetchShdc(progress: { _, _ in }) }
+        fetchingShdc = task
+        defer { fetchingShdc = nil }
+        try await task.value
+    }
+
+    private static func fetchShdc(progress: @escaping @Sendable (Double, String) -> Void) async throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let staging = try stagingFolder()
+        defer { try? fm.removeItem(at: staging) }
+        let download = staging.appendingPathComponent("sokol-shdc")
+        try await fetch(shdcRelease, to: download, name: "the shader compiler", from: 0, to: 0.02, progress: progress)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: download.path)
+        let bin = folder.appendingPathComponent("bin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        if fm.fileExists(atPath: shdc) { try fm.removeItem(atPath: shdc) }
+        try fm.moveItem(at: download, to: URL(fileURLWithPath: shdc))
     }
 
     // MARK: Installing
 
-    /// Downloads and puts in place what's missing, saying how far it is (0…1) and what it's doing. A download that
+    /// Downloads and puts in place what the console's build is missing, saying how far it is (0…1) and what it's doing. A download that
     /// doesn't match its published hash isn't used, and nothing is left half done: each piece is made beside its
     /// place and moved in whole.
     static func install(progress: @escaping @Sendable (Double, String) -> Void) async throws {
@@ -105,17 +144,7 @@ enum WindowsTools {
         guard licenseAccepted else { throw Failure(message: "Microsoft's licence has to be accepted first.") }
         let fm = FileManager.default
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        if !hasShdc {
-            let staging = try stagingFolder()
-            defer { try? fm.removeItem(at: staging) }
-            let download = staging.appendingPathComponent("sokol-shdc")
-            try await fetch(shdcRelease, to: download, name: "the shader compiler", from: 0, to: 0.02, progress: progress)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: download.path)
-            let bin = folder.appendingPathComponent("bin")
-            try fm.createDirectory(at: bin, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: shdc) { try fm.removeItem(atPath: shdc) }
-            try fm.moveItem(at: download, to: URL(fileURLWithPath: shdc))
-        }
+        if !hasShdc { try await fetchShdc(progress: progress) }
         if !hasLLVM {
             let staging = try stagingFolder()
             defer { try? fm.removeItem(at: staging) }

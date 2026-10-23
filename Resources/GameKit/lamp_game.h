@@ -4,7 +4,8 @@
 // boxes, spheres and the like, sokol_debugtext.h and sokol_gl.h for text and lines, HandmadeMath.h for vectors and
 // matrices, cgltf.h for glTF models and stb_image.h for pictures, and sound through the functions below. On the Xbox
 // the host is a full-screen app drawing with Direct3D 11 at 1920x1080, 60 frames a second, and playing the sound
-// through XAudio2; on the Mac the same code is drawn with Metal, out of sight, for Lamp's preview. Nothing here or in the game may call Windows or Apple APIs: everything the game needs from the
+// through XAudio2; on the Mac the same code is drawn with Metal, out of sight for Lamp's preview, or in a window the
+// person plays in with a controller or the keyboard. Nothing here or in the game may call Windows or Apple APIs: everything the game needs from the
 // machine goes through the functions below.
 #pragma once
 #include <stdbool.h>
@@ -42,7 +43,7 @@ typedef struct LampSetup {
 } LampSetup;
 
 typedef struct LampFrame {
-    double dt;          // seconds since the last frame: 1/60 at the console's pace, and always 1/60 in the preview
+    double dt;          // seconds since the last frame: 1/60 at the console's pace, and always 1/60 on the Mac
     double time;        // seconds since the game started
     uint64_t number;    // frames since the game started
     int width, height;

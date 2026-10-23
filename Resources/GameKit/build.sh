@@ -7,11 +7,12 @@
 #
 # The game is every .cpp and .c in Game/, and every .glsl there is a shader, compiled by sokol-shdc into
 # build/shaders/<name>.glsl.h (HLSL for the console, Metal for the Mac) for the game to include. $LAMP_WINDOWS is
-# where Lamp keeps the tools for the console: LLVM's clang-cl and lld-link, Microsoft's SDK and sokol-shdc.
+# where Lamp keeps the tools: sokol-shdc, which both builds need, and for the console LLVM's clang-cl and lld-link
+# and Microsoft's SDK. The preview needs only sokol-shdc and the Mac's own clang.
 set -e
 cd "$(dirname "$0")/.."
 target="${1:-xbox}"
-tools="${LAMP_WINDOWS:?Lamp gives the build the folder with the tools for the console}"
+tools="${LAMP_WINDOWS:?Lamp gives the build the folder with the game tools}"
 mkdir -p build/shaders
 
 # Shaders first: both builds include what they make.
@@ -45,7 +46,7 @@ if [ "$target" = preview ]; then
                       *) clang++ $flags -c "$source" -o "$object" ;; esac
     objects="$objects $object"
   done
-  clang++ $objects -o "$out/lamp_preview" -framework Foundation -framework Metal -framework QuartzCore -framework ImageIO \
+  clang++ $objects -o "$out/lamp_preview" -framework AppKit -framework AVFoundation -framework Foundation -framework GameController -framework Metal -framework QuartzCore -framework ImageIO \
     -framework CoreGraphics -framework UniformTypeIdentifiers
   exit 0
 fi

@@ -536,3 +536,40 @@ private struct DeviceStepChat: View {
         .onAppear { model.watch() }
     }
 }
+
+/// The offer, once per app, to set up a device for an app that plays in its preview on this Mac until one is: a quiet
+/// line under the preview's status, not a step the app waits on. Its button looks for the device and opens its setup.
+struct DeviceOfferLine: View {
+    let project: LampProject
+    @State private var looking = false
+    @State private var said: String?
+
+    var body: some View {
+        Row(app: project.name, device: DeviceApps.integration(for: project)?.name ?? "device", said: said, looking: looking) {
+            looking = true
+            Task {
+                said = await Store.shared.setUpDevice(for: project)
+                looking = false
+            }
+        }
+    }
+
+    /// The line from plain values, for the chat and the gallery.
+    struct Row: View {
+        let app: String
+        let device: String
+        var said: String?
+        var looking = false
+        let action: () -> Void
+
+        static func text(app: String, device: String) -> String {
+            let article = "AEIOUX".contains(device.prefix(1).uppercased()) ? "an" : "a"
+            return "Have \(article) \(device)? Set it up to play \(app) on it."
+        }
+
+        var body: some View {
+            ChatLook.ActionLine(symbol: "gamecontroller", text: said ?? Self.text(app: app, device: device),
+                                button: looking ? "Looking…" : "Set Up \(device)…", disabled: looking, action: action)
+        }
+    }
+}

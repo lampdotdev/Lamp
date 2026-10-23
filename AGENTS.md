@@ -845,8 +845,8 @@ reliably, its efficient path (`InstancedMesh`) is the obvious one, and it's abou
 keep scenes within what an Xbox One's web view draws and have a game read the controller with the Gamepad API while it's
 played, the keyboard too. A kind that declares `preview` (a web app's folder) is looked at and used in the preview on the
 Mac, the TV preview's window under the device's name (`Store.openDevicePreview`, `TVPreview.show(device:)`, where Back
-is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play still puts
-it on the device.
+is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play puts it on the
+device once one is set up or chosen, and until then opens the preview for the person to play (see "Xbox games").
 
 **The Xbox's web host** (`WebHost`, `Resources/WebHost`): an Xbox web app runs in Chromium, the console's WebView2,
 not in the EdgeHTML that Windows gives a package naming a start page (WebGL 1, Edge 18's JavaScript, about a third of
@@ -876,7 +876,7 @@ console before installs over the earlier EdgeHTML one (same family, newer versio
 
 The Xbox takes two kinds of app: its integration's web app (`app`, menus and pages), and native 3D games, Lamp's own
 kind (`GameKit`, GameKit.swift), offered beside it in the integration's `kinds` (`"game": {"lamp": "native-game"}`).
-A native game needs a 2 GB download, so it's for heavy 3D games only: the web app takes apps and games, 3D ones
+A native game needs a 1.7 GB download before it goes on a console, so it's for heavy 3D games only: the web app takes apps and games, 3D ones
 included, and the native kind only a wish that says it needs the console's full power. Which a wish becomes is the
 naming call's choice, from the wish: each kind is named to it with its `purpose`
 (`AppName.deviceKinds`), "xbox-one" for an app and "xbox-one:game" for a 3D game, and that name is what
@@ -899,7 +899,9 @@ Windows.Gaming.Input, the log and saves in the app's LocalState, B kept from lea
 (without it the console ends the app after one frame), which logs its frame times every ten seconds; and
 `lamp_preview.mm`, the same game drawn with Metal out of sight at 60 frames of game time a second, from a script of
 the controller's moves (`hold <frames> <sticks> <triggers> <buttons>`, `shot <name>`), the same seed every play, with
-sokol's draws and vertices counted. `build.sh xbox` compiles with clang-cl for x86_64-pc-windows-msvc against the
+sokol's draws and vertices counted, or with `--window` in a window the person plays in (`GameKit.Window`), with the
+controllers connected to the Mac (GameController) and the keyboard as the first one, and the kit's mix played on the
+Mac's speakers (AVAudioEngine) as XAudio2 plays it on the console. `build.sh xbox` compiles with clang-cl for x86_64-pc-windows-msvc against the
 Windows SDK and links with lld-link as an app-container exe with a static C++ runtime (so the console needs no package
 of Microsoft's beside it), and zips App.exe with Assets/; `build.sh preview` compiles with the Mac's clang. Shaders are
 annotated GLSL compiled by sokol-shdc into one header with HLSL and Metal; the console compiles the HLSL at launch with
@@ -908,7 +910,8 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`); `use_app` takes
 `stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
 `Store.useOnGame`), so after a change to the code the same moves show what changed. `look_at_app` with `on_device`,
-Play and the end of a turn build for the console and put it on the Xbox through the integration's bridge: `stop` ends
+and Play and the end of a turn with an Xbox to go on (below), build for the console and put it on the Xbox through the
+integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
 `install` and `launch` (asked again after a few seconds when the console refuses a launch just after an update,
 0x80073D00); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
@@ -925,12 +928,28 @@ game always, and a web app when its capabilities.json says `{"game": true}` (`Te
 rules ask of anything played. That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
 that aren't games and a game may not use it. The native host logs the memory the console gave it, which says which it got.
 
-The tools are a download (`WindowsTools`, the setup window `WindowsSetup`), in `Edition.sharedDeveloperFolder`/Windows
-like Android's: clang and lld (with clang's own headers) out of LLVM's release for Apple silicon and sokol-shdc at a
-pinned commit, each against its published SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp
-ships (built by build.sh with cargo, pinned and locked; a release needs it) and which checks Microsoft's packages
-against Microsoft's manifest. Microsoft's licence is the person's to accept, in the setup window, before xwin runs:
-nothing of Microsoft's is passed on. Intel Macs can't build games (LLVM publishes no such build).
+**On the Mac first, the Xbox later.** A kind that plays on the Mac (`DeviceApps.playsOnMac`: a web kind with a
+`preview`, or a native game) goes to its preview at the end of a turn and on Play while the preview is chosen under Try
+On ("Xbox Preview", `DeviceApps.previewChoice` in `LampProject.device`) or nothing is chosen and no one Xbox is set up
+(`DeviceApps.goesToPreview`, `setUp(for:)`: every step passed): the web app's preview window, or the game's own
+(`Store.playOnMac`). The chat says so as a status, and offers once per app, while no Xbox is set up, to set one up
+(`DeviceOfferLine`, a `.deviceOffer` line), never as an error. One set up and none chosen is where it goes; when it isn't
+on the network the app plays in the preview meanwhile, and one chosen and not found is a plain status line. The
+request's device line (`DeviceNote`) tells the agent which, so it never says the game is on an Xbox the person hasn't
+got. Nothing is asked of the Mac when a wish becomes an Xbox app (the device kind's `setup` is `.none`). A game's turn builds the preview, and the console's build only when it goes on an Xbox with the console's tools
+here; `Store.consoleBuilt` keeps which code the console's package was built from, so Play builds it when the turn
+built only the preview.
+
+The tools are downloads (`WindowsTools`), in `Edition.sharedDeveloperFolder`/Windows like Android's, in two parts.
+The preview needs only sokol-shdc, the shader compiler, at a pinned commit for this Mac's processor (12 MB, against its
+SHA-256), fetched by itself the first time a game is built (`installPreview`), with nothing to accept; the Mac's own
+clang does the rest. The console's build also needs clang and lld (with clang's own headers) out of LLVM's release for
+Apple silicon, against its SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp ships (built by
+build.sh with cargo, pinned and locked; a release needs it) and which checks Microsoft's packages against Microsoft's
+manifest: about 1.7 GB, asked for in the setup window (`WindowsSetup`) only when a game first goes on an Xbox. Microsoft's
+licence is the person's to accept there, before xwin runs: nothing of Microsoft's is passed on. Intel Macs make and play
+games in the preview, but can't put them on an Xbox (LLVM publishes no such build). `LAMP_PRETEND_MISSING=windows` makes
+Lamp Dev act as if the console's tools weren't here.
 
 ## TV apps
 

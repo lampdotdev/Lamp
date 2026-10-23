@@ -1804,18 +1804,26 @@ private struct TryOnChoices: View {
             .onAppear { store.refreshDevices() }
     }
 
-    /// A device app's places: the person's devices its integration finds, each by its model and what it still needs. One
-    /// not set up is set up when it's chosen, in its setup window.
+    /// A device app's places: the preview on this Mac, for a kind that has one, and the person's devices its integration
+    /// finds, each by its model and what it still needs. One not set up is set up when it's chosen, in its setup window.
     @ViewBuilder private var deviceChoices: some View {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
-        Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
+        if DeviceApps.playsOnMac(project) {
+            Picker("Preview", selection: Binding(get: { DeviceApps.goesToPreview(project) ? "preview" : nil },
+                                                 set: { if $0 != nil { store.setDeviceAppPreview(project) } })) {
+                Label("\(name) Preview", systemImage: "macbook").tag(Optional("preview"))
+            }
+            .pickerStyle(.inline)
+        }
+        Picker("Your \(name)s", selection: Binding(get: { DeviceApps.goesToPreview(project) ? nil : project.device ?? DeviceApps.device(for: project, among: store.devices)?.id },
+                                                     set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
             ForEach(mine) { device in
                 let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
                 Label((device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step, systemImage: device.kind.symbol)
                     .tag(Optional(device.id))
             }
-            if let chosen = project.device, !mine.contains(where: { $0.id == chosen }) {
+            if let chosen = project.device, chosen != DeviceApps.previewChoice, !mine.contains(where: { $0.id == chosen }) {
                 Label("Chosen \(name) (not on the network)", systemImage: Device.Kind.other.symbol).tag(Optional(chosen))
             }
         }
@@ -1828,7 +1836,7 @@ private struct TryOnChoices: View {
             Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
         }
         if GameKit.isGame(project) {
-            Button("Check Xbox Games Setup…") { WindowsSetup.shared.show() }
+            Button("Xbox Setup for Games…") { WindowsSetup.shared.show() }
         }
         Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { store.refreshDevices() }
