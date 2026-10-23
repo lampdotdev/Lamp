@@ -8,12 +8,14 @@
       },
       "output": "build/app.zip",
       "package": "rm -f build/app.zip && mkdir -p build && cd Web && zip -qr ../build/app.zip .",
-      "rules": "The app is a web page in Web/ (HTML, CSS and JavaScript, no build step and no frameworks from the network), shown full screen at 1920x1080 on the Xbox and run by its Edge-based web view. Design for a TV across the room: large type (36px and up), high contrast, nothing that scrolls the whole page. It's driven by the controller: keep `navigator.gamepadInputEmulation = \"keyboard\"` in app.js so the d-pad sends arrow keys and A sends Enter, give every control the class `focusable` and a visible :focus style, and use the arrow-focus code in app.js; B is Escape (\"GamepadB\"). index.html loads Lamp's lamp.js before app.js; keep it so. Lamp wraps Web/ into a signed Windows package itself.",
+      "rules": "The app is a web page in Web/ (HTML, CSS and JavaScript, no build step and no frameworks from the network), shown full screen at 1920x1080 on the Xbox and run by its Edge-based web view. Design for a TV across the room: large type (36px and up), high contrast, nothing that scrolls the whole page. It's driven by the controller: keep `navigator.gamepadInputEmulation = \"keyboard\"` in app.js so the d-pad sends arrow keys and A sends Enter, give every control the class `focusable` and a visible :focus style, and use the arrow-focus code in app.js; B is Escape (\"GamepadB\"). index.html loads Lamp's lamp.js before app.js; keep it so. Lamp wraps Web/ into a signed Windows package itself. A 3D game or scene uses Babylon.js, which Lamp puts at Web/babylon.js (the global BABYLON): load it with a script tag before app.js, make the engine with new BABYLON.Engine(canvas, true) on a full-screen canvas and resize it on window resize. An Xbox One is a modest console running a web view, so keep a scene light: low-poly meshes and simple materials, one or two lights, no real-time shadows, and a few hundred objects at most, reusing meshes with instances; aim for 60 frames a second at 1920x1080. In a game, read the controller directly while it's being played: set navigator.gamepadInputEmulation = \"gamepad\" when play starts and back to \"keyboard\" on its menus, and each frame read navigator.getGamepads()[0] (axes 0 and 1 the left stick, 2 and 3 the right, with a dead zone of about 0.15; buttons[0] A, [1] B, [2] X, [3] Y, [6] and [7] the triggers' value, [12] to [15] the d-pad). Take the keyboard too, as the same moves (WASD or the arrows, Space, Enter, Escape for B): that's how the game is played in the preview on the person's Mac, where you try it with use_app, holding a key with amount in seconds.",
       "start": "index.html",
       "support": {
-        "web": "Web/lamp.js"
+        "web": "Web/lamp.js",
+        "babylon": "Web/babylon.js"
       },
-      "wrap": "msix"
+      "wrap": "msix",
+      "preview": "Web"
     }
   },
   "bridge": {

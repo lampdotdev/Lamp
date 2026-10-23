@@ -17,6 +17,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     private static let home = URL(string: "\(scheme)://app/index.html")!
 
     private let project: LampProject
+    /// What the preview stands in for, as the person calls it: "TV", or a device app's device ("Xbox"). Back on a TV's
+    /// remote is its own key; on anything else it's Escape, as an Xbox's B button sends.
+    private var device = "TV"
+    private var isTV: Bool { device == "TV" }
     private let window: NSWindow
     private let webView: WKWebView
     private let files = StagedFiles()
@@ -34,9 +38,11 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
 
     /// Opens the staged app (again, from the start), in front or behind what the person is doing. Nil once it has loaded.
     @discardableResult
-    static func show(_ project: LampProject, staged: URL, inFront: Bool) async -> String? {
+    static func show(_ project: LampProject, staged: URL, inFront: Bool, device: String = "TV") async -> String? {
         let preview = open[project.id] ?? TVPreview(project: project)
         open[project.id] = preview
+        preview.device = device
+        preview.window.title = "\(project.name) on \(device)"
         return await preview.load(staged: staged, inFront: inFront)
     }
 
@@ -323,7 +329,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     // MARK: Using
 
     private static let keyCodes: [String: Int] = [
-        "left": 37, "up": 38, "right": 39, "down": 40, "enter": 13, "return": 13, "ok": 13, "back": 10009, "escape": 10009,
+        "left": 37, "up": 38, "right": 39, "down": 40, "enter": 13, "return": 13, "ok": 13, "back": 10009, "escape": 10009, "space": 32,
         "play": 415, "pause": 19, "playpause": 10252, "stop": 413, "fastforward": 417, "rewind": 412,
         "red": 403, "green": 404, "yellow": 405, "blue": 406, "channelup": 427, "channeldown": 428, "info": 457,
     ]
@@ -331,7 +337,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// Carries out `use_app`'s actions on the preview, one after another, with the screen read again after each. The
     /// report says what each landed on and what has focus after it.
     static func perform(_ actions: [Simulator.Driver.Action], on project: LampProject, stillMine: @escaping @MainActor () -> Bool) async -> String {
-        guard let preview = open[project.id] else { return "The app isn't open in the TV preview." }
+        guard let preview = open[project.id] else { return "The app isn't open in the preview." }
         var screen = await items(project)
         var report: [String] = []
         func find(_ target: String) -> Item? {
@@ -344,28 +350,53 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
             switch action.action {
             case "key":
                 let name = (action.key ?? "").lowercased()
-                let digit = name.count == 1 && name.first!.isNumber ? 48 + Int(String(name))! : nil
-                guard let code = keyCodes[name] ?? digit else {
-                    report.append("\(n). Unknown key \"\(action.key ?? "")\"; the remote's keys are \(keyCodes.keys.sorted().joined(separator: ", ")) and 0-9.")
+                // A digit, and on a device that isn't a TV a letter too (a game's WASD), as the keyboard sends them.
+                let single = name.count == 1 ? name.unicodeScalars.first : nil
+                let digit = single.flatMap { CharacterSet.decimalDigits.contains($0) ? Int($0.value) : nil }
+                let letter = preview.isTV ? nil : single.flatMap { CharacterSet.lowercaseLetters.contains($0) && $0.isASCII ? Int($0.value) - 32 : nil }
+                let back = !preview.isTV && (name == "back" || name == "escape")
+                guard let code = back ? 27 : keyCodes[name] ?? digit ?? letter else {
+                    let more = preview.isTV ? " and 0-9" : ", 0-9 and a-z"
+                    report.append("\(n). Unknown key \"\(action.key ?? "")\"; the keys are \(keyCodes.keys.sorted().joined(separator: ", "))\(more).")
                     continue
                 }
+                // The key's name as the page reads it in `e.key`, which a game or the Xbox's arrow focus goes by.
+                let keyName: String = switch code {
+                case 37: "ArrowLeft"
+                case 38: "ArrowUp"
+                case 39: "ArrowRight"
+                case 40: "ArrowDown"
+                case 13: "Enter"
+                case 27: "Escape"
+                case 32: " "
+                default: single.map { String($0) } ?? ""
+                }
+                // Held for `amount` seconds when given (a game's move forward), else a press.
+                let hold = min(max(action.amount ?? 0, 0), 10)
                 let source = """
                     (function () {
                       var target = document.activeElement || document.body;
                       function fire(type) {
-                        var e = new KeyboardEvent(type, { bubbles: true, cancelable: true });
+                        var e = new KeyboardEvent(type, { bubbles: true, cancelable: true, key: \(String(reflecting: keyName)) });
                         Object.defineProperty(e, 'keyCode', { get: function () { return \(code); } });
                         Object.defineProperty(e, 'which', { get: function () { return \(code); } });
                         return target.dispatchEvent(e);
                       }
+                      window.__lampHeldKey = fire;
                       var allowed = fire('keydown');
                       if (allowed && \(code) === 13 && /^(BUTTON|A)$/.test(target.tagName)) target.click();
-                      fire('keyup');
+                      if (\(hold > 0 ? "false" : "true")) fire('keyup');
                       return '';
                     })();
                     """
                 _ = await js(source)
-                report.append("\(n). Pressed \(name).")
+                if hold > 0 {
+                    try? await Task.sleep(for: .seconds(hold))
+                    _ = await js("(function () { if (window.__lampHeldKey) window.__lampHeldKey('keyup'); window.__lampHeldKey = null; return ''; })();")
+                    report.append("\(n). Held \(name) for \(hold.formatted()) s.")
+                } else {
+                    report.append("\(n). Pressed \(name).")
+                }
             case "click", "tap", "left_click", "double_click":
                 let point: CGPoint
                 var what = ""

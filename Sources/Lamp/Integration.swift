@@ -183,6 +183,9 @@ struct Integration: Codable, Hashable {
             /// Lamp's building blocks the app takes, by library ("web", "brightscript") to where they go in its folder:
             /// Lamp's own files there, written afresh before every turn and build (`DeviceSupport`).
             var support: [String: String]?
+            /// A web app's folder, whose index.html Lamp opens at 1920×1080 in a preview on this Mac for the agent's looks and
+            /// use (`TVPreview`, as a TV app's), so the builder sees and plays what it makes; Play still puts it on the device.
+            var preview: String?
             /// The app's icon on the device, by path in the app's folder to its size in pixels ("images/icon_hd.png":
             /// "336x210"): Lamp draws the icon it made for the app at each, before every turn and build (`DeviceSupport`),
             /// for the files the device's manifest names. The agent never draws one.
@@ -438,7 +441,7 @@ enum IntegrationCheck {
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
                                "use": .array(action), "logs": .array(action), "keys": .map]),
-            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map, "icons": .map])]),
+            "app": .object(["lamp": .leaf, "declared": .object(["files": .map, "rules": .leaf, "package": .leaf, "output": .leaf, "wrap": .leaf, "start": .leaf, "support": .map, "icons": .map, "preview": .leaf])]),
         ])
     }
 
@@ -589,6 +592,9 @@ enum IntegrationCheck {
                     } else if declared.files.keys.contains(where: { $0 == path || $0.hasPrefix(path + "/") }) {
                         say("app.declared.support: \"\(path)\" is Lamp's, so the scaffold's files can't be there.")
                     }
+                }
+                if let preview = declared.preview, !isAppPath(preview) {
+                    say("app.declared.preview: \"\(preview)\" must be a plain path to a folder inside the app's folder, not in .lamp.")
                 }
                 for (path, size) in declared.icons ?? [:] {
                     if !isAppPath(path) || !path.lowercased().hasSuffix(".png") {

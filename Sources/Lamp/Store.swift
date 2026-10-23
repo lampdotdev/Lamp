@@ -6110,6 +6110,8 @@ final class Store: ObservableObject {
         if project.onDevice {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            // The agent's looks go to the preview on this Mac when the device's kind has one; Play puts it on the device.
+            if !inFront, let folder = DeviceApps.previewFolder(for: project) { return await openDevicePreview(project, folder: folder) }
             return await installOnDeviceApp(project, inFront: inFront, owner: owner)
         }
         if project.onTV {
@@ -6321,14 +6323,15 @@ final class Store: ObservableObject {
 
     /// `look_at_app` for a TV app: the preview pictured at half the TV's size and read as text, with what it printed.
     private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
-        var summary = "The app is open in the TV preview on this Mac."
+        let device = previewDevice(project)
+        var summary = "The app is open in the \(device) preview on this Mac."
         if changed || !TVPreview.isOpen(project) || reopen {
             let problem = await install(project, inFront: false, early: true)
             turn.look.installed = true
-            if let problem { return (200, ["text": "The app didn't open in the TV preview on this Mac.\n\n\(problem)"]) }
-            summary = changed ? "The app was opened again in the TV preview on this Mac with your changes." : "The app was opened again in the TV preview on this Mac, so it started fresh."
+            if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
+            summary = changed ? "The app was opened again in the \(device) preview on this Mac with your changes." : "The app was opened again in the \(device) preview on this Mac, so it started fresh."
         } else {
-            summary = "The app is open in the TV preview on this Mac with your latest code; nothing needed opening again."
+            summary = "The app is open in the \(device) preview on this Mac with your latest code; nothing needed opening again."
         }
         note("Looking at \(project.name)", for: project)
         if progress[project.id]?.newApp == true, !turn.look.presented {
@@ -6338,21 +6341,25 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-        var text = summary + " " + Self.notTheTV + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
-            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the TV preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
+        var text = summary + " " + Self.notTheDevice(device) + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
+            + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the \(device) preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
         if Privacy.sharesPictures { text += "\n\n" + TVPreview.text(await TVPreview.items(project)) }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n\(tail)" }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the \(device) preview's console printed:\n\(tail)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
-    /// Said with every look at a TV app: a preview at the TV's size reads like the TV itself, and the agent would tell
-    /// the person how the app runs on a TV it has never seen.
-    static let notTheTV = "This is the TV preview, a window on this Mac, not one of the person's TVs: it runs in this Mac's browser, so what it shows, its speed included, is the preview's."
+    /// Said with every look at a preview: one at a TV's size reads like the TV itself (or the Xbox), and the agent would
+    /// tell the person how the app runs on a device it has never seen.
+    static func notTheDevice(_ device: String) -> String {
+        "This is the \(device) preview, a window on this Mac, not the person's \(device): it runs in this Mac's browser, so what it shows, its speed "
+            + "included, is the preview's" + (device == "TV" ? "." : ", and Play puts the app on the \(device) itself.")
+    }
 
     /// `use_app` for a TV app: the remote's keys and clicks on the preview, the screen read between them.
     private func useOnTV(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
-        guard TVPreview.isOpen(project) else { return (200, ["text": "The app isn't open. Call look_at_app first: it opens the app in the TV preview."]) }
+        let device = previewDevice(project)
+        guard TVPreview.isOpen(project) else { return (200, ["text": "The app isn't open. Call look_at_app first: it opens the app in the \(device) preview."]) }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
         if owner.tookOver { return (200, ["text": Self.tookOverNote]) }
         guard let data = json.data(using: .utf8), let decoded = try? JSONDecoder().decode([Simulator.Driver.Action].self, from: data) else {
@@ -6360,7 +6367,7 @@ final class Store: ObservableObject {
         }
         // In plain sight, with Stop and Esc, and the person's own click or key in the preview taking it back.
         // Taking over is remembered for the turn the moment it happens, whatever this call is waiting on then.
-        let trial = Handover(label: "\(Self.lampName) is trying it in the TV preview", lampWindow: TVPreview.window(project)) { [weak self] in
+        let trial = Handover(label: "\(Self.lampName) is trying it in the \(device) preview", lampWindow: TVPreview.window(project)) { [weak self] in
             guard let self, !owner.tookOver else { return }
             owner.tookOver = true
             log(project, .status, Self.stoppedByYou)
@@ -6371,7 +6378,7 @@ final class Store: ObservableObject {
             guard let self else { return false }
             return exists(project) && turns[project.id] === owner && !owner.stopped && !trial.tookOver && TVPreview.isOpen(project)
         }
-        var text = "What happened in the TV preview on this Mac, not on the person's TV:\n\(report)"
+        var text = "What happened in the \(device) preview on this Mac, not on the person's \(device):\n\(report)"
         if owner.tookOver { return (200, ["text": text + "\n\n" + Self.tookOverNote]) }
         if Runtime.sourcesChanged(project) {
             text += "\n\nThis is the app as last opened: it doesn't have the changes you've made to the code since. Call look_at_app to open them."
@@ -6381,9 +6388,9 @@ final class Store: ObservableObject {
         if Privacy.sharesPictures {
             text += "\n\n" + TVPreview.text(await TVPreview.items(project))
             if let data = await TVPreview.picture(project), (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-            text += "\n\nA picture of the TV preview follows. Points for the next use_app are pixels in it."
+            text += "\n\nA picture of the \(device) preview follows. Points for the next use_app are pixels in it."
         }
-        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the TV preview's console printed:\n" + tail }
+        if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat the \(device) preview's console printed:\n" + tail }
         // Taken back during the reads above: the agent is told now, not at its next call.
         if owner.tookOver { text += "\n\n" + Self.tookOverNote }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
@@ -6410,6 +6417,27 @@ final class Store: ObservableObject {
 
     /// Puts a device app on the person's device and opens it there, through its integration's bridge. A device not set
     /// up yet gets its next step in the chat instead. Nil when it's open; else what went wrong.
+    /// A device app opened in the preview on this Mac, from a copy of its kind's preview folder (`TVs.stage`, as a TV
+    /// app's): what the agent looks at and plays. Its LampAI reaches Lamp through the preview, as a TV app's does.
+    private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
+        let device = previewDevice(project)
+        do {
+            let staged = try await TVs.stage(project, folder: folder)
+            note("Opening \(project.name) in the \(device) preview…", for: project)
+            let problem = await TVPreview.show(project, staged: staged, inFront: false, device: device)
+            refreshOpenApps()
+            return problem
+        } catch {
+            log(project, .error, error.localizedDescription)
+            return error.localizedDescription
+        }
+    }
+
+    /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
+    private func previewDevice(_ project: LampProject) -> String {
+        project.platform == .tv ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
+    }
+
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let device = await deviceForApp(project) else {
@@ -6467,6 +6495,7 @@ final class Store: ObservableObject {
     /// `look_at_app` for a device app: put on the device when it changed, then the device's own picture of its screen,
     /// what it answered to the install and what the app printed.
     private func lookOnDeviceApp(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
+        if DeviceApps.previewFolder(for: project) != nil { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         var summary: String
         if changed || deviceRuns[project.id] == nil || reopen {
@@ -6512,6 +6541,7 @@ final class Store: ObservableObject {
     /// `use_app` for a device app: the remote's keys, pressed through the integration's bridge, and waits; then the
     /// screen again.
     private func useOnDeviceApp(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
+        if DeviceApps.previewFolder(for: project) != nil { return await useOnTV(project, actions: actions, json: json) }
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let run = deviceRuns[project.id] else { return (200, ["text": "The app isn't on the \(name). Call look_at_app first: it puts it there and opens it."]) }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -8103,7 +8133,7 @@ final class Store: ObservableObject {
         androidApps = androidApps.filter { $0.value.alive }
         // A TV app is open while its preview is, unless a TV is chosen: then Play is for putting it on the TV, which
         // Lamp can't watch, so it always offers Play.
-        let previews = TVPreview.openIDs.filter { id in projects.first { $0.id == id }?.device == nil }
+        let previews = TVPreview.openIDs.filter { id in projects.first { $0.id == id }.map { $0.platform == .tv && $0.device == nil } ?? false }
         // A device app is open while it's the one Lamp last put on its device, so Stop can take the device back.
         let onIOS = Array(simulatorApps.keys) + Array(deviceApps.keys) + Array(androidApps.keys) + previews + Array(deviceRuns.keys)
         // A build or icon held for a Mac copy goes in when that copy closes, even with its iPhone copy still open.

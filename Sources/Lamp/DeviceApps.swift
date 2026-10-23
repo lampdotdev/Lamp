@@ -30,6 +30,13 @@ enum DeviceApps {
 
     static func integration(for project: LampProject) -> Integration? { project.integration.flatMap(Integrations.integration) }
 
+    /// The folder a device app's kind previews on this Mac (`app.declared.preview`), checked; nil when it has none.
+    static func previewFolder(for project: LampProject) -> String? {
+        guard project.platform == .device, let folder = integration(for: project)?.app?.declared?.preview,
+              IntegrationCheck.isAppPath(folder) else { return nil }
+        return folder
+    }
+
     static func isScaffolded(_ dir: URL) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path) }
 
     /// Writes the integration's scaffold, with Lamp's own names for the app put in (`{{NAME}}`), and the app's APP.md.
