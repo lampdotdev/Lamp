@@ -2663,6 +2663,7 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
+                await installParts(of: package, into: project)
             } catch {
                 let iconBack = await putBack()
                 print("Update \(project.name) from a shared file failed: \(error)")
@@ -2688,6 +2689,7 @@ final class Store: ObservableObject {
             } else {
                 log(project, .error, ErrorMessages.appDoesNotBuild)
             }
+            await rebuildParts(of: current(project) ?? project, onlyChanged: true)
         }
     }
 
@@ -2696,7 +2698,6 @@ final class Store: ObservableObject {
     private static let updateChangedIcon = " Only its icon may have changed."
 
     private func finishImport(_ package: Sharing.Package) {
-        defer { try? FileManager.default.removeItem(at: package.folder) }
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -2709,6 +2710,7 @@ final class Store: ObservableObject {
                 Sharing.setIdentity(identity, of: project)
             }
         } catch {
+            try? FileManager.default.removeItem(at: package.folder)
             NSAlert(error: error).runModal()
             return
         }
@@ -2717,9 +2719,43 @@ final class Store: ObservableObject {
         showChat(project.id)
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
+            defer { try? FileManager.default.removeItem(at: package.folder) }
+            // The wish's other apps, each made in its folder as `make_app_for` makes one and given the file's code. One
+            // this Mac can't build yet stays on the wish's list, with its setup a click away, and is made once it can.
+            await installParts(of: package, into: project)
             _ = await Versions.git("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
             await run(project)
+            await rebuildParts(of: current(project) ?? project)
+        }
+    }
+
+    /// A shared wish's other apps into a wish here: each part the file carries goes into the part of its family, made
+    /// now when the wish doesn't have it (`addPart`), with the file's code in place of the scaffold's (`replacing`, when the
+    /// part was there before and keeps the rest). A part the wish has and the file doesn't is left as it is.
+    private func installParts(of package: Sharing.Package, into wish: LampProject) async {
+        for part in package.parts {
+            guard let wish = current(wish) else { return }
+            let kind = part.package.platform
+            let had = parts(of: wish).first { Parts.group($0.platform) == Parts.group(kind) }
+            let target: LampProject
+            if let had, had.platform == kind {
+                target = had
+            } else {
+                if let had, !(await removePart(had)) {
+                    log(wish, .error, "\(Parts.name(of: had.platform)) couldn't be replaced: it's still open.")
+                    continue
+                }
+                let (made, problem) = await addPart(kind, to: wish)
+                guard let made else {
+                    recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, of: wish)
+                    continue
+                }
+                target = made
+            }
+            do { try Sharing.install(part.package, into: target, replacing: had != nil) } catch {
+                log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
+            }
         }
     }
 

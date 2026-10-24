@@ -26,7 +26,8 @@ extension Target {
                        isMade: TVTemplate.isTV, scaffolded: { dir, _ in TVTemplate.isTV(dir) },
                        sources: { _ in [TVTemplate.webFolder, TVTemplate.phoneFolder, "icon.json"] },
                        builtURL: { TVs.stagingFolder(for: $0).appendingPathComponent("web/index.html") }, marker: TVTemplate.supportFile,
-                       shareRefusal: "Lamp doesn't share TV apps yet."),
+                       // Its web files travel in a shared file (`TVFiles`), as a Swift app's sources do.
+                       shareRefusal: nil),
         part: Part(folder: "TV", family: "tv", word: "tv", menu: ("TV App", "tv"), rules: { Agent.tvPrompt(part: $0) },
                    // How the wish's other apps reach the TV app.
                    wishRule: Agent.Rules.tvParts) { dir, wish in
