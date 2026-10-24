@@ -332,15 +332,18 @@ enum PhoneTools {
             return stop(.runtime, "The simulator isn't responding", "The simulator is the iPhone or iPad that appears on your Mac's screen. Lamp started it again and still got no answer. Restart your Mac, then come back to Lamp and click Check Again.", .retry)
         }
         guard list.contains(where: { runtime in
-            (runtime["identifier"] as? String ?? "").contains("SimRuntime.iOS-")
-                && major(runtime["version"] as? String) >= minimumIOS && runtime["isAvailable"] as? Bool == true
+            (runtime["identifier"] as? String ?? "").contains(family.runtimeKey)
+                && major(runtime["version"] as? String) >= (family.isOtherOS ? family.minimum : minimumIOS) && runtime["isAvailable"] as? Bool == true
         }) else {
+            if family.isOtherOS {
+                return stop(.runtime, "Download \(family.os) for the simulator", "Lamp tries your app on \(family.name) in a simulator that appears on your Mac's screen, and that needs \(family.os). Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components and click Get beside \(family.os). Come back to Lamp when the download finishes.", .components)
+            }
             return stop(.runtime, "Download iOS for the simulator", "Lamp tries your app in a simulator, an iPhone or iPad that appears on your Mac's screen, and that needs iOS \(minimumIOS) or later. Click Open Xcode, choose Xcode → Settings from the menu bar, then click Components (Platforms in older versions of Xcode) and click Get beside the newest iOS. Come back to Lamp when the download finishes.", .components)
         }
         report.passed.append(.runtime)
         let devices = probe.run(DeveloperTools.path("simctl", in: developer), ["list", "devices", "available", "-j"], env)
         guard devices.ok, Simulator.device(family, listing: devices.output) != nil else {
-            return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with iOS \(minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
+            return stop(.simulator, "Add an \(family.name) simulator", "There's no \(family.name) for Lamp to try your app on yet. Click Open Simulator, then choose File → New Simulator from the menu bar. Pick any \(family.name) with \(family.os) \(family.isOtherOS ? family.minimum : minimumIOS) or later, click Create, and come back to Lamp.", .simulator)
         }
         // The devices are run by a service and shown by an app (Simulator, or Device Hub in Xcode 27): an Xcode
         // without it would run the app on a screen nobody can see.

@@ -182,7 +182,7 @@ enum Template {
         precondition(template.contains(appSigningLine), "the build script changed")
         return template
             .replacingOccurrences(of: "swift build \"${FLAGS[@]}\" 2>&1\n", with: "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n")
-            .replacingOccurrences(of: appSigningLine, with: watchBuildSteps(complications: complications) + appSigningLine)
+            .replacingOccurrences(of: appSigningLine, with: onlyForIOS(watchBuildSteps(complications: complications)) + appSigningLine)
     }
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
@@ -367,7 +367,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.iOS(.v17)],
+        platforms: [.iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -473,7 +473,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.macOS(.v14), .iOS(.v17)],
+        platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -616,10 +616,16 @@ enum Template {
     # Builds build/{{EXE}}.app for the iPhone simulator. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+    # The same app for Apple TV or Vision Pro when Try On points at one (LAMP_FAMILY), else for iPhone and iPad.
+    case "${LAMP_FAMILY:-}" in
+      appletv) SDKNAME=appletvsimulator; TRIPLE=arm64-apple-tvos17.0-simulator; FAMILIES="<integer>3</integer>"; PLATFORM=AppleTVSimulator; MINOS=17.0 ;;
+      vision) SDKNAME=xrsimulator; TRIPLE=arm64-apple-xros1.0-simulator; FAMILIES="<integer>7</integer>"; PLATFORM=XRSimulator; MINOS=1.0 ;;
+      *) SDKNAME=iphonesimulator; TRIPLE=arm64-apple-ios17.0-simulator; FAMILIES="<integer>1</integer><integer>2</integer>"; PLATFORM=iPhoneSimulator; MINOS=17.0 ;;
+    esac
+    SDK="$(xcrun --sdk "$SDKNAME" --show-sdk-path)"
     # Debug, as Xcode builds for the simulator: a release build optimizes the whole module at once, so every change
     # compiled all of it again, Lamp's own library included, and went through dsymutil too. The phone's is Xcode's.
-    FLAGS=(-c debug --triple arm64-apple-ios17.0-simulator --sdk "$SDK")
+    FLAGS=(-c debug --triple "$TRIPLE" --sdk "$SDK")
     \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
@@ -650,12 +656,12 @@ enum Template {
       <key>CFBundleShortVersionString</key><string>0.1</string>
       <key>CFBundleVersion</key><string>1</string>
       <key>LSRequiresIPhoneOS</key><true/>
-      <key>MinimumOSVersion</key><string>17.0</string>
-      <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+      <key>MinimumOSVersion</key><string>$MINOS</string>
+      <key>UIDeviceFamily</key><array>$FAMILIES</array>
       <key>UILaunchScreen</key><dict/>
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
-      <key>DTPlatformName</key><string>iphonesimulator</string>
-      <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+      <key>DTPlatformName</key><string>$SDKNAME</string>
+      <key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM</string></array>
     {{USAGE}}
     </dict></plist>
     PLIST
@@ -694,11 +700,17 @@ enum Template {
             """
         }
         script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n"
-                      + (widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : ""))
+                      + onlyForIOS((widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : "")))
         script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n",
                       "{{USAGE}}\n" + appGroupPlistLines(group: "group.{{BUNDLE}}", liveActivities: widget) + "\n</dict></plist>\nPLIST\n")
-        script = swap(script, appSigningLine, (widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "") + appSigningLine)
+        script = swap(script, appSigningLine, onlyForIOS((widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "")) + appSigningLine)
         return script
+    }
+
+    /// Steps for what only iOS has (widgets, a share extension, the watch app), left out of a build for Apple TV or
+    /// Vision Pro (LAMP_FAMILY): those are the app alone.
+    static func onlyForIOS(_ steps: String) -> String {
+        "if [[ -z \"${LAMP_FAMILY:-}\" ]]; then\n" + steps + "fi\n"
     }
 
     /// What an app with extensions says in its Info.plist: the folder it shares with them, and with a widget
@@ -3193,6 +3205,9 @@ enum Template {
     static func isScaffold(_ project: LampProject) -> Bool {
         guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
         if GameKit.isGame(project) { return GameKit.isScaffold(project) }
+        if ScreenKit.isScreen(project) {
+            return AppFile.text(project.dir.appendingPathComponent("Web/app.js"), in: project).map { $0 == TVTemplate.appJS.replacingOccurrences(of: "{{NAME}}", with: project.name) } ?? false
+        }
         guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
         else { return false }
         return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }
@@ -3234,26 +3249,46 @@ enum Template {
     import SwiftUI
     import SQLite3
     import JavaScriptCore
+    #if canImport(EventKit)
     import EventKit
+    #endif
+    #if canImport(Contacts)
     import Contacts
+    #endif
     import CryptoKit
+    #if canImport(PDFKit)
     import PDFKit
+    #endif
     import UniformTypeIdentifiers
     import UserNotifications
+    #if canImport(CloudKit)
     import CloudKit
+    #endif
+    #if canImport(HealthKit)
     import HealthKit
+    #endif
+    #if canImport(Photos)
     import Photos
+    #endif
     import CoreLocation
+    #if canImport(WeatherKit)
     import WeatherKit
+    #endif
+    #if canImport(MusicKit)
     import MusicKit
+    #endif
+    #if canImport(CoreSpotlight)
     import CoreSpotlight
+    #endif
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
     import ExtensionKit
     import Carbon.HIToolbox
     import Network
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
     import CoreServices
     import ServiceManagement
     #if LAMP_LIVE
@@ -3264,13 +3299,23 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    #if canImport(BackgroundTasks)
     import BackgroundTasks
+    #endif
     import Network
+    #if canImport(HomeKit)
     import HomeKit
+    #endif
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
+    #if canImport(CoreMotion)
     import CoreMotion
+    #endif
     import Security
+    #if canImport(WatchConnectivity)
     import WatchConnectivity
+    #endif
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
     #endif
@@ -9503,6 +9548,8 @@ enum Template {
 
     // MARK: - Health
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's Health data (steps, heart rate, sleep, workouts, weight, what they ate and drank), read and
     /// written through HealthKit on an iPhone or iPad, once capabilities.json says `{"healthkit": true}`. A
     /// Mac has no Health data of its own (`isAvailable` is false there), so an app for both reads on the
@@ -9846,6 +9893,7 @@ enum Template {
             }
         }
     }
+    #endif
 
 
     // MARK: - Photos
@@ -10072,10 +10120,10 @@ enum Template {
             // The system's question makes the app inactive; when it's active again the person has answered,
             // even with an answer that changes nothing (keeping "While Using" when asked for Always), which
             // the location manager doesn't report.
-            #if os(iOS)
-            let active = UIApplication.didBecomeActiveNotification
-            #else
+            #if os(macOS)
             let active = NSApplication.didBecomeActiveNotification
+            #else
+            let active = UIApplication.didBecomeActiveNotification
             #endif
             NotificationCenter.default.addObserver(forName: active, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { LampLocation.shared.settle() }
@@ -10183,7 +10231,10 @@ enum Template {
             wantsMoves = true
             Task {
                 guard await Self.authorize(), wantsMoves else { return }
+                // Apple TV and Vision Pro don't follow big moves: they stay put.
+                #if os(iOS) || os(macOS)
                 manager.startMonitoringSignificantLocationChanges()
+                #endif
                 status = "Following big moves"
             }
         }
@@ -10207,7 +10258,9 @@ enum Template {
         func stop() {
             wantsMoves = false
             wantsVisits = false
+            #if os(iOS) || os(macOS)
             manager.stopMonitoringSignificantLocationChanges()
+            #endif
             #if os(iOS)
             manager.stopMonitoringVisits()
             #endif
@@ -10215,10 +10268,12 @@ enum Template {
         }
 
         private static func allowed(_ status: CLAuthorizationStatus) -> Bool {
-            #if os(iOS)
+            #if os(macOS)
+            status == .authorizedAlways || status == .authorized
+            #elseif os(iOS)
             status == .authorizedWhenInUse || status == .authorizedAlways
             #else
-            status == .authorizedAlways || status == .authorized
+            status == .authorizedWhenInUse
             #endif
         }
 
@@ -12915,7 +12970,9 @@ enum Template {
                     Section { fields } footer: { note }
                 }
                 .navigationTitle("Connect \(api.name)")
+                #if !os(tvOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel", role: .cancel) { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -15304,10 +15361,12 @@ enum Template {
                             .background(Color.accentColor.opacity(0.08)).allowsHitTesting(false)
                     }
                 }
+                #if !os(tvOS)
                 .onDrop(of: [.fileURL, .image, .url], isTargeted: $targeted) { providers in
                     LampDrop.load(providers) { urls in if !urls.isEmpty { handler(urls) } }
                     return true
                 }
+                #endif
         }
     }
 
@@ -15404,6 +15463,8 @@ enum Template {
 
     #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's calendar, reminders and contacts, through the accounts already set up on the device (iCloud,
     /// Google, Exchange: whatever the system's Internet Accounts has). No sign-in or API key: the system asks the
     /// person once, the first time an app uses each one. All on the device, instant and free.
@@ -15483,7 +15544,10 @@ enum Template {
             try store.remove(event, span: .thisEvent, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampReminders {
         struct Reminder: Identifiable {
             let id: String
@@ -15540,7 +15604,10 @@ enum Template {
             try store.save(reminder, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampContacts {
         struct Contact: Identifiable {
             let id: String
@@ -15596,6 +15663,7 @@ enum Template {
                     note: nil)
         }
     }
+    #endif
 
     #if os(macOS)
     // Mac only: Mail.
@@ -15881,6 +15949,8 @@ enum Template {
     }
     #endif
 
+    // Apple TV shows no notifications of an app's.
+    #if !os(tvOS)
     /// Notifications. Asks permission the first time.
     ///
     ///     LampNotifications.send("Export finished", body: "Saved 12 files to Documents")
@@ -16002,6 +16072,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     /// What people sent this app from another app's share sheet (a link from Safari, photos, text, files), through
     /// its share extension (the Share/ folder). The extension leaves each share in the folder the two have in
@@ -16119,6 +16190,8 @@ enum Template {
         }
     }
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The app's own things in Spotlight (notes, recipes, places, people): a search there finds them, and a tap
     /// opens the app on the one tapped.
     ///
@@ -16150,7 +16223,9 @@ enum Template {
             CSSearchableIndex.default().deleteAllSearchableItems { _ in }
         }
     }
+    #endif
 
+    #if !os(tvOS)
     extension View {
         /// Called with the id of what was tapped in Spotlight (`LampSpotlight.index`), when it opens the app or
         /// brings it to the front.
@@ -16160,6 +16235,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     #if os(macOS)
     /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry

@@ -876,7 +876,7 @@ struct ProjectView: View {
                     TryOnChoices(project: project)
                 } label: {
                     let device = store.devices.first { $0.udid == project.device }
-                    Label(store.tryOnName(project), systemImage: project.onDevice ? Device.Kind.other.symbol : project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family) == .ipad ? "ipad" : "iphone")
+                    Label(store.tryOnName(project), systemImage: project.onDevice ? Device.Kind.other.symbol : project.onTV ? "tv" : project.onAndroid ? "smartphone" : !project.onIOS ? "laptopcomputer" : (device?.family ?? project.family).symbol)
                 }
                 .disabled(busy)
                 .help(project.platform.target.identity.tryOnHelp(project))
@@ -1763,7 +1763,7 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        if GameKit.isGame(project) {
+        if project.platform.addsPlaces {
             gameChoices
         } else if project.onDevice {
             deviceChoices
@@ -1780,11 +1780,11 @@ private struct TryOnChoices: View {
     /// still needs. A TV that isn't set up is set up when it's chosen.
     @ViewBuilder private var tvChoices: some View {
         let tvs = store.devices.filter { $0.kind.isTV }
-        Picker("Preview", selection: Binding(get: { project.device == nil ? "preview" : nil }, set: { if $0 != nil { store.setTVDevice(project, nil) } })) {
+        Picker("Preview", selection: Binding(get: { project.onTV && project.device == nil ? "preview" : nil }, set: { if $0 != nil { store.setTVDevice(project, nil) } })) {
             Label("TV Preview", systemImage: "tv").tag(Optional("preview"))
         }
         .pickerStyle(.inline)
-        Picker("Your TVs", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setTVDevice(project, id) } })) {
+        Picker("Your TVs", selection: Binding(get: { project.onTV ? project.device : nil }, set: { if let id = $0 { store.setTVDevice(project, id) } })) {
             ForEach(tvs) { tv in
                 let step = tv.setup() == .ready && !tv.isAway ? "" : " (\(tv.status))"
                 let model = "\(tv.maker) \(tv.model)"
@@ -1858,16 +1858,22 @@ private struct TryOnChoices: View {
             Divider()
             androidChoices
         }
+        if places.contains(.tv) {
+            Divider()
+            tvChoices
+        }
         if places.contains(.device) {
             Divider()
             deviceChoices
         }
-        let android = !places.contains(.android)
-        if !places.contains(.ios) || android || !places.contains(.device) {
+        // The places the kind can have and this one hasn't yet, each a click away.
+        let missing = project.platform.target.places.filter { !places.contains($0) }
+        if !missing.isEmpty {
             Divider()
-            if !places.contains(.ios) { Button("Play on iPhone and iPad Too") { store.addPlace(project, .ios) } }
-            if android { Button("Play on Android Too") { store.addPlace(project, .android) } }
-            if !places.contains(.device) { Button("Play on Xbox Too") { store.addPlace(project, .device) } }
+            let verb = project.platform == .screen ? "Show" : "Play"
+            ForEach(missing, id: \.self) { place in
+                Button("\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too") { store.addPlace(project, place) }
+            }
         }
     }
 
@@ -1911,6 +1917,11 @@ private struct TryOnChoices: View {
                                                set: { if let family = $0 { store.setSimulator(project, family) } })) {
             Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
             Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
+            // The same SwiftUI app built for tvOS or visionOS: an app's own code, not a game's kit, which is iOS's.
+            if project.platform == .iphone || project.platform == .universal {
+                Label("Apple TV", systemImage: "appletv").tag(Optional(DeviceFamily.appletv))
+                Label("Apple Vision Pro", systemImage: "visionpro").tag(Optional(DeviceFamily.vision))
+            }
         }
         .pickerStyle(.inline)
         // A particular model, for what only some have (a Dynamic Island, an iPad's size). Listed once the
@@ -1922,7 +1933,7 @@ private struct TryOnChoices: View {
                     if let choice = store.simulators.first(where: { $0.udid == udid }) { store.setSimulator(project, choice) }
                 })) {
                     ForEach(store.simulators) { choice in
-                        Label(choice.label, systemImage: choice.family == .ipad ? "ipad" : "iphone").tag(Optional(choice.udid))
+                        Label(choice.label, systemImage: choice.family.symbol).tag(Optional(choice.udid))
                     }
                 }
                 .pickerStyle(.inline)

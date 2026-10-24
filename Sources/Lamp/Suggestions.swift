@@ -179,7 +179,7 @@ enum AppName {
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kinds: kinds, kindSaid: said,
                           integration: kinds == [.device] ? devices.first : nil,
-                          places: kinds == [.game] ? GameKit.places(for: devices) : nil,
+                          places: kinds.count == 1 && kinds[0].addsPlaces ? GameKit.places(for: devices, of: kinds[0]) : nil,
                           engine: kinds == [.game] ? GameKit.engine(for: devices) : nil,
                           forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
                           undecided: said ? nil : candidates(object["candidates"]),

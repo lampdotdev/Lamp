@@ -305,7 +305,8 @@ enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
         let here = place(for: project, store: store)
         // A game says every place it's played and what the slowest allows, then where Try On points.
-        return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here : here
+        return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here
+            : ScreenKit.isScreen(project) ? Agent.Rules.screenPlaces(project) + " " + here : here
     }
 
     @MainActor private static func place(for project: LampProject, store: Store) -> String {
@@ -353,8 +354,9 @@ enum DeviceNote {
                 return "Try On points at the person's \(phone.name): \(phone.forAgent)."
             }
             let simulator = project.simulator.flatMap { udid in store.simulators.first { $0.udid == udid } }
-            var line = simulator.map { "Try On points at the \($0.name) simulator, iOS \($0.runtime.map(String.init).joined(separator: "."))." }
+            var line = simulator.map { "Try On points at the \($0.name) simulator, \($0.family.os) \($0.runtime.map(String.init).joined(separator: "."))." }
                 ?? "Try On points at the \(project.family.name) simulator."
+            if project.family.isOtherOS { line += " " + Agent.Rules.otherOS(project.family) }
             // The phones the person has, exactly, with what each still needs: the app is for one of them in the
             // end, and what it has (a Dynamic Island, say) matters before it ever goes there.
             for phone in phones {

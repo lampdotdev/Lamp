@@ -46,25 +46,28 @@ enum Simulator {
               let devices = json["devices"] as? [String: [[String: Any]]] else { return [] }
         var found: [(udid: String, name: String, family: DeviceFamily, runtime: [Int])] = []
         for (runtime, list) in devices {
-            guard let range = runtime.range(of: "SimRuntime.iOS-") else { continue }
+            // iOS's iPhones and iPads, and tvOS's and visionOS's devices, which the same app is built for too.
+            guard let os = [DeviceFamily.iphone, .appletv, .vision].first(where: { runtime.contains($0.runtimeKey) }),
+                  let range = runtime.range(of: os.runtimeKey) else { continue }
             let version = runtime[range.upperBound...].split(separator: "-").compactMap { Int($0) }
-            guard let major = version.first, major >= minimumIOS else { continue }
+            guard let major = version.first, major >= (os == .iphone ? minimumIOS : os.minimum) else { continue }
             for device in list {
                 guard let name = device["name"] as? String, let udid = device["udid"] as? String else { continue }
-                let family: DeviceFamily? = name.hasPrefix("iPad") ? .ipad : name.hasPrefix("iPhone") ? .iphone : nil
+                let family: DeviceFamily? = os != .iphone ? os : name.hasPrefix("iPad") ? .ipad : name.hasPrefix("iPhone") ? .iphone : nil
                 if let family { found.append((udid, name, family, version)) }
             }
         }
         let names = Dictionary(grouping: found, by: \.name)
         // iPhones first, by name, and of one name the newest iOS first, comparing the whole version.
         func newer(_ a: [Int], _ b: [Int]) -> Bool { a.lexicographicallyPrecedes(b) == false && a != b }
+        let order: [DeviceFamily: Int] = [.iphone: 0, .ipad: 1, .appletv: 2, .vision: 3]
         return found.sorted { left, right in
-            let l = (left.family == .iphone ? 0 : 1, left.name), r = (right.family == .iphone ? 0 : 1, right.name)
+            let l = (order[left.family] ?? 9, left.name), r = (order[right.family] ?? 9, right.name)
             return l != r ? l < r : newer(left.runtime, right.runtime)
         }.map {
             let ios = $0.runtime.map(String.init).joined(separator: ".")
             return Choice(udid: $0.udid, name: $0.name, family: $0.family, version: $0.runtime.first ?? 0, runtime: $0.runtime,
-                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (iOS \(ios))" : $0.name)
+                          label: (names[$0.name]?.count ?? 0) > 1 ? "\($0.name) (\($0.family.os) \(ios))" : $0.name)
         }
     }
 
@@ -87,8 +90,9 @@ enum Simulator {
         typealias Candidate = (version: Int, name: String, booted: Bool, udid: String)
         var candidates: [Candidate] = []
         for (runtime, list) in devices {
-            guard let range = runtime.range(of: "SimRuntime.iOS-"),
-                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""), major >= minimumIOS else { continue }
+            guard let range = runtime.range(of: family.runtimeKey),
+                  let major = Int(runtime[range.upperBound...].split(separator: "-").first ?? ""),
+                  major >= (family.isOtherOS ? family.minimum : minimumIOS) else { continue }
             for device in list {
                 guard let name = device["name"] as? String, name.hasPrefix(family.name), let udid = device["udid"] as? String else { continue }
                 candidates.append((major, name, device["state"] as? String == "Booted", udid))
