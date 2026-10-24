@@ -1520,7 +1520,8 @@ pixels are clear, and a clear window lets clicks on clear pixels through. The pa
 without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
 window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
 Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
-once, so the extension keeps it as it's read, `Link.sharing`), Agent Details and Delete, then Undo Last Change and Versions.
+once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file in its own caches folder that each share
+replaces in one step, `SharedCopy`, as Lamp's own Share… does), Agent Details and Delete, then Undo Last Change and Versions.
 Where the title and every button don't fit, Undo stays and a button for the rest takes their place, which pressed stays
 lit and puts the rest, Versions beside Undo, in the title's place. The room between the buttons moves the chat. ⌘` goes
 through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves
