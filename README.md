@@ -82,7 +82,7 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 
 ## Sharing apps
 
-Click **Share** (the toolbar button), or right-click an app and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. You can also use **Export…** to save the file. Apps travel as small `.lampapp` files containing the app's Swift code (and its widget's, if it has one), `APP.md`, `icon.json`, icon artwork and the app's own files from `Assets/` (a logo, say). Your chat, its attachments, tokens, agent sessions and git history are never included.
+Click **Share** (the toolbar button), or right-click an app and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. You can also use **Export…** to save the file. Apps travel as small `.lampapp` files containing the app's code (Swift, and its widget's, if it has one; an Android app's Kotlin; a TV app's web pages and scripts), `APP.md`, `icon.json`, icon artwork and the app's own files from `Assets/` (a logo, say). A wish of several apps travels whole, each of its other apps in its own folder. Your chat, its attachments, tokens, agent sessions and git history are never included.
 
 The recipient double-clicks the file, or uses **File → Import Shared App… (⌘O)**. Before anything is built, Lamp shows a review:
 

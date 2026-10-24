@@ -1000,7 +1000,9 @@ input kept open until the TV's answer, since it gives up when its input closes (
 `Subprocess.run`'s `keepInputOpenUntil`), and the
 developer-mode session renewed with LG at every install. Play with a TV chosen under Try On (`Store.setTVDevice`, which
 runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
-network description; the first scan brings macOS's firewall and local network questions. TV apps aren't shared yet.
+network description; the first scan brings macOS's firewall and local network questions. A TV app is shared as a
+`.lampapp` like any other (format 10): its Web/ and Phone/ travel (`TVFiles`: pages and scripts as code, which the review
+reads, pictures and sounds as data), never Lamp's lamp.js, which the Mac that opens it writes back as it installs them.
 
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-controllers`
@@ -1137,7 +1139,17 @@ of devices makes is `Parts.kinds`: the devices of one part family are one kind b
 lead: the one that does when it's there (a TV app) is the app at the root, else the first in `Targets.all`'s order (a Mac
 app before an Android app), and the rest are its parts. A device whose integration declares its apps still stands alone.
 An Android part has none of Lamp's building blocks for reaching the wish's other apps, and is told so
-(`Rules.androidPartTalk`).
+(`Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
+as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
+`Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
+opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
+can't build yet is kept on the wish's list with its files beside the wish (`Sharing.keep`, `.lamp/waiting/<family>`,
+by the part's family since the file's folder for it may not be this Mac's, unversioned, gone with the wish), which go in
+over the scaffold, with the family the file gave them, once the part is made (`addPart`, `Sharing.kept`). An update from a
+file replaces each part the file carries, changes one of another kind of the same family in place (`convert`, so it
+keeps its folder and data), adds the ones the wish doesn't have, and leaves a part the file lacks as it is; a part whose
+files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
+with a part says 10.
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between

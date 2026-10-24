@@ -89,17 +89,6 @@ final class WishAppsKeptTests: XCTestCase {
         XCTAssertEqual(Parts.listing(.iphone, madeFor: waiting, parts: []), [WishApp(kind: .tv), WishApp(kind: .iphone)])
     }
 
-    /// A wish of several apps isn't shared as the app at its root alone: its file would leave the others behind.
-    func testAWishOfSeveralAppsIsNotSharedAsItsRootAlone() throws {
-        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
-        let android = wish.dir.appendingPathComponent("Android")
-        try FileManager.default.createDirectory(at: android.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
-        try "rootProject.name = \"Tally\"\n".write(to: android.appendingPathComponent("settings.gradle.kts"), atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try Sharing.export(wish)) { error in
-            XCTAssertEqual((error as? Sharing.ImportError)?.recoverySuggestion, "Lamp doesn't share a wish of several apps yet.")
-        }
-    }
-
     /// A wish waiting for two apps (an iPhone app and an Android app, both toolchains missing) follows each setup on
     /// its own: the setups under way are kept per app and kind, where the app at the root's is kept per app.
     func testEachWaitingAppsSetupIsFollowedOnItsOwn() throws {
