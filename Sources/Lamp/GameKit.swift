@@ -117,6 +117,8 @@ enum GameKit {
         game.platform = .game
         game.places = [.mac, .device]
         game.chosen = .device
+        // Its list of apps named the device app it was: that one app is the game now, not another still to be made.
+        game.apps = game.apps.map { $0.kind == .device ? WishApp(kind: .game) : $0 }
         return game
     }
 

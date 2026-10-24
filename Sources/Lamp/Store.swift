@@ -2047,12 +2047,20 @@ final class Store: ObservableObject {
     /// Back to a simulator from a phone, as one change: the family is set on the project as it is after
     /// the phone is forgotten, not on the copy the menu held.
     func setSimulator(_ project: LampProject, _ family: DeviceFamily) {
+        guard Self.opens(project, on: family) else { return }
         setDevice(project, nil, family: family, simulator: .some(nil))
     }
 
     /// One simulator by name, from Try On's list.
     func setSimulator(_ project: LampProject, _ choice: Simulator.Choice) {
+        guard Self.opens(project, on: choice.family) else { return }
         setDevice(project, nil, family: choice.family, simulator: .some(choice.udid))
+    }
+
+    /// Whether an app can open on a simulator of this family: Apple TV and Vision Pro take an app's own SwiftUI code built
+    /// for them, never a game's or a screen's host, which is iOS's.
+    static func opens(_ project: LampProject, on family: DeviceFamily) -> Bool {
+        !family.isOtherOS || project.platform == .iphone || project.platform == .universal
     }
 
     /// Every simulator Try On can offer, looked up when the menu opens.

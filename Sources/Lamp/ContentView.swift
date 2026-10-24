@@ -1918,7 +1918,7 @@ private struct TryOnChoices: View {
             Label("iPhone", systemImage: "iphone").tag(Optional(DeviceFamily.iphone))
             Label("iPad", systemImage: "ipad").tag(Optional(DeviceFamily.ipad))
             // The same SwiftUI app built for tvOS or visionOS: an app's own code, not a game's kit, which is iOS's.
-            if project.platform == .iphone || project.platform == .universal {
+            if Store.opens(project, on: .appletv) {
                 Label("Apple TV", systemImage: "appletv").tag(Optional(DeviceFamily.appletv))
                 Label("Apple Vision Pro", systemImage: "visionpro").tag(Optional(DeviceFamily.vision))
             }
@@ -1926,21 +1926,22 @@ private struct TryOnChoices: View {
         .pickerStyle(.inline)
         // A particular model, for what only some have (a Dynamic Island, an iPad's size). Listed once the
         // simulators installed on this Mac are known.
-        if !store.simulators.isEmpty {
+        let simulators = store.simulators.filter { Store.opens(project, on: $0.family) }
+        if !simulators.isEmpty {
             Menu("Choose Simulator") {
                 Picker("Choose Simulator", selection: Binding(get: { project.device == nil && project.onIOS ? project.simulator : nil },
                                                               set: { udid in
-                    if let choice = store.simulators.first(where: { $0.udid == udid }) { store.setSimulator(project, choice) }
+                    if let choice = simulators.first(where: { $0.udid == udid }) { store.setSimulator(project, choice) }
                 })) {
-                    ForEach(store.simulators) { choice in
+                    ForEach(simulators) { choice in
                         Label(choice.label, systemImage: choice.family.symbol).tag(Optional(choice.udid))
                     }
                 }
                 .pickerStyle(.inline)
             }
         }
-        // A game goes on the simulators; Lamp doesn't put one on the person's own iPhone or iPad yet.
-        if !GameKit.isGame(project) {
+        // A game or a screen goes on the simulators: Lamp doesn't put one on the person's own iPhone or iPad yet.
+        if !project.platform.addsPlaces {
         do {
             // The person's phones, each by its exact model, and what it still needs before Play can put the app
             // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.
