@@ -513,6 +513,44 @@ enum Sharing {
                        attachments: attachments, androidData: android?.data ?? [], fileCount: fileCount, webData: web?.data ?? [])
     }
 
+    /// Where a wish keeps the files of a part it can't make yet (this Mac lacks the kind's tools): under its own
+    /// `.lamp`, which goes with the wish and isn't versioned, until the part is made and the files go in (`Store.addPart`).
+    static func waitingFolder(in wish: URL, part folder: String) -> URL {
+        wish.appendingPathComponent(".lamp/waiting").appendingPathComponent(folder)
+    }
+
+    /// What a kept part was made for, beside its files.
+    private struct Waiting: Codable {
+        var platform: Platform
+        var family: DeviceFamily?
+    }
+
+    /// Keeps a part's files, as unpacked, for a wish that can't make the part yet.
+    static func keep(_ part: Package.Part, in wish: URL) throws {
+        let fm = FileManager.default
+        let folder = waitingFolder(in: wish, part: part.folder)
+        try? fm.removeItem(at: folder)
+        try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.copyItem(at: part.package.folder, to: folder)
+        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family))
+        try note.write(to: folder.appendingPathComponent("lamp-part.json"))
+    }
+
+    /// The part a wish kept for this folder, read as a shared app is: nil when none is kept, or what's there can't be read
+    /// as an app of that kind. The folder stays until `forgetKept`.
+    static func kept(in wish: URL, part folder: String) -> Package.Part? {
+        let kept = waitingFolder(in: wish, part: folder)
+        guard let data = try? Data(contentsOf: kept.appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data),
+              let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: folder,
+                                      identity: nil, description: nil, fileCount: 0) else { return nil }
+        return Package.Part(folder: folder, package: package)
+    }
+
+    static func forgetKept(in wish: URL, part folder: String) {
+        try? FileManager.default.removeItem(at: waitingFolder(in: wish, part: folder))
+    }
+
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
     /// name would lay out the review's title as if part of it were Lamp's. Nothing else about it changes.
     static func name(from raw: String) -> String {
@@ -1174,8 +1212,16 @@ extension Sharing {
                 found.files.append((name, text))
             }
             if let about = try? String(contentsOf: app.folder.appendingPathComponent("APP.md"), encoding: .utf8) {
-                if prefix.isEmpty { found.about = about } else { found.files.append((prefix + "APP.md", about)) }
                 everything += about
+                // A part's notes go as a file, held to what the root's notes are held to and counted against what's sent.
+                if prefix.isEmpty {
+                    found.about = about
+                } else if sent + min(about.count, 4000) > 150_000 {
+                    found.truncated = true
+                } else {
+                    sent += min(about.count, 4000)
+                    found.files.append((prefix + "APP.md", String(about.prefix(4000))))
+                }
             }
             // What the app declares (capabilities.json, through the checks) is judged with its code: the reviewer
             // sees it as a file, and a background app is listed as starting at login whether or not its code says so.

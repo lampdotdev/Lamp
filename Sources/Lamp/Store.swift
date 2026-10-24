@@ -1759,7 +1759,7 @@ final class Store: ObservableObject {
     /// build that kind yet or the folder can't be made.
     /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
     /// and not tried again by itself.
-    func addPart(_ kind: Platform, to wish: LampProject) async -> (part: LampProject?, problem: String?, setup: Bool) {
+    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily = .iphone) async -> (part: LampProject?, problem: String?, setup: Bool) {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
         if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
@@ -1773,9 +1773,14 @@ final class Store: ObservableObject {
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
             let part = LampProject(id: Parts.id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: dir,
-                                   instance: Parts.instance(wish: wish, folder: folder), platform: kind, partOf: wish.id)
+                                   instance: Parts.instance(wish: wish, folder: folder), platform: kind, family: family, partOf: wish.id)
             try Template.saveMeta(part)
             try Template.fill(part)
+            // Files a shared wish brought for this part while this Mac couldn't make it go in now, over the scaffold.
+            if let kept = Sharing.kept(in: wish.dir, part: folder), kept.package.platform == kind {
+                try Sharing.install(kept.package, into: part)
+                Sharing.forgetKept(in: wish.dir, part: folder)
+            }
         } catch {
             return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)", false)
         }
@@ -2663,9 +2668,11 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
-                await installParts(of: package, into: project)
+                guard await installParts(of: package, into: project) else { throw Sharing.ImportError("A part's files couldn't be put in place.") }
             } catch {
                 let iconBack = await putBack()
+                // A part the file brought, or changed in kind, goes back with the files (`followRestored`).
+                await followRestored(project)
                 print("Update \(project.name) from a shared file failed: \(error)")
                 log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                 return
@@ -2722,7 +2729,7 @@ final class Store: ObservableObject {
             defer { try? FileManager.default.removeItem(at: package.folder) }
             // The wish's other apps, each made in its folder as `make_app_for` makes one and given the file's code. One
             // this Mac can't build yet stays on the wish's list, with its setup a click away, and is made once it can.
-            await installParts(of: package, into: project)
+            _ = await installParts(of: package, into: project)
             _ = await Versions.git("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
             await run(project)
@@ -2730,33 +2737,48 @@ final class Store: ObservableObject {
         }
     }
 
-    /// A shared wish's other apps into a wish here: each part the file carries goes into the part of its family, made
-    /// now when the wish doesn't have it (`addPart`), with the file's code in place of the scaffold's (`replacing`, when the
-    /// part was there before and keeps the rest). A part the wish has and the file doesn't is left as it is.
-    private func installParts(of package: Sharing.Package, into wish: LampProject) async {
+    /// A shared wish's other apps into a wish here, each part the file carries going into the part of its family: one the
+    /// wish has of the same kind takes the file's code in place of its own (`replacing`, keeping the rest); one of
+    /// another kind of the family (the Mac app that's now for the iPhone too) is changed in place as `make_app_for`
+    /// changes one (`convert`), keeping its folder and so its data; one the wish doesn't have is made (`addPart`). One
+    /// this Mac can't make yet keeps its files with the wish (`Sharing.keep`) and goes in once it can. A part the wish
+    /// has and the file doesn't is left as it is. False when a part's files couldn't be put in place, so an update can
+    /// put the whole wish back.
+    private func installParts(of package: Sharing.Package, into wish: LampProject) async -> Bool {
+        var allIn = true
         for part in package.parts {
-            guard let wish = current(wish) else { return }
+            guard let wish = current(wish) else { return false }
             let kind = part.package.platform
-            let had = parts(of: wish).first { Parts.group($0.platform) == Parts.group(kind) }
-            let target: LampProject
-            if let had, had.platform == kind {
-                target = had
-            } else {
-                if let had, !(await removePart(had)) {
-                    log(wish, .error, "\(Parts.name(of: had.platform)) couldn't be replaced: it's still open.")
+            var had = parts(of: wish).first { Parts.group($0.platform) == Parts.group(kind) }
+            if let have = had, have.platform != kind {
+                let (status, changed) = await convert(have, to: kind)
+                guard status == 200, let text = changed["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed") else {
+                    log(wish, .error, "\(Parts.name(of: have.platform)) couldn't be made \(Parts.name(of: kind)): " + (changed["text"] as? String ?? changed["error"] as? String ?? ""))
+                    allIn = false
                     continue
                 }
-                let (made, problem) = await addPart(kind, to: wish)
+                had = current(have)
+            }
+            let target: LampProject
+            if let had {
+                target = had
+            } else {
+                let (made, problem, setup) = await addPart(kind, to: wish, family: part.package.family)
                 guard let made else {
-                    recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, of: wish)
+                    do { try Sharing.keep(part, in: wish.dir) } catch {
+                        log(wish, .error, "Lamp couldn't keep \(Parts.name(of: kind))'s files: \(error.localizedDescription)")
+                    }
+                    recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, of: wish, setup: setup)
                     continue
                 }
                 target = made
             }
             do { try Sharing.install(part.package, into: target, replacing: had != nil) } catch {
                 log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
+                allIn = false
             }
         }
+        return allIn
     }
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together

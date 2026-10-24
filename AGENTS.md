@@ -1142,9 +1142,12 @@ An Android part has none of Lamp's building blocks for reaching the wish's other
 (`Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
 as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
 `Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
-opens it makes each part as `make_app_for` does (`Store.installParts`), one it can't build yet kept on the wish's list
-and made once it can. An update from a file replaces each part the file carries, adds the ones it doesn't have, and
-leaves a part the file lacks as it is. A Lamp from before opens a wish's file as the app at its root alone, so a file
+opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
+can't build yet is kept on the wish's list with its files beside the wish (`Sharing.keep`, `.lamp/waiting/<folder>`,
+unversioned, gone with the wish), which go in over the scaffold once the part is made (`addPart`, `Sharing.kept`). An
+update from a file replaces each part the file carries, changes one of another kind of the same family in place
+(`convert`, so it keeps its folder and data), adds the ones the wish doesn't have, and leaves a part the file lacks as it
+is; a part whose files can't be put in place fails the update, which puts the whole wish back. A Lamp from before opens a wish's file as the app at its root alone, so a file
 with a part says 10.
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,

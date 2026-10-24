@@ -92,6 +92,38 @@ final class SharingWishTests: XCTestCase {
         XCTAssertEqual(Parts.folders(in: receiver.dir), ["iPhone"])
     }
 
+    /// A part this Mac can't make yet keeps its files with the wish, read back as the part it was, and they go into the
+    /// part once it's made, over its scaffold.
+    func testAPartThatCantBeMadeYetKeepsItsFilesWithTheWish() throws {
+        let package = try opened(try exported(try tvWishWithPhone()))
+        let receiver = try Template.scaffold(name: "Remote 3", platform: .tv, in: root)
+        let part = try XCTUnwrap(package.parts.first)
+        try Sharing.keep(part, in: receiver.dir)
+        XCTAssertNil(Sharing.kept(in: receiver.dir, part: "Mac"))
+        let kept = try XCTUnwrap(Sharing.kept(in: receiver.dir, part: part.folder))
+        XCTAssertEqual(kept.package.platform, .iphone)
+        XCTAssertEqual(kept.package.sources.map { kept.package.path(of: $0) }.sorted(), part.package.sources.map { part.package.path(of: $0) }.sorted())
+
+        let phone = LampProject(id: Parts.id(wish: receiver.id, folder: part.folder), name: receiver.name, exe: receiver.exe,
+                                dir: receiver.dir.appendingPathComponent(part.folder), platform: .iphone, partOf: receiver.id)
+        try FileManager.default.createDirectory(at: phone.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Template.fill(phone)
+        try Sharing.install(kept.package, into: phone)
+        Sharing.forgetKept(in: receiver.dir, part: part.folder)
+        XCTAssertTrue(try String(contentsOf: phone.dir.appendingPathComponent("Sources/Pad.swift"), encoding: .utf8).contains("struct Pad"))
+        XCTAssertNil(Sharing.kept(in: receiver.dir, part: part.folder))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Sharing.waitingFolder(in: receiver.dir, part: part.folder).path))
+    }
+
+    /// A part's notes go to the reviewer held to the root's limit, and count against what's sent.
+    func testAPartsNotesAreBoundedInTheReview() throws {
+        let wish = try tvWishWithPhone()
+        try write(String(repeating: "notes ", count: 2000), to: "iPhone/APP.md", in: wish.dir)
+        let found = Sharing.inspect(try opened(try exported(wish)))
+        let notes = try XCTUnwrap(found.files.first { $0.name == "iPhone/APP.md" })
+        XCTAssertEqual(notes.text.count, 4000)
+    }
+
     /// A TV page that loads a script from the internet or runs text as code is said to, as Swift that loads code at
     /// runtime is.
     func testATVPagesHiddenCodeIsSeen() throws {
