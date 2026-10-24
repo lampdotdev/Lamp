@@ -2775,7 +2775,8 @@ enum LiveSlots {
         var holds: [String: [String]] = [:]
         for entry in LiveReload.members(inDump: dump) {
             let parts = entry.split(separator: "\t", maxSplits: 1)
-            guard parts.count == 2, let owner = parts[0].split(separator: ".").last.map({ String($0.prefix { $0 != "@" }) }),
+            // A private type is keyed with its file (`Vertex@Model.swift`), taken off before its last part is read.
+            guard parts.count == 2, let owner = LiveReload.bare(String(parts[0])).split(separator: ".").last.map(String.init),
                   let colon = parts[1].range(of: ": ") else { continue }
             holds[owner, default: []] += words(parts[1][colon.upperBound...])
         }
