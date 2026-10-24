@@ -47,6 +47,6 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-application-extension"])],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", "-Xlinker", "-application_extension"])]
         ),
-        .testTarget(name: "LampTests", dependencies: ["Lamp", "LampFileLook", "LampRelayKit"], path: "Tests/Regression"),
+        .testTarget(name: "LampTests", dependencies: ["Lamp", "LampFileLook", "LampRelayKit", "LampSidebarKit"], path: "Tests/Regression"),
     ]
 )
