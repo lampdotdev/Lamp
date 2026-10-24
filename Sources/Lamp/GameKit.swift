@@ -61,7 +61,7 @@ enum GameKit {
 
     /// The words a game's places are given by, in the naming call's answer and `make_app_for`'s list: "game" itself,
     /// and the devices it's played on.
-    static let placeWords: [String: Destination?] = ["game": nil, "native": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
+    static let placeWords: [String: Destination?] = ["game": nil, "native": nil, "mac": .mac, "iphone": .ios, "ipad": .ios, "android": .android,
                                                      xbox: .device, xboxKind: .device, "xbox": .device]
 
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
@@ -73,7 +73,7 @@ enum GameKit {
     /// The places a list of devices gives a game: always the Mac, its home, and each other one it names.
     static func places(for devices: Set<String>) -> [Destination] {
         let named = Set(devices.compactMap { placeWords[$0] ?? nil })
-        return [.mac, .ios, .device].filter { $0 == .mac || named.contains($0) }
+        return [.mac, .ios, .android, .device].filter { $0 == .mac || named.contains($0) }
     }
 
     /// The integration a game reaches its Xbox through, when the Xbox is one of its places: worked out from its places,
@@ -84,6 +84,7 @@ enum GameKit {
     static func placeName(_ place: Destination) -> String {
         switch place {
         case .ios: "iPhone and iPad"
+        case .android: "Android"
         case .device: "Xbox"
         default: "Mac"
         }
@@ -91,7 +92,7 @@ enum GameKit {
 
     /// The places as the person hears them: "your Mac, your iPhone or iPad and your Xbox".
     static func spoken(_ places: [Destination]) -> String {
-        let names = places.map { $0 == .ios ? "your iPhone or iPad" : "your " + placeName($0) }
+        let names = places.map { $0 == .ios ? "your iPhone or iPad" : $0 == .android ? "your Android phone or tablet" : "your " + placeName($0) }
         return names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
     }
 
@@ -167,6 +168,7 @@ enum GameKit {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path) + common }
         return webFiles.map(\.path) + ["\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
+            + GameAndroid.paths(for: project)
     }
 
     /// Writes Lamp's files into the game where they differ from what's there (so their dates move only when the kit
@@ -188,6 +190,8 @@ enum GameKit {
             } else {
                 try DeviceSupport.writeDeclared(for: project)
             }
+            // On Android too: Lamp's Android app around the page.
+            if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
             try Template.write(webBuildSh, to: "build.sh", for: project, executable: true)
             try Template.write(webPackageSwift, to: "Package.swift", for: project)
             try Template.write("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n", to: marker, for: project)
@@ -305,7 +309,8 @@ enum GameKit {
             return script.replacingOccurrences(of: old, with: new)
         }
         var script = buildSh
-        script = swap(script, "  sh Lamp/build.sh ios-sim\n", "")
+        // Android first: its build is Gradle's, with nothing of Swift's.
+        script = swap(script, "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n", GameAndroid.buildSteps + "if [[ \"$PLACE\" == \"ios\" ]]; then\n")
         script = swap(script, "  sh Lamp/build.sh mac\n", "")
         script = swap(script, " -Xlinker \"$PWD/build/ios-sim/libgame.a\")", ")")
         script = swap(script, " -Xlinker \"$PWD/build/mac/libgame.a\")", ")")
@@ -632,8 +637,8 @@ extension Agent {
 extension Agent.Rules {
     static let gameHeader = """
     You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
-    or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller) and on the person's \
-    Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
+    or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone or \
+    tablet (a game drawn with three.js) and on the person's Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
     sound. You try it in a preview on this Mac, the same code drawn out of sight. The request's device line says where \
     it's played and what that allows: never say it's on a device it isn't on. Read APP.md first for context.
     """
@@ -648,11 +653,12 @@ extension Agent.Rules {
     - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
     Web/lamp-game.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/, \
-    build.sh and Package.swift (the app around the page): read lamp-game.js, never edit or delete any of them. Lamp \
+    build.sh, Package.swift and Android/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
-    it's played is the person's to ask for: when they want it on their iPhone, iPad or Xbox, call make_app_for with \
-    every place it's to be played (["mac", "iphone"], ["mac", "xbox-one"]…); it stays the same game.
+    it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
+    make_app_for with every place it's to be played (["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…); it \
+    stays the same game.
     """
 
     static let gameWebKit = """
@@ -669,7 +675,7 @@ extension Agent.Rules {
     with up positive and the dead zone out; lt and rt 0 to 1; buttons as BUTTON.A… bits in down, pressed and \
     released), the same wherever it's played: a controller connected to the device, the Mac's keyboard (WASD or the \
     arrows the left stick, IJKL the right, Space or Enter A, Esc B, F X, R Y, Q and E the bumpers, Z and C the \
-    triggers, P Menu, Tab View) or the touch controls Lamp draws on an iPhone or iPad (a left stick, and the buttons \
+    triggers, P Menu, Tab View) or the touch controls Lamp draws on a phone or tablet (a left stick, and the buttons \
     `touch` names: BUTTON.A | BUTTON.B | BUTTON.MENU unless you say otherwise, BUTTON.RSTICK for a right stick; keep \
     a game playable with those few on a phone). B is the game's, for back or cancel, and Menu for pause. Draw text \
     and menus as HTML over the canvas (a fixed div, large type) or into the scene; the preview pictures both. Shake \
@@ -767,6 +773,9 @@ extension Agent.Rules {
             budget = "an Xbox One's, the slowest console the game may run on, which gives a game in Developer Mode only part of its GPU: "
                 + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one THREE.InstancedMesh), MeshStandardMaterial or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
                 + ", textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"
+        } else if places.contains(.android) {
+            budget = "a mid-range Android phone's, far slower than an iPhone and drawing through its WebView: under about 300 draws and "
+                + (web ? "300,000 triangles" : "500,000 vertices") + " a frame, textures at most 1024 px, no shadow maps"
         } else if places.contains(.ios) {
             budget = "an iPhone's, which also has to stay cool on battery: under about 600 draws and "
                 + (web ? "500,000 triangles" : "1,000,000 vertices") + " a frame, textures at most 2048 px, one shadow map at most"

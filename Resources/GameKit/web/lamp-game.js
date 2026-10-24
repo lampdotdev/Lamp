@@ -220,6 +220,11 @@ function gamepadPad(g) {
     return pad;
 }
 
+// The first controller as an app around the page reads it itself (Lamp's Android app, whose WebView doesn't promise
+// the Gamepad API): sticks -1 to 1 with up positive, triggers 0 to 1, buttons as BUTTON bits.
+let nativePad = null;
+window.lampNativePad = (lx, ly, rx, ry, lt, rt, down) => { nativePad = { connected: true, lx, ly, rx, ry, lt, rt, down }; };
+
 function merge(pad, more) {
     pad.down |= more.down;
     for (const axis of ['lx', 'ly', 'rx', 'ry', 'lt', 'rt']) if (Math.abs(more[axis]) > Math.abs(pad[axis])) pad[axis] = more[axis];
@@ -325,14 +330,20 @@ function readPads() {
     // may only be the simulator passing the Mac's through), and come back when the screen is touched.
     if (touchScreen && !scripted) {
         if (seenControllers === -1) showTouch();
-        if (touchShown && found.some(inUse)) hideTouch();
+        const nativeInUse = nativePad && (nativePad.down || [nativePad.lx, nativePad.ly, nativePad.rx, nativePad.ry].some(a => Math.abs(a) > 0.3));
+        if (touchShown && (found.some(inUse) || nativeInUse)) hideTouch();
     }
     if (!scripted && found.length !== seenControllers) { seenControllers = found.length; log(`Lamp: ${found.length} controller${found.length === 1 ? '' : 's'} connected.`); }
     for (let i = 0; i < 4; i++) {
         let pad = found[i] ? gamepadPad(found[i]) : { connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
         if (i === 0) {
             if (scripted) pad = Object.assign({}, scripted);
-            else { merge(pad, keyboardPad()); merge(pad, Object.assign({}, touch, { down: touch.down | tapped })); tapped = 0; }
+            else {
+                if (nativePad) merge(pad, nativePad);
+                merge(pad, keyboardPad());
+                merge(pad, Object.assign({}, touch, { down: touch.down | tapped }));
+                tapped = 0;
+            }
             pad.connected = true;
         }
         pad.pressed = pad.down & ~before[i];

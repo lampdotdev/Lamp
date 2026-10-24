@@ -1854,13 +1854,20 @@ private struct TryOnChoices: View {
             }
             .pickerStyle(.inline)
         }
+        if places.contains(.android) {
+            Divider()
+            androidChoices
+        }
         if places.contains(.device) {
             Divider()
             deviceChoices
         }
-        if !places.contains(.ios) || !places.contains(.device) {
+        // Android only for a game drawn with three.js: the C++ kit has no host there yet.
+        let android = !places.contains(.android) && GameKit.engine(project) == .web
+        if !places.contains(.ios) || android || !places.contains(.device) {
             Divider()
             if !places.contains(.ios) { Button("Play on iPhone and iPad Too") { store.addPlace(project, .ios) } }
+            if android { Button("Play on Android Too") { store.addPlace(project, .android) } }
             if !places.contains(.device) { Button("Play on Xbox Too") { store.addPlace(project, .device) } }
         }
     }
@@ -1868,11 +1875,11 @@ private struct TryOnChoices: View {
     /// An Android app's places: the emulator Lamp made, and the person's Android devices adb can see.
     @ViewBuilder private var androidChoices: some View {
         let devices = store.devices.filter { $0.kind == .android }
-        Picker("Emulator", selection: Binding(get: { project.device == nil ? "emulator" : nil }, set: { if $0 != nil { store.setAndroidDevice(project, nil) } })) {
+        Picker("Emulator", selection: Binding(get: { project.onAndroid && project.device == nil ? "emulator" : nil }, set: { if $0 != nil { store.setAndroidDevice(project, nil) } })) {
             Label(AndroidTools.avdName, systemImage: "smartphone").tag(Optional("emulator"))
         }
         .pickerStyle(.inline)
-        Picker("Your Devices", selection: Binding(get: { project.device }, set: { if let serial = $0 { store.setAndroidDevice(project, serial) } })) {
+        Picker("Your Devices", selection: Binding(get: { project.onAndroid ? project.device : nil }, set: { if let serial = $0 { store.setAndroidDevice(project, serial) } })) {
             ForEach(devices) { device in
                 let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
                 Label("\(device.name)\(step)", systemImage: "smartphone").tag(Optional(device.udid))

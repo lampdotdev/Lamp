@@ -1966,9 +1966,12 @@ final class Store: ObservableObject {
     /// Which Android device an Android app opens on: the person's own, by its serial, or nil for the emulator.
     /// The copy on the old one is closed, so Play and Stop are about the one chosen.
     func setAndroidDevice(_ project: LampProject, _ serial: String?) {
-        guard project.onAndroid, project.device != serial, begin(project) != nil else { return }
+        // A game has Android among its places, and may be pointed at another of them now.
+        let reaches = project.onAndroid || (GameKit.isGame(project) && project.openPlaces.contains(.android))
+        guard reaches, project.device != serial || !project.onAndroid, begin(project) != nil else { return }
         var changed = project
         changed.device = serial
+        changed.chosen = .android
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
@@ -2097,6 +2100,10 @@ final class Store: ObservableObject {
             return "It's already played on \(GameKit.spoken(places))."
         }
         if places.contains(.device), Integrations.integration(GameKit.xbox) == nil { return "This copy of Lamp has no way to reach an Xbox." }
+        // The kit has no host on Android yet: a C++ game stays off it.
+        if places.contains(.android), !current.openPlaces.contains(.android), GameKit.engine(current) == .native {
+            return "A game written in C++ can't be played on Android yet; only one drawn with three.js can. It's still played on \(GameKit.spoken(current.openPlaces))."
+        }
         for place in gone where place == .ios { await quit(current, only: .ios) }
         guard let now = self.current(current), let index = projects.firstIndex(where: { $0.id == now.id }) else { return "Lamp can't find the game." }
         var changed = now
@@ -5433,7 +5440,7 @@ final class Store: ObservableObject {
     private func gamePlaces(_ devices: Set<String>, for game: LampProject) async -> (Int, [String: Any]) {
         let words = devices.subtracting(["game"])
         guard words.allSatisfy({ GameKit.placeWords.keys.contains($0) }) else {
-            return (400, ["error": "A game is played on \"mac\" (always: its home), \"iphone\" (iPhone and iPad) and \"xbox-one\"; list those it's to be played on. " +
+            return (400, ["error": "A game is played on \"mac\" (always: its home), \"iphone\" or \"ipad\", \"android\" and \"xbox-one\"; list those it's to be played on. " +
                           "It can't be made for anything else: tell the person in a sentence that a new wish can be."])
         }
         // "ipad" alone is a wish to see it on an iPad: the simulator it opens on is one.
@@ -6347,7 +6354,7 @@ final class Store: ObservableObject {
                 return error.localizedDescription
             }
         }
-        let command = universal || game ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
+        let command = universal || game ? "./build.sh \(project.onIOS ? "ios" : project.onAndroid ? "android" : "mac")" : "./build.sh"
         // An Android app's build is Gradle's, with Google's tools where Lamp put them (`AndroidTools.environment`).
         var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.onAndroid ? AndroidTools.buildEnvironment
             : game && GameKit.engine(project) == .native ? WindowsTools.buildEnvironment : [:]

@@ -8,19 +8,19 @@ extension Platform {
 
 extension Target {
     static let game = Target(
-        platform: .game, places: [.mac, .ios, .device],
-        identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, or an Xbox", analytics: "game",
+        platform: .game, places: [.mac, .ios, .android, .device],
+        identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, Android or an Xbox", analytics: "game",
                            made: { _, _ in "a game" },
-                           devices: Words(words: [("game", "\"game\" for a game (with \"mac\", \"iphone\" and \"xbox-one\" for the places it's played on)",
+                           devices: Words(words: [("game", "\"game\" for a game (with \"mac\", \"iphone\", \"android\" and \"xbox-one\" for the places it's played on)",
                                                    "\"game\" for a game played in real time"),
                                                   ("native", "", "\"native\" with \"game\" for a heavy 3D game in C++")],
                                           hint: "[\"game\"] for a game played in real time (3D, racing, a platformer, a shooter, an arcade or sports game, "
                                               + "anything played with a controller or on their Xbox), whatever device it names; with \"iphone\" when it's to "
-                                              + "be played on a phone or iPad too, with \"xbox-one\" when it's for their Xbox, and with \"native\" too only "
+                                              + "be played on an iPhone or iPad too, \"android\" on an Android phone, with \"xbox-one\" when it's for their Xbox, and with \"native\" too only "
                                               + "for a heavy 3D game the wish says needs the console's whole power (a big world, hundreds of things moving at "
                                               + "once). A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
-                           tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, or your Xbox" },
+                           tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, an Android phone or tablet, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.gamePrompt(for:), changeRules: Agent.Rules.gameChange,
                            skills: { [] },
@@ -32,7 +32,7 @@ extension Target {
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again.
                        inputs: { _ in GameKit.stamp },
                        builtURL: { project in
-                           project.onDevice ? DeviceApps.packageURL(for: project)
+                           project.onDevice ? DeviceApps.packageURL(for: project) : project.onAndroid ? GameAndroid.apk(project)
                                : project.dir.appendingPathComponent(project.onIOS ? "build/iOS/\(project.exe).app" : "build/\(project.exe).app")
                        },
                        marker: GameKit.marker,
