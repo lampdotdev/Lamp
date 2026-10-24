@@ -2108,6 +2108,8 @@ final class Store: ObservableObject {
             // Where it goes in that place is chosen afresh: the simulator, and the only Xbox found until one is chosen.
             changed.device = nil
             changed.simulator = place == .ios ? nil : changed.simulator
+        } else if family != nil, places.contains(.ios) {
+            changed.chosen = .ios
         } else if !places.contains(changed.chosen) {
             changed.chosen = .mac
         }
@@ -5432,7 +5434,9 @@ final class Store: ObservableObject {
             return (400, ["error": "A game is played on \"mac\" (always: its home), \"iphone\" (iPhone and iPad) and \"xbox-one\"; list those it's to be played on. " +
                           "It can't be made for anything else: tell the person in a sentence that a new wish can be."])
         }
-        let said = await setPlaces(game, GameKit.places(for: words))
+        // "ipad" alone is a wish to see it on an iPad: the simulator it opens on is one.
+        let family: DeviceFamily? = words.contains("ipad") && !words.contains("iphone") ? .ipad : nil
+        let said = await setPlaces(game, GameKit.places(for: words), family: family)
         guard let now = current(game) else { return (404, ["error": "Lamp can't find the game."]) }
         return (200, ["text": said + " It's the same game everywhere: the kit gives each place its screen, controls and sound, so nothing in Game/ " +
                       "changes for it. " + Agent.Rules.gamePlaces(now) + " Try it as before; `look_at_app` with `on_device` opens it where Try On points now."])

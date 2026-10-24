@@ -228,6 +228,8 @@ export function rumble(pad, low, high, seconds = 0.2) {
 
 let touchButtons = BUTTON.A | BUTTON.B | BUTTON.MENU;
 const touch = { lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
+// A tap shorter than a frame still reaches the game: held for the next frame it reads.
+let tapped = 0;
 let touchShown = false, touchLayer = null;
 const touchScreen = !preview && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
@@ -244,7 +246,7 @@ function buildTouch() {
         // Where the left stick is, before a thumb is on it.
         const rest = document.createElement('div');
         if (side === 'left') {
-            rest.style.cssText = 'position:absolute;left:40px;bottom:32px;width:120px;height:120px;border-radius:50%;border:2px solid rgba(255,255,255,.25)';
+            rest.style.cssText = 'position:absolute;left:calc(40px + env(safe-area-inset-left));bottom:calc(32px + env(safe-area-inset-bottom));width:120px;height:120px;border-radius:50%;border:2px solid rgba(255,255,255,.25)';
             zone.append(rest);
         }
         let id = null, sx = 0, sy = 0;
@@ -279,23 +281,25 @@ function buildTouch() {
         const b = document.createElement('div');
         b.textContent = title;
         b.style.cssText = `position:absolute;${css};width:${size}px;height:${size}px;line-height:${size}px;text-align:center;border-radius:50%;background:rgba(255,255,255,.22);font-size:${small ? 15 : 22}px`;
-        const on = e => { e.stopPropagation(); touch.down |= bit; b.style.background = 'rgba(255,255,255,.5)'; b.setPointerCapture(e.pointerId); };
+        const on = e => { e.stopPropagation(); touch.down |= bit; tapped |= bit; b.style.background = 'rgba(255,255,255,.5)'; b.setPointerCapture(e.pointerId); };
         const off = () => { touch.down &= ~bit; b.style.background = 'rgba(255,255,255,.22)'; };
         b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointercancel', off);
         touchLayer.append(b);
     };
-    button(BUTTON.A, 'A', 'right:110px;bottom:40px');
-    button(BUTTON.B, 'B', 'right:40px;bottom:110px');
-    button(BUTTON.X, 'X', 'right:180px;bottom:110px');
-    button(BUTTON.Y, 'Y', 'right:110px;bottom:180px');
-    button(BUTTON.LB, 'LB', 'left:30px;top:20px', true);
-    button(BUTTON.VIEW, '⧉', 'left:90px;top:20px', true);
-    button(BUTTON.MENU, '≡', 'right:90px;top:20px', true);
-    button(BUTTON.RB, 'RB', 'right:30px;top:20px', true);
+    // Kept clear of a phone's rounded corners and its camera (the safe area).
+    const at = (x, side, y, edge) => `${side}:calc(${x}px + env(safe-area-inset-${side}));${edge}:calc(${y}px + env(safe-area-inset-${edge}))`;
+    button(BUTTON.A, 'A', at(110, 'right', 40, 'bottom'));
+    button(BUTTON.B, 'B', at(40, 'right', 110, 'bottom'));
+    button(BUTTON.X, 'X', at(180, 'right', 110, 'bottom'));
+    button(BUTTON.Y, 'Y', at(110, 'right', 180, 'bottom'));
+    button(BUTTON.LB, 'LB', at(30, 'left', 20, 'top'), true);
+    button(BUTTON.VIEW, '⧉', at(90, 'left', 20, 'top'), true);
+    button(BUTTON.MENU, '≡', at(90, 'right', 20, 'top'), true);
+    button(BUTTON.RB, 'RB', at(30, 'right', 20, 'top'), true);
     document.body.append(touchLayer);
 }
 if (touchScreen) window.addEventListener('pointerdown', () => { if (!touchShown) { touchShown = true; showTouch(); } }, { capture: true });
-function showTouch() { if (!touchLayer) buildTouch(); touchLayer.style.display = 'block'; }
+function showTouch() { if (!touchLayer) buildTouch(); touchLayer.style.display = 'block'; touchShown = true; }
 function hideTouch() { if (touchLayer) touchLayer.style.display = 'none'; touchShown = false; }
 
 // MARK: The frame
@@ -304,16 +308,23 @@ let time = 0, number = 0;
 const pads = [0, 1, 2, 3].map(() => ({ connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0, pressed: 0, released: 0 }));
 let renderer = null, frameFunction = null, scripted = null, before = [0, 0, 0, 0], seenControllers = -1;
 
+// Whether a controller is being played with now: a button down or a stick off its centre.
+const inUse = g => g.buttons.some(b => b && b.pressed) || g.axes.some(a => Math.abs(a) > 0.3);
+
 function readPads() {
     const found = scripted ? [] : Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(g => g && g.connected);
-    // The touch controls step aside when a controller connects, and come back when the last one goes or the screen is touched.
-    if (touchScreen && !scripted && found.length !== seenControllers) found.length === 0 ? showTouch() : hideTouch();
+    // The touch controls are there from the start, step aside once a controller is played with (a connected one alone
+    // may only be the simulator passing the Mac's through), and come back when the screen is touched.
+    if (touchScreen && !scripted) {
+        if (seenControllers === -1) showTouch();
+        if (touchShown && found.some(inUse)) hideTouch();
+    }
     if (!scripted && found.length !== seenControllers) { seenControllers = found.length; log(`Lamp: ${found.length} controller${found.length === 1 ? '' : 's'} connected.`); }
     for (let i = 0; i < 4; i++) {
         let pad = found[i] ? gamepadPad(found[i]) : { connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
         if (i === 0) {
             if (scripted) pad = Object.assign({}, scripted);
-            else { merge(pad, keyboardPad()); merge(pad, touch); }
+            else { merge(pad, keyboardPad()); merge(pad, Object.assign({}, touch, { down: touch.down | tapped })); tapped = 0; }
             pad.connected = true;
         }
         pad.pressed = pad.down & ~before[i];
