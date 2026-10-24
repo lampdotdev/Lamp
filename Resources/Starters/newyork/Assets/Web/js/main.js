@@ -101,11 +101,12 @@ async function initApp() {
   const streetDetails = buildStreetDetails(scene);
   markInit('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
-  // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them
+  // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
+  // Elevated building sections that clear even a bus don't obstruct ground traffic.
   const trafficSystem = createTrafficSystem(scene, cityGrid.sidewalks, [
     ...cityGrid.footprints,
     ...streetDetails.footprints,
-    ...allColliders.filter((c) => !c.obb)
+    ...allColliders.filter((c) => !c.obb && (c.minY ?? 0) < 3.5)
   ]);
   markInit('traffic');
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
@@ -169,9 +170,6 @@ async function initApp() {
   setupSceneCulling(scene, cullingRoots, lightingSystem.sunLight.shadow);
   markInit('culling');
 
-  // Small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
-  // re-uploads on every draw of every pass (~2.5 MB/frame with the shadow cascades, stalling the GPU queue).
-  // Storage attributes are only uploaded when instanceMatrix.needsUpdate is set.
   // Lamp: without the clustered lighting the many little street, shop and car lights go (the sun and sky stay)
   if (!QUALITY.streetLights) {
     const smallLights = [];
@@ -185,12 +183,16 @@ async function initApp() {
   }
   console.log(`[quality] ${JSON.stringify(QUALITY)}`);
 
-  // Lamp: WebGL 2 has no storage buffers, so the matrices stay ordinary instance attributes there
-  if (!renderer.backend.isWebGLBackend) scene.traverse((object) => {
-    if (object.isInstancedMesh) {
-      object.instanceMatrix = new THREE.StorageInstancedBufferAttribute(object.instanceMatrix.array, 16);
-    }
-  });
+  // On WebGPU, small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
+  // re-uploads on every draw of every pass (~2.5 MB/frame with the shadow cascades, stalling the GPU queue).
+  // Storage attributes only upload when needed; WebGL2 needs ordinary instanced attributes for correct transforms.
+  if (renderer.backend.isWebGPUBackend) {
+    scene.traverse((object) => {
+      if (object.isInstancedMesh) {
+        object.instanceMatrix = new THREE.StorageInstancedBufferAttribute(object.instanceMatrix.array, 16);
+      }
+    });
+  }
 
   // 5. TSL RenderPipeline with Half-Res Screen Space Reflections (SSRNode), Bloom & Filmic Toning
   //    Fade out distant and matte surfaces so SSR spends its rays on visible glossy reflections.
@@ -610,19 +612,23 @@ async function initApp() {
 
     // Every visible object with frustum culling off (like the warm-up frame, see the loop). Plain meshes that share
     // a material share its shader, so one job compiles them in turn (the first build serves the rest); every
-    // instanced mesh gets a build of its own
+    // instanced mesh gets a build of its own unless its chunks share a pipeline
     const culled = [];
     const jobs = [];
     const jobByMaterial = new Map();
+    const pipelines = new Set();
     scene.traverseVisible((o) => {
       if (o.frustumCulled) {
         culled.push(o);
         o.frustumCulled = false;
       }
       if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
-      // chunks of one mesh share its pipeline (the first one compiles it) and the shadow stand-ins only ever draw in
-      // the shadow maps (the warm-up frame compiles those)
-      if (o.userData.sharesPipelineWith || o.userData.shadowProxy) return;
+      // Use the first visible chunk: the original representative may be in an inactive tree cell. Shadow stand-ins
+      // only draw in the shadow maps (the warm-up frame compiles those).
+      if (o.userData.shadowProxy) return;
+      const pipeline = o.userData.sharesPipelineWith || o;
+      if (pipelines.has(pipeline)) return;
+      pipelines.add(pipeline);
       if (o.isInstancedMesh || Array.isArray(o.material)) {
         jobs.push([o]);
         return;
@@ -751,8 +757,12 @@ async function initApp() {
       // map passes): with frustum culling off, every visible material's pipelines compile now instead of stalling the
       // first time the camera turns towards it (one chunk / shadow stand-in per shared pipeline is enough)
       const culled = [];
-      scene.traverse((o) => {
-        if (o.frustumCulled && !o.userData.sharesPipelineWith) {
+      const pipelines = new Set();
+      scene.traverseVisible((o) => {
+        const pipeline = o.userData.sharesPipelineWith || o;
+        if (pipelines.has(pipeline)) return;
+        pipelines.add(pipeline);
+        if (o.frustumCulled) {
           culled.push(o);
           o.frustumCulled = false;
         }

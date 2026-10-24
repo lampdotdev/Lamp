@@ -7,7 +7,7 @@ import WebKit
 /// map and fetch to a page opened from a file, and a page at its own address also keeps its saved game
 /// (localStorage) between launches.
 struct GameScreen: NSViewRepresentable {
-    func makeNSView(context: Context) -> GameWebView {
+    func makeNSView(context: Context) -> KeyCatcher {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(GameFiles(), forURLScheme: GameFiles.scheme)
         // The engine, the horns and the city hum start as the game opens, not at the first click.
@@ -22,10 +22,10 @@ struct GameScreen: NSViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.load(URLRequest(url: URL(string: "\(GameFiles.scheme)://game/index.html")!))
         context.coordinator.reloadOnChange(view)
-        return view
+        return KeyCatcher(holding: view)
     }
 
-    func updateNSView(_ view: GameWebView, context: Context) {}
+    func updateNSView(_ view: KeyCatcher, context: Context) {}
 
     func makeCoordinator() -> Page { Page() }
 
@@ -97,6 +97,24 @@ struct GameScreen: NSViewRepresentable {
       window.addEventListener('unhandledrejection', (e) => send('error', ['unhandled: ' + (e.reason?.stack || e.reason)]));
     })();
     """
+}
+
+/// Holds the web view and takes the keys the page hands back. WebKit gives back every key the page doesn't cancel,
+/// and the game reads its keys without cancelling them, so each one would reach the window, which beeps for a key
+/// nothing took. Shortcuts with ⌘ are menus' and never come here.
+final class KeyCatcher: NSView {
+    init(holding view: NSView) {
+        super.init(frame: .zero)
+        view.frame = bounds
+        view.autoresizingMask = [.width, .height]
+        addSubview(view)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func keyDown(with event: NSEvent) {}
+    override func keyUp(with event: NSEvent) {}
+    override func doCommand(by selector: Selector) {}
 }
 
 /// Takes the keyboard as soon as it's in a window, so the game hears the keys without a click first.
