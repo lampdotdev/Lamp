@@ -187,6 +187,26 @@ final class WishRoomTests: XCTestCase {
         try await Self.refused(try await join(address, as: "tv", device: "TV", credential: fresh))
     }
 
+    /// An app added to the wish, or taken from it, while others are in the room: they're told the list again, so the new
+    /// one is known before it opens and the one gone is forgotten.
+    func testMembersHearTheWishsAppsWhenTheyChange() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV")
+        let welcome = try await Self.text(tv)
+        XCTAssertEqual((welcome["apps"] as? [[String: Any]])?.compactMap { $0["peer"] as? String }, ["android", "iphone", "tv"])
+
+        relay.configureRoom(room, generation: 0, apps: ["tv": ("tv", "the TV app"), "iphone": ("iphone", "the iPhone app"),
+                                                        "android": ("android", "the Android app"), "mac": ("mac", "the Mac app")])
+        let added = try await Self.text(tv)
+        XCTAssertEqual(added["t"] as? String, "apps")
+        XCTAssertEqual((added["apps"] as? [[String: Any]])?.compactMap { $0["peer"] as? String }, ["android", "iphone", "mac", "tv"])
+
+        relay.configureRoom(room, generation: 0, apps: ["tv": ("tv", "the TV app"), "mac": ("mac", "the Mac app")])
+        let taken = try await Self.text(tv)
+        XCTAssertEqual((taken["apps"] as? [[String: Any]])?.compactMap { $0["peer"] as? String }, ["mac", "tv"])
+    }
+
     // MARK: Helpers
 
     private static func refused(_ socket: URLSessionWebSocketTask) async throws { try await closed(socket, code: 4003) }

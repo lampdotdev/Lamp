@@ -120,6 +120,26 @@ final class WishPageTests: XCTestCase {
                        "no need to ask Lamp again")
     }
 
+    /// The wish's list of apps changes while the page is in the room: a new app is known, not open, with its reason; one
+    /// still there keeps its status; one taken away is gone.
+    func testThePageFollowsTheWishsAppsAsTheyChange() throws {
+        let context = try page()
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        context.evaluateScript("""
+            sockets[0].onopen();
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'peer', peer: 'tv', now: Date.now(),
+              peers: [{ peer: 'iphone', kind: 'iphone', name: 'the iPhone app', device: 'iPhone', since: 1 }],
+              apps: [{ peer: 'tv', kind: 'tv', name: 'the TV app' }, { peer: 'iphone', kind: 'iphone', name: 'the iPhone app' }, { peer: 'mac', kind: 'mac', name: 'the Mac app' }] }) });
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'apps',
+              apps: [{ peer: 'tv', kind: 'tv', name: 'the TV app' }, { peer: 'iphone', kind: 'iphone', name: 'the iPhone app' }, { peer: 'android', kind: 'android', name: 'the Android app' }] }) });
+            """)
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.apps().map(function (p) { return p.peer + ':' + p.status.state; }).join(',')")?.toString(),
+                       "iphone:connected,android:notOpen")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't open.")
+        XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('mac')")?.isNull == true, "taken from the wish")
+    }
+
     func testTurnedAwayThePageAsksLampAgainForAFreshCredential() throws {
         let context = try page()
         context.evaluateScript("Lamp.wish.start();")

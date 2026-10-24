@@ -1119,6 +1119,16 @@ extension Template {
                     val id = m.optString("peer")
                     setApps(appsFlow.value.map { if (it.peer == id) it.copy(status = Status(State.NOT_OPEN, notOpen(it.name), System.currentTimeMillis())) else it })
                 }
+                "apps" -> {
+                    // The wish gained an app or lost one: the others keep what's known of them.
+                    val known = appsFlow.value.associateBy { it.peer }
+                    setApps(jsonList(m.optJSONArray("apps")).mapNotNull { app ->
+                        val id = app.optString("peer").ifEmpty { return@mapNotNull null }
+                        if (id == me) return@mapNotNull null
+                        val name = app.optString("name", id)
+                        known[id] ?: Peer(id, app.optString("kind"), name, "", Status(State.NOT_OPEN, notOpen(name)))
+                    })
+                }
                 "message" -> {
                     val from = m.optString("from")
                     val data = if (m.isNull("data")) null else m.opt("data")

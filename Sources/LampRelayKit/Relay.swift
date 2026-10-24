@@ -262,8 +262,16 @@ public final class Relay: @unchecked Sendable {
         queue.async {
             if let known = self.rooms[room], known.generation != generation { self.closeRoom(room) }
             if let known = self.rooms[room] {
+                let changed = Set(known.apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
+                    != Set(apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
                 known.apps = apps
                 for (id, member) in known.members where apps[id] == nil { member.peer.close(code: 4005); known.members[id] = nil }
+                // An app added to the wish or taken from it, while the others are in the room: they hear the list again,
+                // so the one not open yet is known to them, and the one gone isn't.
+                if changed {
+                    let list = Self.json(["t": "apps", "apps": Self.roster(known)])
+                    for member in known.members.values { member.peer.send(list) }
+                }
             } else {
                 self.rooms[room] = Room(generation: generation, apps: apps)
                 self.startTicking()
@@ -349,8 +357,7 @@ public final class Relay: @unchecked Sendable {
         let member = Member(peer: peer, kind: kind, name: name, device: device)
         let others = room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
         room.members[id] = member
-        let apps = room.apps.sorted { $0.key < $1.key }.map { ["peer": $0.key, "kind": $0.value.kind, "name": $0.value.name] }
-        peer.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": apps, "now": Self.now,
+        peer.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": Self.roster(room), "now": Self.now,
                              "credential": ControllerToken.issue(kind: .peer, app: key, generation: room.generation, peer: id, key: self.key)]))
         let joined = Self.json(["t": "joined", "peer": Self.described(id, member)])
         for (other, each) in room.members where other != id { each.peer.send(joined) }
@@ -384,6 +391,11 @@ public final class Relay: @unchecked Sendable {
         } else {
             for (other, each) in room.members where other != id && each.peer.pendingText <= Self.hostBehind { each.peer.send(out) }
         }
+    }
+
+    /// Every app the room's wish has, as a member is told it: in its welcome, and again when the list changes.
+    private static func roster(_ room: Room) -> [[String: Any]] {
+        room.apps.sorted { $0.key < $1.key }.map { ["peer": $0.key, "kind": $0.value.kind, "name": $0.value.name] }
     }
 
     private static func described(_ id: String, _ member: Member) -> [String: Any] {

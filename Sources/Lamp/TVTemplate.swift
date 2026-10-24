@@ -893,6 +893,18 @@ extension TVTemplate {
               if (l) { shut(l, Date.now()); changed(); }
             } else if (m.t === 'credential' && typeof m.credential === 'string') {
               credential = m.credential;
+            } else if (m.t === 'apps') {
+              // The wish gained an app or lost one: the others keep what's known of them.
+              var kept = [], given = m.apps || [];
+              for (var k = 0; k < given.length; k++) {
+                var g = given[k];
+                if (!g || typeof g.peer !== 'string' || g.peer === mine) continue;
+                var had = find(g.peer);
+                if (!had) { had = { peer: g.peer, kind: g.kind || '', name: typeof g.name === 'string' ? g.name : g.peer, device: '', open: false, status: null }; shut(had, null); }
+                kept.push(had);
+              }
+              apps = kept;
+              changed();
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
               emit('message', [m.from, m.data]);
             } else if (m.t === 'undelivered' && typeof m.to === 'string') {

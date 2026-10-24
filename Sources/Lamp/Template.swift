@@ -13859,6 +13859,15 @@ enum Template {
                 }
             case "credential":
                 if let kept = m["credential"] as? String { credential = kept }
+            case "apps":
+                // The wish gained an app or lost one: the others keep what's known of them.
+                apps = (m["apps"] as? [[String: Any]] ?? []).compactMap { app in
+                    guard let id = app["peer"] as? String, id != me else { return nil }
+                    if let known = peer(id) { return known }
+                    let name = app["name"] as? String ?? id
+                    return Peer(id: id, kind: app["kind"] as? String ?? "", name: name, device: "",
+                                status: Status(state: .notOpen, reason: Self.notOpen(name), lastSeen: nil))
+                }
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
                 for listener in listeners { listener(from, data) }
