@@ -147,6 +147,8 @@ static void rumble_pad(int, GCController*) {}
 // What the keyboard holds now, by key code: on a Mac the keys stand in for the first controller.
 static bool g_keys[256];
 static LampPad g_touch;
+// A tap shorter than a frame still reaches the game: held for the next frame it reads.
+static uint32_t g_tapped;
 static LampPad keyboard_pad() {
     auto down = [](unsigned short code) { return code < 256 && g_keys[code]; };
     // Key codes of the US layout's places, so WASD is where it is whatever the layout's letters.
@@ -276,6 +278,7 @@ extern "C" void lamp_apple_keys_up(void) { memset(g_keys, 0, sizeof g_keys); }
 extern "C" void lamp_apple_touch(float lx, float ly, float rx, float ry, uint32_t down) {
     g_touch = LampPad{};
     g_touch.lx = lx; g_touch.ly = ly; g_touch.rx = rx; g_touch.ry = ry; g_touch.down = down;
+    g_tapped |= down;
 }
 extern "C" uint32_t lamp_apple_touch_buttons(void) { return lamp_host_touch_buttons; }
 
@@ -309,7 +312,10 @@ extern "C" void lamp_apple_frame(double dt, bool keys) {
             if (i == 0) {
                 // The keyboard and the touch controls always play as the first controller, beside a real one.
                 if (keys) merge(pad, keyboard_pad());
-                merge(pad, g_touch);
+                LampPad touched = g_touch;
+                touched.down |= g_tapped;
+                g_tapped = 0;
+                merge(pad, touched);
                 pad.connected = true;
             }
             lamp_host_edges(&pad, g_before[i]);
