@@ -249,6 +249,13 @@ enum GameAndroid {
 
         override fun onWindowFocusChanged(focused: Boolean) { super.onWindowFocusChanged(focused); if (focused) immerse() }
         override fun onPause() { super.onPause(); Native.pause(true) }
+        // A copy of the activity that's gone (Android makes another for a change it doesn't hand over) neither polls nor
+        // hears controllers any more: the game has one activity's input at a time.
+        override fun onDestroy() {
+            ticks.removeCallbacksAndMessages(null)
+            (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
+            super.onDestroy()
+        }
         override fun onResume() { super.onResume(); Native.pause(false) }
 
         private fun immerse() {

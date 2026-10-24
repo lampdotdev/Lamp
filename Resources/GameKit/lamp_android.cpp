@@ -113,13 +113,31 @@ static Pads g_given;
 
 // MARK: Sound
 
+static std::mutex g_audio;
 static AAudioStream* g_stream;
+static bool g_paused;
 
 static aaudio_data_callback_result_t mix(AAudioStream*, void*, void* data, int32_t frames) {
     lamp_host_mix((float*)data, frames);
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
+static void start_speaker();
+
+// A stream AAudio cut off (headphones in or out, the speaker changed) can't be used again: it's closed and another
+// opened, on a thread of its own, since nothing may be closed from inside its own callback.
+static void lost(AAudioStream* stream, void*, aaudio_result_t error) {
+    if (error != AAUDIO_ERROR_DISCONNECTED) return;
+    std::thread([stream] {
+        std::lock_guard<std::mutex> lock(g_audio);
+        if (g_stream != stream) return;
+        AAudioStream_close(stream);
+        g_stream = nullptr;
+        start_speaker();
+    }).detach();
+}
+
+// Opens the stream and, unless the app is in the background, starts it. Called with g_audio held, or before anything else.
 static void start_speaker() {
     AAudioStreamBuilder* builder = nullptr;
     if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) { lamp_log("Lamp: the sound couldn't start; the game plays without it."); return; }
@@ -128,8 +146,10 @@ static void start_speaker() {
     AAudioStreamBuilder_setSampleRate(builder, 48000);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setDataCallback(builder, mix, nullptr);
-    if (AAudioStreamBuilder_openStream(builder, &g_stream) != AAUDIO_OK || AAudioStream_requestStart(g_stream) != AAUDIO_OK) {
+    AAudioStreamBuilder_setErrorCallback(builder, lost, nullptr);
+    if (AAudioStreamBuilder_openStream(builder, &g_stream) != AAUDIO_OK || (!g_paused && AAudioStream_requestStart(g_stream) != AAUDIO_OK)) {
         lamp_log("Lamp: the sound couldn't start; the game plays without it.");
+        if (g_stream) AAudioStream_close(g_stream);
         g_stream = nullptr;
     }
     AAudioStreamBuilder_delete(builder);
@@ -198,6 +218,7 @@ static void run() {
             lamp_host_seed((uint64_t)(now() * 1e6));
             LampSetup setup = { W, H, SG_PIXELFORMAT_RGBA8, SG_PIXELFORMAT_DEPTH_STENCIL, 1 };
             game_init(&setup);
+            std::lock_guard<std::mutex> audio(g_audio);
             start_speaker();
         }
         double t = now();
@@ -282,6 +303,8 @@ extern "C" JNIEXPORT jint JNICALL Java_dev_lamp_game_Native_rumble(JNIEnv*, jcla
 }
 
 extern "C" JNIEXPORT void JNICALL Java_dev_lamp_game_Native_pause(JNIEnv*, jclass, jboolean paused) {
+    std::lock_guard<std::mutex> lock(g_audio);
+    g_paused = paused;
     if (!g_stream) return;
     if (paused) AAudioStream_requestPause(g_stream); else AAudioStream_requestStart(g_stream);
 }
