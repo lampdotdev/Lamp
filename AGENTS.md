@@ -449,7 +449,9 @@ and one what it's about (Hot Shelf as a beer tracker), in that order. Each is so
 that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
-A starter whose code imports RealityKit (Drive Anywhere) gets LampScene.swift and macOS 15 like any app with a 3D scene
+A starter may be a game drawn by a web page: New York is Slop New York's three.js city in a WebKit view, its page in
+`Assets/Web` served at an address of the app's own (`GameFiles`) and loaded again when its files change.
+A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
 
