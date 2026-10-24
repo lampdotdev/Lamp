@@ -18,8 +18,8 @@
  *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
- * - `make_app_for`: asks Lamp to make the app for the Mac, the iPhone and iPad, or both; the reply says how to
- *   adapt the code.
+ * - `make_app_for`: asks Lamp to make the wish for these devices: an app it has stays, one it lacks is added beside it,
+ *   one left out goes; the reply says how to adapt the code and gives each new app's rules.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,

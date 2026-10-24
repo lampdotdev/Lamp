@@ -142,8 +142,9 @@ enum AppName {
         var name: String?
         /// A guess at the app's main parts, shown until the agent gives its own plan.
         var sketch: [String]
-        /// What it runs on, from the request (`Store.chooseKind`), and whether the person said so.
-        var kind: Platform?
+        /// What it runs on, from the request (`Store.chooseKind`): the kinds the wish is made of, in Lamp's order
+        /// (`Parts.kinds`), and whether the person said so.
+        var kinds: [Platform] = []
         var kindSaid = false
         /// For a device app (`Platform.device`), the integration it's for.
         var integration: String?
@@ -155,8 +156,6 @@ enum AppName {
         /// A wish that could be for more than one kind of device and didn't say which: the devices it could be for,
         /// likeliest first. Nothing is made until the agent has asked (`LampProject.undecided`).
         var undecided: [String]?
-        /// The kinds beside the main one, for a wish that's more than one app (`Parts.kinds`).
-        var parts: [Platform] = []
         /// The icon's background (`Icons.backgrounds`), chosen here so the blueprint shows it from the start and the
         /// icon keeps it.
         var color: String?
@@ -172,12 +171,12 @@ enum AppName {
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
         let devices = Set(object["devices"] as? [String] ?? [])
         let said = object["devices_by_user"] as? Bool ?? false
-        let kinds = Parts.kinds(for: devices)
+        let kinds = Parts.kinds(for: devices) ?? []
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
-                          kind: kinds?.main, kindSaid: said,
-                          integration: kinds?.main == .device ? devices.first : nil,
+                          kinds: kinds, kindSaid: said,
+                          integration: kinds == [.device] ? devices.first : nil,
                           forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
-                          undecided: said ? nil : candidates(object["candidates"]), parts: kinds?.parts ?? [],
+                          undecided: said ? nil : candidates(object["candidates"]),
                           color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
     }
 

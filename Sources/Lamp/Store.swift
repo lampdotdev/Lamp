@@ -79,7 +79,7 @@ struct LampProject: Identifiable, Hashable {
     /// of the wish's (`partFolders`, `Parts`), built, opened, looked at and used as any app of its kind is, but it has no
     /// chat, no history and no place on the desk of its own: the wish's turn works on it, the wish's versions keep it.
     var partOf: String?
-    /// The folders of this wish's other parts, each an app of its own kind (`partOf`), beside the main one at its root.
+    /// The folders of this wish's other parts, each an app of its own kind (`partOf`), beside the one at its root.
     var partFolders: [String] = []
     /// A new wish that could be for more than one kind of device, and didn't say which (the naming call's
     /// candidates, most likely first): nothing is written for it until the agent has asked and given it its kinds.
@@ -1743,6 +1743,16 @@ final class Store: ObservableObject {
         return chosen
     }
 
+    /// Which of a new wish's kinds goes to its root, where its first app is written: no kind leads, so the first in
+    /// Lamp's order, unless this Mac can't build that one yet and can another (a TV app with an iPhone app, on a Mac
+    /// without Xcode: the TV app is made now and the iPhone app waits with its setup a click away, rather than the
+    /// whole wish waiting). Nil for no kinds.
+    private func rootKind(among kinds: [Platform], integration: String?) async -> Platform? {
+        guard kinds.count > 1 else { return kinds.first }
+        for kind in kinds where await kind.target.setup.canChoose(false, integration) { return kind }
+        return kinds.first
+    }
+
     /// A new wish whose request could be for more than one kind of device: it's kept a draft, with nothing written,
     /// and the agent asks which (`Agent.undecidedPrompt`) and gives it its kinds with `make_app_for` (`convert`).
     private func setUndecided(_ project: LampProject, _ candidates: [String]) -> LampProject {
@@ -2977,13 +2987,14 @@ final class Store: ObservableObject {
             if let suggestion, let candidates = suggestion.undecided {
                 // Nothing points one way: the agent asks first, and nothing is written until it's answered.
                 project = setUndecided(project, candidates)
-            } else if let suggestion, let kind = suggestion.kind {
+            } else if let suggestion, let kind = await rootKind(among: suggestion.kinds, integration: suggestion.integration) {
+                let parts = Parts.others(among: suggestion.kinds, root: kind)
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch, integration: suggestion.integration,
-                                           parts: suggestion.parts)
+                                           parts: parts)
                 // The wish's other apps are kept in its list from here, and made once the app at its root is written
                 // (`startQueued`, `makeWaitingParts`), inside its folder.
-                if !suggestion.parts.isEmpty, project.platform == kind {
-                    project = setApps(project, [WishApp(kind: kind)] + suggestion.parts.map { WishApp(kind: $0) })
+                if !parts.isEmpty, project.platform == kind {
+                    project = setApps(project, [WishApp(kind: kind)] + parts.map { WishApp(kind: $0) })
                 }
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
@@ -5227,7 +5238,11 @@ final class Store: ObservableObject {
         return projects[index]
     }
 
-    /// `make_app_for`: the person asked for the app on other devices, and the agent asks Lamp to make it so.
+    /// `make_app_for`: the person asked for the app on other devices, and the agent asks Lamp to make it so. The wish
+    /// becomes the apps listed, one per family, by adding and taking away folders: the app at its root stays what it is,
+    /// changed in place only inside its family (an iPhone app that's to be for the Mac too) and never written over again
+    /// as another kind; each other kind wanted is added in its folder, changed in place inside its family, or taken away
+    /// when it's no longer listed. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app beside it.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         guard let kinds = Parts.kinds(for: devices) else {
@@ -5235,22 +5250,30 @@ final class Store: ObservableObject {
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
-        let kind = kinds.main
-        let (status, answer) = await changeMainKind(arguments, devices: devices, kind: kind, for: project)
+        guard let wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
+        guard let kind = Parts.root(among: kinds, for: wish) else {
+            let root = Parts.name(of: wish.platform)
+            return (400, ["error": "`devices` leaves out \(root), the app at the wish's root, which stays as it is: Lamp never " +
+                          "writes an app over again as another kind, and a wish keeps the app it began with. List its devices " +
+                          "(it's made for \(wish.platform.target.identity.made(nil, "the person's"))) with the rest to add them beside " +
+                          "it, or tell the person in a sentence that this wish keeps \(root) and a new wish can be for the others."])
+        }
+        let (status, answer) = await changeRootKind(arguments, devices: devices, kind: kind, for: wish)
         guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
-              let wish = current(project) else { return (status, answer) }
+              let wish = current(wish) else { return (status, answer) }
         // Then the other parts: each kind that's wanted and missing is added, with its rules; one that's there as another
         // kind of the same devices (an iPhone app that's to be for the Mac too) is changed in place; one no longer
         // wanted is taken away.
         var said: [String] = []
         let group = Parts.group
+        let others = Parts.others(among: kinds, root: kind)
         // The wish should have these from now on; what each one that can't be made yet needs is kept as it's found.
-        setApps(wish, ([kind] + kinds.parts).map { WishApp(kind: $0) })
-        for part in parts(of: wish) where !kinds.parts.contains(where: { group($0) == group(part.platform) }) {
+        setApps(wish, ([kind] + others).map { WishApp(kind: $0) })
+        for part in parts(of: wish) where !others.contains(where: { group($0) == group(part.platform) }) {
             said.append(await removePart(part) ? "Lamp took \(Parts.name(of: part.platform)) away, as asked; the wish's versions still have it."
                         : "\(Parts.name(of: part.platform)) is still there: the person kept it open. Tell them it has to close first.")
         }
-        for wanted in kinds.parts {
+        for wanted in others {
             if let have = parts(of: wish).first(where: { group($0.platform) == group(wanted) }), have.platform != wanted {
                 let (_, changed) = await convert(have, to: wanted)
                 said.append("For \(Parts.name(of: have.platform)) in \(have.dir.lastPathComponent)/: " + (changed["text"] as? String ?? changed["error"] as? String ?? ""))
@@ -5271,12 +5294,13 @@ final class Store: ObservableObject {
                         Parts.pack(for: wanted))
         }
         guard !said.isEmpty else { return (status, answer) }
-        let main = text.hasPrefix("It's already made for") ? "" : text + "\n\n"
-        return (200, ["text": main + said.joined(separator: "\n\n")])
+        let root = text.hasPrefix("It's already made for") ? "" : text + "\n\n"
+        return (200, ["text": root + said.joined(separator: "\n\n")])
     }
 
-    /// The main part's kind, as `make_app_for` asked: `convert`, and what to do about a watch app.
-    private func changeMainKind(_ arguments: [String: Any], devices: Set<String>, kind: Platform, for project: LampProject) async -> (Int, [String: Any]) {
+    /// The kind of the app at the wish's root, as `make_app_for` asked: `convert`, inside its family, and what to do
+    /// about a watch app.
+    private func changeRootKind(_ arguments: [String: Any], devices: Set<String>, kind: Platform, for project: LampProject) async -> (Int, [String: Any]) {
         // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
         let hadWatch = current(project).map(Template.hasWatch) ?? false
         let (status, answer) = await convert(project, to: kind, integration: kind.hasDevice ? devices.first : nil)
@@ -5284,7 +5308,7 @@ final class Store: ObservableObject {
               let now = current(project) else { return (status, answer) }
         // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, and names the skill
         // that says how, which the prompt this turn began with may not offer.
-        // A watch app is an iPhone app's: when the main part isn't one, it's the iPhone part's, said with that part.
+        // A watch app is an iPhone app's: when the app at the root isn't one, it's the iPhone part's, said with that part.
         let watch = devices.contains("watch") && kind.hasIOS
         guard kind.hasIOS || hadWatch else { return (status, answer) }
         if watch, !Template.hasWatch(now) {
@@ -9197,9 +9221,10 @@ final class Store: ObservableObject {
         // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-        if project.isPart {
+        // One of the wish's other apps asking for its TV app, which is at the wish's root or in its TV/ folder alike.
+        if project.isPart, !project.platform.hasTV {
             let wish = wish(of: project)
-            guard wish.platform.hasTV, wish.id != project.id else { return (403, ["error": "This app's wish has no TV app."]) }
+            guard let tv = ([wish] + parts(of: wish)).first(where: { $0.platform.hasTV }) else { return (403, ["error": "This app's wish has no TV app."]) }
             if body["as"] as? String == "listener" {
                 let token = "^[A-Za-z0-9_-]{8,64}$"
                 guard let port = (body["port"] as? Int).flatMap({ UInt16(exactly: $0) }), port > 0,
@@ -9207,16 +9232,16 @@ final class Store: ObservableObject {
                       let device = body["device"] as? String, device.range(of: token, options: .regularExpression) != nil else {
                     return (400, ["error": "Say where the app is listening."])
                 }
-                guard let key = PhoneControllers.shared.register(listener: listener, wish: wish.id, device: device,
+                guard let key = PhoneControllers.shared.register(listener: listener, wish: tv.id, device: device,
                                                                  address: request.peerAddress ?? "127.0.0.1", port: port) else {
                     return (409, ["error": "Another app is listening under that name."])
                 }
                 return (200, ["key": key.withUnsafeBytes { Data($0) }.base64EncodedString(), "renew": 20])
             }
             syncLocalNetwork()
-            guard Self.servesPhonePage(wish) else { return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."]) }
+            guard Self.servesPhonePage(tv) else { return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."]) }
             guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
-            return (200, ["socket": "ws://\(host):\(port)/", "app": wish.id, "join": ControllerCredential.issue(kind: .join, app: wish.id)])
+            return (200, ["socket": "ws://\(host):\(port)/", "app": tv.id, "join": ControllerCredential.issue(kind: .join, app: tv.id)])
         }
         guard project.platform.hasTV else { return (403, ["error": "Only TV apps take phone controllers."]) }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
@@ -9231,11 +9256,12 @@ final class Store: ObservableObject {
     }
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
-    /// Mac app beside it in its wish (`Parts`).
+    /// Mac app beside it in its wish (`Parts`): at the wish's root with parts, or itself a part (in TV/), beside the
+    /// app at the root.
     /// Read off the wish itself (its parts as found in its folder), never off the list of apps, which is being set
     /// while Lamp reads its apps again: a game must not end because, for a moment, the list was half made.
     nonisolated static func takesPlayers(_ project: LampProject) -> Bool {
-        project.platform.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty)
+        project.platform.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart)
     }
 
     /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then

@@ -94,10 +94,8 @@ struct Target {
         let claims: (Set<String>) -> Bool
         /// A word of its own beyond `words` (an integration's id).
         var owns: (String) -> Bool = { _ in false }
-        /// Never one wish with other kinds: an Android app stands alone.
+        /// Never one wish with other kinds: a device app stands alone.
         let alone: Bool
-        /// In a wish of more than one kind, the main one: what's on the TV is what the wish is about.
-        var leads = false
         /// How a wish still to be told what it's for asks about it ("for the TV"), and how it hears what Lamp makes
         /// ("for Samsung and LG TVs"). Nil when it's never asked about.
         var asked: (word: String, phrase: String, makes: String)? = nil
