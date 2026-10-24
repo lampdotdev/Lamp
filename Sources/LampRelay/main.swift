@@ -46,12 +46,13 @@ while let line = readLine() {
     case "room":
         guard let relay, let app = command["app"] as? String,
               let key = (command["key"] as? String).flatMap({ Data(base64Encoded: $0) }), key.count == WishChannel.keySize else { continue }
-        var apps: [String: (kind: String, name: String)] = [:]
+        var apps: [String: (kind: String, name: String)] = [:], waiting: Set<String> = []
         for each in command["apps"] as? [[String: Any]] ?? [] {
             guard let peer = each["peer"] as? String else { continue }
             apps[peer] = (each["kind"] as? String ?? "", each["name"] as? String ?? "")
+            if each["waiting"] as? Bool == true { waiting.insert(peer) }
         }
-        relay.configureRoom(app, key: key, apps: apps)
+        relay.configureRoom(app, key: key, apps: apps, waiting: waiting)
     case "end-room":
         guard let relay, let app = command["app"] as? String else { continue }
         relay.endRoom(app)

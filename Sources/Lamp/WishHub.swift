@@ -145,9 +145,10 @@ enum WishRooms {
             + Parts.waiting(in: wish, parts: apps.filter { $0.id != wish.id }).map { describe(kind: $0.kind) }
     }
 
-    /// An app the wish asks for and doesn't have yet, by the folder it will be made in.
+    /// An app the wish asks for and doesn't have yet, by the folder it will be made in, marked as waiting so the others
+    /// say it isn't ready rather than ask the person to open it.
     static func describe(kind: Platform) -> [String: Any] {
-        ["peer": Parts.folder(for: kind).lowercased(), "kind": Parts.word(for: kind), "name": Parts.name(of: kind)]
+        ["peer": Parts.folder(for: kind).lowercased(), "kind": Parts.word(for: kind), "name": Parts.name(of: kind), "waiting": true]
     }
 
     /// `kind` is the device word the tools use for the app ("iphone" for an app for iPhone and iPad, Mac too).
@@ -472,6 +473,17 @@ enum WishNote {
             if let member = present[peer] {
                 let since = (member["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened) } ?? "?"
                 line += ", in the wish's room as \"\(member["device"] as? String ?? "")\" since \(since)"
+                // What the app says of its own link: the apps it reaches straight, which go on with Lamp closed, and
+                // what stops it reaching them.
+                let link = member["link"] as? [String: Any] ?? [:]
+                if link["state"] as? String == "localNetworkDenied" {
+                    line += ", Local Network is turned off for it, so it reaches the others only through Lamp"
+                }
+                if let direct = link["direct"] as? [String], !direct.isEmpty {
+                    line += ", straight to \(direct.map { "\"\($0)\"" }.joined(separator: " and "))"
+                } else if link["state"] != nil {
+                    line += ", straight to none"
+                }
             } else {
                 line += ", not in the room"
             }

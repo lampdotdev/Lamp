@@ -129,8 +129,9 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').name")?.toString(), "the Android app")
         // Every app of the wish is known, open or not, with why in words to show and when it was last seen.
         XCTAssertEqual(context.evaluateScript("androidBefore.status.state + '|' + androidBefore.status.reason")?.toString(),
-                       "notOpen|The Android app isn't open.")
-        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(), "The iPhone app isn't open.")
+                       "notOpen|Open the Android app on your Android device.")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(),
+                       "The iPhone app was last open a moment ago. Open it on your iPhone.")
         XCTAssertEqual(context.evaluateScript("typeof Lamp.wish.peer('iphone').status.lastSeen")?.toString(), "number")
         XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('roku')")?.isNull == true, "no such app in the wish")
         XCTAssertEqual(context.evaluateScript("Lamp.wish.status().state + '|' + Lamp.wish.status().reason")?.toString(), "connected|")
@@ -144,9 +145,9 @@ final class WishPageTests: XCTestCase {
         settle(context)
         context.evaluateScript("var early = Lamp.wish.send({ hi: 1 }, 'iphone');")
         try handshake(context)
+        let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
                           "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1]]])
-        let before = sentItems(context).count
         context.evaluateScript("""
             var toOne = Lamp.wish.send({ score: 3 }, 'iphone');
             var toAll = Lamp.wish.send('round 2');
@@ -158,7 +159,12 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("toAll")?.toBool(), true)
         XCTAssertEqual(context.evaluateScript("toAbsent")?.toBool(), false, "the Android app isn't open")
         XCTAssertEqual(context.evaluateScript("big")?.toBool(), false)
-        let frames = try sentItems(context).dropFirst(before).map(opened)
+        let said = try sentItems(context).dropFirst(before).map(opened)
+        // Once in the room the page tells it how its link stands, for the builder: connected, straight to no app yet.
+        XCTAssertEqual(said.first?["t"] as? String, "status")
+        XCTAssertEqual(said.first?["state"] as? String, "connected")
+        XCTAssertEqual(said.first?["direct"] as? [String], [])
+        let frames = Array(said.dropFirst())
         XCTAssertEqual(frames.count, 2, "only the two that could go went: \(frames)")
         XCTAssertEqual(frames.first?["to"] as? String, "iphone")
         XCTAssertEqual((frames.first?["data"] as? [String: Any])?["score"] as? Int, 3)
@@ -219,8 +225,100 @@ final class WishPageTests: XCTestCase {
         deliver(context, ["t": "apps", "apps": roster])
         XCTAssertEqual(context.evaluateScript("Lamp.wish.apps().map(function (p) { return p.peer + ':' + p.status.state; }).join(',')")?.toString(),
                        "iphone:connected,android:notOpen")
-        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't open.")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "Open the Android app on your Android device.")
         XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('mac')")?.isNull == true, "taken from the wish")
+    }
+
+    /// An app the wish asks for and Lamp hasn't made says it isn't ready; when another app was last open is kept on the
+    /// device, so a page opened again later still says how long ago; and the status view shows each app's line and follows
+    /// as they change.
+    func testThePageSaysWhatsMissingAndKeepsWhenAnAppWasLastOpen() throws {
+        let context = try page(before: Self.document)
+        context.evaluateScript("var view = Lamp.wish.statusView(); Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
+                                     ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1]]])
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't ready yet.")
+        XCTAssertEqual(context.evaluateScript("view.text()")?.toString(), "iPhone app connected|The Android app isn't ready yet.")
+        deliver(context, ["t": "left", "peer": "iphone"])
+        XCTAssertEqual(context.evaluateScript("view.text()")?.toString(),
+                       "The iPhone app was last open a moment ago. Open it on your iPhone.|The Android app isn't ready yet.")
+
+        // Opened again later: what was kept says when the iPhone app was last open, 5 minutes before now.
+        let kept = try XCTUnwrap(context.evaluateScript("""
+            (function () { for (var k in store) if (k.indexOf('lamp:wish.') === 0) {
+              var v = JSON.parse(store[k]); v.seen.iphone = Date.now() - 5 * 60000 - 1000; store[k] = JSON.stringify(v); }
+              return JSON.stringify(store); })()
+            """)?.toString())
+        let again = try page(before: { $0.evaluateScript("store = \(kept);") })
+        again.evaluateScript("Lamp.wish.start();")
+        settle(again)
+        XCTAssertEqual(again.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(),
+                       "The iPhone app was last open 5 min ago. Open it on your iPhone.")
+        XCTAssertEqual(again.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't ready yet.")
+    }
+
+    /// What a page says stays right as the beats go by: a copy that wasn't opened from Lamp keeps saying so, and an app
+    /// once marked not made yet, then open, is never called not ready again.
+    func testWhatThePageSaysStaysRightAsTheBeatsGoBy() throws {
+        let beats = "var beaters = []; setInterval = function (fn) { beaters.push(fn); return 1; };"
+        let stray = try page(installed: "null", before: { $0.evaluateScript(beats) })
+        stray.evaluateScript("Lamp.wish.start(); beaters[0](); beaters[0]();")
+        XCTAssertEqual(stray.evaluateScript("Lamp.wish.status().reason")?.toString(),
+                       "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+
+        let context = try page(before: { $0.evaluateScript(beats) })
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": []])
+        // Made and open now, though the list hasn't said so yet (Lamp closed, the apps meeting straight).
+        deliver(context, ["t": "joined", "peer": ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 2]])
+        deliver(context, ["t": "left", "peer": "android"])
+        context.evaluateScript("beaters[0]();")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
+                       "The Android app was last open a moment ago. Open it on your Android device.")
+    }
+
+    /// A page's own view of every app hears a closed app's reason age as the beats go by, and an app once open is never
+    /// called not ready again by a list that still marks it so.
+    func testEveryAppsReasonIsHeardAsItChangesAndBeingSeenOutranksAWaitingMark() throws {
+        let context = try page(before: { $0.evaluateScript("""
+            var beaters = []; setInterval = function (fn) { beaters.push(fn); return 1; };
+            var clock = Date.now(); Date.now = function () { return clock; };
+            """) })
+        context.evaluateScript("var heardApps = []; Lamp.wish.onApps(function (list) { heardApps.push(list.map(function (p) { return p.peer + ':' + p.status.reason; }).join('|')); }); Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": []])
+        deliver(context, ["t": "joined", "peer": ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 2]])
+        deliver(context, ["t": "left", "peer": "android"])
+        // Lamp's list comes again still marking it not made (sent before it knew).
+        deliver(context, ["t": "apps", "apps": apps])
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
+                       "The Android app was last open a moment ago. Open it on your Android device.")
+        context.evaluateScript("clock += 5 * 60000 + 1000; beaters[0]();")
+        XCTAssertEqual(context.evaluateScript("heardApps[heardApps.length - 1]")?.toString(),
+                       "android:The Android app was last open 5 min ago. Open it on your Android device.")
+    }
+
+    /// Just enough of a page's document for the status view: elements that hold children, a style and text.
+    private static func document(_ context: JSContext) {
+        context.evaluateScript("""
+            function Element() { this.children = []; this.style = {}; this.textContent = ''; }
+            Object.defineProperty(Element.prototype, 'firstChild', { get: function () { return this.children[0] || null; } });
+            Element.prototype.appendChild = function (c) { this.children.push(c); return c; };
+            Element.prototype.removeChild = function (c) { this.children.splice(this.children.indexOf(c), 1); return c; };
+            Element.prototype.text = function () {
+              return this.children.map(function (row) { return row.children.map(function (c) { return c.textContent; }).join(''); }).join('|');
+            };
+            var document = { createElement: function () { return new Element(); } };
+            """)
     }
 
     func testTurnedAwayThePageAsksLampAgain() throws {

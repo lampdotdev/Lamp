@@ -143,7 +143,18 @@ back on a new socket before its old one was noticed gone is said to have left be
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
 added to (a `RawRepresentable` struct in Swift, a value class in Kotlin, a string in lamp.js), so code that switches on one
-keeps compiling when later work adds reasons. Lamp
+keeps compiling when later work adds reasons. A reason is the same words in every language (`LampWish.notOpen`, `ago`):
+where to open an app never seen ("Open the TV app on your TV."), how long ago one was last open ("The TV app was last open
+5 min ago. Open it on your TV.", worked out again on every beat), and "isn't ready yet" for one Lamp hasn't made (the room's
+list marks it `waiting`, from `WishRooms.describe(kind:)` through `configureRoom`'s `waiting`; once it has been open the mark
+no longer counts). When each app was last open is kept on the device with the wish's list, so it's known after a relaunch
+with the other app closed. A Mac or iPhone app whose network look is turned down by the system (`kDNSServiceErr_PolicyDenied`
+on its browser or listener: the person said no to Local Network) is `localNetworkDenied`, with where to allow it, unless it's
+connected anyway. Each library has a ready-made view of all of it, a line for each other app or one app's line, nothing after
+`stop()`, for the agent to use, restyle or skip (`LampWishStatus` in SwiftUI and Compose, `Lamp.wish.statusView()`); nothing
+tells the agent to show it but the `wish-links` skill. Each app tells Lamp's room how its link stands when that changes
+(`status`: its state and the apps it reaches straight), which the relay keeps for Lamp alone (`Member.link`, in
+`onRoomChanged`) and never passes to the others. Lamp
 keeps what came only until the next poll (an app that falls 256 behind has its link ended, since a sealed message can't be
 skipped) and lets the socket go when the app has stopped polling. A room is opened the
 first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
@@ -152,7 +163,8 @@ fifteen minutes, so the relay process runs only while a game or a room needs it 
 sessions, and starts the relay for either). Where a wish's apps are is asked of `Store.apps(of:)` and `Store.wish(of:)`
 alone, and a wish is alone when it has fewer than two apps, so nothing in the hub knows which app is at the root. The relay says who is in each room on its output as that changes
 (`ControllerRelay.presence`), and the builder is told, at the end of each request for a wish of more than one app, where
-each of its apps is: open or not, in the room or not and as what device, and which are still to be made (`WishNote`, sent
+each of its apps is: open or not, in the room or not and as what device, which apps it reaches straight and whether Local
+Network is turned off for it (as it told the room), and which are still to be made (`WishNote`, sent
 like `DeviceNote`). How a wish's apps share data is the agent's choice with the person, not a rule: what every app of such
 a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) is a short pointer to the
 `wish-links` skill, which is also named with each request for such a wish (`Skills.applying`) and holds the ways: `LampWish`
