@@ -397,6 +397,8 @@ final class Store: ObservableObject {
     var wishes: [LampProject] { projects.filter { !$0.isPart } }
     /// A wish's other parts, as they are now.
     func parts(of wish: LampProject) -> [LampProject] { projects.filter { $0.partOf == wish.id } }
+    /// Every app of a wish, the one at its root first: the one place that knows where a wish's apps are.
+    func apps(of wish: LampProject) -> [LampProject] { [wish] + parts(of: wish) }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
     /// Who a line about where an app opens names: the wish, or for one of its several apps that app ("The iPhone app"),
@@ -9075,7 +9077,7 @@ final class Store: ObservableObject {
             (($0.platform.hasIOS || $0.platform.hasAndroid || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
         })
         PhoneSites.sync(projects)
-        WishRooms.sync(projects)
+        WishRooms.sync(wishes.map { ($0, apps(of: $0)) })
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
@@ -9279,16 +9281,16 @@ final class Store: ObservableObject {
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         let device = String((body["device"] as? String ?? "").prefix(40))
         let wish = wish(of: project)
-        let parts = parts(of: wish)
+        let apps = apps(of: wish)
         switch route {
         case "/app/wish/poll":
-            return await WishProxies.poll(project, wish: wish, parts: parts, device: device, rejoin: body["rejoin"] as? Bool == true)
+            return await WishProxies.poll(project, wish: wish, apps: apps, device: device, rejoin: body["rejoin"] as? Bool == true)
         case "/app/wish/send":
             return await WishProxies.send(project, body: body)
         default:
             // By the name or address the app reached Lamp at, at the relay's port, as a TV app's page is told its relay.
             let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-            return await WishRooms.answer(for: project, wish: wish, parts: parts, host: host)
+            return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host)
         }
     }
 

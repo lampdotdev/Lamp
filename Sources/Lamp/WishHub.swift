@@ -2,7 +2,8 @@ import Foundation
 import LampRelayKit
 
 /// The apps of one wish seeing each other and talking: a room for the wish at the controllers' relay (`Relay`,
-/// `ControllerRelay`), which each of its apps joins as a peer named by its part ("tv", "iphone", "mac", "android").
+/// `ControllerRelay`), which each of its apps joins as a peer named by its folder in the wish ("tv", "iphone", "apple",
+/// "mac", "android"). Where a wish's apps are is `Store.apps(of:)`'s to know, and nothing here asks which is at the root.
 /// Lamp only introduces them: an app shows its own token at `/app/wish` and is told where the relay is, which peer it
 /// is, a peer credential for the room and who is in it now; what the apps then say to each other goes through the
 /// relay's process, never Lamp's, except for an app that can't hold a socket (an Android app, whose blocks speak HTTP),
@@ -17,16 +18,17 @@ enum WishRooms {
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }
 
-    /// Which of the wish's apps this one is, in the word the tools use for it.
-    static func peer(_ app: LampProject) -> String { Parts.word(for: app.platform) }
+    /// Which of the wish's apps this one is: the folder an app of its kind has in the wish, lowercased ("tv", "iphone",
+    /// "apple", "mac", "android"). A wish has one folder of each, and an app at a wish's root is named by the folder an
+    /// app of its kind gets, so a peer's name never changes.
+    static func peer(_ app: LampProject) -> String { Parts.folder(for: app.platform).lowercased() }
 
     /// Every app the wish has, as the relay and the libraries describe one.
-    static func apps(of wish: LampProject, parts: [LampProject]) -> [[String: Any]] {
-        ([wish] + parts).map(describe)
-    }
+    static func described(_ apps: [LampProject]) -> [[String: Any]] { apps.map(describe) }
 
+    /// `kind` is the device word the tools use for the app ("iphone" for an app for iPhone and iPad, Mac too).
     static func describe(_ app: LampProject) -> [String: Any] {
-        ["peer": peer(app), "kind": app.platform.rawValue, "name": Parts.name(of: app.platform)]
+        ["peer": peer(app), "kind": Parts.word(for: app.platform), "name": Parts.name(of: app.platform)]
     }
 
     /// When each room was last asked for by one of its apps, by key.
@@ -38,31 +40,30 @@ enum WishRooms {
     /// What an app of a wish is told when it asks (`/app/wish`): the relay's socket by the name it reached Lamp at, its
     /// room, which peer it is, a credential for the room, and who is in it now. An app whose wish has no other app is
     /// told it's alone, and asks again later in case one is added.
-    static func answer(for project: LampProject, wish: LampProject, parts: [LampProject], host: String) async -> (Int, [String: Any]) {
+    static func answer(for project: LampProject, wish: LampProject, apps: [LampProject], host: String) async -> (Int, [String: Any]) {
         let me = describe(project)
-        guard !parts.isEmpty else { return (200, ["alone": true, "renew": 300, "me": me]) }
+        // Alone: a wish of one app, whether it's at the wish's root or in a folder of its own.
+        guard apps.count >= 2 else { return (200, ["alone": true, "renew": 300, "me": me]) }
         let key = key(for: wish)
         asked[key] = Date()
-        ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: apps(of: wish, parts: parts))
+        ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(apps))
         startTimer()
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link between the wish's apps."]) }
         return (200, ["socket": "ws://\(host):\(port)/", "room": key, "peer": peer(project),
                       "credential": ControllerCredential.issue(kind: .peer, app: key, peer: peer(project)),
-                      "renew": 60, "peers": presence(of: wish), "apps": apps(of: wish, parts: parts), "me": me])
+                      "renew": 60, "peers": presence(of: wish), "apps": described(apps), "me": me])
     }
 
     /// Who is in the wish's room now, as the relay last said.
     static func presence(of wish: LampProject) -> [[String: Any]] { ControllerRelay.presence[key(for: wish)] ?? [] }
 
-    /// Kept in step with the list of apps: a room whose wish is gone, or alone now, ends; one whose apps changed is
-    /// told them again.
-    static func sync(_ projects: [LampProject]) {
-        let wishes = Dictionary(projects.filter { !$0.isPart }.map { (key(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
+    /// Kept in step with the list of apps (each wish with its apps, `Store.apps(of:)`): a room whose wish is gone, or
+    /// alone now, ends; one whose apps changed is told them again.
+    static func sync(_ wishes: [(wish: LampProject, apps: [LampProject])]) {
+        let byKey = Dictionary(wishes.map { (key(for: $0.wish), $0) }, uniquingKeysWith: { a, _ in a })
         for key in ControllerRelay.roomKeys {
-            guard let wish = wishes[key] else { end(key); continue }
-            let parts = projects.filter { $0.partOf == wish.id }
-            guard !parts.isEmpty else { end(key); continue }
-            ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: apps(of: wish, parts: parts))
+            guard let entry = byKey[key], entry.apps.count >= 2 else { end(key); continue }
+            ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(entry.apps))
         }
         expire()
     }
@@ -140,7 +141,7 @@ enum WishProxies {
     /// `message`, `undelivered`, and `closed` when the socket went), waiting a while for the first. The first poll opens
     /// the app's place in the room; one after the socket closed, or one that asks to `rejoin`, opens it again, so the
     /// app sees a fresh welcome.
-    static func poll(_ project: LampProject, wish: LampProject, parts: [LampProject], device: String, rejoin: Bool = false) async -> (Int, [String: Any]) {
+    static func poll(_ project: LampProject, wish: LampProject, apps: [LampProject], device: String, rejoin: Bool = false) async -> (Int, [String: Any]) {
         let key = WishRooms.key(for: wish)
         let proxy = proxies[project.id] ?? Proxy(app: project.id, room: key, device: device)
         proxies[project.id] = proxy
@@ -154,7 +155,7 @@ enum WishProxies {
         }
         if proxy.task == nil, !proxy.opening {
             proxy.opening = true
-            let (status, answer) = await WishRooms.answer(for: project, wish: wish, parts: parts, host: "127.0.0.1")
+            let (status, answer) = await WishRooms.answer(for: project, wish: wish, apps: apps, host: "127.0.0.1")
             proxy.opening = false
             guard status == 200 else { proxies[project.id] = nil; return (status, answer) }
             if answer["alone"] as? Bool == true { proxies[project.id] = nil; return (200, ["alone": true, "renew": 300, "events": []]) }
@@ -283,11 +284,11 @@ enum WishProxies {
 enum WishNote {
     static func line(for project: LampProject, store: Store) -> String {
         let wish = store.wish(of: project)
-        let parts = store.parts(of: wish)
-        guard !parts.isEmpty else { return "" }
+        let apps = store.apps(of: wish)
+        guard apps.count >= 2 else { return "" }
         let present = Dictionary(WishRooms.presence(of: wish).compactMap { member in (member["peer"] as? String).map { ($0, member) } },
                                  uniquingKeysWith: { a, _ in a })
-        return ([wish] + parts).map { app in
+        return apps.map { app in
             let name = Parts.name(of: app.platform)
             var line = "\(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(WishRooms.peer(app))\"): \(store.isOpen(app) ? "open" : "not open")"
             if let member = present[WishRooms.peer(app)] {
@@ -322,7 +323,8 @@ extension Agent.Rules {
 
     - The apps of this wish see each other and talk through Lamp, with the same building block in each language: \
     `LampWish.shared` in LampSupport.swift, `LampWish` in LampSupport.kt, `Lamp.wish` in lamp.js. Each app of the wish is \
-    a peer named by its part's word ("tv", "iphone", "mac", "android"). `peers` lists the wish's other apps that are open \
+    a peer named by its folder in the wish, lowercased ("tv", "iphone", "apple" for an app for iPhone and Mac, "mac", \
+    "android"). `peers` lists the wish's other apps that are open \
     now (observable: @Published, a StateFlow, onPeers), `send(data, to: "tv")` sends JSON of 16 KB at most to one of \
     them and `send(data)` to all, false (with why in the app's log) when it wasn't sent, and `onMessage { from, data in … }` \
     hears what they send. Lamp introduces the apps over the home Wi‑Fi, with nothing to pair, host or set up: never build \

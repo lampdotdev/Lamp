@@ -798,7 +798,8 @@ extension TVTemplate {
          *
          * The other apps of this app's wish (an iPhone app, a Mac app, an Android app): who is open now, and messages
          * between them, through Lamp on the Mac over the home Wi-Fi, with nothing to pair, host or set up. Each app of the
-         * wish is a peer named by its part: "tv" (this one), "iphone", "mac", "android".
+         * wish is a peer named by its folder in the wish: "tv" (this one), "iphone", "apple" (an app for iPhone and Mac),
+         * "mac", "android"; its kind is the device word the tools use for it.
          *
          * Lamp.wish.start()                  joins the wish's room; call it as the app opens (the other calls do it too)
          * Lamp.wish.peers()                  the wish's other apps open now: [{ peer: 'iphone', kind, name, device, since }]

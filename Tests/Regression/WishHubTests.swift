@@ -25,7 +25,7 @@ final class WishHubTests: XCTestCase {
     }
 
     func testAnAppOfAWishIsToldItsRoomAndAnAppAloneIsToldSo() async throws {
-        let (status, answer) = await WishRooms.answer(for: phone, wish: wish, parts: [phone, android], host: "192.168.1.20")
+        let (status, answer) = await WishRooms.answer(for: phone, wish: wish, apps: [wish, phone, android], host: "192.168.1.20")
         XCTAssertEqual(status, 200, "\(answer)")
         XCTAssertEqual(answer["room"] as? String, "wish:scoreboard")
         XCTAssertEqual(answer["peer"] as? String, "iphone")
@@ -36,23 +36,32 @@ final class WishHubTests: XCTestCase {
         XCTAssertNil(ControllerCredential.check(credential, kinds: [.host, .join, .controller], app: "wish:scoreboard"), "a peer's is nothing else")
         XCTAssertNil(ControllerCredential.check(credential, kinds: [.peer], app: "scoreboard"), "and opens no TV app's game")
 
-        let (aloneStatus, alone) = await WishRooms.answer(for: wish, wish: wish, parts: [], host: "127.0.0.1")
+        let (aloneStatus, alone) = await WishRooms.answer(for: wish, wish: wish, apps: [wish], host: "127.0.0.1")
         XCTAssertEqual(aloneStatus, 200)
         XCTAssertEqual(alone["alone"] as? Bool, true)
         XCTAssertNil(alone["credential"])
+
+        // Peers are named by their folder in the wish, so an app for iPhone and Mac is "apple" while its kind stays the
+        // device word the tools use; an app at the wish's root is named by the folder its kind would have.
+        let both = LampProject(id: "scoreboard.apple", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard/Apple"), platform: .universal, partOf: "scoreboard")
+        XCTAssertEqual(WishRooms.describe(both)["peer"] as? String, "apple")
+        XCTAssertEqual(WishRooms.describe(both)["kind"] as? String, "iphone")
+        XCTAssertEqual(WishRooms.describe(wish)["peer"] as? String, "tv")
+        let mac = LampProject(id: "tally", name: "Tally", exe: "Tally", dir: URL(fileURLWithPath: "/tmp/tally"), platform: .mac)
+        XCTAssertEqual(WishRooms.describe(mac)["peer"] as? String, "mac")
     }
 
     func testAnAppThatCantHoldASocketIsJoinedByLampAndTalksWithOneThatCan() async throws {
-        let parts = [phone, android]
+        let parts = [wish, phone, android]
         // The Android app polls: Lamp joins it to the room, and the first thing it hears is its welcome.
-        var (status, polled) = await WishProxies.poll(android, wish: wish, parts: parts, device: "Android emulator")
+        var (status, polled) = await WishProxies.poll(android, wish: wish, apps: parts, device: "Android emulator")
         XCTAssertEqual(status, 200, "\(polled)")
         var events = polled["events"] as? [[String: Any]] ?? []
         XCTAssertEqual(events.first?["t"] as? String, "welcome", "\(polled)")
         XCTAssertEqual(events.first?["peer"] as? String, "android")
 
         // The iPhone app holds its own socket.
-        let (phoneStatus, told) = await WishRooms.answer(for: phone, wish: wish, parts: parts, host: "127.0.0.1")
+        let (phoneStatus, told) = await WishRooms.answer(for: phone, wish: wish, apps: parts, host: "127.0.0.1")
         XCTAssertEqual(phoneStatus, 200)
         let socket = URLSession.shared.webSocketTask(with: try XCTUnwrap(URL(string: try XCTUnwrap(told["socket"] as? String))))
         socket.resume()
@@ -61,7 +70,7 @@ final class WishHubTests: XCTestCase {
         let welcome = try await Self.text(socket)
         XCTAssertEqual((welcome["peers"] as? [[String: Any]])?.first?["peer"] as? String, "android", "the Android app is already there: \(welcome)")
 
-        (status, polled) = await WishProxies.poll(android, wish: wish, parts: parts, device: "")
+        (status, polled) = await WishProxies.poll(android, wish: wish, apps: parts, device: "")
         events = polled["events"] as? [[String: Any]] ?? []
         XCTAssertEqual(events.first?["t"] as? String, "joined")
         XCTAssertEqual((events.first?["peer"] as? [String: Any])?["device"] as? String, "iPhone simulator")
@@ -73,7 +82,7 @@ final class WishHubTests: XCTestCase {
         XCTAssertEqual(heard["from"] as? String, "android")
         XCTAssertEqual((heard["data"] as? [String: Any])?["score"] as? Int, 7)
         try await socket.send(.string(Self.json(["t": "send", "to": "android", "data": "your turn"])))
-        (status, polled) = await WishProxies.poll(android, wish: wish, parts: parts, device: "")
+        (status, polled) = await WishProxies.poll(android, wish: wish, apps: parts, device: "")
         events = polled["events"] as? [[String: Any]] ?? []
         XCTAssertEqual(events.first?["t"] as? String, "message")
         XCTAssertEqual(events.first?["from"] as? String, "iphone")
@@ -88,7 +97,7 @@ final class WishHubTests: XCTestCase {
         XCTAssertEqual(bigStatus, 413)
 
         // An app that lost touch with Lamp for a while asks to join afresh, and gets the whole state again in a new welcome.
-        (status, polled) = await WishProxies.poll(android, wish: wish, parts: parts, device: "", rejoin: true)
+        (status, polled) = await WishProxies.poll(android, wish: wish, apps: parts, device: "", rejoin: true)
         events = polled["events"] as? [[String: Any]] ?? []
         XCTAssertEqual(events.first?["t"] as? String, "welcome", "\(polled)")
         XCTAssertEqual((events.first?["peers"] as? [[String: Any]])?.first?["peer"] as? String, "iphone")
@@ -97,7 +106,7 @@ final class WishHubTests: XCTestCase {
     /// A room's credentials are no TV app's session: the sync that ends the games whose phone pages aren't served
     /// (`PhoneControllers.endAll`) leaves them as they are, so a network sync never throws a wish's apps out of their room.
     func testARoomsCredentialsOutliveTheTVGamesCleanup() async throws {
-        let (status, answer) = await WishRooms.answer(for: phone, wish: wish, parts: [phone, android], host: "127.0.0.1")
+        let (status, answer) = await WishRooms.answer(for: phone, wish: wish, apps: [wish, phone, android], host: "127.0.0.1")
         XCTAssertEqual(status, 200, "\(answer)")
         XCTAssertFalse(ControllerCredential.apps.contains("wish:scoreboard"), "a room isn't among the games")
         let generation = ControllerCredential.generation("wish:scoreboard")

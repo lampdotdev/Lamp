@@ -13570,7 +13570,8 @@ enum Template {
 
     /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): who is open now, and messages
     /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
-    /// of the wish is a peer named by its part: "tv", "iphone", "mac", "android". One for the whole app, started the
+    /// of the wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
+    /// "android". One for the whole app, started the
     /// first time it's used; keep using `LampWish.shared`.
     ///
     ///     @ObservedObject var wish = LampWish.shared
@@ -13587,8 +13588,9 @@ enum Template {
     /// usable meanwhile. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
     @MainActor final class LampWish: ObservableObject {
         struct Peer: Identifiable, Equatable {
-            /// The peer's name: its part's word ("tv", "iphone", "mac", "android").
+            /// The peer's name: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
             let id: String
+            /// The device word the tools use for it ("iphone" for an app for iPhone and Mac too).
             let kind: String
             /// What Lamp calls it: "the TV app".
             let name: String

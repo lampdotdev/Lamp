@@ -892,7 +892,8 @@ extension Template {
     /**
      * The other apps of this app's wish (a TV app, an iPhone app, a Mac app…): who is open now, and messages between
      * them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app of the
-     * wish is a peer named by its part: "tv", "iphone", "mac", "android". It joins the first time it's used.
+     * wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
+     * "android". It joins the first time it's used.
      *
      *     val peers by LampWish.peers.collectAsState()          // the wish's other apps open now: peer ("tv"), kind, name, device, since
      *     LampWish.peer("tv") != null                            // whether the TV app is open
@@ -909,6 +910,7 @@ extension Template {
      * emulator and on a device on the Mac's Wi‑Fi while Lamp is open. Handlers and the flows change on the main thread.
      */
     object LampWish {
+        /** `peer` is its name (its folder in the wish, lowercased); `kind` the device word the tools use for it. */
         class Peer(val peer: String, val kind: String, val name: String, val device: String, val since: Long)
         enum class State { CONNECTING, CONNECTED, ALONE, AWAY, ENDED }
         const val messageLimit = 16 * 1024

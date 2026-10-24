@@ -1196,8 +1196,9 @@ starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 
 The apps of a wish see each other and talk through a **room** for the wish at the controllers' relay (`WishRooms`,
 WishHub.swift; `Relay.configureRoom`): each app of the wish, by its own token, asks `/app/wish` and is told the relay's
-socket (by the name it reached Lamp at), its room (`wish:<id>`, never a TV app's game key), which peer it is (its part's
-word: "tv", "iphone", "mac", "android"), a `peer` credential for that room naming that peer (`ControllerToken.Kind.peer`,
+socket (by the name it reached Lamp at), its room (`wish:<id>`, never a TV app's game key), which peer it is (its folder
+in the wish, lowercased: "tv", "iphone", "apple", "mac", "android"; an app at the root is named by the folder its kind gets,
+so the name survives a move into one; `kind` stays the device word the tools use), a `peer` credential for that room naming that peer (`ControllerToken.Kind.peer`,
 an hour, signed with the controllers' key, worthless once the room ends), and who is in the room now. The relay lets a
 peer in only with such a credential for that room naming an app the wish has, tells every member who joins and leaves
 (`welcome`, `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as
@@ -1212,7 +1213,8 @@ keeps what came only until the next poll and lets the socket go when the app has
 first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
 `Store.syncLocalNetwork`), and ended when the wish is gone, has no other app, or has had nobody in it and nobody asking for
 fifteen minutes, so the relay process runs only while a game or a room needs it (`ControllerRelay` keeps rooms beside
-sessions, and starts the relay for either). The relay says who is in each room on its output as that changes
+sessions, and starts the relay for either). Where a wish's apps are is asked of `Store.apps(of:)` and `Store.wish(of:)`
+alone, and a wish is alone when it has fewer than two apps, so nothing in the hub knows which app is at the root. The relay says who is in each room on its output as that changes
 (`ControllerRelay.presence`), and the builder is told, at the end of each request for a wish of more than one app, where
 each of its apps is: open or not, in the room or not and as what device (`WishNote`, sent like `DeviceNote`). The rule
 every app of such a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) says
