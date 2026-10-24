@@ -1373,9 +1373,9 @@ extension TVTemplate {
               if (e.c[0] > clock[0] || (e.c[0] === clock[0] && e.c[1] > clock[1])) clock = [e.c[0], e.c[1]];
               if (entries[key] && !later(e.c, entries[key].c)) continue;
               var v = e.v === null ? undefined : e.v;
-              // Held to twice the limits here, since apps measure a little differently and two apps apart may each have
-              // filled the whole: so they still agree.
-              if (v !== undefined) { var b = bytes(JSON.stringify(v)); if (b > VALUE * 2 || sizeWithout(key) + bytes(key) + b > VALUES * 2) continue; }
+              // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps apart
+              // may each have filled it, and taking every app's values whatever the order is what makes them agree.
+              if (v !== undefined && bytes(JSON.stringify(v)) > VALUE * 2) continue;
               entries[key] = { v: v, c: e.c };
               changed.push([key, v]);
             }
@@ -1398,7 +1398,8 @@ extension TVTemplate {
             for (var i = 0; i < keys.length; i++) {
               var e = list[keys[i]], json = { c: e.c };
               if (e.v !== undefined) json.v = e.v;
-              var b = bytes(JSON.stringify(json)) + bytes(keys[i]) + 4;
+              // The name as JSON writes it, escapes included.
+              var b = bytes(JSON.stringify(json)) + bytes(JSON.stringify(keys[i])) + 2;
               if (size + b > 12288) flush(false);
               batch[keys[i]] = json; size += b; any = true;
             }

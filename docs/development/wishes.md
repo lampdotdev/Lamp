@@ -217,7 +217,8 @@ comes (open either way, where it wasn't), each sends it every setting it has, a 
 (`values`, sealed like a message; through Lamp's room the relay passes it to the one app named and keeps none), and each
 takes those later than its own; a setting made while others are open goes to each at once. So a value set while apart
 arrives when they meet, and where two apps set one apart, the later wins in both. A value taken from another app is held
-to the same limit, and the whole to twice it, since two apps apart may each have filled it. A value set before an app
+to twice a value's limit, since apps measure a little differently, but not to the whole: apps apart may each have filled
+it, and taking every app's values whatever the order is what makes them agree, so the 64 KB holds what one app sets. A value set before an app
 first knew its own name takes the name once it does. Nothing here decides what goes in values or who talks to whom: that's
 the agent's, from the `wish-links` skill.
 

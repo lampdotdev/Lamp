@@ -403,6 +403,46 @@ final class WishPageTests: XCTestCase {
         XCTAssertTrue((context.evaluateScript("errors.join('|')")?.toString() ?? "").contains("not __proto__"))
     }
 
+    /// A catch-up is cut into messages by their size as they go, names escaped as JSON included, so none passes what a
+    /// message may be, even when every name is made of characters JSON writes six bytes for.
+    func testCatchUpMessagesStayWithinAMessageWhateverTheNames() throws {
+        let context = try page()
+        context.evaluateScript("""
+            var odd = new Array(61).join(String.fromCharCode(1));
+            for (var i = 100; i < 200; i++) Lamp.wish.set(odd + i, 1);
+            Lamp.wish.start();
+            """)
+        settle(context)
+        try handshake(context)
+        let before = sentItems(context).count
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 2]]])
+        let frames = sentItems(context).dropFirst(before)
+        let values = try frames.map(opened).filter { $0["t"] as? String == "values" }
+        XCTAssertEqual(values.reduce(0) { $0 + (($1["values"] as? [String: Any])?.count ?? 0) }, 100, "every value went")
+        for frame in frames { XCTAssertLessThanOrEqual((frame.count - "sealed:".count) / 2 - 16, 16384, "a message within the limit") }
+    }
+
+    /// Three apps that each filled the values while apart end with the same values whichever order the others' arrive
+    /// in: what another app set is held only to the limit of one value.
+    func testAppsThatEachFilledTheValuesApartAgreeWhateverTheOrder() throws {
+        func filled(_ peer: String) -> [String: Any] {
+            Dictionary(uniqueKeysWithValues: (0..<7).map { ("\(peer)\($0)", ["v": String(repeating: "x", count: 8190), "c": [1000 + $0, 0, peer]] as [String: Any]) })
+        }
+        var ends: [String] = []
+        for order in [["iphone", "android"], ["android", "iphone"]] {
+            let context = try page()
+            context.evaluateScript("for (var i = 0; i < 7; i++) Lamp.wish.set('tv' + i, new Array(8191).join('x')); Lamp.wish.start();")
+            settle(context)
+            try handshake(context)
+            deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster, "peers": []])
+            for peer in order { deliver(context, ["t": "values", "from": peer, "values": filled(peer)]) }
+            ends.append(context.evaluateScript("Object.keys(Lamp.wish.values()).sort().join(',')")?.toString() ?? "")
+        }
+        XCTAssertEqual(ends[0], ends[1])
+        XCTAssertEqual(ends[0].split(separator: ",").count, 21, "all of each app's values: \(ends[0])")
+    }
+
     /// An open app built by another Lamp is shown as out of date, still open, with what to do in words to show: an
     /// older one (saying nothing of what it speaks) is to be opened from Lamp, a newer one means this one is. An older
     /// one is sent no values; the status view shows the line.

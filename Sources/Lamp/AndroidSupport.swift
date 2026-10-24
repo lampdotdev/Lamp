@@ -1468,12 +1468,9 @@ extension Template {
                     if (entry.ms > clock.first || (entry.ms == clock.first && entry.n > clock.second)) clock = entry.ms to entry.n
                     val had = entries[key]
                     if (had != null && !entry.isLater(had)) continue
-                    // Held to twice the limits here, since apps measure a little differently and two apps apart may each
-                    // have filled the whole: so they still agree.
-                    if (entry.value != null) {
-                        val size = sizeOf(entry.value)
-                        if (size > valueLimit * 2 || sizeWithout(key) + key.toByteArray().size + size > valuesLimit * 2) continue
-                    }
+                    // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
+                    // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
+                    if (entry.value != null && sizeOf(entry.value) > valueLimit * 2) continue
                     entries[key] = entry
                     changed.add(key to entry.value)
                 }
@@ -1514,7 +1511,8 @@ extension Template {
             }
             for ((key, entry) in list.toSortedMap()) {
                 val json = entry.json()
-                val bytes = plain(json.toString()).toByteArray().size + key.toByteArray().size + 4
+                // The name as JSON writes it, escapes included.
+                val bytes = plain(json.toString()).toByteArray().size + plain(JSONObject.quote(key)).toByteArray().size + 2
                 if (size + bytes > 12 * 1024) flush(false)
                 batch.put(key, json)
                 size += bytes

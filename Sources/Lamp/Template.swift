@@ -14124,12 +14124,9 @@ enum Template {
                 guard Self.isValueName(key), let entry = Entry(json) else { continue }
                 if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
                 if let had = entries[key], !entry.isLater(than: had) { continue }
-                // Held to twice the limits here, since apps measure a little differently and two apps apart may each
-                // have filled the whole: so they still agree.
-                if let value = entry.value {
-                    let bytes = Self.size(of: value)
-                    guard bytes <= Self.valueLimit * 2, size(without: key) + key.utf8.count + bytes <= Self.valuesLimit * 2 else { continue }
-                }
+                // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
+                // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
+                if let value = entry.value, Self.size(of: value) > Self.valueLimit * 2 { continue }
                 entries[key] = entry
                 changed.append((key, entry.value))
             }
