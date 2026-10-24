@@ -1118,8 +1118,9 @@ extension Template {
                 Log.e("LampWish", "$what wasn't sent: ${e.message}")
                 return false
             }
-            val body = JSONObject().put("t", "send").put("data", value)
-            if (to != null) body.put("to", to)
+            // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
+            val targets = if (to != null) listOf(to) else peersFlow.value.map { it.peer }
+            val body = JSONObject().put("t", "send").put("data", value).put("to", targets.maxByOrNull { it.toByteArray().size } ?: "")
             val size = body.toString().toByteArray().size
             if (size > messageLimit) {
                 Log.e("LampWish", "$what of about $size bytes wasn't sent: a message between the wish's apps is at most $messageLimit bytes as JSON.")
@@ -1130,7 +1131,7 @@ extension Template {
             val ways = routes
             val inRoom = relayed
             val current = link
-            for (target in if (to != null) listOf(to) else peersFlow.value.map { it.peer }) {
+            for (target in targets) {
                 val direct = ways[target]
                 if (direct != null) {
                     direct.send(JSONObject().put("t", "message").put("data", value).toString(), seal = true)
@@ -1465,6 +1466,7 @@ extension Template {
         /** Dials another app at each place in turn until one answers and proves it holds the wish's key; tried again later,
          *  less often each time it fails, and at once when it's found anew. */
         private fun dial(peer: String, places: List<String>) {
+            if (closed) { dialing.remove(peer); return }
             val place = places.firstOrNull() ?: run {
                 dialing.remove(peer)
                 val tries = (nextDial[peer]?.second ?: 0) + 1
@@ -1649,6 +1651,7 @@ extension Template {
         /** A link proved both ways. Two apps that both listen may each have dialled the other: the one the app with the
          *  earlier name dialled is kept on both sides, so they agree without saying. */
         private fun ready(direct: Direct) {
+            if (closed) return drop(direct)
             opening.remove(direct)
             val other = directs[direct.peer]
             if (other != null && other !== direct && other.ready) {

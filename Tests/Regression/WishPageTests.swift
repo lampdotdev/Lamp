@@ -402,6 +402,59 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("sockets[sockets.length - 1].url")?.toString(), "ws://10.0.0.9:\(base)/")
     }
 
+    /// A page in the room whose list holds a Mac app, with time it can move on, beats it can run and a socket it can close.
+    private func roomPage(apps: [[String: Any]], peers: [[String: Any]] = []) throws -> JSContext {
+        let context = try page { context in
+            context.evaluateScript("var now = 1000000, beats = []; Date.now = function () { return now; }; function setInterval(fn) { beats.push(fn); return 1; }")
+        }
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": peers])
+        return context
+    }
+    private let macAndTV: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "mac", "kind": "mac", "name": "the Mac app"]]
+    private func urls(_ context: JSContext) -> [String] { context.evaluateScript("sockets.map(function (s) { return s.url; })")?.toArray() as? [String] ?? [] }
+
+    /// A message for all the wish's apps goes through Lamp's room to each with its name added: it's measured that way, so
+    /// one the room would turn away is refused here, with why, rather than said to be sent.
+    func testAMessageToAllIsMeasuredAsItGoesToEachApp() throws {
+        let context = try roomPage(apps: roster, peers: [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1],
+                                                         ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 1]])
+        let sent = context.evaluateScript("""
+            var pad = new Array(16384 - JSON.stringify({ t: 'send', data: '' }).length + 1).join('A');
+            JSON.stringify({ t: 'send', data: pad }).length + '|' + Lamp.wish.send(pad)
+            """)?.toString()
+        XCTAssertEqual(sent, "16384|false", "16,384 bytes alone, more once it names the app it's for")
+        XCTAssertTrue((context.evaluateScript("errors.join('\\n')")?.toString() ?? "").contains("at most 16384 bytes"))
+    }
+
+    /// The Mac app listens on a port of its own (another program has the wish's), which Lamp's room told the page. Its
+    /// first two tries there fail; from then on the page sweeps its network too, and goes on trying there as well.
+    func testATVPageGoesOnTryingWhereAnAppSaidItListens() throws {
+        let context = try roomPage(apps: macAndTV)
+        deliver(context, ["t": "at", "peer": "mac", "addresses": ["10.0.0.9:45000"]])
+        for _ in 0..<3 {
+            context.evaluateScript("""
+                var told = sockets.filter(function (s) { return s.url === 'ws://10.0.0.9:45000/'; }).pop();
+                told.onclose({ code: 1006 }); now += 60000; beats[0]();
+                """)
+        }
+        let tried = urls(context).filter { $0 == "ws://10.0.0.9:45000/" }.count
+        XCTAssertEqual(tried, 4, "tried there again after the sweep began: \(urls(context).suffix(3))")
+    }
+
+    /// stop() ends every try under way: nothing dials the next place, or sweeps on, after it.
+    func testStoppedThePageDialsNothingMore() throws {
+        let context = try roomPage(apps: macAndTV)
+        deliver(context, ["t": "at", "peer": "mac", "addresses": ["10.0.0.9:45000", "10.0.0.10:45000"]])
+        XCTAssertEqual(urls(context).last, "ws://10.0.0.9:45000/")
+        let before = urls(context).count
+        context.evaluateScript("var first = sockets[sockets.length - 1]; Lamp.wish.stop(); if (first.onclose) first.onclose({ code: 1006 });")
+        XCTAssertEqual(urls(context).count, before, "no new socket: \(urls(context).suffix(2))")
+        XCTAssertEqual(context.evaluateScript("first.closed")?.toBool(), true)
+    }
+
     private static func parse(_ text: String) -> [String: Any]? { (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] }
     private static func quoted(_ text: String) -> String {
         String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data(), as: UTF8.self).dropFirst().dropLast().description

@@ -13806,8 +13806,9 @@ enum Template {
                 fputs("LampWish: \(what) wasn't sent: that app isn't open now (open: \(peers.map(\.id))).\n", stderr)
                 return false
             }
-            var frame: [String: Any] = ["t": "send", "data": data]
-            if let peer { frame["to"] = peer }
+            // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
+            let targets = peer.map { [$0] } ?? peers.map(\.id)
+            let frame: [String: Any] = ["t": "send", "data": data, "to": targets.max { $0.utf8.count < $1.utf8.count } ?? ""]
             guard JSONSerialization.isValidJSONObject(frame), let text = try? JSONSerialization.data(withJSONObject: frame) else {
                 fputs("LampWish: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
                 return false
@@ -13817,7 +13818,7 @@ enum Template {
                 return false
             }
             // Each app the straight way when there is one, else through Lamp's room.
-            for target in peer.map({ [$0] }) ?? peers.map(\.id) {
+            for target in targets {
                 if let direct = directs[target], direct.ready,
                    let message = try? JSONSerialization.data(withJSONObject: ["t": "message", "data": data]) {
                     sealed(message, on: direct)
@@ -14302,6 +14303,7 @@ enum Template {
         /// Dials another app at each place in turn until one answers and proves it holds the wish's key; tried again later,
         /// less often each time it fails, and at once when it's found anew.
         private func dial(_ peer: String, _ places: [NWEndpoint]) {
+            guard !closed else { dialing.remove(peer); return }
             guard let place = places.first else {
                 dialing.remove(peer)
                 let tries = (nextDial[peer]?.tries ?? 0) + 1
@@ -14503,6 +14505,7 @@ enum Template {
         /// A link proved both ways. Two apps that both listen may each have dialled the other: the one the app with the
         /// earlier name dialled is kept on both sides, so they agree without saying.
         private func ready(_ direct: Direct) {
+            guard !closed else { return drop(direct) }
             opening[ObjectIdentifier(direct)] = nil
             if let other = directs[direct.peer], other !== direct, other.ready {
                 let keepNew = direct.dialled == (me < direct.peer)

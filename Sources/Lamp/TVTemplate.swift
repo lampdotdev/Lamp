@@ -1141,7 +1141,7 @@ extension TVTemplate {
           // wish's key; a message goes the straight way when there is one. So the apps go on talking with Lamp closed.
           var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
           var directs = {}, dialing = {}, nextDial = {}, told = {}, openSince = {}, lastSeen = {}, devices = {};
-          var apps = [], lastOpen = '[]', swept = 0, here = null;
+          var apps = [], lastOpen = '[]', swept = 0, here = null, pending = [], epoch = 0;
 
           function emit(name, args) {
             var list = on[name];
@@ -1433,7 +1433,8 @@ extension TVTemplate {
           // side and naming itself, so only an app holding the wish's key answers it, and only the one it was dialled as.
           // `failed` is called if it never gets ready, `settled` once it's over either way.
           function attempt(id, place, failed, settled) {
-            var ws, d, timer;
+            var ws, d, timer, mine_ = epoch;
+            if (!started) return;
             try { ws = new WebSocket('ws://' + place + '/'); } catch (e) { return failed(); }
             ws.binaryType = 'arraybuffer';
             d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null };
@@ -1442,10 +1443,14 @@ extension TVTemplate {
               d.over = true;
               clearTimeout(timer);
               try { ws.close(); } catch (e) {}
+              var at = pending.indexOf(d);
+              if (at >= 0) pending.splice(at, 1);
               if (directs[id] === d) { delete directs[id]; rebuild(); }
-              else if (!d.ready) failed();
+              // A try that stop() ended goes no further: nothing dials or sweeps on after it.
+              else if (!d.ready && mine_ === epoch && started) failed();
             }
             d.end = end;
+            pending.push(d);
             timer = setTimeout(function () { if (!d.ready) end(); }, 4000);
             ws.onopen = function () {
               d.hello = { nonce: C.random(16), tag: C.derive('lamp-wish tag', key).subarray(0, 8) };
@@ -1485,6 +1490,9 @@ extension TVTemplate {
             d.ws.send(box.buffer);
           }
           function ready(d, welcome) {
+            var at = pending.indexOf(d);
+            if (at >= 0) pending.splice(at, 1);
+            if (!started) { d.ready = true; return d.end(); }
             var had = directs[d.peer], settled = d.settled;
             d.settled = null;
             if (settled) settled();
@@ -1571,9 +1579,9 @@ extension TVTemplate {
               if (id === mine || directs[id] || dialing[id]) continue;
               if (nextDial[id] && nextDial[id].at > now) continue;
               var places = (told[id] || []).filter(placeOk);
-              if (places.length && !(nextDial[id] && nextDial[id].tries >= 2)) dial(id, places);
-              else if (!relayPresent[id]) missing.push(id);
-              else if (places.length) dial(id, places);
+              // Where it was reached or said it listens, always; and once that has failed twice, the network as well.
+              if (!relayPresent[id] && (!places.length || (nextDial[id] && nextDial[id].tries >= 2))) missing.push(id);
+              if (places.length) dial(id, places);
             }
             // A sweep only for apps Lamp's room doesn't have either, and not more than once a minute.
             if (missing.length && now - swept > 60000) sweep(missing);
@@ -1617,7 +1625,10 @@ extension TVTemplate {
               clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
               if (socket) { var s = socket; socket = null; s.close(); }
               sendKey = openKey = null; relayIn = false; relayPresent = {};
+              epoch++;
               for (var id in directs) directs[id].end();
+              while (pending.length) pending[0].end();
+              dialing = {}; nextDial = {};
               rebuild();
               setState('ended');
             },
@@ -1640,9 +1651,12 @@ extension TVTemplate {
               if (to) frame.to = to;
               var text = JSON.stringify(frame);
               if (data === undefined || text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
-              if (bytes(text) > MESSAGE) { say(what + ' of ' + bytes(text) + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
+              var targets = to ? [to] : openOnes().map(function (o) { return o.peer; }), viaRoom = [], longest = '';
+              for (var t = 0; t < targets.length; t++) if (bytes(targets[t]) > bytes(longest)) longest = targets[t];
+              // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
+              var measured = bytes(JSON.stringify({ t: 'send', data: data, to: longest }));
+              if (measured > MESSAGE) { say(what + ' of ' + measured + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
               // Each app the straight way when there is one, else through Lamp's room.
-              var targets = to ? [to] : openOnes().map(function (o) { return o.peer; }), viaRoom = [];
               for (var i = 0; i < targets.length; i++) {
                 var d = directs[targets[i]];
                 if (d && d.ready) directSeal(d, JSON.stringify({ t: 'message', data: data }));
