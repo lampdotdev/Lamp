@@ -285,7 +285,8 @@ enum ChatItem: Identifiable {
     /// as it will when the turn ends, so the chat keeps only what's going on now open. The line reads how many steps
     /// it was until its title comes, which is asked for as the stretch closes (`StepTitles.closed(in:turn:)`). The
     /// stretch still going, and a step on its own, stay rows.
-    private static func closing(_ run: [LogLine]) -> [ChatItem] {
+    /// `next` is what follows the run, when something does, which closes its last stretch too.
+    private static func closing(_ run: [LogLine], closedBy next: LogLine? = nil) -> [ChatItem] {
         var result: [ChatItem] = []
         var stretch: [LogLine] = []
         func close(at next: LogLine) {
@@ -306,6 +307,7 @@ enum ChatItem: Identifiable {
             close(at: line)
             result += items([line])
         }
+        if let next { close(at: next) }
         return result + items(stretch)
     }
 
@@ -325,9 +327,12 @@ enum ChatItem: Identifiable {
     /// whole chat, which a part alone can't tell, its answer being in a later one.
     static func chapter(_ lines: [LogLine], waiting: UUID?, ended: Date? = nil) -> [ChatItem] {
         if lines.contains(where: { $0.id == waiting }) { return items(lines) }
-        let trailing = lines.reversed().prefix(while: isStep).count
+        // Only the steps of the part's own: those from before the plan, which go under its first part, are a stretch of
+        // their own, titled as one (`StepTitles.closed(in:)`).
+        let trailing = lines.reversed().prefix { isStep($0) && $0.part == lines.last?.part }.count
         guard trailing > 1 else { return closing(lines) }
-        return closing(Array(lines.dropLast(trailing))) + [fold(Array(lines.suffix(trailing)), ended: ended)]
+        let stretch = Array(lines.suffix(trailing))
+        return closing(Array(lines.dropLast(trailing)), closedBy: stretch[0]) + [fold(stretch, ended: ended)]
     }
 
     /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it

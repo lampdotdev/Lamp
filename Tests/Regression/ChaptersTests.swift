@@ -265,4 +265,17 @@ final class ChaptersTests: XCTestCase {
         XCTAssertEqual(title, "Wrote the board's page · 12 s")
         XCTAssertEqual(steps.count, 2)
     }
+
+    /// The steps from before the plan go under the first part, but they're a stretch of their own there, as they were
+    /// titled: the part's last fold is its own steps, under their own title.
+    func testStepsFromBeforeThePlanAreAFoldOfTheirOwn() {
+        var made = line(.tool, "make_app_for"), planned = line(.tool, "plan", part: 0)
+        made.foldTitle = "Made it a TV app"
+        planned.foldTitle = "Wrote the board's page"
+        let part = [made, line(.status, "Chore Board is made for TVs now."), planned, line(.tool, "write index.html", part: 0)]
+        let titles = ChatItem.chapter(part, waiting: nil).compactMap { item -> String? in
+            if case .work(_, let title, _) = item { return title } else { return nil }
+        }
+        XCTAssertEqual(titles.map { $0.components(separatedBy: " · ")[0] }, ["Made it a TV app", "Wrote the board's page"])
+    }
 }
