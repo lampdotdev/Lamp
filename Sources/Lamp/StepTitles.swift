@@ -115,8 +115,8 @@ enum StepTitles {
         }
     }
 
-    /// The run going on's stretches of more than one step that something said came after, untitled: those that will
-    /// fold. A stretch of one step folds only as the answer's, which isn't known until the run ends. The run starts
+    /// The run going on's stretches of more than one step that something said came after, or, in a new app's first
+    /// build, that a step of the next part came after, untitled: those that will fold. A stretch of one step folds only as the answer's, which isn't known until the run ends. The run starts
     /// at its request, as `ChatItem.live` takes it: the statuses left after the last summary are that turn's end,
     /// titled with the rest of what the run leaves (`start`).
     nonisolated static func closed(in lines: [LogLine]) -> (request: String?, groups: [Group]) {
@@ -125,13 +125,18 @@ enum StepTitles {
         let request = run.first { $0.kind == .user }.map { String($0.text.prefix(600)) }
         var groups: [Group] = []
         var stretch: [LogLine] = []
+        func close() {
+            if stretch.count > 1, stretch[0].foldTitle == nil { groups.append(Group(id: stretch[0].id, steps: stretch.map(words))) }
+            stretch = []
+        }
         for line in run {
             if ChatItem.isStep(line) {
+                // A new app's first build moving on to its next part closes the steps of the part before it.
+                if let last = stretch.last, last.part != line.part { close() }
                 stretch.append(line)
                 continue
             }
-            if stretch.count > 1, stretch[0].foldTitle == nil { groups.append(Group(id: stretch[0].id, steps: stretch.map(words))) }
-            stretch = []
+            close()
         }
         return (request, groups)
     }
@@ -145,7 +150,7 @@ enum StepTitles {
         let request = run.first { $0.kind == .user }.map { String($0.text.prefix(600)) }
         var groups: [Group] = []
         var own: [UUID: String] = [:]
-        for fold in ChatItem.folds(run, summary: lines[end]).folds.compactMap({ $0 }) where fold.folds && fold.first.foldTitle == nil {
+        for fold in ChatItem.folds(run, summary: lines[end]).folds.joined() where fold.folds && fold.first.foldTitle == nil {
             let steps = fold.steps.map(words)
             if steps.count == 1 {
                 own[fold.first.id] = steps[0]

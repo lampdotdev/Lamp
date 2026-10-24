@@ -288,35 +288,46 @@ enum ChatItem: Identifiable {
     private static func closing(_ run: [LogLine]) -> [ChatItem] {
         var result: [ChatItem] = []
         var stretch: [LogLine] = []
-        for line in run {
-            if isStep(line) {
-                stretch.append(line)
-                continue
-            }
+        func close(at next: LogLine) {
             if stretch.count > 1 {
-                let seconds = stretch[0].at.flatMap { start in line.at.map { max(0, $0.timeIntervalSince(start)) } }
-                let fold = Fold(steps: stretch, first: stretch[0], isAnswers: false, seconds: seconds)
-                result.append(.work(id: stretch[0].id, title: title(of: fold, untitled: "\(stretch.count) steps"), steps: stretch))
+                result.append(fold(stretch, ended: next.at))
             } else {
                 result += items(stretch)
             }
-            result += items([line])
             stretch = []
+        }
+        for line in run {
+            if isStep(line) {
+                // A step of another part of a first build closes the stretch of the part before it.
+                if let last = stretch.last, last.part != line.part { close(at: line) }
+                stretch.append(line)
+                continue
+            }
+            close(at: line)
+            result += items([line])
         }
         return result + items(stretch)
     }
 
+    /// A closed stretch of steps as its one line: its title and how long it took once that's come (`StepTitles`),
+    /// how many steps it was until then.
+    private static func fold(_ stretch: [LogLine], ended: Date?) -> ChatItem {
+        let seconds = stretch[0].at.flatMap { start in ended.map { max(0, $0.timeIntervalSince(start)) } }
+        let fold = Fold(steps: stretch, first: stretch[0], isAnswers: false, seconds: seconds)
+        return .work(id: stretch[0].id, title: title(of: fold, untitled: "\(stretch.count) steps"), steps: stretch)
+    }
+
     /// A part of a new app's first build that the build has moved on from, or one of a build that's over (`Chapters`):
-    /// as in the run going on, each stretch of its steps folds to how many steps it was, and so does its last one,
-    /// which nothing more will follow. While a question in it waits for its answer nothing is folded, as in a run
+    /// as in the run going on, each stretch of its steps folds to its title, or how many steps it was until that
+    /// comes, and so does its last one, which nothing more in the part will follow: it was titled as the build moved
+    /// on to the next part (`StepTitles.closed(in:)`), and `ended` is when that was, for how long it took. While a question in it waits for its answer nothing is folded, as in a run
     /// (`items(_:gather:)`): nothing above the card may change height. `waiting` is the card still waiting in the
     /// whole chat, which a part alone can't tell, its answer being in a later one.
-    static func chapter(_ lines: [LogLine], waiting: UUID?) -> [ChatItem] {
+    static func chapter(_ lines: [LogLine], waiting: UUID?, ended: Date? = nil) -> [ChatItem] {
         if lines.contains(where: { $0.id == waiting }) { return items(lines) }
         let trailing = lines.reversed().prefix(while: isStep).count
         guard trailing > 1 else { return closing(lines) }
-        let stretch = Array(lines.suffix(trailing))
-        return closing(Array(lines.dropLast(trailing))) + [.work(id: stretch[0].id, title: "\(stretch.count) steps", steps: stretch)]
+        return closing(Array(lines.dropLast(trailing))) + [fold(Array(lines.suffix(trailing)), ended: ended)]
     }
 
     /// What a turn did, as against what it said: the lines that go into its one line ("Worked for…", and while it
@@ -377,34 +388,41 @@ enum ChatItem: Identifiable {
         var folds: Bool { isAnswers || steps.count > 1 }
     }
 
-    /// The stretches of a finished run's steps, and the run's other lines between them; stretch i
-    /// comes before others[i]. The answer's stretch is the last one with steps up to the run's last message.
-    static func folds(_ run: [LogLine], summary: LogLine) -> (folds: [Fold?], others: [LogLine]) {
-        var stretches: [[LogLine]] = [[]]
+    /// The stretches of a finished run's steps, and the run's other lines between them; the stretches in folds[i]
+    /// come before others[i]. Steps between two things said are one stretch, or one for each part of a new app's
+    /// first build they're in (`Chapters`), so no fold spans two parts and each part's are titled on their own. The
+    /// answer's stretch is the last one with steps up to the run's last message.
+    static func folds(_ run: [LogLine], summary: LogLine) -> (folds: [[Fold]], others: [LogLine]) {
+        var slots: [[[LogLine]]] = [[]]
         var others: [LogLine] = []
         for line in run {
             if isStep(line) {
-                stretches[stretches.count - 1].append(line)
+                if let stretch = slots[slots.count - 1].last, stretch.last?.part == line.part {
+                    slots[slots.count - 1][slots[slots.count - 1].count - 1].append(line)
+                } else {
+                    slots[slots.count - 1].append([line])
+                }
             } else {
                 others.append(line)
-                stretches.append([])
+                slots.append([])
             }
         }
         let answer = others.lastIndex { $0.kind == .agent } ?? others.count
-        let last = stretches[...min(answer, stretches.count - 1)].lastIndex { !$0.isEmpty } ?? stretches.lastIndex { !$0.isEmpty }
-        let folds = stretches.enumerated().map { index, stretch -> Fold? in
-            guard let first = stretch.first else { return nil }
-            let steps = items(stretch).flatMap { item -> [LogLine] in
-                switch item {
-                case .statuses(let lines), .tools(let lines): lines
-                case .line(let line): [line]
-                case .work(_, _, let steps): steps
+        let last = slots[...min(answer, slots.count - 1)].lastIndex { !$0.isEmpty } ?? slots.lastIndex { !$0.isEmpty }
+        let folds = slots.enumerated().map { index, stretches -> [Fold] in
+            let after = index < others.count ? others[index] : summary
+            return stretches.enumerated().map { place, stretch in
+                let steps = items(stretch).flatMap { item -> [LogLine] in
+                    switch item {
+                    case .statuses(let lines), .tools(let lines): lines
+                    case .line(let line): [line]
+                    case .work(_, _, let steps): steps
+                    }
                 }
+                let ended = place + 1 < stretches.count ? stretches[place + 1][0].at : after.at
+                let seconds = stretch[0].at.flatMap { start in ended.map { max(0, $0.timeIntervalSince(start)) } }
+                return Fold(steps: steps, first: stretch[0], isAnswers: index == last && place == stretches.count - 1, seconds: seconds)
             }
-            let after = index < others.count ? others[index] : nil
-            let ended = (after ?? summary).at
-            let seconds = first.at.flatMap { start in ended.map { max(0, $0.timeIntervalSince(start)) } }
-            return Fold(steps: steps, first: first, isAnswers: index == last, seconds: seconds)
         }
         return (folds, others)
     }
@@ -420,8 +438,8 @@ enum ChatItem: Identifiable {
     private static func folded(_ run: [LogLine], summary: LogLine) -> [ChatItem] {
         let (folds, others) = folds(run, summary: summary)
         var result: [ChatItem] = []
-        for (index, fold) in folds.enumerated() {
-            if let fold {
+        for (index, slot) in folds.enumerated() {
+            for fold in slot {
                 if fold.isAnswers {
                     result.append(.work(id: summary.id, title: title(of: fold, untitled: workedFor(summary.text)), steps: fold.steps))
                 } else if !fold.folds {
@@ -548,8 +566,11 @@ struct Transcript: View {
         let openAsk = Talk.open(in: chapterOf ?? lines)?.id
         // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
         let shown = lines
+        // A part's last stretch of steps took until what came after the part.
+        let ended = chapterOf.flatMap { chat in lines.last.flatMap { last in chat.firstIndex { $0.id == last.id } }
+            .flatMap { $0 + 1 < chat.count ? chat[$0 + 1].at : nil } }
         // While the turn goes on, its steps since it last said something are in the one line that says what it's doing.
-        let items = chapterOf != nil && !details ? ChatItem.chapter(shown, waiting: openAsk)
+        let items = chapterOf != nil && !details ? ChatItem.chapter(shown, waiting: openAsk, ended: ended)
             : ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
                              gather: !details)
         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in

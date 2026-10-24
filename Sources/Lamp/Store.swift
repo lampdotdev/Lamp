@@ -415,8 +415,8 @@ final class Store: ObservableObject {
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
-    /// The turn in progress for each app. A new app's first turn stays here after it finishes, so the bar
-    /// above its chat can show the result until the next message (`ChapterBar`).
+    /// The turn in progress for each app. A new app's first turn stays here after it finishes, until the next
+    /// message, for its chapters (`Chapters.segments`).
     @Published var progress: [String: TurnProgress] = [:]
     /// Apps that are open right now, however they were started, so Lamp can offer to quit them.
     @Published var openApps: Set<String> = []
@@ -1054,11 +1054,14 @@ final class Store: ObservableObject {
             }
             return
         }
-        logs[project.id, default: []].append(chaptered(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone,
-                                                               offer: offer, noted: noted, said: said, at: Date(), failed: failed ? true : nil,
-                                                               call: call), in: project))
+        let line = chaptered(LogLine(kind: kind, text: text, attachments: attachments, retryPhone: retryPhone, offer: offer,
+                                     noted: noted, said: said, at: Date(), failed: failed ? true : nil, call: call), in: project)
+        let movedOn = line.part != nil && ChatItem.isStep(line)
+            && logs[project.id]?.last(where: ChatItem.isStep).map { $0.part != line.part } == true
+        logs[project.id, default: []].append(line)
         if kind == .status, text.hasSuffix("…") { note(text, for: project) }   // "Building…"
-        if kind != .detail, kind != .summary, kind != .status, kind != .tool { closeSteps(project) }
+        // A first build's step in the next part closes the steps of the part before it, as something said would.
+        if movedOn || ![.detail, .summary, .status, .tool].contains(kind) { closeSteps(project) }
         saveChat(project)
     }
 

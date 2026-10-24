@@ -3,8 +3,7 @@ import LampSidebarKit
 
 /// A new app's first build in the chat: the parts of the agent's plan (its `plan` tool) are the chat's chapters, each a
 /// heading with its tick and how long it took, with what the agent said during it and its steps, folded, under it. The
-/// parts still to come wait greyed below, and a bar at the top of the chat says where the build is (`ChapterBar`). Once
-/// the app is made it all folds to one line ("Built it in 3 parts · 4 min 29 s"), with the agent's answer under it.
+/// parts still to come wait greyed below. Once the app is made it all folds to one line ("Built it in 3 parts · 4 min 29 s"), with the agent's answer under it.
 /// It took the place of a card above the chat, whose checklist and steps took over the window and left the agent's
 /// own words and its question lost below it.
 ///
@@ -237,63 +236,6 @@ struct ChapterHeading: View {
             let color: Color = state == .now ? .accentColor : .secondary
             Circle().strokeBorder(color.opacity(state == .now ? 1 : 0.5), lineWidth: 1.5)
                 .overlay { Text("\(number)").font(.system(size: 11, weight: .bold)).foregroundStyle(color.opacity(state == .now ? 1 : 0.7)) }
-        }
-    }
-}
-
-/// The bar pinned at the top of a new app's chat while it's first built: the app, where the build is ("Part 3 of 3"),
-/// and a dot for each part. Under it the chat scrolls, so it says where things are when the heading is out of sight.
-struct ChapterBar<Icon: View>: View {
-    let title: String
-    let progress: TurnProgress
-    @ViewBuilder let icon: () -> Icon
-
-    var body: some View {
-        HStack(spacing: 9) {
-            icon()
-            Text(title).fontWeight(.semibold).lineLimit(1)
-            Spacer(minLength: 12)
-            status.font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            if !progress.asking, !progress.plan.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(progress.plan.indices, id: \.self) { index in
-                        Circle().fill(color(of: index)).frame(width: 7, height: 7)
-                    }
-                }
-                .accessibilityHidden(true)
-            }
-        }
-        .padding(.horizontal, 20).padding(.vertical, 9)
-        .frame(maxWidth: 680)
-        .frame(maxWidth: .infinity)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
-    }
-
-    /// Done green, the one being worked on blue, the rest faint.
-    private func color(of part: Int) -> Color {
-        if progress.ending == .ready || progress.chaptersClosed || part < progress.reached { return .green }
-        return part == progress.reached && progress.finished == nil ? .accentColor : Color.secondary.opacity(0.25)
-    }
-
-    @ViewBuilder
-    private var status: some View {
-        if progress.asking {
-            Text("Waiting for your answer")
-        } else if let ending = progress.ending {
-            switch ending {
-            case .ready:
-                Label { Text("Ready") } icon: { Image(systemName: "circle.fill").foregroundStyle(.green).imageScale(.small) }
-            case .didNotFinish: Text("Didn't finish")
-            case .didNotOpen: Text("Built, but it didn't open")
-            }
-        } else if progress.plan.isEmpty {
-            // The agent may build without a plan; until one comes the bar says only that it's being built.
-            Text(progress.naming ? "Naming your app" : "Building it")
-        } else if progress.chaptersClosed {
-            Text("Building and opening it")
-        } else {
-            Text("Part \(min(progress.reached, progress.plan.count - 1) + 1) of \(progress.plan.count)")
         }
     }
 }

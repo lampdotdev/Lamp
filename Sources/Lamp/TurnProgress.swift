@@ -31,7 +31,7 @@ struct TurnProgress {
     /// The turn ended without a working app.
     var failed = false
     /// The agent has asked its questions: nothing is built until they're answered. Set as they arrive, so
-    /// the bar above a new app's chat says so at once (`ChapterBar`).
+    /// a new app's chapters stop showing the parts sketched before them at once.
     var asking = false
     /// The app was built, but couldn't be put in place or opened: the turn made its change, and there is
     /// nothing for the person to use yet.
@@ -160,14 +160,6 @@ struct TurnProgress {
     mutating func wait() {
         finished = Date()
         asking = true
-    }
-
-    /// How a finished turn ended, for the line under the app's name.
-    enum Ending { case ready, didNotFinish, didNotOpen }
-
-    var ending: Ending? {
-        guard finished != nil else { return nil }
-        return failed ? .didNotFinish : unopened ? .didNotOpen : .ready
     }
 
     /// The turn is over. When the app was built and opened, everything planned is done.
