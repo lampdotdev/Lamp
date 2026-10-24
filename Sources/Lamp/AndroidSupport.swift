@@ -1050,7 +1050,7 @@ extension Template {
             start()
             val what = if (to != null) "A message to \"$to\"" else "A message to the wish's apps"
             val current = link
-            if (stateFlow.value != State.CONNECTED || current?.sealer == null) {
+            if (stateFlow.value != State.CONNECTED || current == null || current.sealer == null) {
                 if (!saidAway) { saidAway = true; Log.e("LampWish", "$what wasn't sent: not connected (${stateFlow.value}). Check state and peers before sending.") }
                 return false
             }
@@ -1113,17 +1113,18 @@ extension Template {
                         link = opened
                         post(opened, listOf(JSONObject().put("text", JSONObject().put("t", "hello").put("tag", encode(tag)).put("peer", me).put("nonce", encode(nonce)).toString())))
                     }
-                    val answer = LampAI.post("/app/wish/poll", JSONObject().put("link", current.number), 40_000)
+                    val live = current ?: continue
+                    val answer = LampAI.post("/app/wish/poll", JSONObject().put("link", live.number), 40_000)
                     val events = answer.optJSONArray("events") ?: JSONArray()
                     for (i in 0 until events.length()) {
                         val event = events.optJSONObject(i) ?: continue
-                        if (!arrived(current, key, event)) { current = null; break }
+                        if (!arrived(live, key, event)) { current = null; break }
                     }
                     if (current == null) {
                         // Turned away or dropped: a new link, after a moment that grows while it keeps happening.
                         retry = minOf(retry + 1, 6)
                         delay(750L * retry)
-                    } else if (current.opener != null) {
+                    } else if (live.opener != null) {
                         retry = 0
                     }
                 } catch (e: CancellationException) {
