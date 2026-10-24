@@ -17,11 +17,16 @@ LampSupport.kt, `Lamp.wish` in lamp.js. Read the block's own comment there befor
 - Each app of the wish is a peer named by its folder in the wish, lowercased: "tv", "iphone", "apple" (an app for
   iPhone and Mac), "mac", "android".
 - `peers` lists the wish's other apps that are open now (observable: @Published, a StateFlow, onPeers).
-- `peer("tv")` is that app, open or not, with its `status`: `state` and a `reason` in words to show as they are
-  ("The TV app isn't open."). Every app the wish asks for is there, even one not made yet.
+- `peer("tv")` is that app, open or not, with its `status`: `state`, a `reason` in words to show as they are ("Open
+  the TV app on your TV.", "The TV app was last open 5 min ago. Open it on your TV.", "The TV app isn't ready yet."
+  for one Lamp hasn't made) and `lastSeen`. Every app the wish asks for is there, even one not made yet.
 - `send(data, to: "tv")` sends JSON of 16 KB at most to one of them, `send(data)` to all; false, with why in the app's
   log, when it wasn't sent. `onMessage { from, data in … }` hears what they send.
-- The app's own `status` says how its link stands. More states may come: treat any you don't name as not connected.
+- The app's own `status` says how its link stands, with a `reason` when something keeps it from the others (on a Mac
+  or iPhone, `localNetworkDenied`: the person turned off Local Network for it). More states may come: treat any you
+  don't name as not connected.
+- `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line
+  for each other app, or one app's line with its peer name. Use them, restyle them, or show the statuses your own way.
 
 What it gives: the apps find each other on the home Wi‑Fi with nothing to sign up for, pair, host or pay for. While
 Lamp is open on the Mac it introduces them; with Lamp closed, the Mac asleep or Lamp updating they go on talking
@@ -37,7 +42,8 @@ How to use it well:
   again quickly leaves and comes back between two looks.
 - An app that opens sends the whole of its own as well, and an app that gets a whole from another answers once with
   its own, so the two catch up whichever noticed the other first.
-- Show an app's `reason` where something needs it, and keep every control usable while it isn't open.
+- Where something needs another app, show why it isn't there with its `reason` (or the status view), and keep every
+  control usable while it isn't open.
 - Never build a server, sockets, polling or pairing of your own beside it, and never put the app's token or Lamp's
   addresses in the code.
 

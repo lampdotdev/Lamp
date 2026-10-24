@@ -13632,18 +13632,23 @@ enum Template {
     ///     @ObservedObject var wish = LampWish.shared
     ///     wish.peers                                    // the wish's other apps open now
     ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the wish has no "tv"
-    ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "The TV app isn't open."
+    ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "Open the TV app on your TV.",
+    ///                                                   // "The TV app was last open 5 min ago. Open it on your TV."
+    ///     wish.peer("tv")?.status.lastSeen              // when it was last open on this device, or since when while it is
     ///     wish.send(["score": 3], to: "tv")             // JSON to one app; false (with why in the app's log) when it wasn't sent
     ///     wish.send(["round": 2])                       // to every other app of the wish
     ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
-    ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable), .ended
+    ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable),
+    ///                                                   // .localNetworkDenied (the person turned off Local Network for this app), .ended
     ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
+    ///     LampWishStatus()                              // a ready-made view of all that: one line for each other app
+    ///     LampWishStatus("tv")                          // the TV app's line alone
     ///
     /// A `State` is one of the values above, and more may come: switch on it with a `default`. Show a `reason` as it is
-    /// rather than words of your own. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files
-    /// between the wish's apps aren't carried yet. Keep every control usable while an app isn't open. A TV app's game
-    /// controls (buttons, sticks, files to the TV) go with `LampController`, below.
+    /// rather than words of your own; it changes as time goes by ("5 min ago"). Each message, as the JSON that goes out,
+    /// is at most `messageLimit` (16 KB); files between the wish's apps aren't carried yet. Keep every control usable
+    /// while an app isn't open. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
     @MainActor final class LampWish: ObservableObject {
         /// Where this app's link stands, or another app's. More values may come.
         struct State: RawRepresentable, Hashable, Sendable {
@@ -13659,6 +13664,8 @@ enum Template {
             static let away = State(rawValue: "away")
             /// This app called `stop()`.
             static let ended = State(rawValue: "ended")
+            /// The person turned off Local Network for this app, so it can't reach the others on the home network.
+            static let localNetworkDenied = State(rawValue: "localNetworkDenied")
             /// Another app isn't open now.
             static let notOpen = State(rawValue: "notOpen")
         }
@@ -13666,7 +13673,8 @@ enum Template {
         struct Status: Equatable, Sendable {
             var state: State
             var reason: String
-            /// Another app's: when it was last open, or since when while it is; nil if it hasn't been since this app joined.
+            /// Another app's: when it was last open, or since when while it is; nil if it never was while this app was,
+            /// on this device.
             var lastSeen: Date?
         }
         struct Peer: Identifiable, Equatable {
@@ -13720,7 +13728,14 @@ enum Template {
         private var dialing: Set<String> = []
         private var nextDial: [String: (at: Date, tries: Int)] = [:]
         private var openSince: [String: Date] = [:]
+        /// When each app was last open, kept on the device so it's still known after this app was closed.
         private var lastSeen: [String: Date] = [:]
+        /// The apps the wish asks for that Lamp hasn't made yet.
+        private var waiting: Set<String> = []
+        private var localNetworkDenied = false
+        /// What this app last told Lamp's room of its link, for the builder to see.
+        private var reported = ""
+        private var beats = 0
         private var devices: [String: String] = [:]
         private var monitor: NWPathMonitor?
         private var listeners: [(String, Any) -> Void] = []
@@ -13845,11 +13860,37 @@ enum Template {
             switch state {
             case .connecting: "Connecting to the wish's other apps…"
             case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            #if os(macOS)
+            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in System Settings, Privacy & Security."
+            #else
+            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in Settings."
+            #endif
             default: ""
             }
         }
 
-        private static func notOpen(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + " isn't open." }
+        /// Why another app isn't there, in the same words in every language Lamp's apps are written in: where to open it,
+        /// and when it was last open here when it has been.
+        static func notOpen(name: String, kind: String, lastSeen: Date?, waiting: Bool = false, now: Date = Date()) -> String {
+            let title = name.prefix(1).uppercased() + name.dropFirst()
+            if waiting { return "\(title) isn't ready yet." }
+            let place = ["tv": "your TV", "mac": "your Mac", "iphone": "your iPhone", "android": "your Android device"][kind] ?? "its device"
+            guard let lastSeen else { return "Open \(name) on \(place)." }
+            return "\(title) was last open \(ago(now.timeIntervalSince(lastSeen))). Open it on \(place)."
+        }
+
+        static func ago(_ seconds: TimeInterval) -> String {
+            let minutes = Int(max(0, seconds) / 60), hours = minutes / 60, days = hours / 24
+            switch true {
+            case minutes < 1: return "a moment ago"
+            case minutes < 60: return "\(minutes) min ago"
+            case hours < 24: return hours == 1 ? "an hour ago" : "\(hours) hours ago"
+            default: return days == 1 ? "yesterday" : "\(days) days ago"
+            }
+        }
+
+        /// What `LampWishStatus` says of an app that's open: "TV app connected", "iPhone app connected".
+        static func connected(_ name: String) -> String { (name.hasPrefix("the ") ? String(name.dropFirst(4)) : name) + " connected" }
 
         /// Where this copy runs, for the others to show.
         private static var device: String {
@@ -13883,23 +13924,44 @@ enum Template {
                 let relayed = relayPresent[app.id]
                 let open = !closed && (direct != nil || relayed != nil)
                 if open {
+                    // Open, so made, whatever a list kept from before said.
+                    waiting.remove(app.id)
                     if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now }
                     if let device = direct?.device ?? relayed?.device, !device.isEmpty { devices[app.id] = device }
                 } else if openSince[app.id] != nil {
                     openSince[app.id] = nil
                     lastSeen[app.id] = now
+                    keep()
                 }
                 let status = open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
-                                  : Status(state: .notOpen, reason: Self.notOpen(app.name), lastSeen: lastSeen[app.id])
+                    : Status(state: .notOpen, reason: Self.notOpen(name: app.name, kind: app.kind, lastSeen: lastSeen[app.id],
+                                                                   waiting: waiting.contains(app.id), now: now),
+                             lastSeen: lastSeen[app.id])
                 return Peer(id: app.id, kind: app.kind, name: app.name, device: devices[app.id] ?? "", status: status)
             }
             let next: State = closed ? .ended : alone ? .alone
-                : (relayIn || directs.values.contains { $0.ready }) ? .connected : lampAway ? .away : .connecting
+                : (relayIn || directs.values.contains { $0.ready }) ? .connected
+                : localNetworkDenied ? .localNetworkDenied : lampAway ? .away : .connecting
             // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
             // this one connected when it does.
             if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
             if next == .connected { saidAway = false }
-            apps = list
+            // Set only when something changed, since a reason is worked out again on every beat ("5 min ago").
+            if list != apps { apps = list }
+            report()
+        }
+
+        /// Tells Lamp's room how this app's link stands (its state, and which apps it reaches straight), only when that
+        /// changes, so the builder can tell an app that can't reach the others on the network from one that does.
+        private func report() {
+            guard relayIn else { return }
+            let direct = directs.values.filter(\.ready).map(\.peer).sorted()
+            let now = status.state.rawValue + (localNetworkDenied ? " localNetworkDenied" : "") + " " + direct.joined(separator: ",")
+            guard now != reported,
+                  let json = try? JSONSerialization.data(withJSONObject: ["t": "status", "state": localNetworkDenied ? State.localNetworkDenied.rawValue : status.state.rawValue,
+                                                                         "direct": direct]) else { return }
+            reported = now
+            say(json)
         }
 
         private func setRoster(_ list: [[String: Any]]) {
@@ -13910,6 +13972,7 @@ enum Template {
             guard !given.isEmpty else { return }
             let changed = given.map(\.id).sorted() != roster.map(\.id).sorted()
             roster = given
+            waiting = Set(list.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
             for id in Array(directs.keys) where !given.contains(where: { $0.id == id }) { directs[id].map(drop) }
             keep()
             // Where each app listens follows its place in the list: a changed list moves this one's.
@@ -13923,7 +13986,13 @@ enum Template {
 
         private func keep() {
             guard let keptKey = Self.keptKey else { return }
-            let kept: [String: Any] = ["me": me, "apps": roster.map { ["peer": $0.id, "kind": $0.kind, "name": $0.name] }, "at": told]
+            let apps = roster.map { app -> [String: Any] in
+                var kept: [String: Any] = ["peer": app.id, "kind": app.kind, "name": app.name]
+                if waiting.contains(app.id) { kept["waiting"] = true }
+                return kept
+            }
+            let seen = lastSeen.mapValues { Int($0.timeIntervalSince1970 * 1000) }
+            let kept: [String: Any] = ["me": me, "apps": apps, "at": told, "seen": seen]
             UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: kept), forKey: keptKey)
         }
 
@@ -13932,7 +14001,10 @@ enum Template {
                   let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
             me = kept["me"] as? String ?? ""
             told = kept["at"] as? [String: [String]] ?? [:]
-            roster = (kept["apps"] as? [[String: Any]] ?? []).compactMap { app in
+            lastSeen = (kept["seen"] as? [String: Int] ?? [:]).mapValues { Date(timeIntervalSince1970: Double($0) / 1000) }
+            let apps = kept["apps"] as? [[String: Any]] ?? []
+            waiting = Set(apps.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
+            roster = apps.compactMap { app in
                 (app["peer"] as? String).map { ($0, app["kind"] as? String ?? "", app["name"] as? String ?? $0) }
             }
             alone = roster.count < 2 && !roster.isEmpty
@@ -14081,6 +14153,7 @@ enum Template {
                 undeliveredSaid = []
                 lampAway = false
                 relayIn = true
+                reported = ""
                 if let name = m["peer"] as? String { me = name }
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
                 relayPresent = [:]
@@ -14157,6 +14230,14 @@ enum Template {
                 if Date().timeIntervalSince(direct.heard) > 15 { drop(direct); continue }
                 frame(Data(#"{"t":"beat"}"#.utf8), text: true, on: direct)
             }
+            // When each open app was last seen is kept every minute, so it's known even when this app is closed while
+            // the other is open; and the reasons are worked out again, since they say how long ago.
+            let now = Date()
+            for app in apps where app.isOpen { lastSeen[app.id] = now }
+            beats += 1
+            if beats % 12 == 0, !peers.isEmpty { keep() }
+            // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
+            if Self.key != nil { rebuild() }
             reach()
         }
 
@@ -14227,6 +14308,8 @@ enum Template {
                     case .ready:
                         self.listenerPort = made.port?.rawValue
                         self.tellWhereIListen()
+                    case .waiting(let error) where Self.isDenied(error):
+                        self.denied(true)
                     case .failed:
                         made.cancel()
                         self.listener = nil
@@ -14262,11 +14345,35 @@ enum Template {
             }
             browser.stateUpdateHandler = { [weak self, weak browser] state in
                 MainActor.assumeIsolated {
-                    if case .failed = state, let self, self.browser === browser { self.browser?.cancel(); self.browser = nil }
+                    guard let self, self.browser === browser else { return }
+                    // Looking on the network is what macOS and iOS ask the person about: turned down, it waits saying so,
+                    // and goes on by itself once they allow it.
+                    switch state {
+                    case .ready: self.denied(false)
+                    case .waiting(let error): self.denied(Self.isDenied(error))
+                    case .failed(let error):
+                        self.denied(Self.isDenied(error))
+                        self.browser?.cancel()
+                        self.browser = nil
+                    default: break
+                    }
                 }
             }
             self.browser = browser
             browser.start(queue: .main)
+        }
+
+        /// Whether the system turned the network down because the person didn't allow Local Network for this app.
+        private static func isDenied(_ error: NWError) -> Bool {
+            if case .dns(let code) = error { return code == -65570 }   // kDNSServiceErr_PolicyDenied
+            return false
+        }
+
+        private func denied(_ now: Bool) {
+            guard now != localNetworkDenied else { return }
+            localNetworkDenied = now
+            if !now { lookAgain() }
+            rebuild()
         }
 
         /// Where to reach another app: found by its name now, else where it was last reached or said it listens.
@@ -14608,6 +14715,40 @@ enum Template {
                 count += 1
                 return plain
             }
+        }
+    }
+
+    /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
+    /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
+    /// dot of its colour. Nothing while this app is alone in its wish. Give a peer name for that app's line alone. It
+    /// takes the font and colours of where it's put, so style it as the rest of the app; or show `LampWish`'s own
+    /// `status` and `peer(_:)?.status` in a view of your own.
+    struct LampWishStatus: View {
+        @ObservedObject private var wish = LampWish.shared
+        private let only: String?
+
+        init(_ peer: String? = nil) { only = peer }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                if wish.state == .ended {
+                    // Stopped: it no longer knows who is open.
+                } else if wish.state != .connected, !wish.status.reason.isEmpty {
+                    line(.orange, wish.status.reason)
+                } else {
+                    ForEach(wish.apps.filter { only == nil || $0.id == only }) { app in
+                        line(app.isOpen ? .green : .secondary, app.isOpen ? LampWish.connected(app.name) : app.status.reason)
+                    }
+                }
+            }
+        }
+
+        private func line(_ colour: Color, _ text: String) -> some View {
+            HStack(spacing: 6) {
+                Circle().fill(colour).frame(width: 7, height: 7)
+                Text(text).fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 

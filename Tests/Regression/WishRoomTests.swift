@@ -257,6 +257,53 @@ final class WishRoomTests: XCTestCase {
         XCTAssertEqual((taken["apps"] as? [[String: Any]])?.compactMap { $0["peer"] as? String }, ["mac", "tv"])
     }
 
+    /// An app the wish asks for and Lamp hasn't made is marked so in the list the others hear, so they say it isn't ready
+    /// rather than ask the person to open it; once it's made, they hear the list again without the mark.
+    func testAnAppNotMadeYetIsMarkedInTheList() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        relay.configureRoom(room, key: key, apps: apps, waiting: ["android"])
+        let tv = try await join(address, as: "tv", device: "TV")
+        let welcome = try await tv.next()
+        let listed = (welcome["apps"] as? [[String: Any]] ?? []).map { "\($0["peer"] as? String ?? ""):\($0["waiting"] as? Bool ?? false)" }
+        XCTAssertEqual(listed, ["android:true", "iphone:false", "tv:false"])
+        relay.configureRoom(room, key: key, apps: apps)
+        let made = try await tv.next()
+        XCTAssertEqual(made["t"] as? String, "apps")
+        XCTAssertEqual((made["apps"] as? [[String: Any]])?.compactMap { $0["waiting"] }.count, 0)
+    }
+
+    /// What an app says of its own link (its state, and the apps it reaches straight) is kept for Lamp, which tells the
+    /// builder, and isn't passed to the others.
+    func testWhatAnAppSaysOfItsLinkReachesLampAlone() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let said = Said()
+        relay.onRoomChanged = { _, members in said.add(members) }
+        let tv = try await join(address, as: "tv", device: "TV")
+        _ = try await tv.next()
+        let phone = try await join(address, as: "iphone", device: "iPhone")
+        _ = try await phone.next()
+        _ = try await tv.next()   // joined
+        try await phone.send(["t": "status", "state": "localNetworkDenied", "direct": ["tv", "roku"]])
+        try await phone.send(["t": "send", "to": "tv", "data": 1])
+        let next = try await tv.next()
+        XCTAssertEqual(next["t"] as? String, "message", "the others hear nothing of it: \(next)")
+        let phoneSaid = try XCTUnwrap(said.last?.first { $0["peer"] as? String == "iphone" })
+        let link = try XCTUnwrap(phoneSaid["link"] as? [String: Any])
+        XCTAssertEqual(link["state"] as? String, "localNetworkDenied")
+        XCTAssertEqual(link["direct"] as? [String], ["tv"], "only apps the wish has")
+        tv.socket.cancel(with: .goingAway, reason: nil)
+        phone.socket.cancel(with: .goingAway, reason: nil)
+    }
+
+    private final class Said: @unchecked Sendable {
+        private let lock = NSLock()
+        private var lists: [[[String: Any]]] = []
+        func add(_ members: [[String: Any]]) { lock.lock(); lists.append(members); lock.unlock() }
+        var last: [[String: Any]]? { lock.lock(); defer { lock.unlock() }; return lists.last }
+    }
+
     // MARK: Helpers
 
     private static func refused(_ socket: URLSessionWebSocketTask) async throws { try await closed(socket, code: 4003) }

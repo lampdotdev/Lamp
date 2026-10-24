@@ -64,13 +64,23 @@ extension Template {
     }
 
     static func withoutWish(kotlin: String) -> String {
-        var text = kotlin.replacingOccurrences(of: wishJSONHelper, with: "")
+        var text = kotlin.replacingOccurrences(of: wishJSONHelper, with: "").replacingOccurrences(of: wishImports, with: "")
         if let start = text.range(of: "/**\n * The other apps of this app's wish"),
            let end = text.range(of: "/**\n * Keeps the app's data safe", range: start.upperBound..<text.endIndex) {
             text = String(text[..<start.lowerBound]) + String(text[end.lowerBound...])
         }
         return text
     }
+
+    /// What `LampWishStatus`, LampWish's composable, needs imported, which an app on its own goes without.
+    private static let wishImports = """
+    import androidx.compose.foundation.background
+    import androidx.compose.foundation.layout.size
+    import androidx.compose.runtime.collectAsState
+    import androidx.compose.runtime.getValue
+    import androidx.compose.ui.unit.dp
+
+    """
 
     /// The one line `LampWish` needs inside `LampAI`, which an app on its own goes without.
     private static let wishJSONHelper = """
@@ -122,6 +132,11 @@ extension Template {
     import android.util.Base64
     import android.util.Log
     import androidx.activity.ComponentActivity
+    import androidx.compose.foundation.background
+    import androidx.compose.foundation.layout.size
+    import androidx.compose.runtime.collectAsState
+    import androidx.compose.runtime.getValue
+    import androidx.compose.ui.unit.dp
     import androidx.core.content.ContextCompat
     import androidx.lifecycle.LifecycleRegistry
     import kotlinx.coroutines.CancellationException
@@ -923,15 +938,19 @@ extension Template {
      *
      *     val peers by LampWish.peers.collectAsState()          // the wish's other apps open now
      *     LampWish.peer("tv")?.isOpen                            // whether the TV app is open; null when the wish has no "tv"
-     *     LampWish.peer("tv")?.status?.reason                    // why not, in words to show as they are: "The TV app isn't open."
+     *     LampWish.peer("tv")?.status?.reason                    // why not, in words to show as they are: "Open the TV app on your TV.",
+     *                                                            // "The TV app was last open 5 min ago. Open it on your TV."
+     *     LampWish.peer("tv")?.status?.lastSeen                  // when it was last open on this device (ms since 1970), or since when while it is
      *     LampWish.send(mapOf("score" to 3), to = "tv")          // JSON to one app; false (with why in the log) when it wasn't sent
      *     LampWish.send(mapOf("round" to 2))                     // to every other app of the wish
      *     LampWish.onMessage { from, data -> … }                 // what another app sent: who, and its JSON (a JSONObject, JSONArray, String, Number or Boolean)
      *     val status by LampWish.status.collectAsState()         // this app's link: status.state (CONNECTING, CONNECTED, ALONE, AWAY, ENDED) and status.reason
      *     LampWish.me                                            // this app's own peer name
+     *     LampWishStatus()                                       // a ready-made composable of all that: one line for each other app
+     *     LampWishStatus("tv")                                   // the TV app's line alone
      *
      * A `State` is one of the values above, and more may come: use `when` with an `else`. Show a `reason` as it is
-     * rather than words of your own. `data` is anything LampAI's `about` takes: text, a number, a map or list, or a
+     * rather than words of your own; it changes as time goes by ("5 min ago"). `data` is anything LampAI's `about` takes: text, a number, a map or list, or a
      * @Serializable value. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files between
      * the wish's apps aren't carried yet. Keep every control usable while an app isn't open. What this app says and
      * hears is sealed with a key only the wish's apps have: carried by Lamp while it's open (this app speaks HTTP to
@@ -958,7 +977,8 @@ extension Template {
             override fun toString() = name
         }
         /** A state with what it means to the person, in words to show as they are ("" when there's nothing to say).
-         *  `lastSeen` (another app's, ms since 1970): when it was last open, or since when while it is; null if not since this app joined. */
+         *  `lastSeen` (another app's, ms since 1970): when it was last open, or since when while it is; null if it never was
+         *  while this app was, on this device. */
         data class Status(val state: State, val reason: String, val lastSeen: Long? = null)
         /** `peer` is its name (its folder in the wish, lowercased); `kind` the device word the tools use for it; `device`
          *  where it runs, once it has been open. */
@@ -1015,7 +1035,13 @@ extension Template {
         private val dialing = mutableSetOf<String>()
         private val nextDial = mutableMapOf<String, Pair<Long, Int>>()
         private val openSince = mutableMapOf<String, Long>()
+        /** When each app was last open, kept on the device so it's still known after this app was closed. */
         private val lastSeen = mutableMapOf<String, Long>()
+        /** The apps the wish asks for that Lamp hasn't made yet. */
+        private var waiting: Set<String> = emptySet()
+        /** What this app last told Lamp's room of its link, for the builder to see. */
+        private var reported = ""
+        private var beats = 0
         private val devices = mutableMapOf<String, String>()
         private var networks: List<String> = emptyList()
         @Volatile private var routes: Map<String, Direct> = emptyMap()
@@ -1066,7 +1092,30 @@ extension Template {
             else -> ""
         }
 
-        private fun notOpen(name: String) = name.replaceFirstChar { it.uppercase() } + " isn't open."
+        /** Why another app isn't there, in the same words in every language Lamp's apps are written in: where to open
+         *  it, and when it was last open here when it has been. */
+        fun notOpen(name: String, kind: String, lastSeen: Long?, waiting: Boolean = false, now: Long = System.currentTimeMillis()): String {
+            val title = name.replaceFirstChar { it.uppercase() }
+            if (waiting) return "$title isn't ready yet."
+            val place = mapOf("tv" to "your TV", "mac" to "your Mac", "iphone" to "your iPhone", "android" to "your Android device")[kind] ?: "its device"
+            if (lastSeen == null) return "Open $name on $place."
+            return "$title was last open ${ago(now - lastSeen)}. Open it on $place."
+        }
+
+        fun ago(millis: Long): String {
+            val minutes = maxOf(0L, millis) / 60_000
+            val hours = minutes / 60
+            val days = hours / 24
+            return when {
+                minutes < 1 -> "a moment ago"
+                minutes < 60 -> "$minutes min ago"
+                hours < 24 -> if (hours == 1L) "an hour ago" else "$hours hours ago"
+                else -> if (days == 1L) "yesterday" else "$days days ago"
+            }
+        }
+
+        /** What `LampWishStatus` says of an app that's open: "TV app connected", "iPhone app connected". */
+        fun connected(name: String): String = name.removePrefix("the ") + " connected"
 
         /** Joins the wish's other apps (again, after `stop()`); otherwise nothing, since it joins by itself when first used. */
         fun start() {
@@ -1187,12 +1236,16 @@ extension Template {
                 val inRoom = relayPresent[app.id]
                 val open = !closed && (direct != null || inRoom != null)
                 if (open) {
+                    // Open, so made, whatever a list kept from before said.
+                    waiting = waiting - app.id
                     if (openSince[app.id] == null) openSince[app.id] = inRoom?.second ?: now
                     (direct?.device ?: inRoom?.first)?.takeIf { it.isNotEmpty() }?.let { devices[app.id] = it }
                 } else if (openSince.remove(app.id) != null) {
                     lastSeen[app.id] = now
+                    keep()
                 }
-                val status = if (open) Status(State.CONNECTED, "", openSince[app.id]) else Status(State.NOT_OPEN, notOpen(app.name), lastSeen[app.id])
+                val status = if (open) Status(State.CONNECTED, "", openSince[app.id])
+                    else Status(State.NOT_OPEN, notOpen(app.name, app.kind, lastSeen[app.id], app.id in waiting, now), lastSeen[app.id])
                 Peer(app.id, app.kind, app.name, devices[app.id] ?: "", status)
             }
             routes = directs.filterValues { it.ready }.toMap()
@@ -1210,6 +1263,20 @@ extension Template {
             if (next == State.CONNECTED) saidAway = false
             appsFlow.value = list
             peersFlow.value = list.filter { it.isOpen }
+            report()
+        }
+
+        /** Tells Lamp's room how this app's link stands (its state, and which apps it reaches straight), only when that
+         *  changes, so the builder can tell an app that can't reach the others on the network from one that does. */
+        private fun report() {
+            val current = link ?: return
+            if (!relayIn || current.sealer == null) return
+            val direct = directs.values.filter { it.ready }.map { it.peer }.sorted()
+            val now = "${stateFlow.value} ${direct.joinToString(",")}"
+            if (now == reported) return
+            reported = now
+            sender.start()
+            outbox.trySend(current to JSONObject().put("t", "status").put("state", stateFlow.value.name).put("direct", JSONArray(direct)).toString())
         }
 
         private fun setRoster(list: List<JSONObject>) {
@@ -1217,6 +1284,7 @@ extension Template {
             if (given.isEmpty()) return
             val changed = given.map { it.id }.sorted() != roster.map { it.id }.sorted()
             roster = given
+            waiting = list.filter { it.optBoolean("waiting") }.map { it.optString("peer") }.toSet()
             for (id in directs.keys.toList()) if (given.none { it.id == id }) directs[id]?.let(::drop)
             keep()
             // Where each app listens follows its place in the list: a changed list moves this one's.
@@ -1231,8 +1299,11 @@ extension Template {
         private fun keep() {
             val file = keptFile ?: return
             val at = JSONObject().apply { for ((peer, places) in told) put(peer, JSONArray(places)) }
-            val kept = JSONObject().put("me", me).put("at", at)
-                .put("apps", JSONArray(roster.map { JSONObject().put("peer", it.id).put("kind", it.kind).put("name", it.name) }))
+            val seen = JSONObject().apply { for ((peer, at) in lastSeen) put(peer, at) }
+            val kept = JSONObject().put("me", me).put("at", at).put("seen", seen)
+                .put("apps", JSONArray(roster.map { app ->
+                    JSONObject().put("peer", app.id).put("kind", app.kind).put("name", app.name).apply { if (app.id in waiting) put("waiting", true) }
+                }))
             try { file.parentFile?.mkdirs(); file.writeText(kept.toString()) } catch (e: Exception) { Log.e("LampWish", "couldn't keep the wish's apps: ${e.message}") }
         }
 
@@ -1240,7 +1311,10 @@ extension Template {
             val kept = try { keptFile?.takeIf { it.exists() }?.let { JSONObject(it.readText()) } } catch (e: Exception) { null } ?: return
             if (me.isEmpty()) me = kept.optString("me")
             kept.optJSONObject("at")?.let { at -> for (peer in at.keys()) told[peer] = (0 until (at.optJSONArray(peer)?.length() ?: 0)).map { at.getJSONArray(peer).optString(it) } }
-            roster = jsonList(kept.optJSONArray("apps")).mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
+            kept.optJSONObject("seen")?.let { seen -> for (peer in seen.keys()) seen.optLong(peer).takeIf { it > 0 }?.let { lastSeen[peer] = it } }
+            val apps = jsonList(kept.optJSONArray("apps"))
+            waiting = apps.filter { it.optBoolean("waiting") }.map { it.optString("peer") }.toSet()
+            roster = apps.mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
             alone = roster.size < 2 && roster.isNotEmpty()
             rebuild()
         }
@@ -1385,6 +1459,7 @@ extension Template {
                     undeliveredSaid.clear()
                     lampAway = false
                     relayIn = true
+                    reported = ""
                     me = m.optString("peer", me)
                     setRoster(jsonList(m.optJSONArray("apps")))
                     relayPresent.clear()
@@ -1437,6 +1512,12 @@ extension Template {
                 if (now - direct.heard > 15_000) { drop(direct); continue }
                 direct.send("""{"t":"beat"}""", seal = false)
             }
+            // When each open app was last seen is kept every minute, so it's known even when this app is closed while the
+            // other is open; and the reasons are worked out again, since they say how long ago.
+            for (app in appsFlow.value) if (app.isOpen) lastSeen[app.peer] = now
+            beats += 1
+            if (beats % 12 == 0 && peersFlow.value.isNotEmpty()) keep()
+            rebuild()
             val mine = addresses()
             if (mine != networks) { networks = mine; lookAgain() } else reach()
         }
@@ -1930,6 +2011,40 @@ extension Template {
                 cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, nonce()))
                 cipher.doFinal(sealed).also { count += 1 }
             } catch (e: Exception) { null }
+        }
+    }
+
+    /**
+     * How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on your
+     * iPhone."), or what keeps this app from them, with a dot of its colour. Nothing while this app is alone in its wish.
+     * Give a peer name for that app's line alone. It takes the text style of where it's put (LocalTextStyle), so style it
+     * as the rest of the app; or show LampWish's own `status` and `peer(id)?.status` in a composable of your own.
+     */
+    @androidx.compose.runtime.Composable
+    fun LampWishStatus(peer: String? = null, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
+        val status by LampWish.status.collectAsState()
+        val apps by LampWish.apps.collectAsState()
+        androidx.compose.foundation.layout.Column(modifier, verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
+            if (status.state == LampWish.State.ENDED) {
+                // Stopped: it no longer knows who is open.
+            } else if (status.state != LampWish.State.CONNECTED && status.reason.isNotEmpty()) {
+                LampWishLine(androidx.compose.ui.graphics.Color(0xFFF59E0B), status.reason)
+            } else {
+                for (app in apps) if (peer == null || app.peer == peer) {
+                    LampWishLine(if (app.isOpen) androidx.compose.ui.graphics.Color(0xFF22C55E) else androidx.compose.ui.graphics.Color.Gray,
+                                 if (app.isOpen) LampWish.connected(app.name) else app.status.reason)
+                }
+            }
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun LampWishLine(colour: androidx.compose.ui.graphics.Color, text: String) {
+        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.size(7.dp)
+                .background(colour, androidx.compose.foundation.shape.CircleShape))
+            androidx.compose.material3.Text(text)
         }
     }
 
