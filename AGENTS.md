@@ -1027,7 +1027,8 @@ Phones as controllers never go through Lamp's own process: Lamp introduces the t
 credentials, and they talk directly or through a relay of Lamp's own (`PhoneControllers`), over the home network the
 phone page is already served on, so nothing is hosted and nothing leaves the home. The relay (`LampRelayKit`'s `Relay`)
 runs as a process of its own, `LampRelay` in Lamp's Helpers, started by `ControllerRelay` while a TV app takes players
-and ended when none does, or when Lamp quits (its input closes). Lamp tells it on its input which apps' sessions are open
+or a wish's apps have a room there (`WishRooms`, under "Wishes of more than one app") and ended when none does, or when
+Lamp quits (its input closes). Lamp tells it on its input which apps' sessions are open
 (their generation, phone page port and address, this Mac's names) and gives it the controllers' key; it speaks
 WebSocket with the Network framework on a queue of its own and keeps the port it had while Lamp runs. The phone page
 loads `lamp-controller.js`, which Lamp serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s
@@ -1143,8 +1144,8 @@ a TV app with an iPhone app, on a Mac without Xcode, starts as the TV app with t
 The TV app of a wish takes the wish's other apps as players from its root or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
 stands alone.
-An Android part has none of Lamp's building blocks for reaching the wish's other apps, and is told so
-(`Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
+Every app of a wish, Android's included, reaches the wish's other apps through `LampWish` (below)
+and is told so (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
 as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
 `Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
 opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
@@ -1193,7 +1194,36 @@ A new wish that could be for more than one kind and doesn't say which (the namin
 conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
 starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 
-The parts talk to their TV app as players of `Lamp.controllers`, with `LampController` in LampSupport. An iPhone part
+The apps of a wish see each other and talk through a **room** for the wish at the controllers' relay (`WishRooms`,
+WishHub.swift; `Relay.configureRoom`): each app of the wish, by its own token, asks `/app/wish` and is told the relay's
+socket (by the name it reached Lamp at), its room (`wish:<id>`, never a TV app's game key), which peer it is (its part's
+word: "tv", "iphone", "mac", "android"), a `peer` credential for that room naming that peer (`ControllerToken.Kind.peer`,
+an hour, signed with the controllers' key, worthless once the room ends), and who is in the room now. The relay lets a
+peer in only with such a credential for that room naming an app the wish has, tells every member who joins and leaves
+(`welcome`, `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as
+a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
+phone's size and rate limits (16 KB of JSON a message, `ControllerWire`); files between peers aren't carried yet. The same
+block in every language, under one name: `LampWish.shared` in LampSupport.swift (a WebSocket of its own to the relay),
+`Lamp.wish` in lamp.js (the same, from the TV page, in the preview and on a TV), and `LampWish` in LampSupport.kt, whose
+blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp opens the room's socket for the Android app, as it
+(`WishProxies`), and the app polls `/app/wish/poll` for what came (answered as soon as something has, or after 25 seconds
+with nothing) and posts `/app/wish/send`; the relay sees one more peer, and the app's token is what lets it do either. Lamp
+keeps what came only until the next poll and lets the socket go when the app has stopped polling. A room is opened the
+first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
+`Store.syncLocalNetwork`), and ended when the wish is gone, has no other app, or has had nobody in it and nobody asking for
+fifteen minutes, so the relay process runs only while a game or a room needs it (`ControllerRelay` keeps rooms beside
+sessions, and starts the relay for either). The relay says who is in each room on its output as that changes
+(`ControllerRelay.presence`), and the builder is told, at the end of each request for a wish of more than one app, where
+each of its apps is: open or not, in the room or not and as what device (`WishNote`, sent like `DeviceNote`). The rule
+every app of such a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) says
+what the block does, its limit, to start it as the app opens, to show plainly when an app it needs isn't open and never to
+build its own server, sockets or polling between them; it says nothing about who should talk to whom. A stranger on the
+network can reach none of it: `/app/wish` and the poll routes take an app's own token, the relay takes a credential Lamp
+signed for that room and that peer, and both run only while Lamp does. What one app of a wish says is readable by the
+wish's other apps and by nothing else; a device app made through an integration has no `LampWish` yet.
+
+A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) still does so as a player of
+`Lamp.controllers`, with `LampController` in LampSupport, beside `LampWish` for everything else. An iPhone part
 listens for the TV page itself (an `NWListener` speaking WebSocket, on the phone or in the simulator) and tells Lamp
 where (`/app/controller` with `as: listener`, its own token, every 20 seconds); Lamp keeps where it is and gives it a key
 of its own for that listener (`PhoneControllers.register`), and the TV page's answer lists it with a ticket signed with

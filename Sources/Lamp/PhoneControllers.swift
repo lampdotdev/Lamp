@@ -139,10 +139,10 @@ enum ControllerCredential {
     /// The apps credentials have been handed out for since their sessions last ended.
     static var apps: Set<String> { lock.withLock { known } }
 
-    static func issue(kind: Kind, app: String, player: Int? = nil, preview: Bool = false, now: Date = Date()) -> String {
+    static func issue(kind: Kind, app: String, player: Int? = nil, preview: Bool = false, peer: String? = nil, now: Date = Date()) -> String {
         lock.withLock {
             known.insert(app)
-            return ControllerToken.issue(kind: kind, app: app, generation: generations[app] ?? 0, player: player, preview: preview, now: now, key: key)
+            return ControllerToken.issue(kind: kind, app: app, generation: generations[app] ?? 0, player: player, preview: preview, peer: peer, now: now, key: key)
         }
     }
 
@@ -160,10 +160,11 @@ enum ControllerCredential {
     }
 }
 
-/// The relay between TV apps and their phones (`Relay`), run as a process of its own from Lamp's Helpers while any TV
-/// app takes players, so a game's messages and files never pass through Lamp. Lamp tells it on its input which apps'
-/// sessions are open, with the key their credentials are signed with; it says on its output where it listens, and it
-/// ends when Lamp does (its input closes). It keeps the port it had for as long as Lamp runs, so a phone's page that
+/// The relay between TV apps and their phones, and between the apps of one wish (`Relay`), run as a process of its own
+/// from Lamp's Helpers while any TV app takes players or any wish's room is open (`WishRooms`), so a game's messages and
+/// files, and what a wish's apps say to each other, never pass through Lamp. Lamp tells it on its input which apps'
+/// sessions and which wishes' rooms are open, with the key their credentials are signed with; it says on its output where
+/// it listens and who is in each room, and it ends when Lamp does (its input closes). It keeps the port it had for as long as Lamp runs, so a phone's page that
 /// lost its socket finds it again where it was.
 @MainActor
 enum ControllerRelay {
@@ -201,7 +202,7 @@ enum ControllerRelay {
     /// takes players, or when it hasn't said within a few seconds.
     static func ready() async -> UInt16? {
         if let port { return port }
-        guard !sessions.isEmpty else { return nil }
+        guard !sessions.isEmpty || !rooms.isEmpty else { return nil }
         let id = UUID()
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(15))
@@ -216,7 +217,29 @@ enum ControllerRelay {
         let wanted = Dictionary(serving.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for app in sessions.keys where wanted[app] == nil { end(app) }
         for project in wanted.values { open(project.id) }
-        if sessions.isEmpty { quit() }
+        if sessions.isEmpty, rooms.isEmpty { quit() }
+    }
+
+    /// The wishes' rooms (`WishRooms`), each as the relay is told it: told again to a relay started afresh.
+    private static var rooms: [String: [String: Any]] = [:]
+    /// Who is in each room now, as the relay last said: the room's key, then its members (`peer`, `kind`, `name`,
+    /// `device`, `since`).
+    private(set) static var presence: [String: [[String: Any]]] = [:]
+    static var roomKeys: [String] { Array(rooms.keys) }
+
+    /// Opens a wish's room, or tells the relay its apps again when they changed.
+    static func openRoom(_ key: String, generation: Int, apps: [[String: Any]]) {
+        let line: [String: Any] = ["op": "room", "app": key, "generation": generation, "apps": apps]
+        guard rooms[key].map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: line) }) ?? true else { return }
+        rooms[key] = line
+        if process == nil { launch() } else { send(line) }
+    }
+
+    static func endRoom(_ key: String) {
+        presence[key] = nil
+        guard rooms.removeValue(forKey: key) != nil else { return }
+        send(["op": "end-room", "app": key])
+        if sessions.isEmpty, rooms.isEmpty { quit() }
     }
 
     /// The app's session as it is now: its generation and the address its phone page is at. Sent again when the page moves.
@@ -241,7 +264,7 @@ enum ControllerRelay {
     static func end(_ app: String) {
         guard sessions.removeValue(forKey: app) != nil else { return }
         send(["op": "end", "app": app])
-        if sessions.isEmpty { quit() }
+        if sessions.isEmpty, rooms.isEmpty { quit() }
     }
 
     private static func launch() {
@@ -267,9 +290,18 @@ enum ControllerRelay {
             while let end = pending.firstIndex(of: 0x0A) {
                 let line = pending[..<end]
                 pending.removeSubrange(...end)
-                guard let said = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any], said["op"] as? String == "ready" else { continue }
-                let port = (said["port"] as? Int).flatMap { UInt16(exactly: $0) }
-                Task { @MainActor in if Self.process === process { finish(port) } }
+                guard let said = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { continue }
+                switch said["op"] as? String {
+                case "ready":
+                    let port = (said["port"] as? Int).flatMap { UInt16(exactly: $0) }
+                    Task { @MainActor in if Self.process === process { finish(port) } }
+                case "room":
+                    guard let room = said["app"] as? String else { continue }
+                    let members = said["peers"] as? [[String: Any]] ?? []
+                    Task { @MainActor in if Self.process === process, rooms[room] != nil { presence[room] = members } }
+                default:
+                    continue
+                }
             }
         }
         do {
@@ -282,6 +314,7 @@ enum ControllerRelay {
         self.input = input.fileHandleForWriting
         send(["op": "start", "key": ControllerCredential.keyData.base64EncodedString(), "port": Int(lastPort)])
         for line in sessions.values { send(line) }
+        for line in rooms.values { send(line) }
     }
 
     private static func finish(_ port: UInt16?) {
@@ -303,8 +336,9 @@ enum ControllerRelay {
         process = nil
         input = nil
         port = nil
+        presence = [:]
         finish(nil)
-        guard !sessions.isEmpty else { return }
+        guard !sessions.isEmpty || !rooms.isEmpty else { return }
         restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
         guard restarts.count <= 3 else { return NSLog("Lamp's controller relay keeps ending; it's left off until a TV app opens again.") }
         launch()
@@ -313,6 +347,7 @@ enum ControllerRelay {
     private static func quit() {
         guard let process else { return }
         self.process = nil
+        presence = [:]
         try? input?.close()
         input = nil
         finish(nil)

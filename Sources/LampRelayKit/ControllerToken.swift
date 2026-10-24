@@ -10,14 +10,17 @@ import Foundation
 ///   join        what a phone's link carries, after the #, which a browser never sends: for fifteen minutes.
 ///   controller  given to a phone once it has joined: its place, for two minutes, renewed while it stays, so a phone that
 ///               drops off comes back as the same player.
+///   peer        one of a wish's own apps, for its wish's room (`Relay` rooms): named by its part ("tv", "iphone", "mac",
+///               "android"), for an hour; the app asks Lamp for a fresh one with its own token when it runs out.
 public enum ControllerToken {
     public enum Kind: String, CaseIterable, Sendable {
-        case host, join, controller
+        case host, join, controller, peer
         public var lifetime: TimeInterval {
             switch self {
             case .host: 12 * 3600
             case .join: 15 * 60
             case .controller: 2 * 60
+            case .peer: 3600
             }
         }
     }
@@ -28,21 +31,25 @@ public enum ControllerToken {
         public let player: Int?
         /// A host's: the TV preview on the Mac, which keeps its game from a TV that runs the same app meanwhile.
         public let preview: Bool
-        public init(kind: Kind, app: String, player: Int?, preview: Bool) {
+        /// A peer's: which of the wish's apps it is, by its part's word.
+        public let peer: String?
+        public init(kind: Kind, app: String, player: Int?, preview: Bool, peer: String? = nil) {
             self.kind = kind
             self.app = app
             self.player = player
             self.preview = preview
+            self.peer = peer
         }
     }
 
-    public static func issue(kind: Kind, app: String, generation: Int, player: Int? = nil, preview: Bool = false,
+    public static func issue(kind: Kind, app: String, generation: Int, player: Int? = nil, preview: Bool = false, peer: String? = nil,
                              lifetime: TimeInterval? = nil, now: Date = Date(), key: SymmetricKey) -> String {
         var payload: [String: Any] = ["k": kind.rawValue, "a": app, "g": generation,
                                       "e": Int(now.addingTimeInterval(lifetime ?? kind.lifetime).timeIntervalSince1970),
                                       "n": Data((0..<9).map { _ in UInt8.random(in: 0...255) }).urlSafeBase64]
         if let player { payload["p"] = player }
         if preview { payload["v"] = 1 }
+        if let peer { payload["r"] = peer }
         let body = ((try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()).urlSafeBase64
         return body + "." + Data(HMAC<SHA256>.authenticationCode(for: Data(body.utf8), using: key)).urlSafeBase64
     }
@@ -60,7 +67,7 @@ public enum ControllerToken {
               let kind = (payload["k"] as? String).flatMap(Kind.init(rawValue:)), kinds.contains(kind),
               payload["a"] as? String == app, payload["g"] as? Int == generation,
               let expires = payload["e"] as? Int, Double(expires) > now.timeIntervalSince1970 else { return nil }
-        return Claim(kind: kind, app: app, player: payload["p"] as? Int, preview: payload["v"] as? Int == 1)
+        return Claim(kind: kind, app: app, player: payload["p"] as? Int, preview: payload["v"] as? Int == 1, peer: payload["r"] as? String)
     }
 }
 

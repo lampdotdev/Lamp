@@ -19,7 +19,7 @@ extension Target {
                            changeRules: { _ in Agent.Rules.androidEdit + Agent.Rules.androidFrameworks + Agent.Rules.androidAI + Agent.Rules.androidData + Agent.Rules.androidTry },
                            skills: { ["android-design"] },
                            // It reaches AI only through this Mac, in the emulator or over the same Wi‑Fi.
-                           elsewhere: { _ in "- On the person's Android device: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI" }),
+                           elsewhere: { _ in "- On the person's Android device: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI and no LampWish link to the wish's other apps" }),
         recipe: Recipe(language: .kotlin, fill: Template.fillAndroid,
                        // The Gradle project's files and its Kotlin building blocks.
                        ownedFiles: Template.writeAndroidOwnedFiles, support: Template.writeAndroidSupport,

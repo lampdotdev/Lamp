@@ -13566,6 +13566,254 @@ enum Template {
         }
     }
 
+    // MARK: - The wish's other apps
+
+    /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): who is open now, and messages
+    /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
+    /// of the wish is a peer named by its part: "tv", "iphone", "mac", "android". One for the whole app, started the
+    /// first time it's used; keep using `LampWish.shared`.
+    ///
+    ///     @ObservedObject var wish = LampWish.shared
+    ///     wish.peers                                    // the wish's other apps open now: id ("tv"), kind, name, device, since
+    ///     wish.peer("tv") != nil                        // whether the TV app is open
+    ///     wish.send(["score": 3], to: "tv")             // JSON to one app; false (with why in the app's log) when it wasn't sent
+    ///     wish.send(["round": 2])                       // to every other app of the wish
+    ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
+    ///     wish.state                                    // .connecting, .connected, .alone (the wish has no other app), .away (Lamp isn't reachable), .ended
+    ///     wish.me                                       // this app's own peer name
+    ///
+    /// Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files between the wish's apps aren't
+    /// carried yet. Show plainly when an app this one needs isn't open ("Open it on the TV"), and keep every control
+    /// usable meanwhile. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
+    @MainActor final class LampWish: ObservableObject {
+        struct Peer: Identifiable, Equatable {
+            /// The peer's name: its part's word ("tv", "iphone", "mac", "android").
+            let id: String
+            let kind: String
+            /// What Lamp calls it: "the TV app".
+            let name: String
+            /// Where it runs, in its own words: "TV preview", "iPhone simulator", "Android emulator", "Mac"…
+            let device: String
+            let since: Date
+        }
+        enum State: String { case connecting, connected, alone, away, ended }
+        static let messageLimit = 16 * 1024
+        static let shared = LampWish()
+
+        @Published private(set) var peers: [Peer] = []
+        @Published private(set) var state: State = .connecting
+        @Published private(set) var me = ""
+
+        private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
+        private let link = Link()
+        private var room: String?
+        private var address: URL?
+        private var credential: String?
+        private var listeners: [(String, Any) -> Void] = []
+        private var closed = false
+        private var retry = 0
+        private var heard = Date()
+        private var beat: Timer?
+        private var saidAway = false
+        private var undeliveredSaid: Set<String> = []
+
+        private init() {
+            open()
+            beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+        }
+
+        /// Joins the wish's room again after `stop()`; otherwise nothing, since it joins by itself.
+        func start() {
+            guard closed else { return }
+            closed = false
+            retry = 0
+            open()
+        }
+
+        func stop() {
+            closed = true
+            link.task?.cancel(with: .goingAway, reason: nil)
+            link.task = nil
+            peers = []
+            state = .ended
+        }
+
+        /// The wish's app with this peer name, while it's open.
+        func peer(_ id: String) -> Peer? { peers.first { $0.id == id } }
+
+        /// Sends `data` (anything JSON can hold) to one of the wish's apps, or with no `to` to all of them; false, with the
+        /// reason in the app's log, when it wasn't sent.
+        @discardableResult
+        func send(_ data: Any, to peer: String? = nil) -> Bool {
+            let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
+            guard state == .connected, let task = link.task else {
+                if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
+                return false
+            }
+            if let peer, self.peer(peer) == nil {
+                fputs("LampWish: \(what) wasn't sent: that app isn't open now (peers: \(peers.map(\.id))).\n", stderr)
+                return false
+            }
+            var frame: [String: Any] = ["t": "send", "data": data]
+            if let peer { frame["to"] = peer }
+            guard JSONSerialization.isValidJSONObject(frame), let text = try? JSONSerialization.data(withJSONObject: frame) else {
+                fputs("LampWish: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                return false
+            }
+            guard text.count <= Self.messageLimit else {
+                fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the wish's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
+                return false
+            }
+            task.send(.string(String(decoding: text, as: UTF8.self))) { error in
+                if let error { fputs("LampWish: a message didn't go: \(error.localizedDescription)\n", stderr) }
+            }
+            return true
+        }
+
+        /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
+        func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { listeners.append(handler) }
+
+        /// Where this copy runs, for the others to show.
+        private static var device: String {
+            #if os(macOS)
+            return "Mac"
+            #elseif targetEnvironment(simulator)
+            return "iPhone simulator"
+            #else
+            return UIDevice.current.model
+            #endif
+        }
+
+        // Where to join, from Lamp: the relay's socket, this app's room and peer name, and a credential for them, asked
+        // again whenever the one held has run out or was turned away.
+        private func open() {
+            guard !closed else { return }
+            if state != .alone { state = .connecting }
+            Task { @MainActor in
+                do {
+                    if credential == nil || address == nil {
+                        let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
+                        if answer["alone"] as? Bool == true {
+                            // The wish has no other app: nothing to join, until one is added.
+                            state = .alone
+                            peers = []
+                            me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
+                            return again(after: (answer["renew"] as? Double ?? 300))
+                        }
+                        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let room = answer["room"] as? String,
+                              let credential = answer["credential"] as? String else {
+                            throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the wish's apps meet.")
+                        }
+                        address = socket
+                        self.room = room
+                        self.credential = credential
+                        me = answer["peer"] as? String ?? ""
+                    }
+                    guard let address, let credential, let room, !closed else { return }
+                    let task = URLSession.shared.webSocketTask(with: address)
+                    task.maximumMessageSize = Self.messageLimit + 1024
+                    link.task = task
+                    task.resume()
+                    heard = Date()
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "app": room, "credential": credential, "device": Self.device])
+                    try await task.send(.string(String(decoding: hello, as: UTF8.self)))
+                    receive(on: task)
+                } catch {
+                    if state != .alone { state = .away }
+                    fputs("LampWish: \(error.localizedDescription)\n", stderr)
+                    again()
+                }
+            }
+        }
+
+        private func receive(on task: URLSessionWebSocketTask) {
+            task.receive { [weak self] result in
+                Task { @MainActor in
+                    guard let self, self.link.task === task else { return }
+                    switch result {
+                    case .success(.string(let text)):
+                        self.heard = Date()
+                        self.hear(text)
+                        self.receive(on: task)
+                    case .success:
+                        self.heard = Date()
+                        self.receive(on: task)
+                    case .failure:
+                        self.dropped(task)
+                    }
+                }
+            }
+        }
+
+        private func hear(_ text: String) {
+            guard let m = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+            switch m["t"] as? String {
+            case "welcome":
+                retry = 0
+                saidAway = false
+                undeliveredSaid = []
+                if let name = m["peer"] as? String { me = name }
+                peers = (m["peers"] as? [[String: Any]] ?? []).compactMap(Self.peer)
+                state = .connected
+            case "joined":
+                guard let joined = (m["peer"] as? [String: Any]).flatMap(Self.peer) else { return }
+                peers = peers.filter { $0.id != joined.id } + [joined]
+            case "left":
+                if let id = m["peer"] as? String { peers = peers.filter { $0.id != id } }
+            case "message":
+                guard let from = m["from"] as? String, let data = m["data"] else { return }
+                for listener in listeners { listener(from, data) }
+            case "undelivered":
+                // Said once for each app until the room changes: the code that sent it can't tell otherwise.
+                guard let to = m["to"] as? String, undeliveredSaid.insert(to).inserted else { return }
+                fputs("LampWish: a message to \"\(to)\" didn't arrive: \(m["reason"] as? String ?? "it isn't in the room").\n", stderr)
+            default:
+                break
+            }
+        }
+
+        private static func peer(_ json: [String: Any]) -> Peer? {
+            guard let id = json["peer"] as? String else { return nil }
+            return Peer(id: id, kind: json["kind"] as? String ?? "", name: json["name"] as? String ?? id, device: json["device"] as? String ?? "",
+                        since: Date(timeIntervalSince1970: Double(json["since"] as? Int ?? 0) / 1000))
+        }
+
+        private func dropped(_ task: URLSessionWebSocketTask) {
+            guard link.task === task else { return }
+            let code = task.closeCode.rawValue
+            link.task = nil
+            peers = []
+            // Turned away, or the room ended: the credential is no use, so a fresh one is asked for. Dropped before it was
+            // let in, the relay may have moved: where it is is asked for again too.
+            if code == 4003 || code == 4005 || state == .connecting || retry >= 3 { credential = nil; address = nil }
+            again()
+        }
+
+        private func again(after: Double? = nil) {
+            guard !closed else { return }
+            if after == nil, state == .connected { state = .connecting }
+            retry = min(retry + 1, 6)
+            let wait = after ?? Double(retry) * 0.75
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                self?.open()
+            }
+        }
+
+        // A beat both ways: whoever hears nothing for a while lets the other go.
+        private func tick() {
+            guard let task = link.task else { return }
+            if Date().timeIntervalSince(heard) > 12 {
+                task.cancel(with: .goingAway, reason: nil)
+                dropped(task)
+                return
+            }
+            task.send(.string(#"{"t":"beat"}"#)) { _ in }
+        }
+    }
+
     // MARK: - The wish's TV app
 
     /// Joins the TV app of this app's wish as a player of its `Lamp.controllers`, the way a phone's page does, over the

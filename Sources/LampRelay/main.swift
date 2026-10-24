@@ -8,9 +8,11 @@ import LampRelayKit
 //   {"op":"start","key":"<base64>","port":47900}       the controllers' key, and the port it had before
 //   {"op":"session","app":"…","generation":0,"pagePort":47860,"page":"http://…/","hosts":["…"]}
 //   {"op":"end","app":"…"}
+//   {"op":"room","app":"wish:…","generation":0,"apps":[{"peer":"tv","kind":"tv","name":"the TV app"},…]}   a wish's room
+//   {"op":"end-room","app":"wish:…"}
 //
-// It says where it's listening on its output ({"op":"ready","port":…}) and ends when its input does, so it never
-// outlives the Lamp that started it.
+// It says where it's listening on its output ({"op":"ready","port":…}), who is in each room as that changes
+// ({"op":"room","app":…,"peers":[…]}), and ends when its input does, so it never outlives the Lamp that started it.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 var relay: Relay?
@@ -29,6 +31,7 @@ while let line = readLine() {
         relay = started
         // Not listening, the relay is no use: it ends, and Lamp starts another.
         started.onStopped = { exit(1) }
+        started.onRoomChanged = { room, members in say(["op": "room", "app": room, "peers": members]) }
         started.start(port: UInt16(clamping: command["port"] as? Int ?? 0)) { port in
             say(["op": "ready", "port": port.map { Int($0) as Any } ?? NSNull()])
             if port == nil { exit(1) }
@@ -40,6 +43,17 @@ while let line = readLine() {
     case "end":
         guard let relay, let app = command["app"] as? String else { continue }
         relay.end(app: app)
+    case "room":
+        guard let relay, let app = command["app"] as? String, let generation = command["generation"] as? Int else { continue }
+        var apps: [String: (kind: String, name: String)] = [:]
+        for each in command["apps"] as? [[String: Any]] ?? [] {
+            guard let peer = each["peer"] as? String else { continue }
+            apps[peer] = (each["kind"] as? String ?? "", each["name"] as? String ?? "")
+        }
+        relay.configureRoom(app, generation: generation, apps: apps)
+    case "end-room":
+        guard let relay, let app = command["app"] as? String else { continue }
+        relay.endRoom(app)
     default:
         continue
     }

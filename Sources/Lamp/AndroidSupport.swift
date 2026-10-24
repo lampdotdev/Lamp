@@ -1,8 +1,8 @@
 import Darwin
 import Foundation
 
-/// Lamp's building blocks for an Android app: the Kotlin twin of LampSupport.swift's `LampAI`, `LampStore` and
-/// `LampAssets`, under the same names and with the same advice in their comments, so the agent learns one way for
+/// Lamp's building blocks for an Android app: the Kotlin twin of LampSupport.swift's `LampAI`, `LampStore`,
+/// `LampAssets` and `LampWish`, under the same names and with the same advice in their comments, so the agent learns one way for
 /// every kind of app. Lamp owns the file and writes it afresh before every turn and build, as it does
 /// LampSupport.swift, and a second, small manifest of its own for debug builds (the only builds Lamp makes) that
 /// adds what the file needs: the network, and the provider that hands it the app's context before any of the
@@ -70,7 +70,7 @@ extension Template {
     """
 
     static let androidSupportKotlin = #"""
-    // Written by Lamp before every build; don't edit. Lamp's building blocks for this app: LampAI, LampStore and LampAssets.
+    // Written by Lamp before every build; don't edit. Lamp's building blocks for this app: LampAI, LampStore, LampAssets and LampWish.
     @file:Suppress("unused", "MemberVisibilityCanBePrivate", "DEPRECATION")
 
     package {{PACKAGE}}
@@ -715,6 +715,9 @@ extension Template {
         /** What the decision model is sent: text, numbers, maps and lists as they are, dates as `whenText` writes them,
          *  and @Serializable values (alone or inside a collection) as their JSON. `identity` is for matching saved verdicts:
          *  dates keep their exact moment and no "in 44 minutes". */
+        /** `value` as JSON for a message between the wish's apps (`LampWish.send`): what `about` takes. */
+        internal fun jsonValue(value: Any?): Any = jsonState(value)
+
         private fun jsonState(state: Any?, identity: Boolean = false): Any = when (state) {
             null -> JSONObject.NULL
             is String, is Boolean, is Number, is JSONObject, is JSONArray -> state
@@ -884,6 +887,164 @@ extension Template {
         } ?: emptyMap()
         /** Choice and score: how concentrated the probabilities are (0…1). Low means a close call. */
         val confidence: Double? = json.optDouble("confidence").takeUnless { it.isNaN() }
+    }
+
+    /**
+     * The other apps of this app's wish (a TV app, an iPhone app, a Mac app…): who is open now, and messages between
+     * them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app of the
+     * wish is a peer named by its part: "tv", "iphone", "mac", "android". It joins the first time it's used.
+     *
+     *     val peers by LampWish.peers.collectAsState()          // the wish's other apps open now: peer ("tv"), kind, name, device, since
+     *     LampWish.peer("tv") != null                            // whether the TV app is open
+     *     LampWish.send(mapOf("score" to 3), to = "tv")          // JSON to one app; false (with why in the log) when it wasn't sent
+     *     LampWish.send(mapOf("round" to 2))                     // to every other app of the wish
+     *     LampWish.onMessage { from, data -> … }                 // what another app sent: who, and its JSON (a JSONObject, JSONArray, String, Number or Boolean)
+     *     val state by LampWish.state.collectAsState()           // CONNECTING, CONNECTED, ALONE (the wish has no other app), AWAY (Lamp isn't reachable), ENDED
+     *     LampWish.me                                            // this app's own peer name
+     *
+     * `data` is anything LampAI's `about` takes: text, a number, a map or list, or a @Serializable value. Each message,
+     * as the JSON that goes out, is at most `messageLimit` (16 KB); files between the wish's apps aren't carried yet.
+     * Show plainly when an app this one needs isn't open ("Open it on the TV"), and keep every control usable meanwhile.
+     * Lamp carries what this app says and hears (it speaks HTTP to Lamp, polling for what came), so it works in the
+     * emulator and on a device on the Mac's Wi‑Fi while Lamp is open. Handlers and the flows change on the main thread.
+     */
+    object LampWish {
+        class Peer(val peer: String, val kind: String, val name: String, val device: String, val since: Long)
+        enum class State { CONNECTING, CONNECTED, ALONE, AWAY, ENDED }
+        const val messageLimit = 16 * 1024
+
+        private val peersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
+        private val stateFlow = kotlinx.coroutines.flow.MutableStateFlow(State.CONNECTING)
+        val peers: kotlinx.coroutines.flow.StateFlow<List<Peer>> get() { start(); return peersFlow }
+        val state: kotlinx.coroutines.flow.StateFlow<State> get() { start(); return stateFlow }
+        @Volatile var me: String = ""
+            private set
+
+        private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+        private var polling: kotlinx.coroutines.Job? = null
+        private val listeners = mutableListOf<(String, Any?) -> Unit>()
+        private val lock = ReentrantLock()
+        @Volatile private var saidAway = false
+        private val undeliveredSaid = mutableSetOf<String>()
+        private val device: String get() = if (LampInstall.onDevice) "Android device" else "Android emulator"
+
+        /** Joins the wish's room (again, after `stop()`); otherwise nothing, since it joins by itself when first used. */
+        fun start() {
+            lock.withLock {
+                if (polling?.isActive == true) return
+                stateFlow.value = State.CONNECTING
+                polling = scope.launch { poll() }
+            }
+        }
+
+        fun stop() {
+            lock.withLock {
+                polling?.cancel()
+                polling = null
+            }
+            peersFlow.value = emptyList()
+            stateFlow.value = State.ENDED
+        }
+
+        /** The wish's app with this peer name, while it's open. */
+        fun peer(id: String): Peer? { start(); return peersFlow.value.firstOrNull { it.peer == id } }
+
+        /** Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent, on the main thread. */
+        fun onMessage(handler: (from: String, data: Any?) -> Unit) { start(); lock.withLock { listeners.add(handler) } }
+
+        /**
+         * Sends `data` to one of the wish's apps, or with no `to` to all of them; false, with the reason in the app's
+         * log, when it won't be sent. It goes on its way at once; a failure on the way is logged.
+         */
+        fun send(data: Any?, to: String? = null): Boolean {
+            start()
+            val what = if (to != null) "A message to \"$to\"" else "A message to the wish's apps"
+            if (stateFlow.value != State.CONNECTED) {
+                if (!saidAway) { saidAway = true; Log.e("LampWish", "$what wasn't sent: not connected (${stateFlow.value}). Check state and peers before sending.") }
+                return false
+            }
+            if (to != null && peersFlow.value.none { it.peer == to }) {
+                Log.e("LampWish", "$what wasn't sent: that app isn't open now (peers: ${peersFlow.value.map { it.peer }}).")
+                return false
+            }
+            val body = JSONObject().put("data", try { LampAI.jsonValue(data) } catch (e: Exception) {
+                Log.e("LampWish", "$what wasn't sent: ${e.message}")
+                return false
+            })
+            if (to != null) body.put("to", to)
+            val size = body.toString().toByteArray().size + 16
+            if (size > messageLimit) {
+                Log.e("LampWish", "$what of about $size bytes wasn't sent: a message between the wish's apps is at most $messageLimit bytes as JSON.")
+                return false
+            }
+            scope.launch {
+                try { LampAI.post("/app/wish/send", body, 20_000) }
+                catch (e: Exception) { Log.e("LampWish", "$what didn't go: ${e.message}") }
+            }
+            return true
+        }
+
+        // Polls Lamp for what came: Lamp holds this app's place in the wish's room and answers each poll as soon as
+        // something has come, or after a wait with nothing. When Lamp can't be reached the state says so, and the poll
+        // goes on trying.
+        private suspend fun poll() {
+            while (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive != false) {
+                val answer = try {
+                    LampAI.post("/app/wish/poll", JSONObject().put("device", device), 40_000)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (stateFlow.value != State.ALONE) {
+                        withContext(Dispatchers.Main) { stateFlow.value = State.AWAY; peersFlow.value = emptyList() }
+                    }
+                    Log.e("LampWish", "${e.message}")
+                    delay(3000)
+                    continue
+                }
+                if (answer.optBoolean("alone")) {
+                    withContext(Dispatchers.Main) { stateFlow.value = State.ALONE; peersFlow.value = emptyList() }
+                    delay((answer.optLong("renew", 300) * 1000).coerceAtLeast(5000))
+                    continue
+                }
+                val events = answer.optJSONArray("events") ?: JSONArray()
+                if (events.length() > 0) withContext(Dispatchers.Main) { for (i in 0 until events.length()) events.optJSONObject(i)?.let(::hear) }
+            }
+        }
+
+        private fun hear(m: JSONObject) {
+            when (m.optString("t")) {
+                "welcome" -> {
+                    saidAway = false
+                    undeliveredSaid.clear()
+                    me = m.optString("peer", me)
+                    peersFlow.value = peersOf(m.optJSONArray("peers"))
+                    stateFlow.value = State.CONNECTED
+                }
+                "joined" -> m.optJSONObject("peer")?.let { peerOf(it) }?.let { joined -> peersFlow.value = peersFlow.value.filter { it.peer != joined.peer } + joined }
+                "left" -> { val id = m.optString("peer"); peersFlow.value = peersFlow.value.filter { it.peer != id } }
+                "message" -> {
+                    val from = m.optString("from")
+                    val data = if (m.isNull("data")) null else m.opt("data")
+                    val handlers = lock.withLock { listeners.toList() }
+                    for (handler in handlers) try { handler(from, data) } catch (e: Exception) { Log.e("LampWish", "a message handler failed: ${e.message}") }
+                }
+                "undelivered" -> {
+                    val to = m.optString("to")
+                    if (undeliveredSaid.add(to)) Log.e("LampWish", "a message to \"$to\" didn't arrive: ${m.optString("reason", "it isn't in the room")}.")
+                }
+                "closed" -> {
+                    // Lamp's link to the room went; the next poll opens it again, and a fresh welcome follows.
+                    peersFlow.value = emptyList()
+                    if (stateFlow.value == State.CONNECTED) stateFlow.value = State.CONNECTING
+                }
+            }
+        }
+
+        private fun peersOf(list: JSONArray?): List<Peer> = (0 until (list?.length() ?: 0)).mapNotNull { list?.optJSONObject(it)?.let(::peerOf) }
+        private fun peerOf(json: JSONObject): Peer? {
+            val id = json.optString("peer").ifEmpty { return null }
+            return Peer(id, json.optString("kind"), json.optString("name", id), json.optString("device"), json.optLong("since"))
+        }
     }
 
     /**
