@@ -6277,7 +6277,9 @@ final class Store: ObservableObject {
     static func runBuild(_ command: String, for project: LampProject, env: [String: String],
                          started: (@MainActor (Process) -> Void)? = nil,
                          onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
-        await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
+        // Which structs the app reads as bytes, for the live copy's spares: worked out only when its raw-memory code changed.
+        if env["LAMP_LIVE"] == "1" { await LiveSlots.noteByteStructs(project) }
+        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
     }
 
     /// A new app's bar that has already said how its turn ended follows what happens to the app afterwards

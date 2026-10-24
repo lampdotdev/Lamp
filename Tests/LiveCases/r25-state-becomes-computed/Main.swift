@@ -12,6 +12,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want a plain reason: @State total becomes a computed property of the same name):", Log.take())
+    print("after1 (want it live: @State total becomes a computed property of the same name, total=5):", Log.take())
     _ = window
 }}}
