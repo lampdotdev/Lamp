@@ -1897,7 +1897,7 @@ final class Store: ObservableObject {
         // A game on an Xbox is the Xbox's game kind there.
         if platform == .game {
             changed.engine = engine?.rawValue
-            changed.integration = changed.openPlaces.contains(.device) ? GameKit.xboxKind(for: engine ?? .web) : nil
+            changed.integration = GameKit.integration(for: changed)
         }
         // Choosing what to make doesn't need installed tools. Send checks the selected simulator
         // before building and explains the next setup action without blocking this draft's picker.
@@ -2101,7 +2101,7 @@ final class Store: ObservableObject {
         guard let now = self.current(current), let index = projects.firstIndex(where: { $0.id == now.id }) else { return "Lamp can't find the game." }
         var changed = now
         changed.places = places
-        changed.integration = places.contains(.device) ? GameKit.xboxKind(for: GameKit.engine(now)) : nil
+        changed.integration = GameKit.integration(for: changed)
         if let family { changed.family = family }
         if let place = added.last {
             changed.chosen = place
@@ -5347,7 +5347,9 @@ final class Store: ObservableObject {
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return project }
         let kind = Template.platform(fromPackageIn: project.dir)
         // A device app's code also says which device it's for: restoring between two such kinds changes that too.
-        let integration = kind?.target.recipe.integration(project.dir)
+        var integration = kind?.target.recipe.integration(project.dir)
+        // A game's Xbox is one of its places, which meta.json keeps and no version holds: it stays across a restore.
+        if kind == .game { var game = projects[index]; game.platform = .game; integration = GameKit.integration(for: game) }
         if let kind, projects[index].platform != kind || projects[index].integration != integration {
             let was = projects[index].platform
             projects[index].platform = kind
@@ -5367,14 +5369,14 @@ final class Store: ObservableObject {
     /// when it's no longer listed. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app beside it.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
+        // A game stays a game: what's listed are the places it's played (the Mac always, its home), which aren't kinds.
+        if let wish = current(project), !wish.isPart, wish.platform == .game, wish.scaffolded { return await gamePlaces(devices, for: wish) }
         guard let kinds = Parts.kinds(for: devices) else {
             let others = DeviceApps.kinds().map(\.id)
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
         guard let wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
-        // A game stays a game: what's listed are the places it's played (the Mac always, its home).
-        if wish.platform == .game, wish.scaffolded { return await gamePlaces(devices, for: wish) }
         // A wish with nothing written yet (still to be told what it's for) takes as its root the first kind this Mac can
         // build now, as a new wish does: answered "TV and iPhone" on a Mac without Xcode, it's made as the TV app and
         // the iPhone app waits with its setup, rather than nothing being made at all.
@@ -7405,11 +7407,7 @@ final class Store: ObservableObject {
     /// `look_at_app` for a game: built for the preview on this Mac and played from its start for two
     /// seconds, untouched; with `motion`, a frame every half second.
     private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any]) {
-        if let problem = gameToolsProblem(project) {
-            let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
-            if !said { log(project, .error, problem); WindowsSetup.shared.show() }
-            return (200, ["text": "The game can't be built yet, and Lamp has told the person why: \(problem)\n\nThis isn't a mistake in the code. Finish what was asked without a look, and tell the person in a sentence that you'll build it once the tools are there."])
-        }
+        // The preview needs none of the console's tools, wherever Try On points.
         if let problem = await buildGamePreview(project, owner: turn) { return (200, ["text": problem]) }
         let script = motion ? (1...4).flatMap { [GameKit.Hold(frames: 30).line, "shot m\($0)"] } : [GameKit.Hold(frames: 120).line, "shot look"]
         GameKit.plays[project.id] = script

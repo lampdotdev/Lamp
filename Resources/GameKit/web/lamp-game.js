@@ -74,6 +74,8 @@ export async function asset(path) {
 const sounds = [];
 let audio = null, effectsVolume = 1, musicVolume = 1, musicVoice = null, music = { gain: 0 };
 const played = new Map();
+// The effects playing now, so a change of the effects volume reaches them too.
+const voices = new Set();
 function context() {
     if (preview) return null;
     if (!audio) { try { audio = new AudioContext({ sampleRate: 48000 }); } catch (e) { return null; } }
@@ -146,7 +148,10 @@ export const sound = {
         gain.gain.value = volume * effectsVolume; panner.pan.value = pan;
         source.connect(gain).connect(panner).connect(ctx.destination);
         source.start();
-        return { source, gain, panner, volume };
+        const voice = { source, gain, panner, volume };
+        voices.add(voice);
+        source.onended = () => voices.delete(voice);
+        return voice;
     },
     set(voice, { volume, pan, pitch } = {}) {
         if (!voice) return;
@@ -176,6 +181,7 @@ export const sound = {
     // The person's own volumes for effects and for music, 0 to 1: what the game's settings change, kept with save().
     volume(effects, musicLevel) {
         effectsVolume = effects; musicVolume = musicLevel;
+        for (const voice of voices) voice.gain.gain.value = voice.volume * effectsVolume;
         if (musicVoice) musicVoice.gain.gain.value = music.gain * musicVolume;
     },
 };
@@ -183,8 +189,10 @@ export const sound = {
 // MARK: The controllers
 
 const keys = new Set();
-window.addEventListener('keydown', e => { keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault(); });
-window.addEventListener('keyup', e => keys.delete(e.code));
+// Only the keyboard's own keys: the Xbox's lamp.js sends the controller as key events too (which aren't trusted, being
+// made by a script), and the controller is read whole through the Gamepad API.
+window.addEventListener('keydown', e => { if (!e.isTrusted) return; keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault(); });
+window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(e.code); });
 window.addEventListener('blur', () => keys.clear());
 
 function keyboardPad() {

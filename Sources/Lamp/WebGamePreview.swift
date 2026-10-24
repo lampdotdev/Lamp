@@ -11,6 +11,8 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
     private var webView: WKWebView?
     private let files = StagedFiles()
     private var pictures: [String: Data] = [:]
+    /// The order they were taken in: only the latest are kept, which are the ones a look or a use asks for.
+    private var taken: [String] = []
     private var finished: CheckedContinuation<[String: Any]?, Never>?
 
     /// Plays the script and hands back what it drew and said, or nil when the page never got to the end of it (it
@@ -53,14 +55,19 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
         guard let body = message.body as? [String: Any] else { return replyHandler(nil, nil) }
         if let name = body["shot"] as? String {
             // One picture a name, named as the script names it: letters, digits and dashes.
-            guard pictures.count < 64, name.count <= 40, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }), let webView else {
+            guard name.count <= 40, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }), let webView else {
                 return replyHandler(false, nil)
             }
             let configuration = WKSnapshotConfiguration()
             configuration.afterScreenUpdates = true
             webView.takeSnapshot(with: configuration) { [weak self] image, _ in
                 MainActor.assumeIsolated {
-                    if let image, let png = Self.png(image) { self?.pictures[name] = png }
+                    if let self, let image, let png = Self.png(image) {
+                        self.pictures[name] = png
+                        self.taken.append(name)
+                        // A long play's earliest pictures go: every use plays it all again, and asks only for its own.
+                        while self.taken.count > 16 { self.pictures[self.taken.removeFirst()] = nil }
+                    }
                     replyHandler(true, nil)
                 }
             }

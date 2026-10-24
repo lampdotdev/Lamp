@@ -76,6 +76,10 @@ enum GameKit {
         return [.mac, .ios, .device].filter { $0 == .mac || named.contains($0) }
     }
 
+    /// The integration a game reaches its Xbox through, when the Xbox is one of its places: worked out from its places,
+    /// which meta.json keeps, so setting the places, choosing the kind and a restore all agree.
+    static func integration(for project: LampProject) -> String? { project.openPlaces.contains(.device) ? xboxKind(for: engine(project)) : nil }
+
     /// What a place is called to the person and to the agent.
     static func placeName(_ place: Destination) -> String {
         switch place {

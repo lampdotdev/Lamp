@@ -147,6 +147,8 @@ final class LampGameView: UIView {
         super.didMoveToWindow()
         guard window != nil, link == nil else { return }
         lamp_apple_start(Unmanaged.passUnretained(layer).toOpaque(), LampGameFiles.assets, LampGameFiles.saves)
+        // game_init has run: the touch controls read which buttons it asked for.
+        NotificationCenter.default.post(name: LampTouchControls.started, object: nil)
         let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
         link.add(to: .main, forMode: .common)
@@ -177,7 +179,9 @@ struct LampTouchControls: View {
     @State private var right: (start: CGPoint, now: CGPoint)?
     @State private var held: UInt32 = 0
     @State private var touched = false
-    private let wanted = lamp_apple_touch_buttons()
+    @State private var wanted = lamp_apple_touch_buttons()
+    /// Posted once the game has started, after `game_init` named its buttons (`lamp_touch_buttons`).
+    static let started = Notification.Name("LampGameStarted")
     private let reach: CGFloat = 60
 
     // The kit's bits, as lamp_game.h has them.
@@ -208,6 +212,7 @@ struct LampTouchControls: View {
             send()
         }
         .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidDisconnect)) { _ in controllers = Int(lamp_apple_controllers()) }
+        .onReceive(NotificationCenter.default.publisher(for: Self.started)) { _ in wanted = lamp_apple_touch_buttons() }
     }
 
     private func stickArea(isLeft: Bool) -> some View {
