@@ -1,6 +1,7 @@
 import Foundation
 
-/// A three.js game on Android: a small Android app of Lamp's own in the game's `Android/` folder, none of it the agent's,
+/// A three.js game on Android: a small Android app of Lamp's own in the game's `Lamp/Android` folder, none of it the agent's
+/// (never a folder of its own at the top, where Lamp would take it for another app of the wish's: `Parts.folders`),
 /// which shows the game's page (`Web/`, copied into the app's assets by the build) full screen in a WebView. It serves the
 /// page from the app at an address of its own (so modules and fetch work as in every other place), plays its sound with
 /// no tap first, keeps its saves in the WebView's storage, and reads the controllers itself (Android's own key and
@@ -10,7 +11,7 @@ import Foundation
 /// (`Store.installOnAndroid`, its package and `.MainActivity`). A C++ game isn't played on Android: the kit has no
 /// host there yet, and the NDK isn't among the tools Lamp downloads.
 enum GameAndroid {
-    static let folder = "Android"
+    static let folder = "Lamp/Android"
 
     static func apk(_ project: LampProject) -> URL {
         project.dir.appendingPathComponent("\(folder)/app/build/outputs/apk/debug/app-debug.apk")
@@ -27,16 +28,18 @@ enum GameAndroid {
         try Template.write(appBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
         try Template.write(manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
         try Template.write(mainActivity.replacingOccurrences(of: "{{PACKAGE}}", with: package), to: kotlin + "/MainActivity.kt", for: project)
+        try Template.write(".gradle/\n.kotlin/\nlocal.properties\n", to: "\(folder)/.gitignore", for: project)
     }
 
     /// Every path Lamp owns there, for the agent's file checks and the versions' diffs.
     static func paths(for project: LampProject) -> [String] {
         let package = Template.androidPackage(for: project).replacingOccurrences(of: ".", with: "/")
-        return ["settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml", "app/build.gradle.kts",
+        return [".gitignore", "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml", "app/build.gradle.kts",
                 "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt"].map { "\(folder)/\($0)" }
     }
 
-    /// build.sh's Android part: the page into the app's assets (its files only), the icon, then Gradle.
+    /// build.sh's Android part: the page into the app's assets (its files only, in build/, which no version keeps), the
+    /// icon, then Gradle.
     static let buildSteps = """
     if [[ "$PLACE" == "android" ]]; then
       if [ -z "${LAMP_GRADLE:-}" ] || [ -z "${ANDROID_HOME:-}" ]; then
@@ -44,14 +47,14 @@ enum GameAndroid {
         exit 1
       fi
       if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
-      mkdir -p Android/app/src/main/assets
-      rsync -a --delete Web/ Android/app/src/main/assets/Web/
+      mkdir -p build/android-assets
+      rsync -a --delete Web/ build/android-assets/Web/
       # The game's icon, once Lamp has drawn it; until then the system's own for an app.
       ICON=".lamp/AppIcon-square.png"
       [ -f "$ICON" ] || ICON=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns
-      mkdir -p Android/app/src/main/res/mipmap-xxxhdpi
-      /usr/bin/sips -s format png -z 432 432 "$ICON" --out Android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png > /dev/null
-      cd Android
+      mkdir -p build/android-res/mipmap-xxxhdpi
+      /usr/bin/sips -s format png -z 432 432 "$ICON" --out build/android-res/mipmap-xxxhdpi/ic_launcher.png > /dev/null
+      cd Lamp/Android
       printf 'sdk.dir=%s\\n' "$ANDROID_HOME" > local.properties
       exec "$LAMP_GRADLE" --console=plain -q "-Dlamp.app={{SLUG}}" assembleDebug
     fi
@@ -88,6 +91,9 @@ enum GameAndroid {
         }
         buildFeatures { buildConfig = false }
         sourceSets["main"].kotlin.srcDirs("src/main/kotlin")
+        // The page and the icon, which build.sh puts in the game's build/ before Gradle runs.
+        sourceSets["main"].assets.srcDirs("../../../build/android-assets")
+        sourceSets["main"].res.srcDirs("../../../build/android-res")
         // The page's files are served as they are: a compressed asset can't be streamed to the WebView.
         androidResources { noCompress += listOf("js", "html", "css", "json", "glb", "gltf", "bin", "png", "jpg", "wav", "ogg", "mp3", "m4a") }
     }
@@ -132,6 +138,7 @@ enum GameAndroid {
 
     import android.annotation.SuppressLint
     import android.app.Activity
+    import android.hardware.input.InputManager
     import android.os.Bundle
     import android.util.Log
     import android.view.InputDevice
@@ -148,7 +155,7 @@ enum GameAndroid {
     import android.webkit.WebViewClient
     import kotlin.math.abs
 
-    class MainActivity : Activity() {
+    class MainActivity : Activity(), InputManager.InputDeviceListener {
         private lateinit var web: WebView
         // The first controller, as the page's pad 0 is: sticks -1 to 1 (up positive), triggers 0 to 1, buttons as Lamp's bits.
         private var lx = 0f; private var ly = 0f; private var rx = 0f; private var ry = 0f; private var lt = 0f; private var rt = 0f
@@ -184,6 +191,7 @@ enum GameAndroid {
                 }
             }
             setContentView(web)
+            (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
             immerse()
             web.loadUrl("https://$HOST/index.html")
         }
@@ -206,6 +214,19 @@ enum GameAndroid {
         }
 
         override fun onPause() { super.onPause(); web.onPause() }
+
+        // A controller that goes away mid-press leaves nothing held: the page sees it let go, and its touch controls
+        // can come back.
+        override fun onInputDeviceRemoved(id: Int) {
+            lx = 0f; ly = 0f; rx = 0f; ry = 0f; lt = 0f; rt = 0f; down = 0
+            send()
+        }
+        override fun onInputDeviceAdded(id: Int) {}
+        override fun onInputDeviceChanged(id: Int) {}
+        override fun onDestroy() {
+            (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
+            super.onDestroy()
+        }
         override fun onResume() { super.onResume(); web.onResume() }
 
         // MARK: The controller

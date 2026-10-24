@@ -223,7 +223,10 @@ function gamepadPad(g) {
 // The first controller as an app around the page reads it itself (Lamp's Android app, whose WebView doesn't promise
 // the Gamepad API): sticks -1 to 1 with up positive, triggers 0 to 1, buttons as BUTTON bits.
 let nativePad = null;
-window.lampNativePad = (lx, ly, rx, ry, lt, rt, down) => { nativePad = { connected: true, lx, ly, rx, ry, lt, rt, down }; };
+// All at rest is no controller in hand (one that went away sends that), so the touch controls can come back.
+window.lampNativePad = (lx, ly, rx, ry, lt, rt, down) => {
+    nativePad = down || lx || ly || rx || ry || lt || rt ? { connected: true, lx, ly, rx, ry, lt, rt, down } : null;
+};
 
 function merge(pad, more) {
     pad.down |= more.down;
