@@ -2751,9 +2751,16 @@ final class Store: ObservableObject {
             defer { try? FileManager.default.removeItem(at: package.folder) }
             // The wish's other apps, each made in its folder as `make_app_for` makes one and given the file's code. One
             // this Mac can't build yet stays on the wish's list, with its setup a click away, and is made once it can.
+            // A part whose files couldn't be put in place, or kept for later, fails the import as a whole: the wish just
+            // made goes, and the file can be opened again, rather than a wish missing an app with no way to get it.
             let notIn = await installParts(of: package, into: project)
-            if !notIn.isEmpty {
-                log(project, .error, "\(notIn.joined(separator: ", ")) didn't come in with the wish. Open the shared file again to try once more.")
+            guard notIn.isEmpty else {
+                await delete(current(project) ?? project)
+                let alert = NSAlert()
+                alert.messageText = "Lamp couldn't open “\(package.name)”"
+                alert.informativeText = "\(notIn.joined(separator: ", ")) couldn't be put in place. Nothing was kept; open the file again to try once more."
+                alert.runModal()
+                return
             }
             _ = await Versions.git("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
