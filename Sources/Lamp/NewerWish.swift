@@ -80,6 +80,9 @@ struct NewerWishIcon: View {
         .accessibilityValue(Self.words)
         .accessibilityHint("Update Lamp to open it")
         .accessibilityAction { Updater.shared.checkForUpdates() }
+        // With keyboard navigation on, Tab reaches it and Return asks for the update, as with the desk's other tiles.
+        .focusable(interactions: .activate)
+        .onKeyPress(.return) { Updater.shared.checkForUpdates(); return .handled }
         .task(id: wish.dir) {
             let wish = wish
             icon = await Task.detached { wish.icon }.value
