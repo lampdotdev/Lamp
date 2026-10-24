@@ -938,7 +938,8 @@ setting to `{isGame}` and puts the person's back once the app has been launched 
 held by `DeviceApps.install` across install and launch, one at a time per device): the console settles the type after the
 install's last step, and put back sooner, a person's "on" made a non-game a game. The type stays with the package after. `{isGame}` is `DeviceApps.isGame`: a native
 game always, and a web app when its capabilities.json says `{"game": true}` (`Template.Capabilities.game`), which the
-rules ask of anything played. That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
+rules ask of anything played, or its icon.json does (`IconSpec.game`, which the agent has written for every game, so one
+made before capabilities.json asked is a game too). That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
 that aren't games and a game may not use it. The native host logs the memory the console gave it, which says which it got.
 
 The tools are a download (`WindowsTools`, the setup window `WindowsSetup`), in `Edition.sharedDeveloperFolder`/Windows
