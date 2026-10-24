@@ -670,6 +670,17 @@ what the gateway would with the provider directly (chat completions with the JSO
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
+**On Apple TV and Vision Pro**: an iPhone app, and the iPhone half of an app for both, can open on the Apple TV or Vision
+Pro simulator, chosen under Try On as the iPad is (`DeviceFamily.appletv`, `.vision`; not for a game, whose kit is
+iOS's). It's the same code built for tvOS or visionOS: the build passes `LAMP_FAMILY`, and the iPhone build.sh picks
+that system's SDK, target and Info.plist from it (`iPhoneBuildSh`), leaving out widgets, the share extension and the
+watch app (`Template.onlyForIOS`); the family is part of `Runtime.fingerprint`, so moving there rebuilds it. Package.swift
+names both systems. LampSupport.swift type-checks for both too: on tvOS it leaves out what tvOS lacks (Health, calendar,
+reminders, contacts, Spotlight, notifications), so type-check it for `appletvsimulator` and `xrsimulator` as well after
+editing. The agent is told in the request's device line (`DeviceNote`, `Rules.otherOS`) that the app is built for that
+system and to put what only the iPhone has under `#if !os(tvOS)` or `#if !os(visionOS)`. The simulator's system is a
+download of Xcode's; the setup check asks for it by family (`PhoneTools`). Neither is offered on the person's own device yet.
+
 ## Android apps
 
 An app can be made for Android (`Platform.android`, chosen by the naming call when the wish names Android, a Pixel, a
@@ -995,6 +1006,19 @@ ships (built by build.sh with cargo, pinned and locked; a release needs it) and 
 against Microsoft's manifest. Microsoft's licence is the person's to accept, in the setup window, before xwin runs:
 nothing of Microsoft's is passed on. Intel Macs make and play games, but can't put them on an Xbox (LLVM publishes no
 such build).
+
+## Screens
+
+A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is something shown full screen and glanced at
+from across a room: a family calendar, a photo album, a dashboard, a clock. It's the TV app's page in `Web/`, with the
+same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, and it takes places as a game does (`addsPlaces`, the Mac
+always first): on the Mac, the iPhone and the iPad it's a Swift app of Lamp's own around the page
+(`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift, so it has the wand and the chat beside it), which
+zooms the page to the window and answers its LampAI calls with the app's own token (the `lampGateway` bridge lamp.js
+looks for); on a Samsung or LG TV it goes as a TV app does, and on the Xbox as the integration's web app. Wherever it's
+shown the agent looks at it in the TV preview on the Mac (`openDevicePreview`), the same page at the same size, so a
+change is seen without a build of the Mac app. `make_app_for` with the places it's to be on sets them
+(`Store.setPlaces`), and the request's device line says where it's shown (`Rules.screenPlaces`).
 
 ## TV apps
 
