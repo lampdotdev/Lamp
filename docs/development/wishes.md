@@ -205,6 +205,33 @@ background doesn't, and an Android app only while its activity is open. `WishDir
 Lamp's relay going away and opening again without it, and a TV page finding a Mac app by its port with no Lamp. A TV's own
 address on Tizen and webOS is untried on real TVs.
 
+Beside messages, which are for apps open now, the apps of a wish share **values** (`LampWish.values`, `set`, `onChange`
+in Swift and Kotlin; `Lamp.wish.values()`, `set`, `onChange` in lamp.js): a small map of JSON, each value at most 8 KB and
+all of them 64 KB, that every app keeps on its device beside what it keeps of the wish (by the wish's tag: UserDefaults, a
+file in the Android app's storage, localStorage) and that is the same in every app once they've met. Each setting carries
+when it was made: the clock of the app that made it, a count within that millisecond, and that app's name (`c: [ms, n,
+peer]`). An app's clock never goes back past the latest setting it has made or heard of, so what it sets next is later
+than anything it knows whatever the device's clock says, and every app orders two settings the same way. A removal is a
+setting without a value, kept so that an older setting from an app that was away can't bring it back. When another app
+comes (open either way, where it wasn't), each sends it every setting it has, a few at a time within a message's size
+(`values`, sealed like a message; through Lamp's room the relay passes it to the one app named and keeps none), and each
+takes those later than its own; a setting made while others are open goes to each at once. So a value set while apart
+arrives when they meet, and where two apps set one apart, the later wins in both. A value taken from another app is held
+to the same limit, and the whole to twice it, since two apps apart may each have filled it. A value set before an app
+first knew its own name takes the name once it does. Nothing here decides what goes in values or who talks to whom: that's
+the agent's, from the `wish-links` skill.
+
+What a wish's apps say to each other is numbered (`wire` in each library: 2 since values; an app from before says none,
+which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
+member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
+messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
+newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
+an app that speaks 2 or more. The builder's note says when an app in the room was built by an earlier Lamp
+(`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
+fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
+LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`
+in all three libraries and `WishRooms.wire` together whenever what they say changes in a way an older app would misread.
+
 A wish of one app, which
 is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
 has or asks for other apps (`Template.talksToOtherApps`: its parts, or its list of apps, `LampProject.apps`, counting apps
@@ -215,7 +242,8 @@ so it's written to talk to them from the start. An app on its own's LampSupport.
 without the hub, the channel's crypto and the direct links included (no listener, no Bonjour or NSD, so no Local Network
 question), its prompt has no rule and its requests no line about the hub, no key is made for it and none goes in its install
 (`Store.wishKey(for:)` is nil), its iPhone Info.plist names no Bonjour type, no room is opened for it and so nothing starts
-the relay, and `BuildStamp` leaves the block out, so no app is built again for code it doesn't carry (`WishHubStaysOutTests`).
+the relay, and `BuildStamp` leaves the block out and stamps no fingerprint of it, so no app is built again for code it
+doesn't carry (`WishHubStaysOutTests`).
 
 A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) still does so as a player of
 `Lamp.controllers`, with `LampController` in LampSupport, beside `LampWish` for everything else. An iPhone part

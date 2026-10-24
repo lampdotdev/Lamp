@@ -50,6 +50,21 @@ final class WishHubStaysOutTests: XCTestCase {
                        Template.lampSupportSwift(for: project(.mac, partOf: "pair")).count - Template.lampSupportSwift(for: project(.mac)).count)
     }
 
+    /// An app of several built with an earlier `LampWish` is built again when it's opened from Lamp, so "out of date"
+    /// in its wish's other apps goes once it is; an app on its own is never built again for the block.
+    func testOnlyAnAppOfSeveralIsBuiltAgainForTheBlock() {
+        let current = BuildStamp.current
+        let earlier = BuildStamp(lamp: current.lamp, support: current.support, wish: "0000")
+        let unstamped = BuildStamp(lamp: current.lamp, support: current.support)
+        for kind: Platform in [.mac, .iphone] {
+            XCTAssertFalse(earlier.isOutdated(for: project(kind)), kind.rawValue)
+            XCTAssertFalse(unstamped.isOutdated(for: project(kind)), kind.rawValue)
+            XCTAssertTrue(earlier.isOutdated(for: project(kind, partOf: "pair")), kind.rawValue)
+            XCTAssertTrue(unstamped.isOutdated(for: project(kind, partOf: "pair")), "built before the block was stamped: \(kind.rawValue)")
+            XCTAssertFalse(BuildStamp(lamp: current.lamp, support: current.support, wish: BuildStamp.currentWish).isOutdated(for: project(kind, partOf: "pair")))
+        }
+    }
+
     func testAnAppOnItsOwnOpensNoRoom() async {
         WishRooms.forgetAll()
         let alone = project(.mac)

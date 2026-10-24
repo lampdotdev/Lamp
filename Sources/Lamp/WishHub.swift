@@ -126,6 +126,10 @@ final class WishClaims: @unchecked Sendable {
 /// no key and no room.
 @MainActor
 enum WishRooms {
+    /// What this Lamp's apps of a wish say to each other, numbered as LampSupport.swift, LampSupport.kt and lamp.js number
+    /// it (`wire` in each): an app in the room that says less was built by an earlier Lamp.
+    static let wire = 2
+
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }
 
@@ -473,6 +477,11 @@ enum WishNote {
             if let member = present[peer] {
                 let since = (member["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened) } ?? "?"
                 line += ", in the wish's room as \"\(member["device"] as? String ?? "")\" since \(since)"
+                // Built by an earlier Lamp: its wish's other apps show it as out of date and share no values with it,
+                // which opening it from Lamp mends by building it again.
+                if (member["wire"] as? Int ?? 1) < WishRooms.wire {
+                    line += ", built by an earlier Lamp (the others show it as out of date and share no values with it until it's opened from Lamp, which builds it again)"
+                }
                 // What the app says of its own link: the apps it reaches straight, which go on with Lamp closed, and
                 // what stops it reaching them.
                 let link = member["link"] as? [String: Any] ?? [:]

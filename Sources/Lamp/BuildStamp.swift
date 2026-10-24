@@ -18,9 +18,16 @@ struct BuildStamp: Equatable {
     /// which only an app of several in a wish is given (`Template.talksToOtherApps`): an app on its own must never be
     /// built again for a block it doesn't have.
     var support: String?
+    /// A fingerprint of `LampWish`, on an app of several in a wish only: one built with an earlier block is built again
+    /// when it's opened from Lamp, so the "out of date" its wish's other apps show for it goes once it is.
+    var wish: String? = nil
 
     private static let lampKey = "LampVersion"
     private static let supportKey = "LampSupportVersion"
+    private static let wishKey = "LampWishVersion"
+
+    /// What this Lamp stamps on an app of several in a wish, beside `current`.
+    static let currentWish = SHA256.hash(data: Data(Template.lampSupportSwift.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
 
     /// What this Lamp stamps on the apps it builds.
     static let current = BuildStamp(
@@ -33,7 +40,7 @@ struct BuildStamp: Equatable {
     /// The stamp on a built app, or nil when there's no app there. An app without a stamp reads as empty.
     static func read(_ app: URL) -> BuildStamp? {
         guard let info = NSDictionary(contentsOf: infoPlist(of: app)) else { return nil }
-        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String)
+        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String)
     }
 
     /// Stamps a freshly built app, before it's signed.
@@ -51,6 +58,7 @@ struct BuildStamp: Equatable {
         else { return }
         info[lampKey] = current.lamp
         info[supportKey] = current.support
+        info[wishKey] = Template.talksToOtherApps(project) ? currentWish : nil
         guard let out = try? PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0) else { return }
         try? AppFolder.write(out, to: url, in: project.dir)
     }
@@ -66,6 +74,12 @@ struct BuildStamp: Equatable {
 
     /// Built by a Lamp whose app code differs from this one's.
     var isOutdated: Bool { support != Self.current.support }
+
+    /// Out of date for this app: built by a Lamp whose app code differs, or, for an app of several in a wish, whose
+    /// `LampWish` does.
+    func isOutdated(for project: LampProject) -> Bool {
+        isOutdated || (Template.talksToOtherApps(project) && wish != Self.currentWish)
+    }
 
     /// What built the app, to follow "built with": "Lamp 0.2.0", "an older version of Lamp".
     var builder: String {

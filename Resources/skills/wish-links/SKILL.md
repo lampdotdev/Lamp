@@ -23,27 +23,38 @@ LampSupport.kt, `Lamp.wish` in lamp.js. Read the block's own comment there befor
   changes as time goes by: watch every app's (`apps`, observable as `peers` is; `onApps` in lamp.js), not only the open
   ones.
 - `send(data, to: "tv")` sends JSON of 16 KB at most to one of them, `send(data)` to all; false, with why in the app's
-  log, when it wasn't sent. `onMessage { from, data in … }` hears what they send.
+  log, when it wasn't sent. `onMessage { from, data in … }` hears what they send. A message is for apps open now.
+- `values` is a small map of JSON every app of the wish keeps on its device (each value 8 KB at most, all of them
+  64 KB). `set("list", value)` sets one here and in the others, at once if they're open or when they next meet; nil
+  (null) removes it. `onChange { key, value, from in … }` hears every change, this app's own included. Where two apps
+  set one while apart, the later setting wins in both.
 - The app's own `status` says how its link stands, with a `reason` when something keeps it from the others (on a Mac
-  or iPhone, `localNetworkDenied`: the person turned off Local Network for it). More states may come: treat any you
-  don't name as not connected.
+  or iPhone, `localNetworkDenied`: the person turned off Local Network for it). An open app built by an earlier Lamp is
+  `outOfDate`: still open, with a reason saying to open it from Lamp. More states may come: treat any you don't name as
+  not connected.
 - `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line
   for each other app, or one app's line with its peer name. Use them, restyle them, or show the statuses your own way.
 
 What it gives: the apps find each other on the home Wi‑Fi with nothing to sign up for, pair, host or pay for. While
 Lamp is open on the Mac it introduces them; with Lamp closed, the Mac asleep or Lamp updating they go on talking
 straight to each other on the same network. What they say is sealed with a key only the wish's apps have, and none of
-it leaves the home network. What it doesn't do: reach an app on another network (a phone away from home), or keep a
-message for an app that isn't open.
+it leaves the home network. What it doesn't do: reach an app on another network (a phone away from home), keep a
+message for an app that isn't open, or hold more than a small amount in `values`.
 
 How to use it well:
 - Start it as each app opens.
-- A message is for now. What must survive one app being closed, keep in that app's own store (LampStore) and send the
-  whole of it when the other app appears in `peers`, so they agree again whichever was open meanwhile. Watch `peers` as
-  it changes (onChange of it, collecting the StateFlow, onPeers), not by looking now and then: an app closed and opened
-  again quickly leaves and comes back between two looks.
-- An app that opens sends the whole of its own as well, and an app that gets a whole from another answers once with
-  its own, so the two catch up whichever noticed the other first.
+- Pick by what the data is. Something that happens now (a button pressed, "next round") is a message. Something the
+  other app should still see after being closed (a list, a score, a setting, what's on the dashboard) fits `values`:
+  they catch up by themselves when they meet, so there's nothing to resend. Something bigger or the app's own records
+  belong in its own store (LampStore), with only what the other app needs to show put in `values`.
+- Draw from `values` and redraw on `onChange`, rather than keeping a copy of your own that can drift. What an app kept
+  on its device can reach `values` a moment after it opens (on a TV, once it knows its wish), so never set a default
+  because `values` looks empty at launch: show an empty state, and set a value when the person does something.
+- Several apps may change the same value while apart, and the later setting wins whole. Where both sides add to one
+  list, give each item its own value ("todo.<id>") or keep each app's part under its own name, so neither undoes the
+  other's.
+- Watch `peers` as it changes (onChange of it, collecting the StateFlow, onPeers), not by looking now and then: an app
+  closed and opened again quickly leaves and comes back between two looks.
 - Where something needs another app, show why it isn't there with its `reason` (or the status view), and keep every
   control usable while it isn't open.
 - Never build a server, sockets, polling or pairing of your own beside it, and never put the app's token or Lamp's
