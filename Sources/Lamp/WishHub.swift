@@ -1,22 +1,129 @@
+import CryptoKit
 import Foundation
 import LampRelayKit
+
+/// Each wish's key: 32 random bytes that every app of the wish is given as Lamp puts it on its device, and that it proves
+/// it holds to get into its wish's room (`WishChannel`), so nothing that crosses the network lets anyone else in or reads
+/// what the apps say. Made the first time an app of a wish of more than one app needs it, kept in Lamp's own folder (never
+/// the wish's, which the agent's commands read and versions and shared files carry), by the wish's instance so a rename
+/// keeps it, and forgotten with the wish. It reaches each kind of app only by a way nobody on the network can read: a Mac
+/// app's installed copy and a phone's build in Lamp's own folder (`Template.wishKeyPlistLines`), the simulator's app
+/// folder after the install (`Store.tellSimulatorApp`), an Android app's own storage through adb (`androidInstallValues`),
+/// the TV preview through its bridge, and a TV over the network only sealed to a key the TV app just made, inside the
+/// claim Lamp opened for that TV as it put the app there (`WishRooms.claim`).
+enum WishKeys {
+    /// For tests, which keep theirs apart from any Lamp's.
+    nonisolated(unsafe) static var folder = Edition.supportFolder.appendingPathComponent("Wish Keys") {
+        didSet { lock.withLock { known = [:] } }
+    }
+    private static let lock = NSLock()
+    /// Each key once read or made, so a key that couldn't be written stays the same for as long as Lamp runs.
+    nonisolated(unsafe) private static var known: [String: Data] = [:]
+
+    /// The wish's key, made on first use.
+    static func key(for wish: LampProject) -> Data {
+        lock.withLock {
+            let url = file(for: wish)
+            if let key = known[url.path] { return key }
+            if let kept = try? Data(contentsOf: url), let key = Data(base64Encoded: String(decoding: kept, as: UTF8.self).trimmed),
+               key.count == WishChannel.keySize {
+                known[url.path] = key
+                return key
+            }
+            let made = WishChannel.random(WishChannel.keySize)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            if !FileManager.default.createFile(atPath: url.path, contents: Data(made.base64EncodedString().utf8), attributes: [.posixPermissions: 0o600]) {
+                NSLog("Lamp couldn't keep the key for \(wish.name)'s apps: they'll need to be put on their devices again after Lamp restarts.")
+            }
+            known[url.path] = made
+            return made
+        }
+    }
+
+    /// The wish is gone: its apps' key with it.
+    static func forget(_ wish: LampProject) {
+        lock.withLock {
+            let url = file(for: wish)
+            known[url.path] = nil
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func file(for wish: LampProject) -> URL {
+        let name = (wish.instance.isEmpty ? wish.id : wish.instance).map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "_" }
+        return folder.appendingPathComponent(String(name))
+    }
+}
+
+/// The claims Lamp opens for a wish's key as it puts a wish's TV app on a TV: one per app, from that TV's address, for
+/// two minutes from when Lamp starts putting it there and, if no claim was answered by then, two from when it opened it,
+/// and spent by the first claim answered, after which only that page's own key pair is answered, for the claim's
+/// minutes, in case the answer was lost on its way: sealed to the page again, it's no use to anyone else.
+/// Apart from the TV's token claim (`DeviceSupport.Claims`), which lasts half an hour and may be answered any number of
+/// times: the key, unlike the token, never crosses the network in clear, and the claim is the one moment someone on the
+/// network could get it, by answering for the page. A request that fails on the way (the network, a key that can't be
+/// used) spends nothing, so the page's tries again still work; once the claim is spent a page that opens again uses
+/// the key it kept.
+final class WishClaims: @unchecked Sendable {
+    static let shared = WishClaims()
+    /// For tests.
+    nonisolated(unsafe) static var window: TimeInterval = 2 * 60
+    private let lock = NSLock()
+    private var open: [String: (address: String, until: Date)] = [:]
+    /// The public half each spent claim was answered for, from where, and until when it may be answered again.
+    private var spent: [String: (key: Data, address: String, until: Date)] = [:]
+
+    /// Opens the claim as Lamp starts putting the app on the TV.
+    func open(_ app: String, from address: String) {
+        lock.withLock {
+            spent[app] = nil
+            open[app] = (DeviceSupport.Claims.plain(address), Date().addingTimeInterval(Self.window))
+        }
+    }
+
+    /// Gives it its minutes again once the app is open on the TV, unless a claim was answered meanwhile.
+    func renew(_ app: String, from address: String) {
+        lock.withLock {
+            guard spent[app] == nil else { return }
+            open[app] = (DeviceSupport.Claims.plain(address), Date().addingTimeInterval(Self.window))
+        }
+    }
+
+    func isOpen(_ app: String, from address: String?, for key: Data) -> Bool {
+        lock.withLock {
+            let from = address.map(DeviceSupport.Claims.plain)
+            if let answered = spent[app] {
+                return answered.until > Date() && answered.address == from && answered.key == key
+            }
+            guard let claim = open[app], claim.until > Date() else { open[app] = nil; return false }
+            return from == claim.address
+        }
+    }
+
+    func spend(_ app: String, on key: Data) {
+        lock.withLock {
+            guard spent[app] == nil, let claim = open.removeValue(forKey: app) else { return }
+            spent[app] = (key, claim.address, Date().addingTimeInterval(Self.window))
+        }
+    }
+}
 
 /// The apps of one wish seeing each other and talking: a room for the wish at the controllers' relay (`Relay`,
 /// `ControllerRelay`), which each of its apps joins as a peer named by its folder in the wish ("tv", "iphone", "apple",
 /// "mac", "android"). Where a wish's apps are is `Store.apps(of:)`'s to know, and nothing here asks which is at the root.
 /// Lamp only introduces them: an app shows its own token at `/app/wish` and is told where the relay is, which peer it
-/// is, a peer credential for the room and who is in it now; what the apps then say to each other goes through the
-/// relay's process, never Lamp's, except for an app that can't hold a socket (an Android app, whose blocks speak HTTP),
-/// which Lamp joins to the room on its behalf and feeds by long-poll (`WishProxies`). A room is opened the first time
-/// an app of the wish asks, told the wish's apps again when they change, and ended when the wish is gone, has no other
-/// app, or has had nobody in it and nobody asking for a while, so the relay runs only while something needs it.
+/// is and who is in the room now; it gets in by proving it holds the wish's key (`WishKeys`, `WishChannel`), and what
+/// the apps then say to each other is sealed and goes through the relay's process, never Lamp's. An app that can't hold
+/// a socket (an Android app, whose blocks speak HTTP) has Lamp hold one to the room for it (`WishProxies`), which carries
+/// its handshake and sealed messages as they are, unread. A room is opened the first time an app of the wish asks, told
+/// the wish's apps again when they change, and ended when the wish is gone, has no other app, or has had nobody in it
+/// and nobody asking for a while, so the relay runs only while something needs it.
 ///
 /// The builder is told the same block in every language (`Agent.Rules.wishTalk`) and, at the end of each request, where
 /// each app of the wish is: open or not, in the room or not (`WishNote`).
 ///
-/// A peer credential is good once and for two minutes, as a phone's is: the room hands a joined app a fresh one over its
-/// socket, which is what a dropped link comes back with, so a hello seen on the home network is already spent. A wish
-/// of one app gets none of this: no rule, no line, no code in its building blocks (`Template.talksToOtherApps`), no room.
+/// A wish of one app gets none of this: no rule, no line, no code in its building blocks (`Template.talksToOtherApps`),
+/// no key and no room.
 @MainActor
 enum WishRooms {
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
@@ -44,22 +151,59 @@ enum WishRooms {
     static let idle: TimeInterval = 15 * 60
     private static var timer: Timer?
 
-    /// What an app of a wish is told when it asks (`/app/wish`): the relay's socket by the name it reached Lamp at, its
-    /// room, which peer it is, a credential for the room, and who is in it now. An app whose wish has no other app is
-    /// told it's alone, and asks again later in case one is added.
-    static func answer(for project: LampProject, wish: LampProject, apps: [LampProject], host: String) async -> (Int, [String: Any]) {
+    /// What an app of a wish is told when it asks (`/app/wish`): the relay's socket by the name it reached Lamp at, which
+    /// peer it is, and who is in the room now; nothing that lets it in, which is the wish's key the app was given when it
+    /// was put on its device. The TV preview, whose page asks through its bridge on this Mac and was put nowhere, is
+    /// given the key here (`preview`). An app whose wish has no other app is told it's alone, and asks again later in
+    /// case one is added.
+    static func answer(for project: LampProject, wish: LampProject, apps: [LampProject], host: String, preview: Bool = false) async -> (Int, [String: Any]) {
         let me = describe(project, in: wish)
         // Alone: a wish of one app, whether it's at the wish's root or in a folder of its own.
         guard apps.count >= 2 else { return (200, ["alone": true, "renew": 300, "me": me]) }
         let key = key(for: wish)
-        let peer = peer(project, in: wish)
         asked[key] = Date()
-        ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(apps, in: wish))
+        ControllerRelay.openRoom(key, wishKey: WishKeys.key(for: wish), apps: described(apps, in: wish))
         startTimer()
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link between the wish's apps."]) }
-        return (200, ["socket": "ws://\(host):\(port)/", "room": key, "peer": peer,
-                      "credential": ControllerCredential.issue(kind: .peer, app: key, peer: peer),
-                      "renew": 60, "peers": presence(of: wish), "apps": described(apps, in: wish), "me": me])
+        var answer: [String: Any] = ["socket": "ws://\(host):\(port)/", "peer": peer(project, in: wish),
+                                     "peers": presence(of: wish), "apps": described(apps, in: wish), "me": me]
+        if preview { answer["key"] = WishKeys.key(for: wish).base64EncodedString() }
+        return (200, answer)
+    }
+
+    /// A TV app Lamp has just put on a TV asking for its wish's key (`/app/wish/claim`), which never goes in a TV's
+    /// package (a Samsung TV's goes over a link anyone on the network can read) nor in clear: the page makes a key pair
+    /// as it opens and sends its public half, and the wish's key comes back sealed to it, so only that page can open it.
+    /// The request is plain HTTP, so someone on the network between the TV and this Mac could put a public half of their
+    /// own in its place and have the key sealed to them; nothing short of an encrypted link to the gateway stops that.
+    /// So the claim is open only as long as it must be (`WishClaims`): from the TV's address, for minutes after Lamp put
+    /// the app there and opened it, and only until the first claim it answers, which in a normal install is the page's
+    /// own a moment after it opens.
+    static func claim(for project: LampProject, wish: LampProject, apps: [LampProject], publicKey: Data, from address: String?) -> (Int, [String: Any]) {
+        guard WishClaims.shared.isOpen(project.id, from: address, for: publicKey) else { return (403, ["error": "Lamp didn't just put this app here."]) }
+        let answer = claim(for: wish, apps: apps, publicKey: publicKey)
+        if answer.0 == 200 { WishClaims.shared.spend(project.id, on: publicKey) }
+        return answer
+    }
+
+    static func claim(for wish: LampProject, apps: [LampProject], publicKey: Data) -> (Int, [String: Any]) {
+        guard apps.count >= 2 else { return (200, ["alone": true]) }
+        guard let theirs = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey) else { return (400, ["error": "That key can't be used."]) }
+        let mine = Curve25519.KeyAgreement.PrivateKey()
+        guard let shared = try? mine.sharedSecretFromKeyAgreement(with: theirs) else { return (400, ["error": "That key can't be used."]) }
+        let secret = shared.withUnsafeBytes { Data($0) }
+        // A key the page couldn't have made (one of the few points every secret comes out zero for) seals nothing.
+        guard secret.contains(where: { $0 != 0 }) else { return (400, ["error": "That key can't be used."]) }
+        let sealing = SymmetricKey(data: claimKey(secret: secret, lamp: mine.publicKey.rawRepresentation, page: publicKey))
+        let nonce = AES.GCM.Nonce()
+        guard let box = try? AES.GCM.seal(WishKeys.key(for: wish), using: sealing, nonce: nonce) else { return (500, ["error": "Lamp couldn't seal the key."]) }
+        return (200, ["public": mine.publicKey.rawRepresentation.base64EncodedString(), "nonce": Data(nonce).base64EncodedString(),
+                      "sealed": (box.ciphertext + box.tag).base64EncodedString()])
+    }
+
+    /// What a claim's key is sealed with: from the two keys' shared secret and both public halves, as lamp.js makes it.
+    static func claimKey(secret: Data, lamp: Data, page: Data) -> Data {
+        WishChannel.derive("lamp-wish claim", key: SymmetricKey(data: secret), lamp + page)
     }
 
     /// Who is in the wish's room now, as the relay last said.
@@ -71,15 +215,14 @@ enum WishRooms {
         let byKey = Dictionary(wishes.map { (key(for: $0.wish), $0) }, uniquingKeysWith: { a, _ in a })
         for key in ControllerRelay.roomKeys {
             guard let entry = byKey[key], entry.apps.count >= 2 else { end(key); continue }
-            ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(entry.apps, in: entry.wish))
+            ControllerRelay.openRoom(key, wishKey: WishKeys.key(for: entry.wish), apps: described(entry.apps, in: entry.wish))
         }
         expire()
     }
 
-    /// The room is over: its members are let go, its credentials are worthless, and the apps Lamp joined to it are dropped.
+    /// The room is over: its members are let go, and the apps Lamp joined to it are dropped.
     static func end(_ key: String) {
         asked[key] = nil
-        ControllerCredential.forget(key)
         ControllerRelay.endRoom(key)
         WishProxies.end(room: key)
     }
@@ -111,30 +254,35 @@ enum WishRooms {
     }
 }
 
-/// An app that can't hold a WebSocket (an Android app: its blocks speak HTTP on a socket) in its wish's room: Lamp
-/// opens the room's socket for it, as it, and the app polls Lamp for what came (`/app/wish/poll`, answered as soon as
-/// there is something, or after a wait) and posts what it sends (`/app/wish/send`). The link is the app's own: Lamp
-/// keeps what arrived only until the next poll, and lets the socket go when the app has stopped polling.
+/// An app that can't hold a WebSocket (an Android app: its blocks speak HTTP on a socket) in its wish's room: Lamp holds
+/// the socket for it and carries what goes each way as it is, unread, since the app does its own handshake and seals its
+/// own messages (`WishChannel`). The app asks Lamp to open the socket (`/app/wish/open`, which ends any it had), sends
+/// its handshake's text and its sealed messages (`/app/wish/send`), and polls for what came (`/app/wish/poll`, answered
+/// as soon as there is something, or after a wait). Each socket is a link of its own, numbered, so nothing of an old one
+/// reaches a new handshake. Lamp keeps what arrived only until the next poll, and lets the socket go when the app has
+/// stopped polling.
 @MainActor
 enum WishProxies {
     final class Proxy {
         let app: String
         let room: String
-        var device: String
+        let link: Int
         var task: URLSessionWebSocketTask?
-        var opening = false
         var events: [[String: Any]] = []
         var waiter: CheckedContinuation<[[String: Any]], Never>?
         var lastPoll = Date()
         var beat: Timer?
-        init(app: String, room: String, device: String) {
+        /// What the app sent, waiting its turn: each goes once the one before it has, so they reach the relay in order.
+        var sending: Task<Void, Never>?
+        init(app: String, room: String, link: Int) {
             self.app = app
             self.room = room
-            self.device = device
+            self.link = link
         }
     }
 
-    /// Events kept for an app between polls, past which the oldest go: a poll takes them all.
+    /// Events kept for an app between polls, past which the link is let go: a sealed message missed can't be skipped,
+    /// so an app that fell this far behind starts its link again.
     static let backlog = 256
     /// A poll waits this long for something to come before answering with nothing.
     static let wait: TimeInterval = 25
@@ -142,38 +290,52 @@ enum WishProxies {
     static let idle: TimeInterval = 90
 
     private static var proxies: [String: Proxy] = [:]
+    private static var links = 0
 
     static func lastAsked(room: String) -> Date? { proxies.values.filter { $0.room == room }.map(\.lastPoll).max() }
 
-    /// What has come for the app since its last poll (`events`: the room's own messages, `welcome`, `joined`, `left`,
-    /// `message`, `undelivered`, and `closed` when the socket went), waiting a while for the first. The first poll opens
-    /// the app's place in the room; one after the socket closed, or one that asks to `rejoin`, opens it again, so the
-    /// app sees a fresh welcome.
-    static func poll(_ project: LampProject, wish: LampProject, apps: [LampProject], device: String, rejoin: Bool = false) async -> (Int, [String: Any]) {
-        let key = WishRooms.key(for: wish)
-        let proxy = proxies[project.id] ?? Proxy(app: project.id, room: key, device: device)
+    /// Opens the app's socket to its wish's room, closing any it had, and says which link it is, with what `/app/wish`
+    /// says (alone, which peer it is).
+    static func open(_ project: LampProject, wish: LampProject, apps: [LampProject]) async -> (Int, [String: Any]) {
+        if let old = proxies[project.id] { close(old); proxies[project.id] = nil }
+        var (status, answer) = await WishRooms.answer(for: project, wish: wish, apps: apps, host: "127.0.0.1")
+        guard status == 200, answer["alone"] as? Bool != true else { return (status, answer) }
+        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)) else {
+            return (503, ["error": "Lamp couldn't say where the wish's apps meet."])
+        }
+        links += 1
+        let proxy = Proxy(app: project.id, room: WishRooms.key(for: wish), link: links)
         proxies[project.id] = proxy
-        proxy.lastPoll = Date()
-        if !device.isEmpty { proxy.device = device }
-        // The app lost touch with Lamp for a while (`rejoin`): what it missed can't be made up, so its place in the room
-        // is taken afresh, and the welcome that follows gives it the whole state again.
-        if rejoin, proxy.task != nil {
-            close(proxy)
-            proxy.events = []
-        }
-        if proxy.task == nil, !proxy.opening {
-            proxy.opening = true
-            let (status, answer) = await WishRooms.answer(for: project, wish: wish, apps: apps, host: "127.0.0.1")
-            proxy.opening = false
-            guard status == 200 else { proxies[project.id] = nil; return (status, answer) }
-            if answer["alone"] as? Bool == true { proxies[project.id] = nil; return (200, ["alone": true, "renew": 300, "events": []]) }
-            guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let credential = answer["credential"] as? String else {
-                proxies[project.id] = nil
-                return (503, ["error": "Lamp couldn't say where the wish's apps meet."])
+        let task = URLSession.shared.webSocketTask(with: socket)
+        task.maximumMessageSize = WishChannel.sealedLimit + 1024
+        proxy.task = task
+        task.resume()
+        receive(proxy, on: task)
+        // The relay's beats are answered here, in clear as they always are (they carry nothing), so the app polls only
+        // when something has come.
+        proxy.beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                guard proxy.task === task else { return }
+                if Date().timeIntervalSince(proxy.lastPoll) > idle {
+                    close(proxy)
+                    if proxies[proxy.app] === proxy { proxies[proxy.app] = nil }
+                    return
+                }
+                task.send(.string(#"{"t":"beat"}"#)) { _ in }
             }
-            open(proxy, socket: socket, credential: credential)
         }
-        if !proxy.events.isEmpty { return (200, ["events": take(proxy)]) }
+        answer["socket"] = nil
+        answer["link"] = proxy.link
+        return (200, answer)
+    }
+
+    /// What has come for the app on this link since its last poll: `{"text": …}` for the handshake's, `{"data": base64}`
+    /// for a sealed message, and `{"closed": code}` when the socket went; waiting a while for the first. A link that isn't
+    /// the app's now is answered 409, and the app opens a new one.
+    static func poll(_ project: LampProject, link: Int) async -> (Int, [String: Any]) {
+        guard let proxy = proxies[project.id], proxy.link == link else { return (409, ["error": "That link to the wish's apps is over: open another."]) }
+        proxy.lastPoll = Date()
+        if !proxy.events.isEmpty || proxy.task == nil { return (200, ["events": take(proxy)]) }
         // One poll waits at a time: a second one ends the first with nothing, since the app has moved on.
         proxy.waiter?.resume(returning: [])
         proxy.waiter = nil
@@ -189,20 +351,29 @@ enum WishProxies {
         return (200, ["events": events])
     }
 
-    /// Sends what the app said to one peer or to all, as the app would on its own socket.
+    /// Sends what the app said on this link, in order: its handshake's `text`s, and its sealed messages (`data`, base64),
+    /// each as one message on the socket, as the app would on its own.
     static func send(_ project: LampProject, body: [String: Any]) async -> (Int, [String: Any]) {
-        guard let proxy = proxies[project.id], let task = proxy.task else { return (409, ["error": "The app isn't in the wish's room yet: poll first."]) }
-        guard let data = body["data"] else { return (400, ["error": "Nothing to send."]) }
-        var frame: [String: Any] = ["t": "send", "data": data]
-        if let to = body["to"] as? String { frame["to"] = to }
-        guard JSONSerialization.isValidJSONObject(frame), let text = try? JSONSerialization.data(withJSONObject: frame),
-              text.count <= ControllerWire.message else {
-            return (413, ["error": "A message between the wish's apps is at most \(ControllerWire.message) bytes as JSON."])
+        guard let proxy = proxies[project.id], proxy.link == body["link"] as? Int, let task = proxy.task else {
+            return (409, ["error": "That link to the wish's apps is over: open another."])
+        }
+        var messages: [URLSessionWebSocketTask.Message] = []
+        for item in body["frames"] as? [[String: Any]] ?? [] {
+            if let text = item["text"] as? String, text.utf8.count <= ControllerWire.message { messages.append(.string(text)) }
+            else if let data = (item["data"] as? String).flatMap({ Data(base64Encoded: $0) }), data.count <= WishChannel.sealedLimit + 16 { messages.append(.data(data)) }
+            else { return (413, ["error": "A message between the wish's apps is at most \(ControllerWire.message) bytes as JSON."]) }
         }
         proxy.lastPoll = Date()
-        do {
-            try await task.send(.string(String(decoding: text, as: UTF8.self)))
-        } catch {
+        let before = proxy.sending
+        let sent = Task { @MainActor () -> Error? in
+            await before?.value
+            for message in messages {
+                do { try await task.send(message) } catch { return error }
+            }
+            return nil
+        }
+        proxy.sending = Task { _ = await sent.value }
+        if let error = await sent.value {
             return (503, ["error": "The message didn't reach the wish's other apps: \(error.localizedDescription)"])
         }
         return (200, ["ok": true])
@@ -221,34 +392,11 @@ enum WishProxies {
 
     private static func push(_ proxy: Proxy, _ event: [String: Any]) {
         proxy.events.append(event)
-        if proxy.events.count > backlog { proxy.events.removeFirst(proxy.events.count - backlog) }
+        // Too far behind to catch up: a sealed message can't be skipped, so the link ends and the app starts another.
+        if proxy.events.count > backlog, proxy.task != nil { close(proxy); proxy.events.append(["closed": 1008]) }
         if let waiter = proxy.waiter {
             proxy.waiter = nil
             waiter.resume(returning: take(proxy))
-        }
-    }
-
-    private static func open(_ proxy: Proxy, socket: URL, credential: String) {
-        let task = URLSession.shared.webSocketTask(with: socket)
-        task.maximumMessageSize = ControllerWire.message + 1024
-        proxy.task = task
-        task.resume()
-        let hello: [String: Any] = ["t": "hello", "app": proxy.room, "credential": credential, "device": proxy.device]
-        if let data = try? JSONSerialization.data(withJSONObject: hello) {
-            task.send(.string(String(decoding: data, as: UTF8.self))) { _ in }
-        }
-        receive(proxy, on: task)
-        proxy.beat?.invalidate()
-        proxy.beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                guard proxy.task === task else { return }
-                if Date().timeIntervalSince(proxy.lastPoll) > idle {
-                    close(proxy)
-                    proxies[proxy.app] = nil
-                    return
-                }
-                task.send(.string(#"{"t":"beat"}"#)) { _ in }
-            }
         }
     }
 
@@ -258,9 +406,11 @@ enum WishProxies {
                 guard proxy.task === task else { return }
                 switch result {
                 case .success(.string(let text)):
-                    if let event = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any], event["t"] as? String != "beat" {
-                        push(proxy, event)
-                    }
+                    let said = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+                    if said?["t"] as? String != "beat" { push(proxy, ["text": text]) }
+                    receive(proxy, on: task)
+                case .success(.data(let data)):
+                    push(proxy, ["data": data.base64EncodedString()])
                     receive(proxy, on: task)
                 case .success:
                     receive(proxy, on: task)
@@ -269,7 +419,7 @@ enum WishProxies {
                     proxy.task = nil
                     proxy.beat?.invalidate()
                     proxy.beat = nil
-                    push(proxy, ["t": "closed", "code": code])
+                    push(proxy, ["closed": code])
                 }
             }
         }

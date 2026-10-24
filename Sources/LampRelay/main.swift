@@ -8,7 +8,7 @@ import LampRelayKit
 //   {"op":"start","key":"<base64>","port":47900}       the controllers' key, and the port it had before
 //   {"op":"session","app":"…","generation":0,"pagePort":47860,"page":"http://…/","hosts":["…"]}
 //   {"op":"end","app":"…"}
-//   {"op":"room","app":"wish:…","generation":0,"apps":[{"peer":"tv","kind":"tv","name":"the TV app"},…]}   a wish's room
+//   {"op":"room","app":"wish:…","key":"<base64>","apps":[{"peer":"tv","kind":"tv","name":"the TV app"},…]}   a wish's room, with its key
 //   {"op":"end-room","app":"wish:…"}
 //
 // It says where it's listening on its output ({"op":"ready","port":…}), who is in each room as that changes
@@ -44,13 +44,14 @@ while let line = readLine() {
         guard let relay, let app = command["app"] as? String else { continue }
         relay.end(app: app)
     case "room":
-        guard let relay, let app = command["app"] as? String, let generation = command["generation"] as? Int else { continue }
+        guard let relay, let app = command["app"] as? String,
+              let key = (command["key"] as? String).flatMap({ Data(base64Encoded: $0) }), key.count == WishChannel.keySize else { continue }
         var apps: [String: (kind: String, name: String)] = [:]
         for each in command["apps"] as? [[String: Any]] ?? [] {
             guard let peer = each["peer"] as? String else { continue }
             apps[peer] = (each["kind"] as? String ?? "", each["name"] as? String ?? "")
         }
-        relay.configureRoom(app, generation: generation, apps: apps)
+        relay.configureRoom(app, key: key, apps: apps)
     case "end-room":
         guard let relay, let app = command["app"] as? String else { continue }
         relay.endRoom(app)

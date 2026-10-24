@@ -802,13 +802,297 @@ extension TVTemplate {
     /// The wish's other apps (`WishRooms`): the TV page's half of `LampWish`, the same block the wish's Swift and Kotlin
     /// apps have. The page asks Lamp for its room (`/app/wish`, through the preview's bridge or the gateway), opens its own
     /// socket to the relay there and hears who else is in it; what the apps say to each other never passes through Lamp.
-    static let wishJS = #"""
+    /// The wish's channel's crypto for lamp.js (`WishChannel` on the relay's side): SHA-256, HMAC, AES-256-GCM and X25519 in
+    /// plain ES5, since a TV's page opened from its package has no WebCrypto, held to CryptoKit's own by `WishChannelTests`.
+    /// Only a TV app with others in its wish carries it.
+    static let wishCryptoJS = #"""
+        (function () {
+          'use strict';
+          // SHA-256, HMAC, AES-256-GCM and X25519 in plain ES5, for TVs whose browsers have no WebCrypto on a page
+          // opened from a file. Bytes are Uint8Arrays throughout. X25519 is TweetNaCl's (public domain).
+          var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+
+          function concat(list) {
+            var n = 0, i, out, at = 0;
+            for (i = 0; i < list.length; i++) n += list[i].length;
+            out = new Uint8Array(n);
+            for (i = 0; i < list.length; i++) { out.set(list[i], at); at += list[i].length; }
+            return out;
+          }
+
+          function sha256(data) {
+            var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+            var length = data.length, padded = ((length + 72) >> 6) << 6, m = new Uint8Array(padded), w = new Array(64);
+            var bits = length * 8, high = Math.floor(bits / 4294967296), i, j, o;
+            m.set(data);
+            m[length] = 0x80;
+            for (i = 0; i < 4; i++) { m[padded - 1 - i] = (bits >>> (8 * i)) & 255; m[padded - 5 - i] = (high >>> (8 * i)) & 255; }
+            for (o = 0; o < padded; o += 64) {
+              for (i = 0; i < 16; i++) w[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+              for (i = 16; i < 64; i++) {
+                var x = w[i - 15], y = w[i - 2];
+                var s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+                var s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+                w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+              }
+              var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+              for (j = 0; j < 64; j++) {
+                var t1 = (k + (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) + ((e & f) ^ (~e & g)) + K[j] + w[j]) | 0;
+                var t2 = ((((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+                k = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+              }
+              h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+              h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + k) | 0;
+            }
+            var out = new Uint8Array(32);
+            for (i = 0; i < 8; i++) { out[4 * i] = h[i] >>> 24; out[4 * i + 1] = (h[i] >>> 16) & 255; out[4 * i + 2] = (h[i] >>> 8) & 255; out[4 * i + 3] = h[i] & 255; }
+            return out;
+          }
+
+          function hmac(key, data) {
+            if (key.length > 64) key = sha256(key);
+            var inner = new Uint8Array(64), outer = new Uint8Array(64);
+            for (var i = 0; i < 64; i++) { var k = i < key.length ? key[i] : 0; inner[i] = k ^ 0x36; outer[i] = k ^ 0x5c; }
+            return sha256(concat([outer, sha256(concat([inner, data]))]));
+          }
+
+          // AES-256 on one 16-byte block, byte by byte: SubBytes, ShiftRows, MixColumns and the round keys.
+          var SBOX = (function (hex) {
+            var box = new Uint8Array(256);
+            for (var i = 0; i < 256; i++) box[i] = parseInt(hex.substr(2 * i, 2), 16);
+            return box;
+          })('637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b27509832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16');
+          function xtime(x) { return ((x << 1) ^ (x & 0x80 ? 0x1b : 0)) & 255; }
+          function expand(key) {
+            var w = new Array(60), i, rcon = 1;
+            for (i = 0; i < 8; i++) w[i] = (key[4 * i] << 24) | (key[4 * i + 1] << 16) | (key[4 * i + 2] << 8) | key[4 * i + 3];
+            for (i = 8; i < 60; i++) {
+              var t = w[i - 1];
+              if (i % 8 === 0) t = ((t << 8) | (t >>> 24));
+              if (i % 8 === 0 || i % 8 === 4) t = (SBOX[t >>> 24] << 24) | (SBOX[(t >>> 16) & 255] << 16) | (SBOX[(t >>> 8) & 255] << 8) | SBOX[t & 255];
+              if (i % 8 === 0) { t ^= rcon << 24; rcon = xtime(rcon); }
+              w[i] = w[i - 8] ^ t;
+            }
+            return w;
+          }
+          function encrypt(w, block) {
+            var s = new Uint8Array(16), t = new Uint8Array(16), r, c, i;
+            function addKey(round) {
+              for (c = 0; c < 4; c++) {
+                var k = w[round * 4 + c];
+                s[4 * c] ^= k >>> 24; s[4 * c + 1] ^= (k >>> 16) & 255; s[4 * c + 2] ^= (k >>> 8) & 255; s[4 * c + 3] ^= k & 255;
+              }
+            }
+            function subShift() {
+              for (i = 0; i < 16; i++) t[i] = SBOX[s[i]];
+              for (c = 0; c < 4; c++) for (r = 0; r < 4; r++) s[r + 4 * c] = t[r + 4 * ((c + r) % 4)];
+            }
+            s.set(block);
+            addKey(0);
+            for (var round = 1; round < 14; round++) {
+              subShift();
+              for (c = 0; c < 4; c++) {
+                var a0 = s[4 * c], a1 = s[4 * c + 1], a2 = s[4 * c + 2], a3 = s[4 * c + 3], all = a0 ^ a1 ^ a2 ^ a3;
+                s[4 * c] ^= all ^ xtime(a0 ^ a1); s[4 * c + 1] ^= all ^ xtime(a1 ^ a2);
+                s[4 * c + 2] ^= all ^ xtime(a2 ^ a3); s[4 * c + 3] ^= all ^ xtime(a3 ^ a0);
+              }
+              addKey(round);
+            }
+            subShift();
+            addKey(14);
+            return s;
+          }
+
+          // GCM: counter mode from the nonce, and GHASH over what was sealed, multiplied in GF(2^128) bit by bit.
+          function words(b, at) { return [(b[at] << 24 | b[at + 1] << 16 | b[at + 2] << 8 | b[at + 3]) >>> 0, (b[at + 4] << 24 | b[at + 5] << 16 | b[at + 6] << 8 | b[at + 7]) >>> 0,
+                                           (b[at + 8] << 24 | b[at + 9] << 16 | b[at + 10] << 8 | b[at + 11]) >>> 0, (b[at + 12] << 24 | b[at + 13] << 16 | b[at + 14] << 8 | b[at + 15]) >>> 0]; }
+          function times(x, h) {
+            var z0 = 0, z1 = 0, z2 = 0, z3 = 0, v0 = h[0], v1 = h[1], v2 = h[2], v3 = h[3];
+            for (var i = 0; i < 128; i++) {
+              if ((x[i >>> 5] >>> (31 - (i & 31))) & 1) { z0 ^= v0; z1 ^= v1; z2 ^= v2; z3 ^= v3; }
+              var low = v3 & 1;
+              v3 = (v3 >>> 1) | ((v2 & 1) << 31); v2 = (v2 >>> 1) | ((v1 & 1) << 31); v1 = (v1 >>> 1) | ((v0 & 1) << 31); v0 = v0 >>> 1;
+              if (low) v0 ^= 0xe1000000;
+            }
+            return [z0 >>> 0, z1 >>> 0, z2 >>> 0, z3 >>> 0];
+          }
+          function ghash(h, data) {
+            var x = [0, 0, 0, 0], padded = new Uint8Array(((data.length + 15) >> 4) << 4), at, bits = data.length * 8;
+            padded.set(data);
+            for (at = 0; at < padded.length; at += 16) {
+              var y = words(padded, at);
+              x = times([x[0] ^ y[0], x[1] ^ y[1], x[2] ^ y[2], x[3] ^ y[3]], h);
+            }
+            return times([x[0], x[1], x[2] ^ Math.floor(bits / 4294967296), (x[3] ^ bits) >>> 0], h);
+          }
+          function counter(w, nonce, data) {
+            var out = new Uint8Array(data.length), block = new Uint8Array(16), n = 2, at, i;
+            block.set(nonce);
+            for (at = 0; at < data.length; at += 16, n++) {
+              block[12] = n >>> 24; block[13] = (n >>> 16) & 255; block[14] = (n >>> 8) & 255; block[15] = n & 255;
+              var stream = encrypt(w, block);
+              for (i = 0; i < 16 && at + i < data.length; i++) out[at + i] = data[at + i] ^ stream[i];
+            }
+            return out;
+          }
+          function tag(w, nonce, sealed) {
+            var h = words(encrypt(w, new Uint8Array(16)), 0), j0 = new Uint8Array(16), mask, out = new Uint8Array(16), i;
+            j0.set(nonce); j0[15] = 1;
+            mask = encrypt(w, j0);
+            var x = ghash(h, sealed);
+            for (i = 0; i < 16; i++) out[i] = mask[i] ^ ((x[i >> 2] >>> (24 - 8 * (i & 3))) & 255);
+            return out;
+          }
+          function same(a, b) {
+            if (a.length !== b.length) return false;
+            var d = 0;
+            for (var i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+            return d === 0;
+          }
+          // What was said, then its 16-byte tag, as CryptoKit's AES.GCM writes it with no additional data.
+          function seal(key, nonce, plain) {
+            var w = expand(key), sealed = counter(w, nonce, plain);
+            return concat([sealed, tag(w, nonce, sealed)]);
+          }
+          function open(key, nonce, box) {
+            if (box.length < 16) return null;
+            var w = expand(key), sealed = box.subarray(0, box.length - 16);
+            if (!same(tag(w, nonce, sealed), box.subarray(box.length - 16))) return null;
+            return counter(w, nonce, sealed);
+          }
+
+          // X25519, from TweetNaCl.
+          function gf(init) { var r = new Float64Array(16); if (init) for (var i = 0; i < init.length; i++) r[i] = init[i]; return r; }
+          var C121665 = gf([0xdb41, 1]);
+          function car(o) {
+            var i, v, c = 1;
+            for (i = 0; i < 16; i++) { v = o[i] + c + 65535; c = Math.floor(v / 65536); o[i] = v - c * 65536; }
+            o[0] += c - 1 + 37 * (c - 1);
+          }
+          function sel(p, q, b) { var t, c = ~(b - 1); for (var i = 0; i < 16; i++) { t = c & (p[i] ^ q[i]); p[i] ^= t; q[i] ^= t; } }
+          function pack(o, n) {
+            var i, j, b, m = gf(), t = gf();
+            for (i = 0; i < 16; i++) t[i] = n[i];
+            car(t); car(t); car(t);
+            for (j = 0; j < 2; j++) {
+              m[0] = t[0] - 0xffed;
+              for (i = 1; i < 15; i++) { m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1); m[i - 1] &= 0xffff; }
+              m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
+              b = (m[15] >> 16) & 1;
+              m[14] &= 0xffff;
+              sel(t, m, 1 - b);
+            }
+            for (i = 0; i < 16; i++) { o[2 * i] = t[i] & 0xff; o[2 * i + 1] = t[i] >> 8; }
+          }
+          function unpack(o, n) { for (var i = 0; i < 16; i++) o[i] = n[2 * i] + (n[2 * i + 1] << 8); o[15] &= 0x7fff; }
+          function add(o, a, b) { for (var i = 0; i < 16; i++) o[i] = a[i] + b[i]; }
+          function sub(o, a, b) { for (var i = 0; i < 16; i++) o[i] = a[i] - b[i]; }
+          function mul(o, a, b) {
+            var i, j, t = new Float64Array(31);
+            for (i = 0; i < 16; i++) for (j = 0; j < 16; j++) t[i + j] += a[i] * b[j];
+            for (i = 0; i < 15; i++) t[i] += 38 * t[i + 16];
+            for (i = 0; i < 16; i++) o[i] = t[i];
+            car(o); car(o);
+          }
+          function inverse(o, i) {
+            var c = gf(), a;
+            for (a = 0; a < 16; a++) c[a] = i[a];
+            for (a = 253; a >= 0; a--) { mul(c, c, c); if (a !== 2 && a !== 4) mul(c, c, i); }
+            for (a = 0; a < 16; a++) o[a] = c[a];
+          }
+          function x25519(scalar, point) {
+            var z = new Uint8Array(32), x = new Float64Array(80), q = new Uint8Array(32), r, i;
+            var a = gf(), b = gf(), c = gf(), d = gf(), e = gf(), f = gf();
+            for (i = 0; i < 31; i++) z[i] = scalar[i];
+            z[31] = (scalar[31] & 127) | 64;
+            z[0] &= 248;
+            unpack(x, point);
+            for (i = 0; i < 16; i++) { b[i] = x[i]; d[i] = a[i] = c[i] = 0; }
+            a[0] = d[0] = 1;
+            for (i = 254; i >= 0; --i) {
+              r = (z[i >>> 3] >>> (i & 7)) & 1;
+              sel(a, b, r); sel(c, d, r);
+              add(e, a, c); sub(a, a, c); add(c, b, d); sub(b, b, d);
+              mul(d, e, e); mul(f, a, a); mul(a, c, a); mul(c, b, e);
+              add(e, a, c); sub(a, a, c); mul(b, a, a); sub(c, d, f);
+              mul(a, c, C121665); add(a, a, d); mul(c, c, a); mul(a, d, f); mul(d, b, x); mul(b, e, e);
+              sel(a, b, r); sel(c, d, r);
+            }
+            for (i = 0; i < 16; i++) { x[i + 16] = a[i]; x[i + 32] = c[i]; x[i + 48] = b[i]; x[i + 64] = d[i]; }
+            var x32 = x.subarray(32), x16 = x.subarray(16);
+            inverse(x32, x32);
+            mul(x16, x16, x32);
+            pack(q, x16);
+            return q;
+          }
+          var BASE = new Uint8Array(32);
+          BASE[0] = 9;
+
+          var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+          function toBase64(b) {
+            var out = '';
+            for (var i = 0; i < b.length; i += 3) {
+              var n = (b[i] << 16) | ((i + 1 < b.length ? b[i + 1] : 0) << 8) | (i + 2 < b.length ? b[i + 2] : 0);
+              out += B64.charAt((n >>> 18) & 63) + B64.charAt((n >>> 12) & 63) + (i + 1 < b.length ? B64.charAt((n >>> 6) & 63) : '=') + (i + 2 < b.length ? B64.charAt(n & 63) : '=');
+            }
+            return out;
+          }
+          // Null for anything that isn't base64.
+          function fromBase64(s) {
+            if (typeof s !== 'string' || !/^[A-Za-z0-9+\/]*={0,2}$/.test(s) || s.length % 4) return null;
+            var clean = s.replace(/=+$/, ''), out = new Uint8Array(Math.floor(clean.length * 3 / 4)), j = 0, n = 0, bits = 0;
+            for (var i = 0; i < clean.length; i++) {
+              n = ((n << 6) | B64.indexOf(clean.charAt(i))) & 0xffffff;
+              bits += 6;
+              if (bits >= 8) { bits -= 8; out[j++] = (n >>> bits) & 255; }
+            }
+            return out.subarray(0, j);
+          }
+          function utf8(text) {
+            var s = unescape(encodeURIComponent(text)), b = new Uint8Array(s.length);
+            for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+            return b;
+          }
+          // Throws for bytes that aren't UTF-8.
+          function fromUtf8(b) {
+            var s = '';
+            for (var i = 0; i < b.length; i += 4096) s += String.fromCharCode.apply(null, Array.prototype.slice.call(b.subarray(i, i + 4096)));
+            return decodeURIComponent(escape(s));
+          }
+          function random(n) {
+            var c = window.crypto || window.msCrypto;
+            if (!c || !c.getRandomValues) throw new Error('This browser has no source of random numbers, which the wish\'s apps need to talk.');
+            return c.getRandomValues(new Uint8Array(n));
+          }
+          // Every value the channel derives: an HMAC under the wish's key of a label, a zero byte and what it's about.
+          function derive(label, key, data) { return hmac(key, concat([utf8(label), new Uint8Array(1), data || new Uint8Array(0)])); }
+          function nonce(count) {
+            var n = new Uint8Array(12), high = Math.floor(count / 4294967296);
+            for (var i = 0; i < 4; i++) { n[11 - i] = (count >>> (8 * i)) & 255; n[7 - i] = (high >>> (8 * i)) & 255; }
+            return n;
+          }
+          return { sha256: sha256, hmac: hmac, seal: seal, open: open, x25519: x25519, base: BASE, concat: concat, same: same,
+                   toBase64: toBase64, fromBase64: fromBase64, utf8: utf8, fromUtf8: fromUtf8, random: random, derive: derive, nonce: nonce };
+        })()
+        """#
+
+    static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
+
+    private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
          *
          * The other apps of this app's wish (an iPhone app, a Mac app, an Android app): which are open now, and messages
-         * between them, through Lamp on the Mac over the home Wi-Fi, with nothing to pair, host or set up. Each app of the
-         * wish is a peer named by its folder in the wish: "tv" (this one), "iphone", "apple" (an app for iPhone and Mac),
-         * "mac", "android"; its kind is the device word the tools use for it.
+         * between them, through Lamp on the Mac over the home Wi-Fi, with nothing to pair, host or set up. What they say is
+         * sealed with a key only the wish's apps have. Each app of the wish is a peer named by its folder in the wish: "tv"
+         * (this one), "iphone", "apple" (an app for iPhone and Mac), "mac", "android"; its kind is the device word the tools
+         * use for it.
          *
          * Lamp.wish.start()                  joins the wish's room; call it as the app opens (the other calls do it too)
          * Lamp.wish.peers()                  the wish's other apps open now: [{ peer: 'iphone', kind, name, device, status }]
@@ -836,18 +1120,32 @@ extension TVTemplate {
           var MESSAGE = 16384;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi." };
+          var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
+          var C = /*LAMP_WISH_CRYPTO*/;
           var on = { peers: [], message: [], state: [] };
           var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
-          var room = null, address = null, credential = null, mine = '', apps = [], state = 'connecting', retry = 0, away = false, undeliveredSaid = {};
+          var address = null, mine = '', apps = [], state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
+          // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
+          var hello = null, sent = 0, opened = 0, sendKey = null, openKey = null;
           var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
           var device = bridge ? 'TV preview' : 'TV';
+          // Where Lamp is, filled in by Lamp in the package it puts on a TV, and the wish's key: the preview is given it by
+          // Lamp through its bridge; a TV asks Lamp for it sealed to a key pair it makes, just after Lamp put the app
+          // there (`claim`), and keeps it.
+          var installed = /*LAMP_INSTALL*/null;
+          var key = null, claiming = null, claims = 0, claimPair = null;
 
           function emit(name, args) {
             var list = on[name];
             for (var i = 0; i < list.length; i++) { try { list[i].apply(null, args); } catch (e) { if (window.console) console.error(e); } }
           }
-          function status() { return { state: state, reason: REASONS[state] || '' }; }
-          function setState(next) { if (state === next) return; state = next; emit('state', [state, status()]); }
+          function status() { return { state: state, reason: reason !== null ? reason : (REASONS[state] || '') }; }
+          function setState(next, why) {
+            var said = why === undefined ? null : why;
+            if (state === next && reason === said) return;
+            state = next; reason = said;
+            emit('state', [state, status()]);
+          }
           function copy(p) { return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open,
                                       status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } }; }
           function openOnes() { var list = []; for (var i = 0; i < apps.length; i++) if (apps[i].open) list.push(copy(apps[i])); return list; }
@@ -855,7 +1153,7 @@ extension TVTemplate {
           function find(id) { for (var i = 0; i < apps.length; i++) if (apps[i].peer === id) return apps[i]; return null; }
           function notOpen(name) { return name.charAt(0).toUpperCase() + name.slice(1) + " isn't open."; }
           function shut(p, when) { p.open = false; p.status = { state: 'notOpen', reason: notOpen(p.name), lastSeen: when }; }
-          function opened(p, info) {
+          function opened_(p, info) {
             p.open = true;
             if (typeof info.device === 'string') p.device = info.device;
             p.status = { state: 'connected', reason: '', lastSeen: typeof info.since === 'number' ? info.since : Date.now() };
@@ -864,11 +1162,68 @@ extension TVTemplate {
           function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
           function say(line) { if (window.console) console.error('Lamp.wish: ' + line); }
 
+          // What the page keeps on the TV, beside LampAI's own: the routes it was told and the wish's key it claimed.
+          function storage(name, value) {
+            try {
+              if (value === undefined) { var v = window.localStorage.getItem('lamp:' + name); return v === null ? null : JSON.parse(v); }
+              window.localStorage.setItem('lamp:' + name, JSON.stringify(value));
+            } catch (e) {}
+            return null;
+          }
+          // The wish's key from Lamp, sealed to a key pair made here and now, so nobody else on the network can open it.
+          function claim() {
+            if (claiming) return claiming;
+            var routes = (storage('install.routes') || []).concat(installed && installed.routes || []);
+            var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
+            routes = routes.filter(function (r) { return ipv4.test(r); }).concat(routes.filter(function (r) { return !ipv4.test(r); }));
+            // One key pair for the page's tries, so a try after an answer lost on its way is answered again.
+            if (!claimPair) { var made = C.random(32); claimPair = { secret: made, ours: C.x25519(made, C.base) }; }
+            var secret = claimPair.secret, ours = claimPair.ours;
+            function attempt(i) {
+              if (i >= routes.length) return Promise.reject(new Error(UNCLAIMED));
+              return new Promise(function (resolve, reject) {
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', routes[i] + '/app/wish/claim');
+                xhr.timeout = 10000;
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.onload = function () { var r = null; try { r = JSON.parse(xhr.responseText); } catch (e) {} resolve({ status: xhr.status, reply: r || {} }); };
+                xhr.onerror = xhr.ontimeout = function () { reject(new Error('unreachable')); };
+                xhr.send(JSON.stringify({ app: installed.app, 'public': C.toBase64(ours) }));
+              }).then(function (answer) {
+                if (answer.status !== 200) throw new Error(UNCLAIMED);
+                var theirs = C.fromBase64(answer.reply['public']), nonce = C.fromBase64(answer.reply.nonce), box = C.fromBase64(answer.reply.sealed);
+                if (!theirs || theirs.length !== 32 || !nonce || nonce.length !== 12 || !box) throw new Error(UNCLAIMED);
+                var shared = C.x25519(secret, theirs), zero = 0;
+                // A key that makes every secret zero (a low-order point) seals nothing anyone should trust.
+                for (var z = 0; z < shared.length; z++) zero |= shared[z];
+                if (!zero) throw new Error(UNCLAIMED);
+                var sealing = C.derive('lamp-wish claim', shared, C.concat([theirs, ours]));
+                var unsealed = C.open(sealing, nonce, box);
+                if (!unsealed || unsealed.length !== 32) throw new Error(UNCLAIMED);
+                storage('install.wish', { app: installed.app, key: C.toBase64(unsealed) });
+                return unsealed;
+              }, function () { return attempt(i + 1); });
+            }
+            claiming = attempt(0);
+            claiming.then(function () { claiming = null; }, function () { claiming = null; });
+            return claiming;
+          }
+          function kept() {
+            var k = storage('install.wish');
+            var b = k && installed && k.app === installed.app ? C.fromBase64(k.key) : null;
+            return b && b.length === 32 ? b : null;
+          }
+          // On a TV, opened by Lamp's install, the page asks for the key at once, while the claim is open; one kept from
+          // before is used meanwhile, and the new one replaces it.
+          if (installed && !bridge) {
+            key = kept();
+            claim().then(function (fresh) { key = fresh; }, function () {});
+          }
+
           function hear(m) {
             if (m.t === 'welcome') {
               retry = 0; away = false; undeliveredSaid = {};
               if (typeof m.peer === 'string') mine = m.peer;
-              if (typeof m.credential === 'string') credential = m.credential;
               var present = {}, i, list = m.peers || [], roster = m.apps || [], next = [];
               for (i = 0; i < list.length; i++) if (list[i] && typeof list[i].peer === 'string') present[list[i].peer] = list[i];
               for (i = 0; i < roster.length; i++) {
@@ -877,7 +1232,7 @@ extension TVTemplate {
                 var known = find(a.peer), name = typeof a.name === 'string' ? a.name : a.peer;
                 var p = { peer: a.peer, kind: a.kind || '', name: name, device: known ? known.device : '', open: false, status: null };
                 shut(p, known ? known.status.lastSeen : null);
-                if (present[a.peer]) opened(p, present[a.peer]);
+                if (present[a.peer]) opened_(p, present[a.peer]);
                 next.push(p);
               }
               apps = next;
@@ -886,24 +1241,22 @@ extension TVTemplate {
             } else if (m.t === 'joined' && m.peer && typeof m.peer.peer === 'string') {
               var j = find(m.peer.peer);
               if (!j) { j = { peer: m.peer.peer, kind: m.peer.kind || '', name: m.peer.name || m.peer.peer, device: '', open: false, status: null }; apps.push(j); }
-              opened(j, m.peer);
+              opened_(j, m.peer);
               changed();
             } else if (m.t === 'left') {
               var l = find(m.peer);
               if (l) { shut(l, Date.now()); changed(); }
-            } else if (m.t === 'credential' && typeof m.credential === 'string') {
-              credential = m.credential;
             } else if (m.t === 'apps') {
               // The wish gained an app or lost one: the others keep what's known of them.
-              var kept = [], given = m.apps || [];
+              var kept_ = [], given = m.apps || [];
               for (var k = 0; k < given.length; k++) {
                 var g = given[k];
                 if (!g || typeof g.peer !== 'string' || g.peer === mine) continue;
                 var had = find(g.peer);
                 if (!had) { had = { peer: g.peer, kind: g.kind || '', name: typeof g.name === 'string' ? g.name : g.peer, device: '', open: false, status: null }; shut(had, null); }
-                kept.push(had);
+                kept_.push(had);
               }
-              apps = kept;
+              apps = kept_;
               changed();
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
               emit('message', [m.from, m.data]);
@@ -911,39 +1264,88 @@ extension TVTemplate {
               if (!undeliveredSaid[m.to]) { undeliveredSaid[m.to] = true; say('a message to "' + m.to + '" did not arrive: ' + (m.reason || 'it is not in the room') + '.'); }
             }
           }
+          // Seals a message with the next number this way and sends it.
+          function seal(text) {
+            var box = C.seal(sendKey, C.nonce(sent), C.utf8(text));
+            sent++;
+            socket.send(box.buffer);
+          }
+          // The relay proved it holds the wish's key: this page proves it does too, and both seal from here on.
+          function answer(m) {
+            var theirs = C.fromBase64(m.nonce), proof = C.fromBase64(m.proof);
+            if (!hello || typeof m.peer !== 'string' || m.peer.length < 1 || m.peer.length > 32 || !theirs || theirs.length !== 16 || !proof) return false;
+            var me8 = C.utf8(mine), them8 = C.utf8(m.peer);
+            var transcript = C.concat([hello.tag, new Uint8Array([me8.length]), me8, new Uint8Array([them8.length]), them8, hello.nonce, theirs]);
+            if (!C.same(proof, C.derive('lamp-wish server', key, transcript))) return false;
+            hello = null;
+            socket.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
+            sendKey = C.derive('lamp-wish c2s', key, transcript); openKey = C.derive('lamp-wish s2c', key, transcript);
+            sent = 0; opened = 0;
+            seal(JSON.stringify({ t: 'join', device: device }));
+            return true;
+          }
+          // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages and beats.
+          // Anything else was made up on the way, and lets the link go.
+          function arrived(s, data) {
+            if (typeof data === 'string') {
+              var m; try { m = JSON.parse(data); } catch (e) { m = null; }
+              if (m && m.t === 'beat') return;
+              if (!sendKey && m && m.t === 'challenge' && answer(m)) return;
+            } else if (openKey) {
+              var plain = C.open(openKey, C.nonce(opened), new Uint8Array(data)), said = null;
+              if (plain) { opened++; try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
+              if (said && typeof said === 'object') return hear(said);
+            }
+            say('the link to the wish\'s other apps heard something that was not theirs, and started again.');
+            socket = null; s.close(); lost(0);
+          }
           function connect() {
             if (!started || socket) return;
-            // Each credential lets this page in once: the next one comes over the socket.
-            var given = credential;
-            credential = null;
             var s;
             try { s = new WebSocket(address); } catch (e) { return lost(0); }
+            s.binaryType = 'arraybuffer';
             socket = s;
+            sendKey = openKey = null;
             heard = Date.now();
-            s.onopen = function () { s.send(JSON.stringify({ t: 'hello', app: room, credential: given, device: device })); };
+            s.onopen = function () {
+              hello = { nonce: C.random(16), tag: C.derive('lamp-wish tag', key).subarray(0, 8) };
+              s.send(JSON.stringify({ t: 'hello', tag: C.toBase64(hello.tag), peer: mine, nonce: C.toBase64(hello.nonce) }));
+            };
             s.onmessage = function (event) {
+              if (socket !== s) return;
               heard = Date.now();
-              if (typeof event.data !== 'string') return;
-              var m; try { m = JSON.parse(event.data); } catch (e) { return; }
-              if (m && typeof m === 'object') hear(m);
+              arrived(s, event.data);
             };
             s.onclose = function (event) { if (socket === s) lost(event.code); };
           }
-          // Turned away, or the room ended: Lamp is asked for a fresh credential; dropped otherwise, the page comes back
-          // after a moment with the one the room last handed it, or asks Lamp when it has none.
+          // Turned away, or the room ended, or dropped before it was let in: Lamp is asked again where to join and who this
+          // page is; dropped otherwise, the page comes back after a moment.
           function lost(code) {
-            socket = null;
+            socket = null; hello = null; sendKey = openKey = null;
             leftAll();
             if (!started) return;
             if (state === 'connected') setState('connecting');
-            if (code === 4003 || code === 4005 || (state === 'connecting' && retry >= 3)) { credential = null; address = null; }
+            if (code === 4003 || code === 4005 || state === 'connecting' || retry >= 3) address = null;
             retry = Math.min(retry + 1, 6);
             clearTimeout(again);
             again = setTimeout(open, retry * 750);
           }
           function open() {
             if (!started || socket) return;
-            if (credential && address) return connect();
+            if (!key && !bridge) {
+              if (!installed) { setState('away', 'This copy wasn\'t opened from Lamp, so it can\'t reach the wish\'s other apps. Open it from Lamp on your Mac.'); return; }
+              // Tried again while the page is open, less often each time, since the claim stays open for a while after
+              // Lamp put the app here and the network may just have been down.
+              claim().then(function (fresh) { key = fresh; claims = 0; open(); }, function (error) {
+                if (!started) return;
+                setState('away', error.message);
+                claims = Math.min(claims + 1, 5);
+                clearTimeout(askTimer);
+                askTimer = setTimeout(open, 2000 * Math.pow(2, claims));
+              });
+              return;
+            }
+            if (address && key) return connect();
             clearTimeout(askTimer);
             LampAI._post('/app/wish', { device: device }, 20000).then(function (answer) {
               if (!started) return;
@@ -954,8 +1356,9 @@ extension TVTemplate {
                 askTimer = setTimeout(open, (answer.renew || 300) * 1000);
                 return;
               }
-              if (!answer.socket || !answer.room || !answer.credential) throw new Error(answer.error || 'Lamp did not say where the wish\'s apps meet.');
-              address = answer.socket; room = answer.room; credential = answer.credential; mine = answer.peer || mine;
+              if (bridge && answer.key) key = C.fromBase64(answer.key);
+              if (!answer.socket || !answer.peer || !key || key.length !== 32) throw new Error(answer.error || 'Lamp did not say where the wish\'s apps meet.');
+              address = answer.socket; mine = answer.peer;
               if (state !== 'connected') setState('connecting');
               connect();
             }, function (error) {
@@ -965,6 +1368,7 @@ extension TVTemplate {
               askTimer = setTimeout(open, 3000);
             });
           }
+          // A beat both ways, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
           function beat() {
             if (!socket || socket.readyState !== 1) return;
             if (Date.now() - heard > 15000) { var s = socket; socket = null; s.close(); lost(0); return; }
@@ -991,6 +1395,7 @@ extension TVTemplate {
               started = false;
               clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
               if (socket) { var s = socket; socket = null; s.close(); }
+              sendKey = openKey = null;
               leftAll();
               setState('ended');
             },
@@ -1004,7 +1409,7 @@ extension TVTemplate {
             send: function (data, to) {
               api.start();
               var what = to ? 'a message to "' + to + '"' : 'a message to the wish\'s apps';
-              if (state !== 'connected' || !socket || socket.readyState !== 1) {
+              if (state !== 'connected' || !socket || socket.readyState !== 1 || !sendKey) {
                 if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
                 return false;
               }
@@ -1014,7 +1419,7 @@ extension TVTemplate {
               var text = JSON.stringify(frame);
               if (data === undefined || text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
               if (bytes(text) > MESSAGE) { say(what + ' of ' + bytes(text) + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
-              socket.send(text);
+              seal(text);
               return true;
             },
             onMessage: adder('message'), onPeers: adder('peers'), onState: adder('state')
