@@ -278,3 +278,17 @@ shown the agent looks at it in the TV preview on the Mac (`openDevicePreview`), 
 change is seen without a build of the Mac app. `make_app_for` with the places it's to be on sets them
 (`Store.setPlaces`), and the request's device line says where it's shown (`Rules.screenPlaces`).
 
+**What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
+(`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
+app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's, shared by `LampWebGame.swift`
+and `LampScreen.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
+routes, only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
+`Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
+which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.
+So a game made of the person's unanswered emails, or a family calendar on the kitchen iPad, is a game or a screen and not
+a Mac app. `Native.swift` is the app's own: Lamp writes it only when it isn't there and takes it away with the kind only
+while it's still Lamp's scaffold, and the two Package.swift files compile all of `Sources/`. Everywhere else (a TV, the
+Xbox, Android, Lamp's preview of either) `LampNative.available` is false and its calls reject, so the rule
+(`Rules.pageNative`) has the page show example content then, which also keeps the game preview's replay exact; a C++
+game has no such bridge.
+

@@ -45,8 +45,8 @@ export function log(...parts) {
     const line = parts.map(p => typeof p === 'string' ? p : JSON.stringify(p)).join(' ');
     const said = `[${time.toFixed(2)} s] ${line}`;
     if (preview) { if (logs.length < 400) logs.push(said); return; }
+    // The app around the page puts its console into the app's log.
     console.log(said);
-    window.webkit?.messageHandlers?.lampLog?.postMessage(said);
 }
 window.addEventListener('error', e => log(`Error: ${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
 window.addEventListener('unhandledrejection', e => log(`Error: ${e.reason && e.reason.message || e.reason}`));

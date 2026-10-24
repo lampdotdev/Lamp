@@ -35,6 +35,7 @@ enum ScreenKit {
         guard let host else { throw Failure(message: "This copy of Lamp is missing its screen kit.") }
         try TVTemplate.writeOwnedFiles(for: project)
         try Template.write(host, to: "Sources/LampScreen.swift", for: project)
+        try GameKit.writePage(for: project)
         try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try Template.write(GameKit.webBuildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
@@ -53,10 +54,11 @@ enum ScreenKit {
 
     static func remove(from project: LampProject) {
         for path in ["Sources/LampScreen.swift", marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
+        GameKit.removePage(from: project)
     }
 
     /// Every path Lamp owns in a screen.
-    static let paths = [TVTemplate.supportFile, "Sources/LampScreen.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
+    static let paths = [TVTemplate.supportFile, "Sources/LampScreen.swift", "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
 
     static let appMd = """
     # {{NAME}}
@@ -77,13 +79,13 @@ enum ScreenKit {
     let package = Package(
         name: "{{EXE}}",
         platforms: [.macOS(.v14), .iOS(.v17)],
-        targets: [.executableTarget(name: "{{EXE}}", path: "Sources", sources: ["LampScreen.swift", "LampSupport.swift"])]
+        targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
     """
 
     /// Names what Lamp writes into a screen, so a new Lamp's builds it again (`Target.Recipe.inputs`).
-    static var stamp: String { (host ?? "") + GameKit.webBuildSh + packageSwift + TVTemplate.lampJS }
+    static var stamp: String { (host ?? "") + (GameKit.page?.text ?? "") + GameKit.webBuildSh + packageSwift + TVTemplate.lampJS }
 }
 
 // MARK: - What the builder is told
@@ -92,7 +94,7 @@ extension Agent {
     /// The rules for a screen: the TV app's rules for the page (it's the same page), with where it's shown in the
     /// request's device line (`Rules.screenPlaces`), since a place may be given at any time.
     static func screenPrompt(for project: LampProject) -> String {
-        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI,
+        let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                      Rules.begin, Rules.finish]
         return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
@@ -114,8 +116,8 @@ extension Agent.Rules {
 
     static let screenEdit = """
     - Make the change the user asks for by editing the page's files in Web/ (index.html, style.css, app.js and any \
-    others), and what it shows beside them. Web/lamp.js, Sources/, build.sh and Package.swift are Lamp's (the page's \
-    building blocks and the app around it): read lamp.js, never edit or delete any of them. Lamp builds by itself and, \
+    others), and what it shows beside them, and Sources/Native.swift for what the page asks of the device. Web/lamp.js, \
+    the rest of Sources/, build.sh and Package.swift are Lamp's (the page's building blocks and the app around it): read lamp.js, never edit or delete any of them. Lamp builds by itself and, \
     at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, a TV or the \
     Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Lay the page out for a fixed \
     1920x1080, as for a TV: Lamp scales it to every screen. Where else it's shown is the person's to ask for: when they \

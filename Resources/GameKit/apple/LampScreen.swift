@@ -5,7 +5,8 @@
 // The page is laid out at 1920x1080, as on a TV, and zoomed to fill the window or screen. It's served from the app's
 // bundle at an address of its own (lamp-screen://app/), so it reads its own files with fetch; its LampAI and LampStore
 // calls reach Lamp through this app (the `lampGateway` bridge that Web/lamp.js looks for), with the app's own token,
-// never the page's; what it logs goes to the app's log.
+// never the page's, and its `LampNative` calls reach Sources/Native.swift (both in LampPage.swift); what it logs goes
+// to the app's log.
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -69,53 +70,14 @@ final class LampScreenFiles: NSObject, WKURLSchemeHandler {
     }
 }
 
-/// The page's way to Lamp: only the routes a screen uses, with the app's own token, answered to the app's own page.
-final class LampScreenGateway: NSObject, WKScriptMessageHandlerWithReply, WKScriptMessageHandler {
-    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide"]
-
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
-                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
-        guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.protocol == LampScreenFiles.scheme,
-              let call = message.body as? [String: Any], let path = call["path"] as? String, Self.routes.contains(path),
-              let url = URL(string: lampGateway + path) else {
-            return replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
-        }
-        var request = URLRequest(url: url, timeoutInterval: 240)
-        request.httpMethod = "POST"
-        request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data((call["body"] as? String ?? "{}").utf8)
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 502
-            let body = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Couldn't reach Lamp on your Mac. Open Lamp and try again."}"#
-            DispatchQueue.main.async { replyHandler(["status": status, "body": body], nil) }
-        }.resume()
-    }
-
-    /// What the page logs, into the app's log.
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let line = message.body as? String else { return }
-        FileHandle.standardError.write(Data((line.prefix(2000) + "\n").utf8))
-    }
-}
-
 @MainActor enum LampScreenPage {
     static let files = LampScreenFiles()
-    static let gateway = LampScreenGateway()
 
     static func make() -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(files, forURLScheme: LampScreenFiles.scheme)
-        configuration.userContentController.addScriptMessageHandler(gateway, contentWorld: .page, name: "lampGateway")
-        configuration.userContentController.add(gateway, name: "lampLog")
-        // The page's console, into the app's log.
-        configuration.userContentController.addUserScript(WKUserScript(source: """
-            (function () {
-              var send = function (kind) { return function () { try { window.webkit.messageHandlers.lampLog.postMessage(kind + Array.prototype.join.call(arguments, ' ')); } catch (e) {} }; };
-              console.log = send(''); console.warn = send('Warning: '); console.error = send('Error: ');
-              window.addEventListener('error', function (e) { send('Error: ')(e.message + ' (' + (e.filename || '').split('/').pop() + ':' + e.lineno + ')'); });
-            })();
-            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // LampAI and the page's calls of this device (LampPage.swift), and its console into the app's log.
+        LampPage.attach(to: configuration, scheme: LampScreenFiles.scheme)
         configuration.mediaTypesRequiringUserActionForPlayback = []
         #if os(iOS)
         configuration.allowsInlineMediaPlayback = true

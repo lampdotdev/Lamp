@@ -380,6 +380,8 @@ enum DeviceSupport {
           var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
           list = list.filter(function (r) { return ipv4.test(r); }).concat(list.filter(function (r) { return !ipv4.test(r); }));
         }
+        // Lamp's preview of a game replays a play exactly, so nothing in it answers from outside.
+        if (window.lampPreview) return Promise.reject(new Failure('Lamp\'s preview has no AI: show example content here, and look at the game on the device for the real answers.'));
         if (!list.length) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
         function attempt(i, round) {
           if (i >= list.length) {
@@ -899,8 +901,28 @@ enum DeviceSupport {
       // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
       Object.defineProperty(LampAI, '_post', { value: post });
 
+      /**
+       * What only the app around the page can reach: the person's mail, calendar, reminders, contacts, photos and the
+       * like, read by the app's own Swift (Sources/Native.swift, in a game or a screen on the Mac, iPhone or iPad).
+       * `available` is false everywhere else (a TV, an Xbox, Android, Lamp's preview), where `call` rejects: show
+       * example content then, in the page's own words.
+       *
+       *     LampNative.call('unanswered', { limit: 30 }).then(function (mails) { ... }, function () { ... });
+       */
+      var nativeBridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampNative;
+      var LampNative = {
+        available: !!nativeBridge,
+        call: function (name, args) {
+          if (!nativeBridge) return Promise.reject(new Error('Only the app on the Mac, iPhone or iPad can do that.'));
+          return nativeBridge.postMessage({ name: String(name), args: JSON.stringify(args || {}) }).then(function (text) {
+            return text === undefined || text === null || text === '' ? null : JSON.parse(text);
+          }, function (error) { throw new Error(String(error && error.message || error)); });
+        }
+      };
+
       window.LampAI = LampAI;
       window.LampQuestion = LampQuestion;
+      window.LampNative = LampNative;
       window.LampStore = LampStore;
       window.LampAssets = LampAssets;
     })();

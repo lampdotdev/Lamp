@@ -150,6 +150,30 @@ enum GameKit {
     static let webFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampWebGame.swift"),
                                                                  ("\(webFolder)/lamp-game.js", "web/lamp-game.js")])
 
+    /// The bridge between a page and the app around it (a three.js game's and a screen's: LampAI through the app, and
+    /// `LampNative` calls of the device), Lamp's; and where those calls are answered, the app's own Swift, written only
+    /// when the app has none yet.
+    static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first
+    static let native: (path: String, text: String)? = read([("Sources/Native.swift", "apple/Native.swift")]).first
+
+    /// Writes the page's bridge, and the app's `Native` when it has none.
+    static func writePage(for project: LampProject) throws {
+        guard let page, let native else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
+        try Template.write(page.text, to: page.path, for: project)
+        if !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(native.path).path) {
+            try Template.write(native.text, to: native.path, for: project)
+        }
+    }
+
+    /// Takes the page's bridge away, with the app's `Native` while it's still the one Lamp wrote: an app that's no
+    /// longer a page has no use for either, and its code no longer has what they name.
+    static func removePage(from project: LampProject) {
+        guard let page, let native else { return }
+        AppFolder.remove(project.dir.appendingPathComponent(page.path), in: project.dir)
+        let own = project.dir.appendingPathComponent(native.path)
+        if (try? String(contentsOf: own, encoding: .utf8)) == native.text { AppFolder.remove(own, in: project.dir) }
+    }
+
     /// Where a three.js game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
     static let webFolder = "Web"
 
@@ -164,7 +188,7 @@ enum GameKit {
         var hasher = SHA256()
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
-        for file in appleFiles + webFiles { hasher.update(data: Data((file.path + file.text).utf8)) }
+        for file in appleFiles + webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
         hasher.update(data: Data((nativeBuildSh + packageSwift + webBuildSh + webPackageSwift).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }()
@@ -175,7 +199,7 @@ enum GameKit {
         guard engine(project) == .web else {
             return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path) + common + GameAndroid.paths(for: project)
         }
-        return webFiles.map(\.path) + ["\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
+        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
             + GameAndroid.paths(for: project)
     }
 
@@ -187,14 +211,15 @@ enum GameKit {
         if engine == .web {
             guard webFiles.count == 2, !DeviceSupport.threeFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
             for file in webFiles { try Template.write(file.text, to: file.path, for: project) }
+            try writePage(for: project)
             for file in DeviceSupport.threeFiles {
                 try Template.put(file.contents, at: project.dir.appendingPathComponent("\(webFolder)/three/\(file.name)"), for: project)
             }
             // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host); elsewhere
             // the page loads nothing from it.
+            // Elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page.
             if project.integration == nil {
-                try Template.put("// Lamp's building blocks for the Xbox, written here when the game is played on one.\n",
-                                 at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
+                try Template.put(DeviceSupport.webJS, at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
             } else {
                 try DeviceSupport.writeDeclared(for: project)
             }
@@ -225,6 +250,7 @@ enum GameKit {
         for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", "\(webFolder)/three", marker] {
             AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir)
         }
+        removePage(from: project)
     }
 
     /// The scaffold: a game that already draws and moves, for the agent to make into the one asked for.
@@ -305,7 +331,7 @@ enum GameKit {
     let package = Package(
         name: "{{EXE}}",
         platforms: [.macOS(.v14), .iOS(.v17)],
-        targets: [.executableTarget(name: "{{EXE}}", path: "Sources", sources: ["LampGame.swift", "LampSupport.swift"])]
+        targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
     """
@@ -640,7 +666,7 @@ extension Agent {
     static func gamePrompt(for project: LampProject) -> String {
         let web = GameKit.engine(project) == .web
         let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, web ? Rules.gameWebKit : Rules.gameKit,
-                     web ? Rules.gameWebSound : Rules.gameSound, Rules.gameBudget, Rules.icon, Rules.about,
+                     web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
                      web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -660,20 +686,36 @@ extension Agent.Rules {
 
     /// What `make_app_for` answers with when an app becomes a game.
     static func gameChange(_ project: LampProject) -> String {
-        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + gameBudget + gameTry
+        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + pageNative + gameBudget + gameTry
             : gameEdit + gameKit + gameSound + gameBudget + gameTry
     }
 
     static let gameWebEdit = """
     - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
-    Web/lamp-game.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/, \
-    build.sh, Package.swift and Android/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
+    Web/lamp-game.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/ but for \
+    Sources/Native.swift, build.sh, Package.swift and Lamp/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
     it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
     make_app_for with every place it's to be played (["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…); it \
     stays the same game.
+    """
+
+    /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the
+    /// app's own Swift, and LampAI through the app (LampPage.swift).
+    static let pageNative = """
+    - The person's own things (their mail, calendar, reminders, contacts, photos, where they are) are read by the app \
+    around the page, not by the page: register a call in Sources/Native.swift, yours, inside `Native.register()` \
+    (`LampNative.on("unanswered") { args in … }`, Swift returning anything Encodable, with Lamp's building blocks in \
+    Sources/LampSupport.swift: LampMail on the Mac, LampCalendar, LampReminders, LampContacts, LampPhotos, \
+    LampLocation…; read their doc comments there), and ask for it from the page with \
+    `LampNative.call("unanswered", { limit: 30 })`, a Promise of the JSON it returned. Return only what the page \
+    shows. AI in the page is LampAI from Web/lamp.js (read it), which reaches Lamp through the app. Both answer only in \
+    the app on the Mac, iPhone and iPad (LampAI on the Xbox too): elsewhere, and in Lamp's preview, \
+    `LampNative.available` is false and the calls reject, so the page shows example content then, never an error. \
+    Make these calls once as it opens or from a menu, never every frame; `look_at_app` with `on_device` shows the \
+    real thing.
     """
 
     static let gameWebKit = """

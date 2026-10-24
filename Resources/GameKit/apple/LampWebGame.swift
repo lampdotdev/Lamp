@@ -5,6 +5,7 @@
 // its top right and the chat opens beside it like any app's. On an iPhone or iPad it's the whole screen, on its side.
 // The page is served from the app's bundle at an address of its own (lamp-game://app/), never as a file, so it reads its
 // own files with fetch and loads its modules; what it logs goes to the app's log. Its sound plays without a tap first.
+// Its LampAI calls and its calls of this device go through LampPage.swift.
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -101,23 +102,15 @@ final class LampGameFiles: NSObject, WKURLSchemeHandler {
     }
 }
 
-/// What the page logs, into the app's log.
-final class LampGameLog: NSObject, WKScriptMessageHandler {
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let line = message.body as? String else { return }
-        FileHandle.standardError.write(Data((line.prefix(2000) + "\n").utf8))
-    }
-}
-
 /// The page that is the game: its sound and pictures without a tap first, nothing to scroll, zoom or select.
 @MainActor enum LampGamePage {
     static let files = LampGameFiles()
-    static let logger = LampGameLog()
 
     static func make() -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(files, forURLScheme: LampGameFiles.scheme)
-        configuration.userContentController.add(logger, name: "lampLog")
+        // LampAI and the page's calls of this device (LampPage.swift), and its console into the app's log.
+        LampPage.attach(to: configuration, scheme: LampGameFiles.scheme, catchErrors: false)
         configuration.mediaTypesRequiringUserActionForPlayback = []
         #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
