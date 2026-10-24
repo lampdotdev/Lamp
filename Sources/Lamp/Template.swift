@@ -14128,6 +14128,20 @@ enum Template {
             // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
             let most = Self.valuesLimit * 2 * max(2, roster.count)
             var held = entries.reduce(0) { $0 + Self.held($1.key, $1.value) }
+            // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes an
+            // older copy of what it removed, and the oldest matter least.
+            var removals: [String]? = nil, next = 0
+            func oldestRemoval(except key: String) -> String? {
+                if removals == nil {
+                    removals = entries.filter { $0.value.value == nil }.sorted { $1.value.isLater(than: $0.value) }.map(\.key)
+                }
+                while let list = removals, next < list.count {
+                    let name = list[next]
+                    next += 1
+                    if name != key, let entry = entries[name], entry.value == nil { return name }
+                }
+                return nil
+            }
             for (key, json) in given.sorted(by: { $0.key < $1.key }) {
                 guard Self.isValueName(key), let entry = Entry(json) else { continue }
                 if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
@@ -14135,9 +14149,19 @@ enum Template {
                 // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
                 // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
                 if let value = entry.value, Self.size(of: value) > Self.valueLimit * 2 { continue }
-                let after = held - (entries[key].map { Self.held(key, $0) } ?? 0) + Self.held(key, entry)
-                if after > most { continue }
-                held = after
+                let old = entries[key].map { Self.held(key, $0) } ?? 0, need = Self.held(key, entry)
+                while held - old + need > most, let gone = oldestRemoval(except: key), let removal = entries.removeValue(forKey: gone) {
+                    held -= Self.held(gone, removal)
+                }
+                if held - old + need > most {
+                    // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                    // keeping it, so a value removed is never left behind.
+                    guard entry.value == nil, let had = entries.removeValue(forKey: key) else { continue }
+                    held -= old
+                    if had.value != nil { changed.append((key, nil)) }
+                    continue
+                }
+                held = held - old + need
                 entries[key] = entry
                 changed.append((key, entry.value))
             }

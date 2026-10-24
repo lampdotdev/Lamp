@@ -462,6 +462,45 @@ final class WishPageTests: XCTestCase {
         XCTAssertLessThanOrEqual(held.last ?? .max, 3 * 2 * 65536, "three apps' worth of the whole, twice over")
     }
 
+    /// Removals never stop at the bound: an app that removes thousands of small values it set, more than the bound holds
+    /// as removals, still leaves every other app without them; and a value set after removals filled the bound is taken,
+    /// the oldest removals letting it in.
+    func testRemovalsAlwaysGoAndAValueOutranksOldRemovalsAtTheBound() throws {
+        let two: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"]]
+        let start = Int(Date().timeIntervalSince1970 * 1000)
+        func names(_ prefix: String) -> [String] { (0..<8000).map { String(format: "\(prefix)%04d", $0) } }
+        func send(_ context: JSContext, _ list: [String], stamp: Int, value: Any?) {
+            for chunk in stride(from: 0, to: list.count, by: 1000) {
+                var values: [String: Any] = [:]
+                for (i, name) in list[chunk..<min(chunk + 1000, list.count)].enumerated() {
+                    values[name] = value.map { ["v": $0, "c": [stamp, chunk + i, "iphone"]] } ?? ["c": [stamp, chunk + i, "iphone"]]
+                }
+                deliver(context, ["t": "values", "from": "iphone", "values": values])
+            }
+        }
+        func joined() throws -> JSContext {
+            let context = try page()
+            context.evaluateScript("Lamp.wish.start();")
+            settle(context)
+            try handshake(context)
+            deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": two, "peers": []])
+            return context
+        }
+
+        // 8,000 values of 1 under five-byte names, then each removed: removals held at 32 bytes pass the bound.
+        let kept = try joined()
+        send(kept, names("k"), stamp: start, value: 1)
+        XCTAssertEqual(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 8000)
+        send(kept, names("k"), stamp: start + 1, value: nil)
+        XCTAssertEqual(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 0, "every removal went")
+
+        // Removals of names never set, past the bound; then a real value of 4 KB.
+        let crowded = try joined()
+        send(crowded, names("r"), stamp: start, value: nil)
+        deliver(crowded, ["t": "values", "from": "iphone", "values": ["real": ["v": String(repeating: "x", count: 4000), "c": [start + 1, 0, "iphone"]]]])
+        XCTAssertEqual(crowded.evaluateScript("typeof Lamp.wish.values().real")?.toString(), "string", "the value was taken")
+    }
+
     /// An open app built by another Lamp is shown as out of date, still open, with what to do in words to show: an
     /// older one (saying nothing of what it speaks) is to be opened from Lamp, a newer one means this one is. An older
     /// one is sent no values; the status view shows the line.

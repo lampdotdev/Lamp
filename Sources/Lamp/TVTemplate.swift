@@ -1372,8 +1372,22 @@ extension TVTemplate {
             // What the store holds may grow, from other apps, to what every app of the wish could have set between them
             // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits, so
             // they still agree, and an app gone wrong or hostile that floods the others gets no further.
-            var most = VALUES * 2 * Math.max(2, roster.length), held = 0;
+            var most = VALUES * 2 * Math.max(2, roster.length), held = 0, removals = null, next = 0;
             for (var h in entries) held += heldBy(h, entries[h].v);
+            // The oldest removal kept, other than this name's: let go first when something needs room, since a removal
+            // only outvotes an older copy of what it removed, and the oldest matter least.
+            function oldestRemoval(except) {
+              if (!removals) {
+                removals = [];
+                for (var r in entries) if (entries[r].v === undefined) removals.push(r);
+                removals.sort(function (a, b) { return later(entries[a].c, entries[b].c) ? 1 : later(entries[b].c, entries[a].c) ? -1 : 0; });
+              }
+              while (next < removals.length) {
+                var k = removals[next++];
+                if (k !== except && entries[k] && entries[k].v === undefined) return k;
+              }
+              return null;
+            }
             for (var i = 0; i < list.length; i++) {
               var key = list[i], e = given[key];
               if (!nameOk(key) || !e || typeof e !== 'object' || !stampOk(e.c)) continue;
@@ -1383,9 +1397,19 @@ extension TVTemplate {
               // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps apart
               // may each have filled it, and taking every app's values whatever the order is what makes them agree.
               if (v !== undefined && bytes(JSON.stringify(v)) > VALUE * 2) continue;
-              var after = held - (entries[key] ? heldBy(key, entries[key].v) : 0) + heldBy(key, v);
-              if (after > most) continue;
-              held = after;
+              var old = entries[key] ? heldBy(key, entries[key].v) : 0, need = heldBy(key, v), gone;
+              while (held - old + need > most && (gone = oldestRemoval(key))) { held -= heldBy(gone, undefined); delete entries[gone]; }
+              if (held - old + need > most) {
+                // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                // keeping it, so a value removed is never left behind.
+                if (v !== undefined || !entries[key]) continue;
+                var had = entries[key].v;
+                held -= old;
+                delete entries[key];
+                if (had !== undefined) changed.push([key, undefined]);
+                continue;
+              }
+              held = held - old + need;
               entries[key] = { v: v, c: e.c };
               changed.push([key, v]);
             }

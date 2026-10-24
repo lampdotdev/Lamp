@@ -1470,6 +1470,20 @@ extension Template {
             val most = valuesLimit * 2 * maxOf(2, roster.size)
             valuesLock.withLock {
                 var held = entries.entries.sumOf { (k, e) -> heldBy(k, e) }
+                // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes
+                // an older copy of what it removed, and the oldest matter least.
+                val removals by lazy {
+                    entries.filterValues { it.value == null }.entries
+                        .sortedWith { a, b -> if (b.value.isLater(a.value)) -1 else if (a.value.isLater(b.value)) 1 else 0 }.map { it.key }
+                }
+                var next = 0
+                fun oldestRemoval(except: String): String? {
+                    while (next < removals.size) {
+                        val name = removals[next++]
+                        if (name != except && entries[name]?.let { it.value == null } == true) return name
+                    }
+                    return null
+                }
                 for (key in given.keys().asSequence().toList().sorted()) {
                     if (!isValueName(key)) continue
                     val entry = Entry.from(given.opt(key)) ?: continue
@@ -1479,9 +1493,22 @@ extension Template {
                     // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
                     // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
                     if (entry.value != null && sizeOf(entry.value) > valueLimit * 2) continue
-                    val after = held - (entries[key]?.let { heldBy(key, it) } ?: 0) + heldBy(key, entry)
-                    if (after > most) continue
-                    held = after
+                    val old = entries[key]?.let { heldBy(key, it) } ?: 0
+                    val need = heldBy(key, entry)
+                    while (held - old + need > most) {
+                        val gone = oldestRemoval(key) ?: break
+                        entries.remove(gone)?.let { held -= heldBy(gone, it) }
+                    }
+                    if (held - old + need > most) {
+                        // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                        // keeping it, so a value removed is never left behind.
+                        if (entry.value != null) continue
+                        val had = entries.remove(key) ?: continue
+                        held -= old
+                        if (had.value != null) changed.add(key to null)
+                        continue
+                    }
+                    held = held - old + need
                     entries[key] = entry
                     changed.add(key to entry.value)
                 }
