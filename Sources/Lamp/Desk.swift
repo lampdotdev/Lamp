@@ -60,7 +60,7 @@ struct WishDesk: View {
                         if !hidesDesk {
                             VStack(spacing: 0) {
                                 headline
-                                if !wishes.isEmpty || !missingStarters.isEmpty {
+                                if !wishes.isEmpty || !store.newerWishes.isEmpty || !missingStarters.isEmpty {
                                     grid.padding(.top, 28)
                                         .modifier(receding ? Recede.behind : Recede.present)
                                         .animation(.easeOut(duration: 0.3), value: receding)
@@ -320,6 +320,7 @@ struct WishDesk: View {
                     if inside { pointedAt = project.id } else if pointedAt == project.id { pointedAt = nil }
                 }
             }
+            ForEach(store.newerWishes) { NewerWishIcon(wish: $0) }
             if !missingStarters.isEmpty {
                 MoreFromLamp(starters: missingStarters)
             }
