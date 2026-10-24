@@ -988,19 +988,24 @@ extension Template {
         // something has come, or after a wait with nothing. When Lamp can't be reached the state says so, and the poll
         // goes on trying.
         private suspend fun poll() {
+            // After a poll that failed, the next one has Lamp join the room afresh: what was missed meanwhile can't be
+            // known, and a new welcome brings the whole state back.
+            var rejoin = false
             while (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive != false) {
                 val answer = try {
-                    LampAI.post("/app/wish/poll", JSONObject().put("device", device), 40_000)
+                    LampAI.post("/app/wish/poll", JSONObject().put("device", device).put("rejoin", rejoin), 40_000)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     if (stateFlow.value != State.ALONE) {
                         withContext(Dispatchers.Main) { stateFlow.value = State.AWAY; peersFlow.value = emptyList() }
                     }
+                    rejoin = true
                     Log.e("LampWish", "${e.message}")
                     delay(3000)
                     continue
                 }
+                rejoin = false
                 if (answer.optBoolean("alone")) {
                     withContext(Dispatchers.Main) { stateFlow.value = State.ALONE; peersFlow.value = emptyList() }
                     delay((answer.optLong("renew", 300) * 1000).coerceAtLeast(5000))

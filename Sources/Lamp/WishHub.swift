@@ -138,13 +138,20 @@ enum WishProxies {
 
     /// What has come for the app since its last poll (`events`: the room's own messages, `welcome`, `joined`, `left`,
     /// `message`, `undelivered`, and `closed` when the socket went), waiting a while for the first. The first poll opens
-    /// the app's place in the room; one after the socket closed opens it again, so the app sees a fresh welcome.
-    static func poll(_ project: LampProject, wish: LampProject, parts: [LampProject], device: String) async -> (Int, [String: Any]) {
+    /// the app's place in the room; one after the socket closed, or one that asks to `rejoin`, opens it again, so the
+    /// app sees a fresh welcome.
+    static func poll(_ project: LampProject, wish: LampProject, parts: [LampProject], device: String, rejoin: Bool = false) async -> (Int, [String: Any]) {
         let key = WishRooms.key(for: wish)
         let proxy = proxies[project.id] ?? Proxy(app: project.id, room: key, device: device)
         proxies[project.id] = proxy
         proxy.lastPoll = Date()
         if !device.isEmpty { proxy.device = device }
+        // The app lost touch with Lamp for a while (`rejoin`): what it missed can't be made up, so its place in the room
+        // is taken afresh, and the welcome that follows gives it the whole state again.
+        if rejoin, proxy.task != nil {
+            close(proxy)
+            proxy.events = []
+        }
         if proxy.task == nil, !proxy.opening {
             proxy.opening = true
             let (status, answer) = await WishRooms.answer(for: project, wish: wish, parts: parts, host: "127.0.0.1")

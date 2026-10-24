@@ -86,6 +86,24 @@ final class WishHubTests: XCTestCase {
         // Too big for one message, said so and not sent.
         let (bigStatus, _) = await WishProxies.send(android, body: ["data": String(repeating: "A", count: ControllerWire.message)])
         XCTAssertEqual(bigStatus, 413)
+
+        // An app that lost touch with Lamp for a while asks to join afresh, and gets the whole state again in a new welcome.
+        (status, polled) = await WishProxies.poll(android, wish: wish, parts: parts, device: "", rejoin: true)
+        events = polled["events"] as? [[String: Any]] ?? []
+        XCTAssertEqual(events.first?["t"] as? String, "welcome", "\(polled)")
+        XCTAssertEqual((events.first?["peers"] as? [[String: Any]])?.first?["peer"] as? String, "iphone")
+    }
+
+    /// A room's credentials are no TV app's session: the sync that ends the games whose phone pages aren't served
+    /// (`PhoneControllers.endAll`) leaves them as they are, so a network sync never throws a wish's apps out of their room.
+    func testARoomsCredentialsOutliveTheTVGamesCleanup() async throws {
+        let (status, answer) = await WishRooms.answer(for: phone, wish: wish, parts: [phone, android], host: "127.0.0.1")
+        XCTAssertEqual(status, 200, "\(answer)")
+        XCTAssertFalse(ControllerCredential.apps.contains("wish:scoreboard"), "a room isn't among the games")
+        let generation = ControllerCredential.generation("wish:scoreboard")
+        PhoneControllers.shared.endAll(except: [])
+        XCTAssertEqual(ControllerCredential.check(answer["credential"] as? String, kinds: [.peer], app: "wish:scoreboard")?.peer, "iphone")
+        XCTAssertEqual(ControllerCredential.generation("wish:scoreboard"), generation, "the room's generation is its own")
     }
 
     private static func text(_ socket: URLSessionWebSocketTask) async throws -> [String: Any] {

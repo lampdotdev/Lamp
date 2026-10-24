@@ -136,12 +136,14 @@ enum ControllerCredential {
 
     static func generation(_ app: String) -> Int { lock.withLock { generations[app] ?? 0 } }
 
-    /// The apps credentials have been handed out for since their sessions last ended.
+    /// The apps credentials have been handed out for since their sessions last ended (a TV app's game; never a wish's
+    /// room, whose credentials `WishRooms` ends by itself).
     static var apps: Set<String> { lock.withLock { known } }
 
     static func issue(kind: Kind, app: String, player: Int? = nil, preview: Bool = false, peer: String? = nil, now: Date = Date()) -> String {
         lock.withLock {
-            known.insert(app)
+            // A wish's room (`WishRooms`) is no TV app's session: it's ended by its own rules, never with the games.
+            if kind != .peer { known.insert(app) }
             return ControllerToken.issue(kind: kind, app: app, generation: generations[app] ?? 0, player: player, preview: preview, peer: peer, now: now, key: key)
         }
     }

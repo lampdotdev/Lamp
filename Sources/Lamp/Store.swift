@@ -9282,7 +9282,7 @@ final class Store: ObservableObject {
         let parts = parts(of: wish)
         switch route {
         case "/app/wish/poll":
-            return await WishProxies.poll(project, wish: wish, parts: parts, device: device)
+            return await WishProxies.poll(project, wish: wish, parts: parts, device: device, rejoin: body["rejoin"] as? Bool == true)
         case "/app/wish/send":
             return await WishProxies.send(project, body: body)
         default:

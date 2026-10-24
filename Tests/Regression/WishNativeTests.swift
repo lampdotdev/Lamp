@@ -28,9 +28,11 @@ final class WishNativeTests: XCTestCase {
         // The iPhone app waits for a message; the Mac app waits for the iPhone app to be there, then sends one.
         async let phone = Task.detached { TestShell.run("\(common) LAMP_PEER=iphone LAMP_CREDENTIAL='\(credential("iphone"))' LAMP_ROLE=listen ./wish 2>&1", in: work).output }.value
         try await Task.sleep(for: .milliseconds(500))
-        async let mac = Task.detached { TestShell.run("\(common) LAMP_PEER=mac LAMP_CREDENTIAL='\(credential("mac"))' LAMP_ROLE=send ./wish 2>&1", in: work).output }.value
+        // The Mac app is first told a relay that isn't there (Lamp restarted, the relay moved): it asks Lamp again.
+        async let mac = Task.detached { TestShell.run("\(common) LAMP_DEAD_SOCKET='ws://127.0.0.1:1/' LAMP_PEER=mac LAMP_CREDENTIAL='\(credential("mac"))' LAMP_ROLE=send ./wish 2>&1", in: work).output }.value
         let (phoneSaid, macSaid) = try await (phone, mac)
-        XCTAssertTrue(macSaid.contains("me mac"), macSaid)
+        XCTAssertTrue(macSaid.contains("LampWish: "), "the first try failed and was said: \(macSaid)")
+        XCTAssertTrue(macSaid.contains("me mac state connected"), "then it asked Lamp again and joined: \(macSaid)")
         XCTAssertTrue(macSaid.contains("sees iphone (the iPhone app on iPhone simulator)"), "the Mac app sees the iPhone app: \(macSaid)")
         XCTAssertTrue(macSaid.contains("sent true"), macSaid)
         XCTAssertTrue(phoneSaid.contains("heard from mac: {\"score\":3}"), "the message arrived with who sent it: \(phoneSaid)")
@@ -51,9 +53,12 @@ final class WishNativeTests: XCTestCase {
         import SwiftUI
         enum LampAI {
             struct Failure: Error, LocalizedError { let message: String; var errorDescription: String? { message } }
+            nonisolated(unsafe) static var asked = 0
             static func post(_ path: String, _ body: [String: Any], timeout: Double) async throws -> [String: Any] {
                 let env = ProcessInfo.processInfo.environment
-                return ["socket": env["LAMP_SOCKET"]!, "room": env["LAMP_ROOM"]!, "peer": env["LAMP_PEER"]!, "credential": env["LAMP_CREDENTIAL"]!]
+                asked += 1
+                let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? env["LAMP_SOCKET"]!) : env["LAMP_SOCKET"]!
+                return ["socket": socket, "room": env["LAMP_ROOM"]!, "peer": env["LAMP_PEER"]!, "credential": env["LAMP_CREDENTIAL"]!]
             }
         }
         \(block)

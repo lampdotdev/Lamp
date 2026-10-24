@@ -13721,6 +13721,14 @@ enum Template {
                     try await task.send(.string(String(decoding: hello, as: UTF8.self)))
                     receive(on: task)
                 } catch {
+                    // The socket couldn't be opened or the hello didn't go (Lamp restarted, the relay moved): the link is
+                    // let go, and where to join is asked of Lamp again rather than the same address tried for good.
+                    if let task = link.task {
+                        task.cancel(with: .goingAway, reason: nil)
+                        link.task = nil
+                    }
+                    credential = nil
+                    address = nil
                     if state != .alone { state = .away }
                     fputs("LampWish: \(error.localizedDescription)\n", stderr)
                     again()
