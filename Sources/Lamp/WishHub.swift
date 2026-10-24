@@ -297,10 +297,13 @@ enum WishProxies {
     /// Events kept for an app between polls, past which the link is let go: a sealed message missed can't be skipped,
     /// so an app that fell this far behind starts its link again.
     static let backlog = 256
-    /// A poll waits this long for something to come before answering with nothing.
-    static let wait: TimeInterval = 25
-    /// An app that hasn't polled for this long has stopped: its socket is let go.
-    static let idle: TimeInterval = 90
+    /// A poll waits this long for something to come before answering with nothing. Short, since an app that stops (closed,
+    /// force-stopped, its phone asleep) is noticed only by its polls stopping, and the wish's other apps should see it
+    /// leave while it's gone, so that they see it arrive again when it's back.
+    static var wait: TimeInterval = 6
+    /// An app that hasn't started a poll this long after its last one could have ended has stopped: its socket is let go,
+    /// so the room tells the others it left, within seconds, as it does for an app holding its own socket.
+    static var grace: TimeInterval = 4
 
     private static var proxies: [String: Proxy] = [:]
     private static var links = 0
@@ -326,15 +329,17 @@ enum WishProxies {
         receive(proxy, on: task)
         // The relay's beats are answered here, in clear as they always are (they carry nothing), so the app polls only
         // when something has come.
-        proxy.beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+        var ticks = 0
+        proxy.beat = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             MainActor.assumeIsolated {
                 guard proxy.task === task else { return }
-                if Date().timeIntervalSince(proxy.lastPoll) > idle {
+                if proxy.waiter == nil, Date().timeIntervalSince(proxy.lastPoll) > wait + grace {
                     close(proxy)
                     if proxies[proxy.app] === proxy { proxies[proxy.app] = nil }
                     return
                 }
-                task.send(.string(#"{"t":"beat"}"#)) { _ in }
+                ticks += 1
+                if ticks % 5 == 0 { task.send(.string(#"{"t":"beat"}"#)) { _ in } }
             }
         }
         answer["socket"] = nil

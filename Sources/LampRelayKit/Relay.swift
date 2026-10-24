@@ -405,11 +405,14 @@ public final class Relay: @unchecked Sendable {
 
     private func joinRoom(_ peer: RelayPeer, room: Room, key: String, id: String, kind: String, name: String, device: String,
                           sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
-        // The same app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it.
+        // The same app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it. The others
+        // hear that it left before they hear it join, so they see it arrive again and can catch it up on what it missed.
         if let old = room.members[id] {
             old.peer.onClose = {}
             old.peer.close(code: 4000)
             room.members[id] = nil
+            let left = Self.json(["t": "left", "peer": id])
+            for (_, each) in room.members { each.send(left) }
         }
         let member = Member(peer: peer, kind: kind, name: name, device: device, sealer: sealer, opener: opener)
         let others = room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }

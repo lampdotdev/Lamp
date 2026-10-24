@@ -1235,8 +1235,10 @@ block in every language, under one name: `LampWish.shared` in LampSupport.swift 
 blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app
 (`WishProxies`, `/app/wish/open`, numbered so nothing of an old link reaches a new handshake) and carries its handshake and
 sealed messages each way as they are, unread: the app posts them to `/app/wish/send`, in the order it sealed them, and polls
-`/app/wish/poll` for what came (answered as soon as something has, or after 25 seconds with nothing), and Lamp answers the
-relay's beats for it. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
+`/app/wish/poll` for what came (answered as soon as something has, or after 6 seconds with nothing), and Lamp answers the
+relay's beats for it. An app that stops polling (closed, force-stopped) has its socket let go a few seconds after its last
+poll could have ended (`WishProxies.grace`), so the others see it leave while it's gone and arrive when it's back; and an app
+back on a new socket before its old one was noticed gone is said to have left before it's said to join. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
 added to (a `RawRepresentable` struct in Swift, a value class in Kotlin, a string in lamp.js), so code that switches on one

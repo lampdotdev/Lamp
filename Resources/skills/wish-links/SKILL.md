@@ -32,7 +32,11 @@ message for an app that isn't open.
 How to use it well:
 - Start it as each app opens.
 - A message is for now. What must survive one app being closed, keep in that app's own store (LampStore) and send the
-  whole of it when the other app appears in `peers`, so they agree again whichever was open meanwhile.
+  whole of it when the other app appears in `peers`, so they agree again whichever was open meanwhile. Watch `peers` as
+  it changes (onChange of it, collecting the StateFlow, onPeers), not by looking now and then: an app closed and opened
+  again quickly leaves and comes back between two looks.
+- An app that opens sends the whole of its own as well, and an app that gets a whole from another answers once with
+  its own, so the two catch up whichever noticed the other first.
 - Show an app's `reason` where something needs it, and keep every control usable while it isn't open.
 - Never build a server, sockets, polling or pairing of your own beside it, and never put the app's token or Lamp's
   addresses in the code.
