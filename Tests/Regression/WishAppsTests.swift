@@ -79,6 +79,16 @@ final class WishAppsKeptTests: XCTestCase {
         XCTAssertEqual(Parts.waiting(in: wanted, parts: []).map(\.kind), [.iphone])
     }
 
+    /// A part made for a wish whose list is empty (a wish from before the list, or one opened from a shared file) is
+    /// listed with the app at the wish's root, so the list names every app the wish has.
+    func testAPartMadeForAWishListsTheRootAppToo() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .tv, in: root)
+        XCTAssertEqual(Parts.listing(.mac, madeFor: wish, parts: []), [WishApp(kind: .tv), WishApp(kind: .mac)])
+        var waiting = wish
+        waiting.apps = [WishApp(kind: .tv), WishApp(kind: .iphone, needs: "this Mac can't build the iPhone app yet.")]
+        XCTAssertEqual(Parts.listing(.iphone, madeFor: waiting, parts: []), [WishApp(kind: .tv), WishApp(kind: .iphone)])
+    }
+
     /// An Android app in Android/ is one of the wish's parts, found from its files as the others are.
     func testAnAndroidPartIsFoundInItsFolder() throws {
         let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)

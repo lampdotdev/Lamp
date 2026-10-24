@@ -144,6 +144,12 @@ enum Parts {
         return wish.apps.filter { !made.contains(group($0.kind)) }
     }
 
+    /// The list once a part of this kind is made: every app the wish has, the one at its root included (a wish from
+    /// before the list has none written), with this one in place of any of its family.
+    static func listing(_ kind: Platform, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        setting(WishApp(kind: kind), in: wanted(in: wish, parts: parts))
+    }
+
     /// The list with one app set: in place of the one of its family, or added.
     static func setting(_ app: WishApp, in apps: [WishApp]) -> [WishApp] {
         var apps = apps

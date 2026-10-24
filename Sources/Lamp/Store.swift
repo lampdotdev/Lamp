@@ -1777,8 +1777,7 @@ final class Store: ObservableObject {
         } catch {
             return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)")
         }
-        // The list says every app the wish has from here, the one at its root included, for a wish from before the list.
-        setApps(wish, Parts.setting(WishApp(kind: kind), in: Parts.wanted(in: wish, parts: parts(of: wish))))
+        setApps(wish, Parts.listing(kind, madeFor: wish, parts: parts(of: wish)))
         reload()
         return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil)
     }
