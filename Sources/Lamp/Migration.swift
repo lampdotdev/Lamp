@@ -36,7 +36,8 @@ enum Migration {
 
         imageMarkers()
         let apps = home.appendingPathComponent("Library/Application Support/Lamp/Apps")
-        for dir in (try? fm.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? [] {
+        // A wish a newer Lamp laid out is past this migration, and isn't this Lamp's to rewrite or commit.
+        for dir in (try? fm.contentsOfDirectory(at: apps, includingPropertiesForKeys: nil)) ?? [] where NewerWish.read(at: dir) == nil {
             normalize(dir)
             appData(dir.lastPathComponent)
         }

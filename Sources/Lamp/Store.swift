@@ -391,6 +391,8 @@ final class Store: ObservableObject {
             DeskArrangement.shared.adopt(wishes)
         }
     }
+    /// Wishes a newer Lamp laid out, shown on the desk and otherwise left alone (`NewerWish`).
+    @Published private(set) var newerWishes: [NewerWish] = []
     /// The wishes, without their other parts, which are reached through their wish and never listed on their own.
     var wishes: [LampProject] { projects.filter { !$0.isPart } }
     /// A wish's other parts, as they are now.
@@ -1010,9 +1012,11 @@ final class Store: ObservableObject {
         id != nil && selection == id && NSApp.isActive
     }
 
-    /// A wish as its folder says it is: its meta.json, and the other parts found beside it (`Parts.folders`).
+    /// A wish as its folder says it is: its meta.json, and the other parts found beside it (`Parts.folders`). None for
+    /// a wish a newer Lamp laid out (`NewerWish`), which this Lamp leaves alone.
     nonisolated static func readWish(at dir: URL) -> LampProject? {
-        guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
+        guard NewerWish.read(at: dir) == nil,
+              let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
               let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
         return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                            instance: meta.instance ?? dir.lastPathComponent,
@@ -1026,6 +1030,8 @@ final class Store: ObservableObject {
 
     func reload() {
         let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        newerWishes = dirs.compactMap(NewerWish.read)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let wishes = dirs.compactMap(Self.readWish)
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         // Each wish's other parts follow it, as apps of their own kind in its folders (`Parts`). Set in one go: every
@@ -2416,7 +2422,9 @@ final class Store: ObservableObject {
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
         // A wish's other parts carry its name, and are no other app holding it.
-        let taken = Set(projects.filter { $0.id != id && ($0.partOf == nil || $0.partOf != id) }.map { $0.name.lowercased() })
+        // A newer Lamp's wish keeps its name too: its installed copy is found by it.
+        let taken = Set(projects.filter { $0.id != id && ($0.partOf == nil || $0.partOf != id) }.map { $0.name.lowercased() }
+                        + newerWishes.map { $0.name.lowercased() })
         let base = name.trimmed
         var candidate = base
         var n = 2
