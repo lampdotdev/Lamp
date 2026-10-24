@@ -1833,9 +1833,12 @@ private struct TryOnChoices: View {
         if GameKit.isGame(project) {
             Button("Check Xbox Setup for Games…") { WindowsSetup.shared.show() }
         }
-        Button("All Your Devices…") { settingsTab = "building"; openSettings() }
-        Button("Look for Devices Again") { store.refreshDevices() }
-            .onAppear { store.refreshDevices() }
+        // A game on the iPhone and iPad too has these already, with the simulators.
+        if !(GameKit.isGame(project) && project.openPlaces.contains(.ios)) {
+            Button("All Your Devices…") { settingsTab = "building"; openSettings() }
+            Button("Look for Devices Again") { store.refreshDevices() }
+                .onAppear { store.refreshDevices() }
+        }
     }
 
     /// A game's places: this Mac, its home, then the simulators once it's played on an iPhone or iPad and the person's
