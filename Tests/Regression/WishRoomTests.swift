@@ -220,13 +220,21 @@ final class WishRoomTests: XCTestCase {
     func testTheSameAppBackOnANewSocketTakesItsPlace() async throws {
         let (relay, address) = try await start()
         defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV")
+        _ = try await tv.next()
         let first = try await join(address, as: "iphone", device: "iPhone")
         _ = try await first.next()
+        let arrived = try await tv.next()
+        XCTAssertEqual(arrived["t"] as? String, "joined")
         let second = try await join(address, as: "iphone", device: "iPhone")
         let welcomed = try await second.next()
         XCTAssertEqual(welcomed["t"] as? String, "welcome")
         try await Self.closed(first.socket, code: 4000)
-        XCTAssertEqual(relay.members(of: room), ["iphone"])
+        XCTAssertEqual(relay.members(of: room), ["iphone", "tv"])
+        // The others see it leave and arrive again, so they can catch it up on what it missed while it was away.
+        let left = try await tv.next(), joined = try await tv.next()
+        XCTAssertEqual("\(left["t"] ?? "") \(left["peer"] ?? "")", "left iphone")
+        XCTAssertEqual(joined["t"] as? String, "joined")
     }
 
     /// An app added to the wish, or taken from it, while others are in the room: they're told the list again, so the new

@@ -933,10 +933,10 @@ extension Template {
      * A `State` is one of the values above, and more may come: use `when` with an `else`. Show a `reason` as it is
      * rather than words of your own. `data` is anything LampAI's `about` takes: text, a number, a map or list, or a
      * @Serializable value. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files between
-     * the wish's apps aren't carried yet. Keep every control usable while an app isn't open. Lamp carries what this
-     * app says and hears (it speaks HTTP to Lamp, polling for what came), sealed with a key only the wish's apps have,
-     * so it works in the emulator and on a device on the Mac's Wi‑Fi while Lamp is open. Handlers and the flows change
-     * on the main thread.
+     * the wish's apps aren't carried yet. Keep every control usable while an app isn't open. What this app says and
+     * hears is sealed with a key only the wish's apps have: carried by Lamp while it's open (this app speaks HTTP to
+     * Lamp, polling for what came), and straight between the wish's apps on the same Wi‑Fi, so they go on talking with
+     * Lamp closed. Handlers and the flows change on the main thread.
      */
     object LampWish {
         /** Where this app's link stands, or another app's. More values may come: use `when` with an `else`. */
@@ -948,7 +948,7 @@ extension Template {
                 val CONNECTED = State("connected")
                 /** This app's wish has no other app. */
                 val ALONE = State("alone")
-                /** This app can't reach Lamp, which carries what the wish's apps say. */
+                /** This app can't reach Lamp, nor any other app of the wish. */
                 val AWAY = State("away")
                 /** This app called `stop()`. */
                 val ENDED = State("ended")
@@ -981,18 +981,51 @@ extension Template {
             private set
 
         private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+        private val lock = ReentrantLock()
+        private var begun = false
         private var polling: kotlinx.coroutines.Job? = null
         private val listeners = mutableListOf<(String, Any?) -> Unit>()
-        private val lock = ReentrantLock()
         @Volatile private var saidAway = false
-        private val undeliveredSaid = mutableSetOf<String>()
         private val device: String get() = if (LampInstall.onDevice) "Android device" else "Android emulator"
+
+        // Two ways to the others, used together: Lamp's room while Lamp is open on the Mac (Lamp holds the socket for this
+        // app and carries what goes each way unread), and a link straight to each app of the wish that listens (this one
+        // does too), found on the home network by an opaque name or at the address it was last reached at. Each is sealed
+        // the same way, with the wish's key; a message goes the straight way when there is one. So the apps go on talking
+        // with Lamp closed or the Mac asleep, as long as they're on the same network. What follows is touched on the main
+        // thread only, but for `routes`, `relayed` and the link to Lamp, which `send` reads from wherever it's called.
+        private class App(val id: String, val kind: String, val name: String)
+        private var closed = false
+        private var relayIn = false
+        private var lampAway = false
+        private var alone = false
+        private val undeliveredSaid = mutableSetOf<String>()
+        /** The apps in Lamp's room now, by peer name: the device they said and since when. */
+        private val relayPresent = mutableMapOf<String, Pair<String, Long>>()
+        /** Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed. */
+        private var roster: List<App> = emptyList()
+        private val directs = mutableMapOf<String, Direct>()
+        private val opening = mutableSetOf<Direct>()
+        private var server: java.net.ServerSocket? = null
+        private var listenerPort: Int? = null
+        private var listenerTried = 0L
+        private val upgrading = java.util.concurrent.atomic.AtomicInteger(0)
+        private val found = mutableMapOf<String, String>()
+        private val told = mutableMapOf<String, List<String>>()
+        private val dialing = mutableSetOf<String>()
+        private val nextDial = mutableMapOf<String, Pair<Long, Int>>()
+        private val openSince = mutableMapOf<String, Long>()
+        private val lastSeen = mutableMapOf<String, Long>()
+        private val devices = mutableMapOf<String, String>()
+        private var networks: List<String> = emptyList()
+        @Volatile private var routes: Map<String, Direct> = emptyMap()
+        @Volatile private var relayed: Set<String> = emptySet()
 
         /** This link to Lamp, which holds the app's socket to the wish's room and carries what goes each way unread, and
          *  its seals each way once the handshake is done. What goes is sealed and posted one at a time, in order. */
         private class Link(val number: Int) {
             var hello: Pair<ByteArray, ByteArray>? = null
-            var sealer: Sealer? = null
+            @Volatile var sealer: Sealer? = null
             var opener: Sealer? = null
         }
         @Volatile private var link: Link? = null
@@ -1008,32 +1041,40 @@ extension Template {
             }
         }
 
+        /** One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way. What
+         *  goes out is written by one coroutine of its own, in the order it was given, each sealed as it's written. */
+        private class Direct(val socket: Socket, val input: InputStream, val output: java.io.OutputStream, val dialled: Boolean, var peer: String) {
+            class Frame(val opcode: Int, val bytes: ByteArray, val seal: Boolean)
+            var hello: Pair<ByteArray, ByteArray>? = null
+            var transcript: ByteArray? = null
+            @Volatile var sealer: Sealer? = null
+            var opener: Sealer? = null
+            @Volatile var ready = false
+            @Volatile var heard = System.currentTimeMillis()
+            var device = ""
+            var done: ((Boolean) -> Unit)? = null
+            val out = kotlinx.coroutines.channels.Channel<Frame>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            fun send(text: String, seal: Boolean) { out.trySend(Frame(1, text.toByteArray(Charsets.UTF_8), seal)) }
+            @Volatile var over = false
+            fun close() { over = true; out.close(); try { socket.close() } catch (e: Exception) {} }
+        }
+
         /** The words for a state of this app's link, the same in every language Lamp's apps are written in. */
         fun reason(state: State): String = when (state) {
             State.CONNECTING -> "Connecting to the wish's other apps…"
-            State.AWAY -> "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi."
+            State.AWAY -> "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
             else -> ""
         }
 
         private fun notOpen(name: String) = name.replaceFirstChar { it.uppercase() } + " isn't open."
 
-        private fun set(state: State, why: String? = null) {
-            statusFlow.value = Status(state, why ?: reason(state))
-            stateFlow.value = state
-        }
-
-        private fun setApps(list: List<Peer>) {
-            appsFlow.value = list
-            peersFlow.value = list.filter { it.isOpen }
-        }
-
-        /** Joins the wish's room (again, after `stop()`); otherwise nothing, since it joins by itself when first used. */
+        /** Joins the wish's other apps (again, after `stop()`); otherwise nothing, since it joins by itself when first used. */
         fun start() {
             lock.withLock {
                 if (polling?.isActive == true) return
-                set(State.CONNECTING)
                 polling = scope.launch { poll() }
             }
+            scope.launch(Dispatchers.Main) { begin() }
         }
 
         fun stop() {
@@ -1042,8 +1083,14 @@ extension Template {
                 polling = null
             }
             link = null
-            leftAll()
-            set(State.ENDED)
+            scope.launch(Dispatchers.Main) {
+                closed = true
+                relayGone()
+                for (direct in directs.values.toList() + opening.toList()) drop(direct)
+                stopListening()
+                stopLooking()
+                rebuild()
+            }
         }
 
         /** The wish's app with this peer name, open or not; null when the wish has no such app. */
@@ -1059,8 +1106,7 @@ extension Template {
         fun send(data: Any?, to: String? = null): Boolean {
             start()
             val what = if (to != null) "A message to \"$to\"" else "A message to the wish's apps"
-            val current = link
-            if (stateFlow.value != State.CONNECTED || current == null || current.sealer == null) {
+            if (stateFlow.value != State.CONNECTED) {
                 if (!saidAway) { saidAway = true; Log.e("LampWish", "$what wasn't sent: not connected (${stateFlow.value}). Check state and peers before sending.") }
                 return false
             }
@@ -1068,20 +1114,32 @@ extension Template {
                 Log.e("LampWish", "$what wasn't sent: that app isn't open now (open: ${peersFlow.value.map { it.peer }}).")
                 return false
             }
-            val body = JSONObject().put("t", "send").put("data", try { LampAI.jsonValue(data) } catch (e: Exception) {
+            val value = try { LampAI.jsonValue(data) } catch (e: Exception) {
                 Log.e("LampWish", "$what wasn't sent: ${e.message}")
                 return false
-            })
-            if (to != null) body.put("to", to)
+            }
+            // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
+            val targets = if (to != null) listOf(to) else peersFlow.value.map { it.peer }
+            val body = JSONObject().put("t", "send").put("data", value).put("to", targets.maxByOrNull { it.toByteArray().size } ?: "")
             val size = body.toString().toByteArray().size
             if (size > messageLimit) {
                 Log.e("LampWish", "$what of about $size bytes wasn't sent: a message between the wish's apps is at most $messageLimit bytes as JSON.")
                 return false
             }
-            // Queued, so messages go in the order they were sent, and taken by one coroutine of the link's own off the
-            // main thread, since the call comes from the UI.
-            sender.start()
-            outbox.trySend(current to body.toString())
+            // Each app the straight way when there is one, else through Lamp's room: queued, so messages go in the order
+            // they were sent, and written off the main thread, since the call comes from the UI.
+            val ways = routes
+            val inRoom = relayed
+            val current = link
+            for (target in targets) {
+                val direct = ways[target]
+                if (direct != null) {
+                    direct.send(JSONObject().put("t", "message").put("data", value).toString(), seal = true)
+                } else if (target in inRoom && current != null && current.sealer != null) {
+                    sender.start()
+                    outbox.trySend(current to JSONObject().put("t", "send").put("data", value).put("to", target).toString())
+                }
+            }
             return true
         }
 
@@ -1094,14 +1152,116 @@ extension Template {
             } catch (e: Exception) { null }
         }
 
-        // Asks Lamp to hold a socket to the wish's room for this app, says hello on it, and polls for what came: Lamp answers
-        // each poll as soon as something has, or after a wait with nothing. When Lamp can't be reached the state says so,
-        // and it goes on trying; a link that ended is opened again, and a new welcome brings the whole state back.
-        private suspend fun poll() {
-            val key = wishKey ?: run {
-                withContext(Dispatchers.Main) { set(State.AWAY, "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.") }
+        // MARK: What's known
+
+        private fun begin() {
+            if (begun) { if (closed) { closed = false; rebuild(); reach() }; return }
+            begun = true
+            if (wishKey == null) {
+                statusFlow.value = Status(State.AWAY, "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+                stateFlow.value = State.AWAY
                 return
             }
+            restore()
+            networks = addresses()
+            reach()
+            // A beat on every straight link, and a look for the others: every few seconds, at once when the app comes back
+            // to the front, and when this device's addresses change (another network).
+            scope.launch(Dispatchers.Main) { while (true) { delay(5000); tick() } }
+            (LampInstall.context as? Application)?.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityResumed(activity: Activity) { lookAgain() }
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+                override fun onActivityStarted(activity: Activity) {}
+                override fun onActivityPaused(activity: Activity) {}
+                override fun onActivityStopped(activity: Activity) {}
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+                override fun onActivityDestroyed(activity: Activity) {}
+            })
+        }
+
+        /** The state and the list of apps, from what each way says now. */
+        private fun rebuild() {
+            val now = System.currentTimeMillis()
+            val list = roster.filter { it.id != me }.map { app ->
+                val direct = directs[app.id]?.takeIf { it.ready }
+                val inRoom = relayPresent[app.id]
+                val open = !closed && (direct != null || inRoom != null)
+                if (open) {
+                    if (openSince[app.id] == null) openSince[app.id] = inRoom?.second ?: now
+                    (direct?.device ?: inRoom?.first)?.takeIf { it.isNotEmpty() }?.let { devices[app.id] = it }
+                } else if (openSince.remove(app.id) != null) {
+                    lastSeen[app.id] = now
+                }
+                val status = if (open) Status(State.CONNECTED, "", openSince[app.id]) else Status(State.NOT_OPEN, notOpen(app.name), lastSeen[app.id])
+                Peer(app.id, app.kind, app.name, devices[app.id] ?: "", status)
+            }
+            routes = directs.filterValues { it.ready }.toMap()
+            relayed = relayPresent.keys.toSet()
+            val next = when {
+                closed -> State.ENDED
+                alone -> State.ALONE
+                relayIn || directs.values.any { it.ready } -> State.CONNECTED
+                lampAway -> State.AWAY
+                else -> State.CONNECTING
+            }
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
+            if (next != stateFlow.value) { statusFlow.value = Status(next, reason(next)); stateFlow.value = next }
+            if (next == State.CONNECTED) saidAway = false
+            appsFlow.value = list
+            peersFlow.value = list.filter { it.isOpen }
+        }
+
+        private fun setRoster(list: List<JSONObject>) {
+            val given = list.mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
+            if (given.isEmpty()) return
+            val changed = given.map { it.id }.sorted() != roster.map { it.id }.sorted()
+            roster = given
+            for (id in directs.keys.toList()) if (given.none { it.id == id }) directs[id]?.let(::drop)
+            keep()
+            // Where each app listens follows its place in the list: a changed list moves this one's.
+            if (changed) listen(again = true)
+            rebuild()
+        }
+
+        /** What this app keeps of its wish on the device, by the wish's tag: who it is, the wish's apps and where each was
+         *  last reached, so it finds the others with Lamp closed. */
+        private val keptFile: File? get() = wishKey?.let { File(LampInstall.context.filesDir, "lamp/wish-" + hex(derive("lamp-wish tag", it).copyOf(8)) + ".json") }
+
+        private fun keep() {
+            val file = keptFile ?: return
+            val at = JSONObject().apply { for ((peer, places) in told) put(peer, JSONArray(places)) }
+            val kept = JSONObject().put("me", me).put("at", at)
+                .put("apps", JSONArray(roster.map { JSONObject().put("peer", it.id).put("kind", it.kind).put("name", it.name) }))
+            try { file.parentFile?.mkdirs(); file.writeText(kept.toString()) } catch (e: Exception) { Log.e("LampWish", "couldn't keep the wish's apps: ${e.message}") }
+        }
+
+        private fun restore() {
+            val kept = try { keptFile?.takeIf { it.exists() }?.let { JSONObject(it.readText()) } } catch (e: Exception) { null } ?: return
+            if (me.isEmpty()) me = kept.optString("me")
+            kept.optJSONObject("at")?.let { at -> for (peer in at.keys()) told[peer] = (0 until (at.optJSONArray(peer)?.length() ?: 0)).map { at.getJSONArray(peer).optString(it) } }
+            roster = jsonList(kept.optJSONArray("apps")).mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
+            alone = roster.size < 2 && roster.isNotEmpty()
+            rebuild()
+        }
+
+        /** Where another app was reached or said it listens, the latest first. */
+        private fun remember(peer: String, places: List<String>) {
+            if (peer == me || places.isEmpty()) return
+            val list = places.filter { it.isNotEmpty() }.toMutableList()
+            for (place in told[peer].orEmpty()) if (place !in list) list.add(place)
+            told[peer] = list.take(6)
+            keep()
+        }
+
+        // MARK: Lamp's room
+
+        // Asks Lamp to hold a socket to the wish's room for this app, says hello on it, and polls for what came: Lamp answers
+        // each poll as soon as something has, or after a wait with nothing. When Lamp can't be reached the apps go on the
+        // straight way, and it goes on trying; a link that ended is opened again, and a new welcome brings the room back.
+        private suspend fun poll() {
+            // A copy not opened from Lamp has no key: it stays as it is, saying so.
+            val key = wishKey ?: awaitCancellation()
             var current: Link? = null
             var retry = 0
             while (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive != false) {
@@ -1109,11 +1269,20 @@ extension Template {
                     if (current == null) {
                         val answer = LampAI.post("/app/wish/open", JSONObject().put("device", device), 30_000)
                         if (answer.optBoolean("alone")) {
-                            withContext(Dispatchers.Main) { setApps(emptyList()); set(State.ALONE) }
+                            withContext(Dispatchers.Main) {
+                                lampAway = false
+                                alone = true
+                                answer.optJSONObject("me")?.let { mine -> me = mine.optString("peer", me); setRoster(listOf(mine)) }
+                                rebuild()
+                            }
                             delay((answer.optLong("renew", 300) * 1000).coerceAtLeast(5000))
                             continue
                         }
-                        me = answer.optString("peer", me)
+                        withContext(Dispatchers.Main) {
+                            alone = false
+                            me = answer.optString("peer", me)
+                            setRoster(jsonList(answer.optJSONArray("apps")))
+                        }
                         val opened = Link(answer.optInt("link"))
                         val nonce = random(16)
                         val tag = derive("lamp-wish tag", key).copyOf(8)
@@ -1139,15 +1308,25 @@ extension Template {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // Lamp restarted, or the link it held is over: a new one, after a moment.
-                    if (stateFlow.value != State.ALONE) withContext(Dispatchers.Main) { leftAll(); set(State.AWAY) }
-                    Log.e("LampWish", "${e.message}")
+                    // Lamp isn't there (closed, restarting, or the Mac asleep): the apps go on the straight way meanwhile,
+                    // and Lamp is asked again after a while. Said once each time Lamp goes.
+                    withContext(Dispatchers.Main) {
+                        if (!lampAway) Log.e("LampWish", "${e.message}")
+                        lampAway = true
+                        relayGone()
+                        rebuild()
+                    }
                     current = null
                     retry = minOf(retry + 1, 6)
                     delay(750L * retry + 500)
                 }
-                if (current == null) { link = null; withContext(Dispatchers.Main) { leftAll(); if (stateFlow.value == State.CONNECTED) set(State.CONNECTING) } }
+                if (current == null) { link = null; withContext(Dispatchers.Main) { relayGone(); rebuild() } }
             }
+        }
+
+        private fun relayGone() {
+            relayIn = false
+            relayPresent.clear()
         }
 
         // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages. Anything
@@ -1174,16 +1353,11 @@ extension Template {
             val theirs = try { java.util.Base64.getDecoder().decode(challenge.optString("nonce")) } catch (e: Exception) { return false }
             val proof = try { java.util.Base64.getDecoder().decode(challenge.optString("proof")) } catch (e: Exception) { return false }
             if (server.toByteArray().size !in 1..32 || theirs.size != 16) return false
-            val transcript = java.io.ByteArrayOutputStream().apply {
-                write(hello.second)
-                for (name in listOf(me, server)) { val bytes = name.toByteArray(); write(bytes.size); write(bytes) }
-                write(hello.first)
-                write(theirs)
-            }.toByteArray()
+            val transcript = transcript(hello.second, me, server, hello.first, theirs)
             if (!MessageDigest.isEqual(proof, derive("lamp-wish server", key, transcript))) return false
             current.hello = null
-            current.sealer = Sealer(derive("lamp-wish c2s", key, transcript))
             current.opener = Sealer(derive("lamp-wish s2c", key, transcript))
+            current.sealer = Sealer(derive("lamp-wish c2s", key, transcript))
             say(current, text = JSONObject().put("t", "proof").put("proof", encode(derive("lamp-wish client", key, transcript))).toString(),
                 sealed = listOf(JSONObject().put("t", "join").put("device", device).toString()))
             return true
@@ -1208,65 +1382,515 @@ extension Template {
         private fun hear(m: JSONObject) {
             when (m.optString("t")) {
                 "welcome" -> {
-                    saidAway = false
                     undeliveredSaid.clear()
+                    lampAway = false
+                    relayIn = true
                     me = m.optString("peer", me)
-                    val present = jsonList(m.optJSONArray("peers")).associateBy { it.optString("peer") }
-                    val known = appsFlow.value.associateBy { it.peer }
-                    setApps(jsonList(m.optJSONArray("apps")).mapNotNull { app ->
-                        val id = app.optString("peer").ifEmpty { return@mapNotNull null }
-                        if (id == me) return@mapNotNull null
-                        val name = app.optString("name", id)
-                        val peer = Peer(id, app.optString("kind"), name, "", Status(State.NOT_OPEN, notOpen(name), known[id]?.status?.lastSeen))
-                        present[id]?.let { opened(peer, it) } ?: peer
-                    })
-                    set(State.CONNECTED)
+                    setRoster(jsonList(m.optJSONArray("apps")))
+                    relayPresent.clear()
+                    for (seen in jsonList(m.optJSONArray("peers"))) present(seen)
+                    tellWhereIListen()
+                    rebuild()
                 }
-                "joined" -> m.optJSONObject("peer")?.let { joined ->
-                    val id = joined.optString("peer").ifEmpty { return }
-                    val list = appsFlow.value
-                    val peer = list.firstOrNull { it.peer == id }
-                        ?: Peer(id, joined.optString("kind"), joined.optString("name", id), "", Status(State.NOT_OPEN, ""))
-                    setApps(list.filter { it.peer != id } + opened(peer, joined))
-                }
-                "left" -> {
+                "joined" -> { m.optJSONObject("peer")?.let(::present); rebuild() }
+                "left" -> { relayPresent.remove(m.optString("peer")); rebuild() }
+                "at" -> {
                     val id = m.optString("peer")
-                    setApps(appsFlow.value.map { if (it.peer == id) it.copy(status = Status(State.NOT_OPEN, notOpen(it.name), System.currentTimeMillis())) else it })
+                    if (id.isNotEmpty()) { remember(id, strings(m.optJSONArray("addresses"))); lookAgain() }
                 }
-                "apps" -> {
-                    // The wish gained an app or lost one: the others keep what's known of them.
-                    val known = appsFlow.value.associateBy { it.peer }
-                    setApps(jsonList(m.optJSONArray("apps")).mapNotNull { app ->
-                        val id = app.optString("peer").ifEmpty { return@mapNotNull null }
-                        if (id == me) return@mapNotNull null
-                        val name = app.optString("name", id)
-                        known[id] ?: Peer(id, app.optString("kind"), name, "", Status(State.NOT_OPEN, notOpen(name)))
-                    })
-                }
-                "message" -> {
-                    val from = m.optString("from")
-                    val data = if (m.isNull("data")) null else m.opt("data")
-                    val handlers = lock.withLock { listeners.toList() }
-                    for (handler in handlers) try { handler(from, data) } catch (e: Exception) { Log.e("LampWish", "a message handler failed: ${e.message}") }
-                }
+                // The wish gained an app or lost one: the others keep what's known of them.
+                "apps" -> setRoster(jsonList(m.optJSONArray("apps")))
+                "message" -> deliver(m.optString("from"), if (m.isNull("data")) null else m.opt("data"))
                 "undelivered" -> {
+                    // Said once for each app until the room changes: the code that sent it can't tell otherwise.
                     val to = m.optString("to")
                     if (undeliveredSaid.add(to)) Log.e("LampWish", "a message to \"$to\" didn't arrive: ${m.optString("reason", "it isn't in the room")}.")
                 }
             }
         }
 
-        private fun opened(peer: Peer, json: JSONObject): Peer =
-            peer.copy(device = json.optString("device", peer.device),
-                      status = Status(State.CONNECTED, "", json.optLong("since").takeIf { it > 0 } ?: System.currentTimeMillis()))
-
-        /** The link went: no other app can be seen open until it's back. */
-        private fun leftAll() {
-            val now = System.currentTimeMillis()
-            setApps(appsFlow.value.map { if (it.isOpen) it.copy(status = Status(State.NOT_OPEN, notOpen(it.name), now)) else it })
+        private fun present(json: JSONObject) {
+            val id = json.optString("peer").ifEmpty { return }
+            relayPresent[id] = json.optString("device") to (json.optLong("since").takeIf { it > 0 } ?: System.currentTimeMillis())
+            val places = strings(json.optJSONArray("at"))
+            if (places.isNotEmpty()) { remember(id, places); lookAgain() }
         }
 
+        private fun deliver(from: String, data: Any?) {
+            val handlers = lock.withLock { listeners.toList() }
+            for (handler in handlers) try { handler(from, data) } catch (e: Exception) { Log.e("LampWish", "a message handler failed: ${e.message}") }
+        }
+
+        /** Where this app listens, for Lamp's room to tell the others, who keep it for when Lamp is closed. */
+        private fun tellWhereIListen() {
+            val port = listenerPort ?: return
+            val current = link ?: return
+            if (!relayIn || current.sealer == null) return
+            sender.start()
+            outbox.trySend(current to JSONObject().put("t", "at").put("addresses", JSONArray(addresses().map { "$it:$port" })).toString())
+        }
+
+        private fun tick() {
+            if (closed) return
+            val now = System.currentTimeMillis()
+            for (direct in directs.values.toList()) {
+                if (now - direct.heard > 15_000) { drop(direct); continue }
+                direct.send("""{"t":"beat"}""", seal = false)
+            }
+            val mine = addresses()
+            if (mine != networks) { networks = mine; lookAgain() } else reach()
+        }
+
+        // MARK: Straight to the others
+
+        /** Listens, looks for the others and dials the ones it can reach: as it starts, on each beat for those whose time
+         *  to try again has come, and at once whenever something changed (`lookAgain`). */
+        private fun reach() {
+            if (closed || alone || wishKey == null || me.isEmpty() || roster.size < 2) return
+            listen()
+            look()
+            val now = System.currentTimeMillis()
+            for (app in roster) {
+                if (app.id == me || directs[app.id]?.ready == true || app.id in dialing) continue
+                val wait = nextDial[app.id]
+                if (wait != null && wait.first > now) continue
+                val places = (listOfNotNull(found[app.id]) + told[app.id].orEmpty()).distinct()
+                if (places.isNotEmpty()) dial(app.id, places)
+            }
+        }
+
+        private fun lookAgain() {
+            nextDial.clear()
+            if (server == null) listenerTried = 0
+            reach()
+        }
+
+        /** Dials another app at each place in turn until one answers and proves it holds the wish's key; tried again later,
+         *  less often each time it fails, and at once when it's found anew. */
+        private fun dial(peer: String, places: List<String>) {
+            if (closed) { dialing.remove(peer); return }
+            val place = places.firstOrNull() ?: run {
+                dialing.remove(peer)
+                val tries = (nextDial[peer]?.second ?: 0) + 1
+                nextDial[peer] = (System.currentTimeMillis() + (minOf(30.0, Math.pow(2.0, tries.toDouble())) * 1000 * (0.8 + Math.random() * 0.4)).toLong()) to tries
+                return
+            }
+            dialing.add(peer)
+            val colon = place.lastIndexOf(':')
+            val host = if (colon > 0) place.substring(0, colon) else ""
+            val port = place.substring(colon + 1).toIntOrNull()
+            if (!isPlace(host) || port == null || port !in 1..65535) return dial(peer, places.drop(1))
+            scope.launch {
+                val made = try { Ws.dial(host, port) } catch (e: Exception) { null }
+                withContext(Dispatchers.Main) {
+                    if (made == null || closed) { made?.first?.close(); dial(peer, places.drop(1)); return@withContext }
+                    val direct = Direct(made.first, made.second, made.third, dialled = true, peer = peer)
+                    direct.done = { worked ->
+                        if (worked) {
+                            dialing.remove(peer)
+                            nextDial.remove(peer)
+                            remember(peer, listOf("$host:$port"))
+                        } else {
+                            dial(peer, places.drop(1))
+                        }
+                    }
+                    serve(direct)
+                    hello(direct)
+                }
+            }
+        }
+
+        private fun listen(again: Boolean = false) {
+            if (again) stopListening()
+            if (me.isEmpty()) return
+            val name = serviceName(me) ?: return
+            if (server != null || System.currentTimeMillis() - listenerTried < 30_000) return
+            listenerTried = System.currentTimeMillis()
+            val wanted = port(me, roster.map { it.id })
+            val made = (wanted?.let { try { java.net.ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(it)) } } catch (e: Exception) { null } })
+                ?: try { java.net.ServerSocket(0) } catch (e: Exception) { return }
+            server = made
+            listenerPort = made.localPort
+            scope.launch {
+                while (!made.isClosed) {
+                    val socket = try { made.accept() } catch (e: Exception) { break }
+                    // Eight asking to upgrade at a time, each with eight seconds for its whole request, so nobody without
+                    // the key can hold this app's threads by sending its request a byte at a time.
+                    if (upgrading.incrementAndGet() > 8) { upgrading.decrementAndGet(); try { socket.close() } catch (e: Exception) {}; continue }
+                    scope.launch {
+                        val watchdog = scope.launch { delay(8000); try { socket.close() } catch (e: Exception) {} }
+                        val taken = try { Ws.take(socket) } catch (e: Exception) { null } finally { watchdog.cancel(); upgrading.decrementAndGet() }
+                        if (taken == null) { try { socket.close() } catch (e: Exception) {}; return@launch }
+                        withContext(Dispatchers.Main) { take(socket, taken.first, taken.second) }
+                    }
+                }
+            }
+            register(name, made.localPort)
+            tellWhereIListen()
+        }
+
+        private fun stopListening() {
+            try { server?.close() } catch (e: Exception) {}
+            server = null
+            listenerPort = null
+            listenerTried = 0
+            unregister()
+        }
+
+        /** An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key. */
+        private fun take(socket: Socket, input: InputStream, output: java.io.OutputStream) {
+            if (opening.count { !it.dialled } >= 8 || closed) { try { socket.close() } catch (e: Exception) {}; return }
+            serve(Direct(socket, input, output, dialled = false, peer = ""))
+        }
+
+        /** Reads and writes a link off the main thread, hearing each message on it; a handshake not done in a few seconds
+         *  is let go. */
+        private fun serve(direct: Direct) {
+            opening.add(direct)
+            scope.launch {
+                try {
+                    for (frame in direct.out) {
+                        val bytes = if (frame.seal) (direct.sealer ?: continue).seal(frame.bytes) else frame.bytes
+                        Ws.write(direct.output, if (frame.seal) 2 else frame.opcode, bytes, mask = direct.dialled)
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { drop(direct) }
+                }
+            }
+            scope.launch {
+                try {
+                    while (true) {
+                        val (opcode, payload) = Ws.read(direct.input, messageLimit + 2048)
+                        direct.heard = System.currentTimeMillis()
+                        when (opcode) {
+                            1 -> withContext(Dispatchers.Main) { text(String(payload, Charsets.UTF_8), direct) }
+                            2 -> withContext(Dispatchers.Main) { binary(payload, direct) }
+                            8 -> break
+                            9 -> direct.out.trySend(Direct.Frame(10, payload, false))
+                        }
+                        if (direct.over) break
+                    }
+                } catch (e: Exception) {}
+                withContext(Dispatchers.Main) { drop(direct) }
+            }
+            scope.launch(Dispatchers.Main) { delay(8000); if (!direct.ready) drop(direct) }
+        }
+
+        private fun hello(direct: Direct) {
+            val key = wishKey ?: return drop(direct)
+            val nonce = random(16)
+            val tag = derive("lamp-wish tag", key).copyOf(8)
+            direct.hello = nonce to tag
+            direct.send(JSONObject().put("t", "hello").put("tag", encode(tag)).put("peer", me).put("nonce", encode(nonce)).toString(), seal = false)
+        }
+
+        // The same handshake as Lamp's room, the app that listens taking the relay's side and naming itself.
+        private fun text(text: String, direct: Direct) {
+            val key = wishKey ?: return drop(direct)
+            val said = try { JSONObject(text) } catch (e: Exception) { return drop(direct) }
+            val kind = said.optString("t")
+            if (kind == "beat") return
+            val decode = { name: String -> try { java.util.Base64.getDecoder().decode(said.optString(name)) } catch (e: Exception) { null } }
+            val hello = direct.hello
+            if (direct.dialled && direct.sealer == null && kind == "challenge" && hello != null && said.optString("peer") == direct.peer) {
+                val theirs = decode("nonce")
+                val proof = decode("proof")
+                if (theirs != null && theirs.size == 16 && proof != null) {
+                    val transcript = transcript(hello.second, me, direct.peer, hello.first, theirs)
+                    if (!MessageDigest.isEqual(proof, derive("lamp-wish server", key, transcript))) return drop(direct)
+                    direct.hello = null
+                    direct.send(JSONObject().put("t", "proof").put("proof", encode(derive("lamp-wish client", key, transcript))).toString(), seal = false)
+                    direct.opener = Sealer(derive("lamp-wish s2c", key, transcript))
+                    direct.sealer = Sealer(derive("lamp-wish c2s", key, transcript))
+                    direct.send(JSONObject().put("t", "join").put("device", device).toString(), seal = true)
+                    return
+                }
+            }
+            if (!direct.dialled && direct.transcript == null && kind == "hello") {
+                val tag = decode("tag")
+                val peer = said.optString("peer")
+                val theirs = decode("nonce")
+                if (tag != null && MessageDigest.isEqual(tag, derive("lamp-wish tag", key).copyOf(8)) && isName(peer) && peer != me &&
+                    roster.any { it.id == peer } && theirs != null && theirs.size == 16) {
+                    val ours = random(16)
+                    val transcript = transcript(tag, peer, me, theirs, ours)
+                    direct.peer = peer
+                    direct.transcript = transcript
+                    direct.send(JSONObject().put("t", "challenge").put("peer", me).put("nonce", encode(ours))
+                        .put("proof", encode(derive("lamp-wish server", key, transcript))).toString(), seal = false)
+                    return
+                }
+            }
+            val transcript = direct.transcript
+            if (!direct.dialled && direct.sealer == null && kind == "proof" && transcript != null) {
+                val proof = decode("proof")
+                if (proof != null && MessageDigest.isEqual(proof, derive("lamp-wish client", key, transcript))) {
+                    direct.opener = Sealer(derive("lamp-wish c2s", key, transcript))
+                    direct.sealer = Sealer(derive("lamp-wish s2c", key, transcript))
+                    return
+                }
+            }
+            drop(direct)
+        }
+
+        private fun binary(sealed: ByteArray, direct: Direct) {
+            val plain = direct.opener?.open(sealed) ?: return drop(direct)
+            val m = try { JSONObject(String(plain, Charsets.UTF_8)) } catch (e: Exception) { return drop(direct) }
+            when (m.optString("t")) {
+                "join" -> if (!direct.dialled && !direct.ready) {
+                    direct.device = m.optString("device").take(40)
+                    direct.send(JSONObject().put("t", "welcome").put("peer", me).put("device", device).toString(), seal = true)
+                    ready(direct)
+                }
+                "welcome" -> if (direct.dialled && !direct.ready) {
+                    direct.device = m.optString("device").take(40)
+                    ready(direct)
+                }
+                "message" -> if (direct.ready && m.has("data")) deliver(direct.peer, if (m.isNull("data")) null else m.opt("data"))
+            }
+        }
+
+        /** A link proved both ways. Two apps that both listen may each have dialled the other: the one the app with the
+         *  earlier name dialled is kept on both sides, so they agree without saying. */
+        private fun ready(direct: Direct) {
+            if (closed) return drop(direct)
+            opening.remove(direct)
+            val other = directs[direct.peer]
+            if (other != null && other !== direct && other.ready) {
+                val keepNew = direct.dialled == (me < direct.peer)
+                if (!keepNew) { val done = direct.done; direct.done = null; done?.invoke(true); return drop(direct) }
+                other.done = null
+                drop(other)
+            }
+            direct.ready = true
+            directs[direct.peer] = direct
+            val done = direct.done
+            direct.done = null
+            done?.invoke(true)
+            rebuild()
+        }
+
+        private fun drop(direct: Direct) {
+            opening.remove(direct)
+            direct.close()
+            if (directs[direct.peer] === direct) {
+                directs.remove(direct.peer)
+                rebuild()
+            }
+            val done = direct.done
+            direct.done = null
+            done?.invoke(false)
+        }
+
+        // Found on the network by a name that says nothing of the wish or the app to anyone without the key. Android looks
+        // up one name at a time.
+        private var registration: android.net.nsd.NsdManager.RegistrationListener? = null
+        private var discovery: android.net.nsd.NsdManager.DiscoveryListener? = null
+        private val toResolve = ArrayDeque<android.net.nsd.NsdServiceInfo>()
+        private var resolving = false
+        private val nsd: android.net.nsd.NsdManager? get() = LampInstall.context.getSystemService(Context.NSD_SERVICE) as? android.net.nsd.NsdManager
+        private const val serviceType = "_lampwish._tcp"
+
+        private fun register(name: String, port: Int) {
+            unregister()
+            val made = object : android.net.nsd.NsdManager.RegistrationListener {
+                override fun onServiceRegistered(info: android.net.nsd.NsdServiceInfo) {}
+                override fun onRegistrationFailed(info: android.net.nsd.NsdServiceInfo, error: Int) {}
+                override fun onServiceUnregistered(info: android.net.nsd.NsdServiceInfo) {}
+                override fun onUnregistrationFailed(info: android.net.nsd.NsdServiceInfo, error: Int) {}
+            }
+            val info = android.net.nsd.NsdServiceInfo().apply { serviceName = name; serviceType = LampWish.serviceType; this.port = port }
+            try { nsd?.registerService(info, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, made); registration = made } catch (e: Exception) {}
+        }
+
+        private fun unregister() {
+            registration?.let { try { nsd?.unregisterService(it) } catch (e: Exception) {} }
+            registration = null
+        }
+
+        private fun look() {
+            if (discovery != null) return
+            val made = object : android.net.nsd.NsdManager.DiscoveryListener {
+                override fun onDiscoveryStarted(type: String) {}
+                override fun onDiscoveryStopped(type: String) {}
+                override fun onStartDiscoveryFailed(type: String, error: Int) {
+                    val failed = this
+                    scope.launch(Dispatchers.Main) { if (discovery === failed) discovery = null }
+                }
+                override fun onStopDiscoveryFailed(type: String, error: Int) {}
+                override fun onServiceFound(info: android.net.nsd.NsdServiceInfo) {
+                    scope.launch(Dispatchers.Main) {
+                        if (roster.any { it.id != me && serviceName(it.id) == info.serviceName }) { toResolve.addLast(info); resolveNext() }
+                    }
+                }
+                override fun onServiceLost(info: android.net.nsd.NsdServiceInfo) {
+                    scope.launch(Dispatchers.Main) { roster.firstOrNull { serviceName(it.id) == info.serviceName }?.let { found.remove(it.id) } }
+                }
+            }
+            try { nsd?.discoverServices(serviceType, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, made); discovery = made } catch (e: Exception) {}
+        }
+
+        private fun stopLooking() {
+            discovery?.let { try { nsd?.stopServiceDiscovery(it) } catch (e: Exception) {} }
+            discovery = null
+            toResolve.clear()
+        }
+
+        private fun resolveNext() {
+            if (resolving) return
+            val info = toResolve.removeFirstOrNull() ?: return
+            resolving = true
+            val next = { resolving = false; resolveNext() }
+            try {
+                nsd?.resolveService(info, object : android.net.nsd.NsdManager.ResolveListener {
+                    override fun onResolveFailed(info: android.net.nsd.NsdServiceInfo, error: Int) { scope.launch(Dispatchers.Main) { next() } }
+                    override fun onServiceResolved(info: android.net.nsd.NsdServiceInfo) {
+                        scope.launch(Dispatchers.Main) {
+                            val app = roster.firstOrNull { it.id != me && serviceName(it.id) == info.serviceName }
+                            val host = (info.host as? java.net.Inet4Address)?.hostAddress
+                            if (app != null && host != null) {
+                                val fresh = found[app.id] == null
+                                found[app.id] = "$host:${info.port}"
+                                if (fresh) { nextDial.remove(app.id); reach() }
+                            }
+                            next()
+                        }
+                    }
+                }) ?: next()
+            } catch (e: Exception) { next() }
+        }
+
+        /** This app's place on the network: the wish's port for it, worked out from the wish's key and its place in the
+         *  wish's list, so a TV that can't look up names knows where to try; any port when another program has that one. */
+        private fun port(peer: String, roster: List<String>): Int? {
+            val key = wishKey ?: return null
+            val d = derive("lamp-wish port", key)
+            val base = 20000 + ((d[0].toInt() and 0xff) shl 8 or (d[1].toInt() and 0xff)) % 1500 * 8
+            val rank = roster.sorted().indexOf(peer)
+            return if (rank in 0 until 8) base + rank else null
+        }
+
+        private fun serviceName(peer: String): String? = wishKey?.let { hex(derive("lamp-wish service", it, peer.toByteArray(Charsets.UTF_8)).copyOf(8)) }
+
+        /** This device's addresses on its networks, IPv4, not the loopback. */
+        private fun addresses(): List<String> = try {
+            java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }.filterIsInstance<java.net.Inet4Address>().mapNotNull { it.hostAddress }.sorted()
+        } catch (e: Exception) { emptyList() }
+
+        private fun isName(name: String) = name.toByteArray().size in 1..32 && name.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }
+        private fun isPlace(host: String) = host.length in 1..253 && host.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '.' }
+
         private fun jsonList(list: JSONArray?): List<JSONObject> = (0 until (list?.length() ?: 0)).mapNotNull { list?.optJSONObject(it) }
+        private fun strings(list: JSONArray?): List<String> = (0 until (list?.length() ?: 0)).mapNotNull { list?.optString(it)?.takeIf { s -> s.isNotEmpty() } }
+
+        /** Just enough of WebSocket for the straight links (RFC 6455): one message to a frame each way, as every library
+         *  of Lamp's sends them, a dialler's frames masked; ping answered, close heard. */
+        private object Ws {
+            private const val guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+            private fun accept(key: String) = java.util.Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-1").digest((key + guid).toByteArray()))
+
+            private fun head(input: InputStream): List<String> {
+                val bytes = ByteArrayOutputStream()
+                var last = 0
+                while (true) {
+                    val b = input.read()
+                    if (b < 0 || bytes.size() > 8192) throw IOException("no answer")
+                    bytes.write(b)
+                    last = (last shl 8) or b
+                    if (last == 0x0d0a0d0a) break
+                }
+                return bytes.toString("ISO-8859-1").split("\r\n").filter { it.isNotEmpty() }
+            }
+
+            private fun header(lines: List<String>, name: String) =
+                lines.drop(1).firstOrNull { it.substringBefore(':').trim().equals(name, ignoreCase = true) }?.substringAfter(':')?.trim()
+
+            fun dial(host: String, port: Int): Triple<Socket, InputStream, java.io.OutputStream> {
+                val socket = Socket()
+                try {
+                    socket.connect(InetSocketAddress(host, port), 3000)
+                    socket.soTimeout = 8000
+                    socket.tcpNoDelay = true
+                    val input = java.io.BufferedInputStream(socket.getInputStream())
+                    val output = java.io.BufferedOutputStream(socket.getOutputStream())
+                    val key = java.util.Base64.getEncoder().encodeToString(random(16))
+                    output.write("GET / HTTP/1.1\r\nHost: $host:$port\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n".toByteArray())
+                    output.flush()
+                    val lines = head(input)
+                    if (lines.firstOrNull()?.split(" ")?.getOrNull(1) != "101" || header(lines, "Sec-WebSocket-Accept") != accept(key)) throw IOException("not a WebSocket")
+                    socket.soTimeout = 0
+                    return Triple(socket, input, output)
+                } catch (e: Exception) {
+                    try { socket.close() } catch (x: Exception) {}
+                    throw e
+                }
+            }
+
+            fun take(socket: Socket): Pair<InputStream, java.io.OutputStream>? {
+                socket.soTimeout = 8000
+                socket.tcpNoDelay = true
+                val input = java.io.BufferedInputStream(socket.getInputStream())
+                val output = java.io.BufferedOutputStream(socket.getOutputStream())
+                val lines = head(input)
+                val key = header(lines, "Sec-WebSocket-Key")
+                if (lines.firstOrNull()?.startsWith("GET ") != true || key == null || header(lines, "Upgrade")?.equals("websocket", ignoreCase = true) != true) return null
+                output.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept(key)}\r\n\r\n".toByteArray())
+                output.flush()
+                socket.soTimeout = 0
+                return input to output
+            }
+
+            private fun exactly(input: InputStream, count: Int): ByteArray {
+                val bytes = ByteArray(count)
+                var at = 0
+                while (at < count) { val n = input.read(bytes, at, count - at); if (n < 0) throw IOException("closed"); at += n }
+                return bytes
+            }
+
+            /** The next message, its pieces put together, or a control frame as it comes. */
+            fun read(input: InputStream, limit: Int): Pair<Int, ByteArray> {
+                var opcode = -1
+                val message = ByteArrayOutputStream()
+                while (true) {
+                    val first = exactly(input, 2)
+                    val fin = (first[0].toInt() and 0x80) != 0
+                    val op = first[0].toInt() and 0x0f
+                    val masked = (first[1].toInt() and 0x80) != 0
+                    var length = (first[1].toInt() and 0x7f).toLong()
+                    if (length == 126L) length = java.nio.ByteBuffer.wrap(exactly(input, 2)).short.toLong() and 0xffff
+                    else if (length == 127L) length = java.nio.ByteBuffer.wrap(exactly(input, 8)).long
+                    if (length < 0 || length > limit || message.size() + length > limit) throw IOException("too big")
+                    val mask = if (masked) exactly(input, 4) else null
+                    val payload = exactly(input, length.toInt())
+                    if (mask != null) for (i in payload.indices) payload[i] = (payload[i].toInt() xor mask[i % 4].toInt()).toByte()
+                    if (op >= 8) return op to payload
+                    if (op != 0) opcode = op
+                    message.write(payload)
+                    if (fin) return opcode to message.toByteArray()
+                }
+            }
+
+            fun write(output: java.io.OutputStream, opcode: Int, payload: ByteArray, mask: Boolean) {
+                val head = ByteArrayOutputStream()
+                head.write(0x80 or opcode)
+                val bit = if (mask) 0x80 else 0
+                when {
+                    payload.size < 126 -> head.write(bit or payload.size)
+                    payload.size < 65536 -> { head.write(bit or 126); head.write(payload.size shr 8); head.write(payload.size and 0xff) }
+                    else -> { head.write(bit or 127); head.write(java.nio.ByteBuffer.allocate(8).putLong(payload.size.toLong()).array()) }
+                }
+                var body = payload
+                if (mask) {
+                    val key = random(4)
+                    head.write(key)
+                    body = ByteArray(payload.size) { (payload[it].toInt() xor key[it % 4].toInt()).toByte() }
+                }
+                output.write(head.toByteArray())
+                output.write(body)
+                output.flush()
+            }
+        }
 
         // The wish's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
         // under the wish's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
@@ -1279,8 +1903,17 @@ extension Template {
             return mac.doFinal(data)
         }
 
+        private fun transcript(tag: ByteArray, client: String, server: String, clientNonce: ByteArray, serverNonce: ByteArray): ByteArray =
+            ByteArrayOutputStream().apply {
+                write(tag)
+                for (name in listOf(client, server)) { val bytes = name.toByteArray(); write(bytes.size); write(bytes) }
+                write(clientNonce)
+                write(serverNonce)
+            }.toByteArray()
+
         private fun random(count: Int): ByteArray = ByteArray(count).also { java.security.SecureRandom().nextBytes(it) }
         private fun encode(bytes: ByteArray): String = java.util.Base64.getEncoder().encodeToString(bytes)
+        private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
         private class Sealer(key: ByteArray) {
             private val key = javax.crypto.spec.SecretKeySpec(key, "AES")

@@ -251,11 +251,22 @@ enum Template {
         key.map { "<key>\(wishKeyName)</key><string>\($0.base64EncodedString())</string>" } ?? ""
     }
 
-    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. An app on
-    /// its own (most apps, and every starter) gets none of it: its building blocks are written as if the wish's apps
-    /// couldn't talk at all, so it carries no code, size, rule or permission for something it can't use. A wish that gains
-    /// a second app has its blocks written again before its next turn and build, as they always are.
-    static func talksToOtherApps(_ project: LampProject) -> Bool { project.partOf != nil || !project.partFolders.isEmpty }
+    /// The Bonjour type the apps of a wish of several are found by on the network (`LampWish`), each under a name only the
+    /// wish's key makes. iOS lets an app advertise and browse only the types its Info.plist names.
+    static let wishServiceType = "_lampwish._tcp"
+
+    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. That's
+    /// decided by the apps the wish asks for (`LampProject.apps`), not only those made: the first app of a wish meant to
+    /// be a Mac app and an Android app has the block from its first build, while the other waits for this Mac to be able
+    /// to build it, so it's written to talk to it from the start. Apps are counted, not devices: an app for the Mac and
+    /// the iPhone is one. An app on its own (most apps, and every starter) gets none of it: its building blocks are written
+    /// as if the wish's apps couldn't talk at all, so it carries no code, size, rule or permission for something it can't
+    /// use. A wish that comes to ask for a second app has its blocks written again before its next turn and build, as
+    /// they always are.
+    static func talksToOtherApps(_ project: LampProject) -> Bool {
+        project.partOf != nil || !project.partFolders.isEmpty
+            || Set(project.apps.map { Parts.group($0.kind) } + [Parts.group(project.platform)]).count >= 2
+    }
 
     /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
     static func lampSupportSwift(for project: LampProject) -> String {
@@ -265,10 +276,15 @@ enum Template {
     /// The Swift building blocks without `LampWish`: what an app on its own is given, and what decides whether an app
     /// built by an earlier Lamp is out of date (`BuildStamp`), so the block never makes such an app build again.
     static func withoutWish(_ swift: String) -> String {
+        let swift = swift.replacingOccurrences(of: wishLeavesLampClosed, with: "")
         guard let start = swift.range(of: "    // MARK: - The wish's other apps\n"),
               let end = swift.range(of: "    // MARK: - The wish's TV app\n", range: start.upperBound..<swift.endIndex) else { return swift }
         return String(swift[..<start.lowerBound]) + String(swift[end.lowerBound...])
     }
+
+    /// The one line `LampWish` needs inside `LampAI`, which an app on its own goes without: the person may have quit
+    /// Lamp, and the wish's apps go on talking without it, asking it again now and then, so asking never starts it.
+    static let wishLeavesLampClosed = "                    if path.hasPrefix(\"/app/wish\") { throw error }   // LampWish goes on without Lamp\n"
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
@@ -1823,8 +1839,13 @@ enum Template {
         }
 
         /// Those lists as Info.plist lines, or nothing.
-        var backgroundPlistLine: String {
-            lists.sorted { $0.key < $1.key }
+        var backgroundPlistLine: String { backgroundPlistLine(adding: nil) }
+
+        /// The same, with one more Bonjour type beside what the app declared: the wish's, for an app of several.
+        func backgroundPlistLine(adding service: String?) -> String {
+            var lists = lists
+            if let service, !(lists["NSBonjourServices"] ?? []).contains(service) { lists["NSBonjourServices", default: []].append(service) }
+            return lists.sorted { $0.key < $1.key }
                 .map { "  <key>\($0.key)</key><array>" + $0.value.map { "<string>\($0.xmlEscaped)</string>" }.joined() + "</array>" }
                 .joined(separator: "\n")
         }
@@ -1943,6 +1964,8 @@ enum Template {
         let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
         // The wish's key, for an app with others in its wish, goes the same way and only there.
         let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        // An app of a wish of several finds the others, and is found, by the wish's Bonjour type, beside any of its own.
+        let background = capabilities.backgroundPlistLine(adding: !wish.isEmpty ? wishServiceType : nil)
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
@@ -1953,7 +1976,7 @@ enum Template {
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
-                .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
+                .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
@@ -3239,7 +3262,8 @@ enum Template {
     /// action's spot is announced during the pause before it, with the time until it happens, so nothing waits.
     static let useAppLead = 0.2
 
-    static let lampSupportSwift = Connectors.fill(lampSupportTemplate) + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
+    static let lampSupportSwift = Connectors.fill(lampSupportTemplate).replacingOccurrences(of: "{{WISH_LEAVES_LAMP_CLOSED}}", with: wishLeavesLampClosed)
+        + "\n#if os(macOS)" + lampGlyphSwift + "#endif\n"
 
     private static let lampSupportTemplate = #"""
     // Generated by Lamp before every build. Don't edit: changes are overwritten.
@@ -13554,7 +13578,7 @@ enum Template {
                 } catch let error as URLError where error.code == .cannotConnectToHost && attempt == 0 {
                     // Lamp isn't running: start it in the background, then retry once. (A phone can't start
                     // it; the simulator app just waits a moment in case Lamp is coming up.)
-                    #if os(macOS)
+{{WISH_LEAVES_LAMP_CLOSED}}                    #if os(macOS)
                     let config = NSWorkspace.OpenConfiguration()
                     config.activates = false
                     if let lamp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) {
@@ -13691,7 +13715,7 @@ enum Template {
             static let connected = State(rawValue: "connected")
             /// This app's wish has no other app.
             static let alone = State(rawValue: "alone")
-            /// This app can't reach Lamp, which carries what the wish's apps say.
+            /// This app can't reach Lamp, nor any other app of the wish.
             static let away = State(rawValue: "away")
             /// This app called `stop()`.
             static let ended = State(rawValue: "ended")
@@ -13728,13 +13752,37 @@ enum Template {
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
 
+        // Two ways to the others, used together: Lamp's relay while Lamp is open on the Mac, and a link straight to each
+        // app that listens (this one does too), found on the home network by an opaque Bonjour name or at the address it
+        // was last reached at. Each is sealed the same way, with the wish's key; a message goes the direct way when there
+        // is one. So the apps go on talking with Lamp closed, or the Mac asleep, as long as they're on the same network.
         private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
         private let link = Link()
         private var address: URL?
-        /// This link's seals each way, once the handshake is done: nil while it isn't.
         private var sealer: Sealer?
         private var opener: Sealer?
         private var handshake: (nonce: Data, tag: Data)?
+        private var relayIn = false
+        private var lampAway = false
+        private var alone = false
+        /// The apps in Lamp's room now, by peer name: the device they said and since when.
+        private var relayPresent: [String: (device: String, since: Date)] = [:]
+        /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
+        private var roster: [(id: String, kind: String, name: String)] = []
+        private var directs: [String: Direct] = [:]
+        private var opening: [ObjectIdentifier: Direct] = [:]
+        private var listener: NWListener?
+        private var listenerPort: UInt16?
+        private var listenerTried = Date.distantPast
+        private var browser: NWBrowser?
+        private var found: [String: NWEndpoint] = [:]
+        private var told: [String: [String]] = [:]
+        private var dialing: Set<String> = []
+        private var nextDial: [String: (at: Date, tries: Int)] = [:]
+        private var openSince: [String: Date] = [:]
+        private var lastSeen: [String: Date] = [:]
+        private var devices: [String: String] = [:]
+        private var monitor: NWPathMonitor?
         private var listeners: [(String, Any) -> Void] = []
         private var closed = false
         private var retry = 0
@@ -13743,19 +13791,55 @@ enum Template {
         private var saidAway = false
         private var undeliveredSaid: Set<String> = []
 
-        private init() {
-            open()
-            beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.tick() }
+        /// One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way.
+        private final class Direct: @unchecked Sendable {   // touched only on the main queue
+            let connection: NWConnection
+            let dialled: Bool
+            var peer: String
+            var hello: (nonce: Data, tag: Data)?
+            var transcript: Data?
+            var sealer: Sealer?
+            var opener: Sealer?
+            var ready = false
+            var heard = Date()
+            var device = ""
+            var done: ((Bool) -> Void)?
+            init(connection: NWConnection, dialled: Bool, peer: String) {
+                self.connection = connection
+                self.dialled = dialled
+                self.peer = peer
             }
         }
 
-        /// Joins the wish's room again after `stop()`; otherwise nothing, since it joins by itself.
+        private init() {
+            restore()
+            open()
+            reach()
+            beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            // Back to the front, or onto another network: the others are looked for again at once.
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] _ in DispatchQueue.main.async { MainActor.assumeIsolated { self?.lookAgain() } } }
+            monitor.start(queue: .main)
+            self.monitor = monitor
+            #if os(macOS)
+            let front = NSApplication.didBecomeActiveNotification
+            #else
+            let front = UIApplication.willEnterForegroundNotification
+            #endif
+            NotificationCenter.default.addObserver(forName: front, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lookAgain() }
+            }
+        }
+
+        /// Joins the wish's other apps again after `stop()`; otherwise nothing, since it joins by itself.
         func start() {
             guard closed else { return }
             closed = false
             retry = 0
             open()
+            reach()
         }
 
         func stop() {
@@ -13763,8 +13847,14 @@ enum Template {
             link.task?.cancel(with: .goingAway, reason: nil)
             link.task = nil
             sealer = nil
-            leftAll()
-            set(.ended)
+            relayIn = false
+            relayPresent = [:]
+            for direct in Array(directs.values) + Array(opening.values) { drop(direct) }
+            listener?.cancel()
+            listener = nil
+            browser?.cancel()
+            browser = nil
+            rebuild()
         }
 
         /// The wish's app with this peer name, open or not; nil when the wish has no such app.
@@ -13775,7 +13865,7 @@ enum Template {
         @discardableResult
         func send(_ data: Any, to peer: String? = nil) -> Bool {
             let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
-            guard state == .connected, link.task != nil, sealer != nil else {
+            guard state == .connected else {
                 if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
                 return false
             }
@@ -13783,8 +13873,9 @@ enum Template {
                 fputs("LampWish: \(what) wasn't sent: that app isn't open now (open: \(peers.map(\.id))).\n", stderr)
                 return false
             }
-            var frame: [String: Any] = ["t": "send", "data": data]
-            if let peer { frame["to"] = peer }
+            // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
+            let targets = peer.map { [$0] } ?? peers.map(\.id)
+            let frame: [String: Any] = ["t": "send", "data": data, "to": targets.max { $0.utf8.count < $1.utf8.count } ?? ""]
             guard JSONSerialization.isValidJSONObject(frame), let text = try? JSONSerialization.data(withJSONObject: frame) else {
                 fputs("LampWish: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
                 return false
@@ -13793,7 +13884,16 @@ enum Template {
                 fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the wish's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
                 return false
             }
-            say(text)
+            // Each app the straight way when there is one, else through Lamp's room.
+            for target in targets {
+                if let direct = directs[target], direct.ready,
+                   let message = try? JSONSerialization.data(withJSONObject: ["t": "message", "data": data]) {
+                    sealed(message, on: direct)
+                } else if relayPresent[target] != nil,
+                          let relayed = try? JSONSerialization.data(withJSONObject: ["t": "send", "data": data, "to": target]) {
+                    say(relayed)
+                }
+            }
             return true
         }
 
@@ -13804,14 +13904,12 @@ enum Template {
         static func reason(_ state: State) -> String {
             switch state {
             case .connecting: "Connecting to the wish's other apps…"
-            case .away: "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi."
+            case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
             default: ""
             }
         }
 
         private static func notOpen(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + " isn't open." }
-
-        private func set(_ state: State, reason: String? = nil) { status = Status(state: state, reason: reason ?? Self.reason(state), lastSeen: nil) }
 
         /// Where this copy runs, for the others to show.
         private static var device: String {
@@ -13835,31 +13933,110 @@ enum Template {
             return SymmetricKey(data: data)
         }()
 
+        // MARK: What's known
+
+        /// The state and the list of apps, from what each way says now.
+        private func rebuild() {
+            let now = Date()
+            let list = roster.filter { $0.id != me }.map { app in
+                let direct = directs[app.id].flatMap { $0.ready ? $0 : nil }
+                let relayed = relayPresent[app.id]
+                let open = !closed && (direct != nil || relayed != nil)
+                if open {
+                    if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now }
+                    if let device = direct?.device ?? relayed?.device, !device.isEmpty { devices[app.id] = device }
+                } else if openSince[app.id] != nil {
+                    openSince[app.id] = nil
+                    lastSeen[app.id] = now
+                }
+                let status = open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
+                                  : Status(state: .notOpen, reason: Self.notOpen(app.name), lastSeen: lastSeen[app.id])
+                return Peer(id: app.id, kind: app.kind, name: app.name, device: devices[app.id] ?? "", status: status)
+            }
+            let next: State = closed ? .ended : alone ? .alone
+                : (relayIn || directs.values.contains { $0.ready }) ? .connected : lampAway ? .away : .connecting
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
+            if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
+            if next == .connected { saidAway = false }
+            apps = list
+        }
+
+        private func setRoster(_ list: [[String: Any]]) {
+            let given = list.compactMap { app -> (id: String, kind: String, name: String)? in
+                guard let id = app["peer"] as? String, Self.isName(id) else { return nil }
+                return (id, app["kind"] as? String ?? "", app["name"] as? String ?? id)
+            }
+            guard !given.isEmpty else { return }
+            let changed = given.map(\.id).sorted() != roster.map(\.id).sorted()
+            roster = given
+            for id in Array(directs.keys) where !given.contains(where: { $0.id == id }) { directs[id].map(drop) }
+            keep()
+            // Where each app listens follows its place in the list: a changed list moves this one's.
+            if changed { listen(again: true) }
+            rebuild()
+        }
+
+        /// What this app keeps of its wish on the device, by the wish's tag: who it is, the wish's apps and where each was
+        /// last reached, so it finds the others with Lamp closed.
+        private static var keptKey: String? { key.map { "LampWish." + tag(of: $0).map { String(format: "%02x", $0) }.joined() } }
+
+        private func keep() {
+            guard let keptKey = Self.keptKey else { return }
+            let kept: [String: Any] = ["me": me, "apps": roster.map { ["peer": $0.id, "kind": $0.kind, "name": $0.name] }, "at": told]
+            UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: kept), forKey: keptKey)
+        }
+
+        private func restore() {
+            guard let keptKey = Self.keptKey, let data = UserDefaults.standard.data(forKey: keptKey),
+                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+            me = kept["me"] as? String ?? ""
+            told = kept["at"] as? [String: [String]] ?? [:]
+            roster = (kept["apps"] as? [[String: Any]] ?? []).compactMap { app in
+                (app["peer"] as? String).map { ($0, app["kind"] as? String ?? "", app["name"] as? String ?? $0) }
+            }
+            alone = roster.count < 2 && !roster.isEmpty
+            rebuild()
+        }
+
+        /// Where another app was reached or said it listens, the latest first.
+        private func remember(_ peer: String, at places: [String]) {
+            guard peer != me, !places.isEmpty else { return }
+            var list = places.filter { !$0.isEmpty }
+            for place in told[peer] ?? [] where !list.contains(place) { list.append(place) }
+            told[peer] = Array(list.prefix(6))
+            keep()
+        }
+
+        // MARK: Lamp's room
+
         // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the wish's key, proved
         // in a handshake that sends nothing anyone could use again, and everything after it is sealed.
         private func open() {
             guard !closed else { return }
             guard let key = Self.key else {
-                set(.away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+                status = Status(state: .away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.", lastSeen: nil)
                 return
             }
-            if state != .alone { set(.connecting) }
             Task { @MainActor in
                 do {
                     if address == nil || me.isEmpty {
                         let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
                         if answer["alone"] as? Bool == true {
                             // The wish has no other app: nothing to join, until one is added.
-                            set(.alone)
-                            apps = []
+                            alone = true
                             me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
+                            if let mine = answer["me"] as? [String: Any] { setRoster([mine]) }
+                            rebuild()
                             return again(after: (answer["renew"] as? Double ?? 300))
                         }
                         guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let peer = answer["peer"] as? String else {
                             throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the wish's apps meet.")
                         }
+                        alone = false
                         address = socket
                         me = peer
+                        setRoster(answer["apps"] as? [[String: Any]] ?? [])
                     }
                     guard let address, !closed else { return }
                     let task = URLSession.shared.webSocketTask(with: address)
@@ -13869,21 +14046,23 @@ enum Template {
                     opener = nil
                     task.resume()
                     heard = Date()
-                    let nonce = Self.random(16), tag = Self.derive("lamp-wish tag", key).prefix(8)
+                    let nonce = Self.random(16), tag = Self.tag(of: key)
                     handshake = (nonce, tag)
                     let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": me, "nonce": nonce.base64EncodedString()])
                     try await task.send(.string(String(decoding: hello, as: UTF8.self)))
                     receive(on: task)
                 } catch {
-                    // The socket couldn't be opened or the hello didn't go (Lamp restarted, the relay moved): the link is
-                    // let go, and where to join is asked of Lamp again rather than the same address tried for good.
+                    // Lamp isn't there (closed, restarting, or the Mac asleep): the apps go on the straight way meanwhile,
+                    // and Lamp is asked again after a while.
                     if let task = link.task {
                         task.cancel(with: .goingAway, reason: nil)
                         link.task = nil
                     }
                     address = nil
-                    if state != .alone { set(.away) }
-                    fputs("LampWish: \(error.localizedDescription)\n", stderr)
+                    // Said once each time Lamp goes, so the log shows why without a line for every try.
+                    if !lampAway { fputs("LampWish: \(error.localizedDescription)\n", stderr) }
+                    lampAway = true
+                    rebuild()
                     again()
                 }
             }
@@ -13928,10 +14107,7 @@ enum Template {
             guard let key = Self.key, let handshake, let server = challenge["peer"] as? String, (1...32).contains(server.utf8.count),
                   let theirs = (challenge["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
                   let proof = (challenge["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return false }
-            var transcript = handshake.tag
-            for name in [me, server] { transcript.append(UInt8(name.utf8.count)); transcript.append(Data(name.utf8)) }
-            transcript.append(handshake.nonce)
-            transcript.append(theirs)
+            let transcript = Self.transcript(tag: handshake.tag, client: me, server: server, clientNonce: handshake.nonce, serverNonce: theirs)
             guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return false }
             self.handshake = nil
             let mine = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()])
@@ -13942,7 +14118,7 @@ enum Template {
             return true
         }
 
-        /// Seals a message and sends it, in the order said: each is sealed with the next number this way.
+        /// Seals a message for Lamp's room and sends it, in the order said: each is sealed with the next number this way.
         private func say(_ json: Data) {
             guard let task = link.task, var box = sealer else { return }
             let sealed = box.seal(json)
@@ -13962,43 +14138,26 @@ enum Template {
             switch m["t"] as? String {
             case "welcome":
                 retry = 0
-                saidAway = false
                 undeliveredSaid = []
+                lampAway = false
+                relayIn = true
                 if let name = m["peer"] as? String { me = name }
-                let present = Dictionary((m["peers"] as? [[String: Any]] ?? []).compactMap { p in (p["peer"] as? String).map { ($0, p) } },
-                                      uniquingKeysWith: { a, _ in a })
-                apps = (m["apps"] as? [[String: Any]] ?? []).compactMap { app in
-                    guard let id = app["peer"] as? String, id != me else { return nil }
-                    let name = app["name"] as? String ?? id
-                    var peer = Peer(id: id, kind: app["kind"] as? String ?? "", name: name, device: "",
-                                    status: Status(state: .notOpen, reason: Self.notOpen(name), lastSeen: self.peer(id)?.status.lastSeen))
-                    if let seen = present[id] { Self.mark(&peer, openWith: seen) }
-                    return peer
-                }
-                set(.connected)
+                setRoster(m["apps"] as? [[String: Any]] ?? [])
+                relayPresent = [:]
+                for seen in m["peers"] as? [[String: Any]] ?? [] { present(seen) }
+                tellWhereIListen()
+                rebuild()
             case "joined":
-                guard let joined = m["peer"] as? [String: Any], let id = joined["peer"] as? String else { return }
-                if let index = apps.firstIndex(where: { $0.id == id }) {
-                    Self.mark(&apps[index], openWith: joined)
-                } else {
-                    var peer = Peer(id: id, kind: joined["kind"] as? String ?? "", name: joined["name"] as? String ?? id, device: "",
-                                    status: Status(state: .notOpen, reason: "", lastSeen: nil))
-                    Self.mark(&peer, openWith: joined)
-                    apps.append(peer)
-                }
+                if let joined = m["peer"] as? [String: Any] { present(joined) }
+                rebuild()
             case "left":
-                if let id = m["peer"] as? String, let index = apps.firstIndex(where: { $0.id == id }) {
-                    apps[index].status = Status(state: .notOpen, reason: Self.notOpen(apps[index].name), lastSeen: Date())
-                }
+                if let id = m["peer"] as? String { relayPresent[id] = nil }
+                rebuild()
+            case "at":
+                if let id = m["peer"] as? String { remember(id, at: m["addresses"] as? [String] ?? []); lookAgain() }
             case "apps":
                 // The wish gained an app or lost one: the others keep what's known of them.
-                apps = (m["apps"] as? [[String: Any]] ?? []).compactMap { app in
-                    guard let id = app["peer"] as? String, id != me else { return nil }
-                    if let known = peer(id) { return known }
-                    let name = app["name"] as? String ?? id
-                    return Peer(id: id, kind: app["kind"] as? String ?? "", name: name, device: "",
-                                status: Status(state: .notOpen, reason: Self.notOpen(name), lastSeen: nil))
-                }
+                setRoster(m["apps"] as? [[String: Any]] ?? [])
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
                 for listener in listeners { listener(from, data) }
@@ -14011,17 +14170,11 @@ enum Template {
             }
         }
 
-        private static func mark(_ peer: inout Peer, openWith json: [String: Any]) {
-            peer.device = json["device"] as? String ?? peer.device
+        private func present(_ json: [String: Any]) {
+            guard let id = json["peer"] as? String else { return }
             let since = (json["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date()
-            peer.status = Status(state: .connected, reason: "", lastSeen: since)
-        }
-
-        /// The link went: no other app can be seen open until it's back.
-        private func leftAll() {
-            for index in apps.indices where apps[index].isOpen {
-                apps[index].status = Status(state: .notOpen, reason: Self.notOpen(apps[index].name), lastSeen: Date())
-            }
+            relayPresent[id] = (json["device"] as? String ?? "", since)
+            if let places = json["at"] as? [String], !places.isEmpty { remember(id, at: places); lookAgain() }
         }
 
         private func dropped(_ task: URLSessionWebSocketTask) {
@@ -14031,16 +14184,17 @@ enum Template {
             sealer = nil
             opener = nil
             handshake = nil
-            leftAll()
+            relayIn = false
+            relayPresent = [:]
             // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
             // not be of the wish it was, so Lamp is asked again where to join and who this app is.
-            if code == 4003 || code == 4005 || state == .connecting || retry >= 3 { address = nil }
+            if code == 4003 || code == 4005 || retry >= 3 { address = nil }
+            rebuild()
             again()
         }
 
         private func again(after: Double? = nil) {
             guard !closed else { return }
-            if after == nil, state == .connected { set(.connecting) }
             retry = min(retry + 1, 6)
             let wait = after ?? Double(retry) * 0.75
             Task { @MainActor [weak self] in
@@ -14049,15 +14203,417 @@ enum Template {
             }
         }
 
-        // A beat both ways, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
+        // A beat on every link, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
         private func tick() {
-            guard let task = link.task else { return }
-            if Date().timeIntervalSince(heard) > 12 {
-                task.cancel(with: .goingAway, reason: nil)
-                dropped(task)
+            if let task = link.task {
+                if Date().timeIntervalSince(heard) > 12 {
+                    task.cancel(with: .goingAway, reason: nil)
+                    dropped(task)
+                } else {
+                    task.send(.string(#"{"t":"beat"}"#)) { _ in }
+                }
+            }
+            for direct in Array(directs.values) {
+                if Date().timeIntervalSince(direct.heard) > 15 { drop(direct); continue }
+                frame(Data(#"{"t":"beat"}"#.utf8), text: true, on: direct)
+            }
+            reach()
+        }
+
+        // MARK: Straight to the others
+
+        /// Listens, looks for the others and dials the ones it can reach: as it starts, on each beat for those whose time
+        /// to try again has come, and at once whenever something changed (`lookAgain`).
+        private func reach() {
+            guard !closed, !alone, Self.key != nil, !me.isEmpty, roster.count >= 2 else { return }
+            listen()
+            browse()
+            let now = Date()
+            for app in roster where app.id != me && directs[app.id]?.ready != true && !dialing.contains(app.id) {
+                if let wait = nextDial[app.id], wait.at > now { continue }
+                let places = endpoints(of: app.id)
+                guard !places.isEmpty else { continue }
+                dial(app.id, places)
+            }
+        }
+
+        private func lookAgain() {
+            nextDial = [:]
+            if listener == nil { listenerTried = .distantPast }
+            reach()
+        }
+
+        /// This app's place on the network: the wish's port for it, worked out from the wish's key and its place in the
+        /// wish's list, so a TV that can't look up names knows where to try; any port when another program has that one.
+        private static func port(for peer: String, among roster: [String]) -> UInt16? {
+            guard let key else { return nil }
+            let d = derive("lamp-wish port", key)
+            let base = 20000 + (Int(d[0]) << 8 | Int(d[1])) % 1500 * 8
+            guard let rank = roster.sorted().firstIndex(of: peer), rank < 8 else { return nil }
+            return UInt16(base + rank)
+        }
+
+        /// The name this app is found by on the network, which says nothing of the wish or the app to anyone without the key.
+        private static func serviceName(of peer: String) -> String? {
+            key.map { derive("lamp-wish service", $0, Data(peer.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined() }
+        }
+
+        private static var serviceType: String { "_lampwish._tcp" }
+
+        private static func socketParameters() -> NWParameters {
+            let socket = NWProtocolWebSocket.Options()
+            socket.autoReplyPing = true
+            socket.maximumMessageSize = messageLimit + 2048
+            let parameters = NWParameters.tcp
+            parameters.defaultProtocolStack.applicationProtocols.insert(socket, at: 0)
+            return parameters
+        }
+
+        private func listen(again: Bool = false, anyPort: Bool = false) {
+            if again { listener?.cancel(); listener = nil; listenerPort = nil; listenerTried = .distantPast }
+            guard listener == nil, anyPort || Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me) else { return }
+            listenerTried = Date()
+            let wanted = anyPort ? nil : Self.port(for: me, among: roster.map(\.id)).flatMap { NWEndpoint.Port(rawValue: $0) }
+            let made = (wanted.flatMap { try? NWListener(using: Self.socketParameters(), on: $0) }) ?? (try? NWListener(using: Self.socketParameters()))
+            guard let made else { return }
+            made.service = NWListener.Service(name: name, type: Self.serviceType)
+            made.newConnectionHandler = { [weak self] connection in
+                MainActor.assumeIsolated { self?.take(connection) }
+            }
+            made.stateUpdateHandler = { [weak self, weak made] state in
+                MainActor.assumeIsolated {
+                    guard let self, let made, self.listener === made else { return }
+                    switch state {
+                    case .ready:
+                        self.listenerPort = made.port?.rawValue
+                        self.tellWhereIListen()
+                    case .failed:
+                        made.cancel()
+                        self.listener = nil
+                        self.listenerPort = nil
+                        // Another program has the wish's port: any port, found by name and told to Lamp's room instead.
+                        if wanted != nil { self.listen(anyPort: true) }
+                    default:
+                        break
+                    }
+                }
+            }
+            listener = made
+            made.start(queue: .main)
+        }
+
+        private func browse() {
+            guard browser == nil else { return }
+            let browser = NWBrowser(for: .bonjour(type: Self.serviceType, domain: nil), using: .tcp)
+            browser.browseResultsChangedHandler = { [weak self] results, _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    var seen: [String: NWEndpoint] = [:]
+                    for result in results {
+                        guard case .service(let name, _, _, _) = result.endpoint,
+                              let app = self.roster.first(where: { $0.id != self.me && Self.serviceName(of: $0.id) == name }) else { continue }
+                        seen[app.id] = result.endpoint
+                    }
+                    let fresh = seen.keys.filter { self.found[$0] == nil }
+                    self.found = seen
+                    for id in fresh { self.nextDial[id] = nil }
+                    if !fresh.isEmpty { self.reach() }
+                }
+            }
+            browser.stateUpdateHandler = { [weak self, weak browser] state in
+                MainActor.assumeIsolated {
+                    if case .failed = state, let self, self.browser === browser { self.browser?.cancel(); self.browser = nil }
+                }
+            }
+            self.browser = browser
+            browser.start(queue: .main)
+        }
+
+        /// Where to reach another app: found by its name now, else where it was last reached or said it listens.
+        private func endpoints(of peer: String) -> [NWEndpoint] {
+            var list: [NWEndpoint] = []
+            if let found = found[peer] { list.append(found) }
+            for place in told[peer] ?? [] {
+                guard let colon = place.lastIndex(of: ":"), let port = NWEndpoint.Port(String(place[place.index(after: colon)...])) else { continue }
+                let host = String(place[..<colon]).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+                list.append(.hostPort(host: NWEndpoint.Host(host), port: port))
+            }
+            return list
+        }
+
+        /// Where this app listens, for Lamp's room to tell the others, who keep it for when Lamp is closed.
+        private func tellWhereIListen() {
+            guard relayIn, let port = listenerPort else { return }
+            // This Mac's own address first, for an app of the wish on the same Mac (an iPhone app in the simulator): it shares
+            // the Mac's network, and an app on another device that tries it is turned away at once.
+            let places = (["127.0.0.1"] + Self.addresses()).map { "\($0):\(port)" }
+            if let json = try? JSONSerialization.data(withJSONObject: ["t": "at", "addresses": places]) { say(json) }
+        }
+
+        /// This device's addresses on its networks, IPv4, not the loopback.
+        private static func addresses() -> [String] {
+            var list: [String] = []
+            var first: UnsafeMutablePointer<ifaddrs>?
+            guard getifaddrs(&first) == 0, let start = first else { return [] }
+            defer { freeifaddrs(start) }
+            var each: UnsafeMutablePointer<ifaddrs>? = start
+            while let item = each {
+                defer { each = item.pointee.ifa_next }
+                let flags = Int32(item.pointee.ifa_flags)
+                guard let address = item.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET),
+                      flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0 else { continue }
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    list.append(String(cString: host))
+                }
+            }
+            return list
+        }
+
+        /// Dials another app at each place in turn until one answers and proves it holds the wish's key; tried again later,
+        /// less often each time it fails, and at once when it's found anew.
+        private func dial(_ peer: String, _ places: [NWEndpoint]) {
+            guard !closed else { dialing.remove(peer); return }
+            guard let place = places.first else {
+                dialing.remove(peer)
+                let tries = (nextDial[peer]?.tries ?? 0) + 1
+                nextDial[peer] = (Date().addingTimeInterval(min(30, pow(2, Double(tries))) * Double.random(in: 0.8...1.2)), tries)
                 return
             }
-            task.send(.string(#"{"t":"beat"}"#)) { _ in }
+            dialing.insert(peer)
+            // A WebSocket asks for its link only of an address a URL can name, so a name found on the network is looked up
+            // first, with a plain connection that goes no further.
+            if case .service = place {
+                let look = NWConnection(to: place, using: .tcp), settled = Flag()
+                let next = { [weak self] (found: NWEndpoint?) in
+                    guard !settled.on else { return }
+                    settled.on = true
+                    look.stateUpdateHandler = nil
+                    look.cancel()
+                    self?.dial(peer, (found.map { [$0] } ?? []) + places.dropFirst())
+                }
+                look.stateUpdateHandler = { state in
+                    MainActor.assumeIsolated {
+                        switch state {
+                        case .ready: next(look.currentPath?.remoteEndpoint)
+                        case .failed, .waiting, .cancelled: next(nil)
+                        default: break
+                        }
+                    }
+                }
+                look.start(queue: .main)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { MainActor.assumeIsolated { next(nil) } }
+                return
+            }
+            guard case .hostPort(let host, let port) = place, let name = Self.urlHost(host),
+                  let url = URL(string: "ws://\(name):\(port.rawValue)/") else { return dial(peer, Array(places.dropFirst())) }
+            let direct = Direct(connection: NWConnection(to: .url(url), using: Self.socketParameters()), dialled: true, peer: peer)
+            direct.done = { [weak self] worked in
+                guard let self else { return }
+                if worked {
+                    self.dialing.remove(peer)
+                    self.nextDial[peer] = nil
+                    // Kept by an address any app of the wish can dial again, an IPv4 one or a name.
+                    switch host {
+                    case .ipv4, .name: self.remember(peer, at: ["\(name):\(port.rawValue)"])
+                    default: break
+                    }
+                } else {
+                    self.dial(peer, Array(places.dropFirst()))
+                }
+            }
+            start(direct)
+            direct.connection.stateUpdateHandler = { [weak self] state in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    switch state {
+                    case .ready:
+                        self.receive(direct)
+                        self.hello(direct)
+                    // Waiting is a place that can't be reached now: the next one is tried rather than this one again.
+                    case .failed, .waiting, .cancelled: self.drop(direct)
+                    default: break
+                    }
+                }
+            }
+            direct.connection.start(queue: .main)
+        }
+
+        /// A host as a URL names it: an IPv4 address without the interface it was found on, an IPv6 one in brackets.
+        private static func urlHost(_ host: NWEndpoint.Host) -> String? {
+            switch host {
+            case .ipv4(let v4): return "\(v4)".split(separator: "%").first.map(String.init)
+            case .ipv6(let v6):
+                let parts = "\(v6)".split(separator: "%", maxSplits: 1)
+                return parts.first.map { "[" + $0 + (parts.count > 1 ? "%25" + parts[1] : "") + "]" }
+            case .name(let name, _): return isPlace(name) ? name : nil
+            @unknown default: return nil
+            }
+        }
+
+        private static func isPlace(_ name: String) -> Bool {
+            (1...253).contains(name.utf8.count) && name.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x41 && $0 <= 0x5a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d || $0 == 0x2e }
+        }
+
+        private final class Flag: @unchecked Sendable { var on = false }   // touched only on the main queue
+
+        /// An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key.
+        private func take(_ connection: NWConnection) {
+            // Eight unproven at a time, counting only those dialled in, so this app's own dials never shut the others out.
+            guard opening.values.filter({ !$0.dialled }).count < 8, !closed else { return connection.cancel() }
+            let direct = Direct(connection: connection, dialled: false, peer: "")
+            start(direct)
+            connection.stateUpdateHandler = { [weak self] state in
+                MainActor.assumeIsolated {
+                    if case .ready = state { self?.receive(direct) }
+                    if case .failed = state { self?.drop(direct) }
+                    if case .cancelled = state { self?.drop(direct) }
+                }
+            }
+            connection.start(queue: .main)
+        }
+
+        private func start(_ direct: Direct) {
+            opening[ObjectIdentifier(direct)] = direct
+            // A handshake not done in a few seconds is let go.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                MainActor.assumeIsolated { if !direct.ready { self?.drop(direct) } }
+            }
+        }
+
+        private func hello(_ direct: Direct) {
+            guard let key = Self.key else { return drop(direct) }
+            let nonce = Self.random(16), tag = Self.tag(of: key)
+            direct.hello = (nonce, tag)
+            if let json = try? JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": me, "nonce": nonce.base64EncodedString()]) {
+                frame(json, text: true, on: direct)
+            }
+        }
+
+        private func receive(_ direct: Direct) {
+            direct.connection.receiveMessage { [weak self] content, context, _, error in
+                MainActor.assumeIsolated {
+                    guard let self, error == nil else { self?.drop(direct); return }
+                    let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+                    direct.heard = Date()
+                    switch metadata?.opcode {
+                    case .text?: self.text(content ?? Data(), on: direct)
+                    case .binary?: self.binary(content ?? Data(), on: direct)
+                    case .close?: return self.drop(direct)
+                    default: break
+                    }
+                    if self.opening[ObjectIdentifier(direct)] != nil || self.directs[direct.peer] === direct { self.receive(direct) }
+                }
+            }
+        }
+
+        // The same handshake as Lamp's room, the app that listens taking the relay's side and naming itself.
+        private func text(_ data: Data, on direct: Direct) {
+            guard data.count <= Self.messageLimit, let key = Self.key,
+                  let said = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return drop(direct) }
+            let kind = said["t"] as? String
+            if kind == "beat" { return }
+            if direct.dialled, direct.sealer == nil, kind == "challenge", let hello = direct.hello,
+               said["peer"] as? String == direct.peer,
+               let theirs = (said["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
+               let proof = (said["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) {
+                let transcript = Self.transcript(tag: hello.tag, client: me, server: direct.peer, clientNonce: hello.nonce, serverNonce: theirs)
+                guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return drop(direct) }
+                direct.hello = nil
+                if let json = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()]) {
+                    frame(json, text: true, on: direct)
+                }
+                direct.sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
+                direct.opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
+                if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device]) { sealed(join, on: direct) }
+                return
+            }
+            if !direct.dialled, direct.transcript == nil, kind == "hello",
+               let tag = (said["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), Self.same(tag, Self.tag(of: key)),
+               let peer = said["peer"] as? String, Self.isName(peer), peer != me, roster.contains(where: { $0.id == peer }),
+               let theirs = (said["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16 {
+                let ours = Self.random(16)
+                let transcript = Self.transcript(tag: tag, client: peer, server: me, clientNonce: theirs, serverNonce: ours)
+                direct.peer = peer
+                direct.transcript = transcript
+                if let json = try? JSONSerialization.data(withJSONObject: ["t": "challenge", "peer": me, "nonce": ours.base64EncodedString(),
+                                                                         "proof": Self.derive("lamp-wish server", key, transcript).base64EncodedString()]) {
+                    frame(json, text: true, on: direct)
+                }
+                return
+            }
+            if !direct.dialled, direct.sealer == nil, kind == "proof", let transcript = direct.transcript,
+               let proof = (said["proof"] as? String).flatMap({ Data(base64Encoded: $0) }),
+               Self.same(proof, Self.derive("lamp-wish client", key, transcript)) {
+                direct.opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
+                direct.sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
+                return
+            }
+            drop(direct)
+        }
+
+        private func binary(_ data: Data, on direct: Direct) {
+            guard var box = direct.opener, let plain = box.open(data),
+                  let m = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else { return drop(direct) }
+            direct.opener = box
+            switch m["t"] as? String {
+            case "join" where !direct.dialled && !direct.ready:
+                direct.device = String((m["device"] as? String ?? "").prefix(40))
+                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": me, "device": Self.device]) { sealed(welcome, on: direct) }
+                ready(direct)
+            case "welcome" where direct.dialled && !direct.ready:
+                direct.device = String((m["device"] as? String ?? "").prefix(40))
+                ready(direct)
+            case "message" where direct.ready:
+                guard let data = m["data"] else { return }
+                for listener in listeners { listener(direct.peer, data) }
+            default:
+                break
+            }
+        }
+
+        /// A link proved both ways. Two apps that both listen may each have dialled the other: the one the app with the
+        /// earlier name dialled is kept on both sides, so they agree without saying.
+        private func ready(_ direct: Direct) {
+            guard !closed else { return drop(direct) }
+            opening[ObjectIdentifier(direct)] = nil
+            if let other = directs[direct.peer], other !== direct, other.ready {
+                let keepNew = direct.dialled == (me < direct.peer)
+                if !keepNew { direct.done?(true); direct.done = nil; return drop(direct) }
+                other.done = nil
+                drop(other)
+            }
+            direct.ready = true
+            directs[direct.peer] = direct
+            direct.done?(true)
+            direct.done = nil
+            rebuild()
+        }
+
+        private func drop(_ direct: Direct) {
+            opening[ObjectIdentifier(direct)] = nil
+            direct.connection.stateUpdateHandler = nil
+            direct.connection.cancel()
+            if directs[direct.peer] === direct {
+                directs[direct.peer] = nil
+                rebuild()
+            }
+            let done = direct.done
+            direct.done = nil
+            done?(false)
+        }
+
+        private func sealed(_ json: Data, on direct: Direct) {
+            guard var box = direct.sealer else { return }
+            let sealed = box.seal(json)
+            direct.sealer = box
+            frame(sealed, text: false, on: direct)
+        }
+
+        private func frame(_ data: Data, text: Bool, on direct: Direct) {
+            let metadata = NWProtocolWebSocket.Metadata(opcode: text ? .text : .binary)
+            let context = NWConnection.ContentContext(identifier: "message", metadata: [metadata])
+            direct.connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { _ in })
         }
 
         // The wish's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
@@ -14068,6 +14624,20 @@ enum Template {
             message.append(0)
             message.append(data)
             return Data(HMAC<SHA256>.authenticationCode(for: message, using: key))
+        }
+
+        private static func tag(of key: SymmetricKey) -> Data { derive("lamp-wish tag", key).prefix(8) }
+
+        private static func transcript(tag: Data, client: String, server: String, clientNonce: Data, serverNonce: Data) -> Data {
+            var data = tag
+            for name in [client, server] { data.append(UInt8(name.utf8.count)); data.append(Data(name.utf8)) }
+            data.append(clientNonce)
+            data.append(serverNonce)
+            return data
+        }
+
+        private static func isName(_ name: String) -> Bool {
+            (1...32).contains(name.utf8.count) && name.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d }
         }
 
         private static func same(_ a: Data, _ b: Data) -> Bool {

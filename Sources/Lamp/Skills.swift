@@ -98,6 +98,7 @@ enum Skills {
         var found: [(name: String, because: String)] = parts.map { part in
             (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part.platform)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(for: part.platform))\" in look_at_app and use_app)")
         }
+        if Template.talksToOtherApps(project) { found.append(("wish-links", "this wish is more than one app: the ways its apps can share data")) }
         if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }
         if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
         if offered.contains("menu-bar"), appSwift(of: project, matches: #"\bLampMenuBar\b"#) { found.append(("menu-bar", "its code uses LampMenuBar")) }
