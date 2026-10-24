@@ -443,6 +443,25 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(ends[0].split(separator: ",").count, 21, "all of each app's values: \(ends[0])")
     }
 
+    /// An app of the wish that floods another with values (hostile, or wrong) gets no further than what every app of the
+    /// wish could have set between them: the wish's apps times the limit of the whole, with room to spare.
+    func testAFloodOfValuesPastWhatTheWishsAppsCouldSetIsDropped() throws {
+        let context = try page()
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster, "peers": []])
+        let later = Int(Date().timeIntervalSince1970 * 1000) + 60_000
+        for batch in 0..<100 {
+            deliver(context, ["t": "values", "from": "iphone",
+                              "values": ["flood\(batch)": ["v": String(repeating: "x", count: 8190), "c": [later + batch, 0, "iphone"]]]])
+        }
+        let held = context.evaluateScript("var o = Lamp.wish.values(), b = 0, n = 0; for (var k in o) { n++; b += k.length + JSON.stringify(o[k]).length; } [n, b]")?.toArray() as? [Int] ?? []
+        XCTAssertGreaterThan(held.first ?? 0, 0, "values within the bound are taken")
+        XCTAssertLessThan(held.first ?? 100, 100, "the flood past it is dropped: \(held)")
+        XCTAssertLessThanOrEqual(held.last ?? .max, 3 * 2 * 65536, "three apps' worth of the whole, twice over")
+    }
+
     /// An open app built by another Lamp is shown as out of date, still open, with what to do in words to show: an
     /// older one (saying nothing of what it speaks) is to be opened from Lamp, a newer one means this one is. An older
     /// one is sent no values; the status view shows the line.

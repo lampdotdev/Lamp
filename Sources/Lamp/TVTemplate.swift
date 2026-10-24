@@ -1332,6 +1332,8 @@ extension TVTemplate {
           function own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
           function names(o) { var list = []; for (var k in o) if (own(o, k)) list.push(k); list.sort(); return list; }
           function copyOf(v) { return v === undefined ? null : JSON.parse(JSON.stringify(v)); }
+          // What a setting takes in the store: its name and value as JSON, or for a removal its name and its time.
+          function heldBy(key, v) { return bytes(key) + (v === undefined ? 32 : bytes(JSON.stringify(v))); }
           // The values' size as JSON, names included, leaving one out.
           function sizeWithout(key) {
             var total = 0;
@@ -1367,6 +1369,11 @@ extension TVTemplate {
           function merge(given, from) {
             if (!given || typeof given !== 'object') return;
             var changed = [], list = names(given);
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits, so
+            // they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            var most = VALUES * 2 * Math.max(2, roster.length), held = 0;
+            for (var h in entries) held += heldBy(h, entries[h].v);
             for (var i = 0; i < list.length; i++) {
               var key = list[i], e = given[key];
               if (!nameOk(key) || !e || typeof e !== 'object' || !stampOk(e.c)) continue;
@@ -1376,6 +1383,9 @@ extension TVTemplate {
               // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps apart
               // may each have filled it, and taking every app's values whatever the order is what makes them agree.
               if (v !== undefined && bytes(JSON.stringify(v)) > VALUE * 2) continue;
+              var after = held - (entries[key] ? heldBy(key, entries[key].v) : 0) + heldBy(key, v);
+              if (after > most) continue;
+              held = after;
               entries[key] = { v: v, c: e.c };
               changed.push([key, v]);
             }

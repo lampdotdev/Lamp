@@ -14089,6 +14089,9 @@ enum Template {
 
         private static func json(_ object: Any) -> Data? { try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) }
 
+        /// What a setting takes in the store: its name and value as JSON, or for a removal its name and its time.
+        private static func held(_ key: String, _ entry: Entry) -> Int { key.utf8.count + (entry.value.map(size(of:)) ?? 32) }
+
         /// The values' size as JSON, names included, leaving one out.
         private func size(without key: String) -> Int {
             entries.reduce(0) { total, each in
@@ -14120,6 +14123,11 @@ enum Template {
         /// in, every app ends with the same.
         private func merge(_ given: [String: Any], from peer: String) {
             var changed: [(String, Any?)] = []
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
+            // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            let most = Self.valuesLimit * 2 * max(2, roster.count)
+            var held = entries.reduce(0) { $0 + Self.held($1.key, $1.value) }
             for (key, json) in given.sorted(by: { $0.key < $1.key }) {
                 guard Self.isValueName(key), let entry = Entry(json) else { continue }
                 if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
@@ -14127,6 +14135,9 @@ enum Template {
                 // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
                 // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
                 if let value = entry.value, Self.size(of: value) > Self.valueLimit * 2 { continue }
+                let after = held - (entries[key].map { Self.held(key, $0) } ?? 0) + Self.held(key, entry)
+                if after > most { continue }
+                held = after
                 entries[key] = entry
                 changed.append((key, entry.value))
             }

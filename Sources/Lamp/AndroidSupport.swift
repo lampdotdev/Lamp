@@ -1401,6 +1401,9 @@ extension Template {
         /** A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already. */
         private fun isValueName(key: String): Boolean = key.toByteArray().size in 1..64 && key != "__proto__"
 
+        /** What a setting takes in the store: its name and value as JSON, or for a removal its name and its time. */
+        private fun heldBy(key: String, entry: Entry): Int = key.toByteArray().size + (entry.value?.let(::sizeOf) ?: 32)
+
         /** The values' size as JSON, names included, leaving one out. Under `valuesLock`. */
         private fun sizeWithout(key: String): Int =
             entries.entries.sumOf { (k, e) -> if (k == key || e.value == null) 0 else k.toByteArray().size + sizeOf(e.value) }
@@ -1461,7 +1464,12 @@ extension Template {
             given ?: return
             ensureValues()
             val changed = mutableListOf<Pair<String, Any?>>()
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits, so
+            // they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            val most = valuesLimit * 2 * maxOf(2, roster.size)
             valuesLock.withLock {
+                var held = entries.entries.sumOf { (k, e) -> heldBy(k, e) }
                 for (key in given.keys().asSequence().toList().sorted()) {
                     if (!isValueName(key)) continue
                     val entry = Entry.from(given.opt(key)) ?: continue
@@ -1471,6 +1479,9 @@ extension Template {
                     // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
                     // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
                     if (entry.value != null && sizeOf(entry.value) > valueLimit * 2) continue
+                    val after = held - (entries[key]?.let { heldBy(key, it) } ?: 0) + heldBy(key, entry)
+                    if (after > most) continue
+                    held = after
                     entries[key] = entry
                     changed.add(key to entry.value)
                 }

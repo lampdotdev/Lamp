@@ -34,7 +34,12 @@ final class WishValuesTests: XCTestCase {
                         print("set \\(parts[0]) \\(wish.set(parts[0], value))")
                     }
                 }
-                wish.onChange { key, value, from in print("change \\(key) = \\(text(value)) from \\(from)") }
+                // A flood of values, from an app built to set past the limit of the whole.
+                if let flood = Int(env["LAMP_FLOOD"] ?? "") {
+                    for i in 0..<flood { _ = wish.set("flood\\(i)", String(repeating: "x", count: 8000)) }
+                } else {
+                    wish.onChange { key, value, from in print("change \\(key) = \\(text(value)) from \\(from)") }
+                }
                 set(env["LAMP_SET"])
                 if let other = env["LAMP_TO"] {
                     spin(15) { wish.peer(other)?.isOpen == true }
@@ -46,17 +51,24 @@ final class WishValuesTests: XCTestCase {
                 } else {
                     spin(1)
                 }
-                print("values \\(text(wish.values))")
+                if env["LAMP_COUNT"] != nil {
+                    let bytes = wish.values.reduce(0) { $0 + $1.key.utf8.count + text($1.value).utf8.count }
+                    print("holds \\(wish.values.count) values, \\(bytes) bytes")
+                } else {
+                    print("values \\(text(wish.values))")
+                }
             }
         }
         """
 
-    private func built(_ key: Data, old: Bool = false) throws -> URL {
+    private func built(_ key: Data, old: Bool = false, flooding: Bool = false) throws -> URL {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-values-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         var program = try WishNativeTests.program(main: Self.harness)
         // An app built before values says nothing of what it speaks.
         if old { program = program.replacingOccurrences(of: ", \"wire\": Self.wire]", with: "]") }
+        // One built to set far past the limit of the whole, as an app of the wish gone wrong could.
+        if flooding { program = program.replacingOccurrences(of: "static let valuesLimit = 64 * 1024", with: "static let valuesLimit = 64 * 1024 * 1024") }
         try program.write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
         let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.values</string>"
             + Template.wishKeyPlistLines(key) + "</dict></plist>"
@@ -130,6 +142,27 @@ final class WishValuesTests: XCTestCase {
         XCTAssertTrue(phoneSaid.contains("met mac true"), "out of date is still open: \(phoneSaid)")
         XCTAssertTrue(phoneSaid.contains("peer mac outOfDate: The Mac app is out of date. Open it from Lamp on your Mac to update it."), phoneSaid)
         XCTAssertFalse(macSaid.contains("change score"), "nothing sent to the older app: \(macSaid)")
+    }
+
+    /// An app of the wish that floods another with values gets no further than what the wish's apps could have set
+    /// between them: the other keeps two apps' worth of the whole, twice over, and drops the rest.
+    func testAFloodOfValuesFromAnotherAppIsHeldToWhatTheWishsAppsCouldSet() async throws {
+        let (relay, port, key) = try await room(["mac": ("mac", "the Mac app"), "iphone": ("iphone", "the iPhone app")])
+        defer { relay.stop() }
+        let victim = try built(key), flooder = try built(key, flooding: true)
+        defer { try? FileManager.default.removeItem(at: victim); try? FileManager.default.removeItem(at: flooder) }
+        let suite = "lamp-wish-values-\(UUID().uuidString)"
+        defer { for each in ["mac", "iphone"] { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-\(each)") } }
+        let common = "LAMP_SOCKET='ws://127.0.0.1:\(port)/' LAMP_COUNT=1 LAMP_WAIT=4"
+        async let mac = Task.detached { TestShell.run("\(common) LAMP_DEFAULTS=\(suite)-mac LAMP_PEER=mac LAMP_TO=iphone LAMP_FLOOD=60 ./app 2>&1", in: flooder).output }.value
+        async let phone = Task.detached { TestShell.run("\(common) LAMP_DEFAULTS=\(suite)-iphone LAMP_PEER=iphone LAMP_TO=mac ./app 2>&1", in: victim).output }.value
+        let (macSaid, phoneSaid) = await (mac, phone)
+        XCTAssertTrue(macSaid.contains("holds 60 values"), "the flooder set them all: \(macSaid)")
+        let held = try XCTUnwrap(phoneSaid.split(separator: "\n").last { $0.hasPrefix("holds ") }, phoneSaid).split(separator: " ")
+        let count = Int(held[1]) ?? 0, bytes = Int(held[3]) ?? .max
+        XCTAssertGreaterThan(count, 0, "values within the bound arrived: \(phoneSaid)")
+        XCTAssertLessThan(count, 60, "the flood past it was dropped: \(held)")
+        XCTAssertLessThanOrEqual(bytes, 2 * 2 * 65536, "two apps' worth of the whole, twice over: \(held)")
     }
 
     /// With Lamp gone, a TV page finds the Mac app on its network, and each gets the values the other set: lamp.js and
