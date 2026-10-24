@@ -10,8 +10,11 @@ import Foundation
 ///   join        what a phone's link carries, after the #, which a browser never sends: for fifteen minutes.
 ///   controller  given to a phone once it has joined: its place, for two minutes, renewed while it stays, so a phone that
 ///               drops off comes back as the same player.
-///   peer        one of a wish's own apps, for its wish's room (`Relay` rooms): named by its part ("tv", "iphone", "mac",
-///               "android"), for an hour; the app asks Lamp for a fresh one with its own token when it runs out.
+///   peer        one of a wish's own apps, for its wish's room (`Relay` rooms): named by its folder ("tv", "iphone", "mac",
+///               "android"), for two minutes and good once, as a phone's is. The relay gives a joined app a fresh one
+///               over its socket, at once and every minute, which is what lets it back in after its link drops; an app
+///               whose credential ran out asks Lamp for one with its own token. Its hello travels in clear on the home
+///               network, so one seen there is already spent.
 public enum ControllerToken {
     public enum Kind: String, CaseIterable, Sendable {
         case host, join, controller, peer
@@ -20,7 +23,7 @@ public enum ControllerToken {
             case .host: 12 * 3600
             case .join: 15 * 60
             case .controller: 2 * 60
-            case .peer: 3600
+            case .peer: 2 * 60
             }
         }
     }
@@ -31,14 +34,19 @@ public enum ControllerToken {
         public let player: Int?
         /// A host's: the TV preview on the Mac, which keeps its game from a TV that runs the same app meanwhile.
         public let preview: Bool
-        /// A peer's: which of the wish's apps it is, by its part's word.
+        /// A peer's: which of the wish's apps it is, by its folder.
         public let peer: String?
-        public init(kind: Kind, app: String, player: Int?, preview: Bool, peer: String? = nil) {
+        /// What makes this credential the one it is, and when it runs out: what a credential that's good once is kept by.
+        public let nonce: String
+        public let expires: Date
+        public init(kind: Kind, app: String, player: Int?, preview: Bool, peer: String? = nil, nonce: String = "", expires: Date = .distantFuture) {
             self.kind = kind
             self.app = app
             self.player = player
             self.preview = preview
             self.peer = peer
+            self.nonce = nonce
+            self.expires = expires
         }
     }
 
@@ -67,7 +75,8 @@ public enum ControllerToken {
               let kind = (payload["k"] as? String).flatMap(Kind.init(rawValue:)), kinds.contains(kind),
               payload["a"] as? String == app, payload["g"] as? Int == generation,
               let expires = payload["e"] as? Int, Double(expires) > now.timeIntervalSince1970 else { return nil }
-        return Claim(kind: kind, app: app, player: payload["p"] as? Int, preview: payload["v"] as? Int == 1, peer: payload["r"] as? String)
+        return Claim(kind: kind, app: app, player: payload["p"] as? Int, preview: payload["v"] as? Int == 1, peer: payload["r"] as? String,
+                     nonce: payload["n"] as? String ?? "", expires: Date(timeIntervalSince1970: Double(expires)))
     }
 }
 

@@ -13,6 +13,10 @@ import LampRelayKit
 ///
 /// The builder is told the same block in every language (`Agent.Rules.wishTalk`) and, at the end of each request, where
 /// each app of the wish is: open or not, in the room or not (`WishNote`).
+///
+/// A peer credential is good once and for two minutes, as a phone's is: the room hands a joined app a fresh one over its
+/// socket, which is what a dropped link comes back with, so a hello seen on the home network is already spent. A wish
+/// of one app gets none of this: no rule, no line, no code in its building blocks (`Template.talksToOtherApps`), no room.
 @MainActor
 enum WishRooms {
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
@@ -329,12 +333,14 @@ extension Agent.Rules {
     - The apps of this wish see each other and talk through Lamp, with the same building block in each language: \
     `LampWish.shared` in LampSupport.swift, `LampWish` in LampSupport.kt, `Lamp.wish` in lamp.js. Each app of the wish is \
     a peer named by its folder in the wish, lowercased ("tv", "iphone", "apple" for an app for iPhone and Mac, "mac", \
-    "android"). `peers` lists the wish's other apps that are open \
-    now (observable: @Published, a StateFlow, onPeers), `send(data, to: "tv")` sends JSON of 16 KB at most to one of \
-    them and `send(data)` to all, false (with why in the app's log) when it wasn't sent, and `onMessage { from, data in … }` \
-    hears what they send. Lamp introduces the apps over the home Wi‑Fi, with nothing to pair, host or set up: never build \
-    your own server, sockets, polling or pairing between them, and never put the app's token or Lamp's addresses in the \
-    code. Start it as each app opens, show plainly when an app it needs isn't open ("Open it on the TV"), and keep every \
-    control usable meanwhile. Read the block's comment before using it.
+    "android"). `peers` lists the wish's other apps that are open now (observable: @Published, a StateFlow, onPeers); \
+    `peer("tv")` is that app open or not, with its `status` (`state` and a `reason` in words to show as they are); \
+    `send(data, to: "tv")` sends JSON of 16 KB at most to one of them and `send(data)` to all, false (with why in the \
+    app's log) when it wasn't sent; `onMessage { from, data in … }` hears what they send; the app's own `status` says \
+    how its link stands. More states may come, so treat any you don't name as not connected. Lamp introduces the apps \
+    over the home Wi‑Fi, with nothing to pair, host or set up: never build your own server, sockets, polling or pairing \
+    between them, and never put the app's token or Lamp's addresses in the code. Start it as each app opens, show an \
+    app's `reason` when one it needs isn't open, and keep every control usable meanwhile. Read the block's comment \
+    before using it.
     """
 }

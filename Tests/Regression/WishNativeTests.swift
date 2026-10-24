@@ -38,6 +38,9 @@ final class WishNativeTests: XCTestCase {
         XCTAssertTrue(phoneSaid.contains("heard from mac: {\"score\":3}"), "the message arrived with who sent it: \(phoneSaid)")
         XCTAssertTrue(phoneSaid.contains("refused false"), "a message to an app that isn't open isn't sent: \(phoneSaid)")
         XCTAssertTrue(phoneSaid.contains("isn't open now"), phoneSaid)
+        XCTAssertTrue(phoneSaid.contains("status connected reason []"), "connected, nothing to say: \(phoneSaid)")
+        XCTAssertTrue(phoneSaid.contains("mac now notOpen: The Mac app isn't open. seen true"),
+                      "the Mac app that left is still known, with why and when it was last seen: \(phoneSaid)")
     }
 
     /// LampWish out of the support library, with a stand-in for LampAI.post that answers as Lamp's `/app/wish` does,
@@ -79,7 +82,7 @@ final class WishNativeTests: XCTestCase {
                 spin(10) { wish.state == .connected }
                 print("me \\(wish.me) state \\(wish.state.rawValue)")
                 if role == "send" {
-                    spin(10) { wish.peer("iphone") != nil }
+                    spin(10) { wish.peer("iphone")?.isOpen == true }
                     for peer in wish.peers { print("sees \\(peer.id) (\\(peer.name) on \\(peer.device))") }
                     print("sent \\(wish.send(["score": 3], to: "iphone"))")
                     spin(1) { false }
@@ -87,6 +90,9 @@ final class WishNativeTests: XCTestCase {
                     spin(15) { !heard.isEmpty }
                     for line in heard { print(line) }
                     print("refused \\(wish.send(["x": 1], to: "android"))")
+                    print("status \\(wish.status.state.rawValue) reason [\\(wish.status.reason)]")
+                    spin(10) { wish.peer("mac")?.isOpen == false }
+                    if let mac = wish.peer("mac") { print("mac now \\(mac.status.state.rawValue): \\(mac.status.reason) seen \\(mac.status.lastSeen != nil)") }
                 }
             }
         }

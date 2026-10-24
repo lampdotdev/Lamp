@@ -121,6 +121,9 @@ public final class Relay: @unchecked Sendable {
         var generation: Int
         var apps: [String: (kind: String, name: String)]
         var members: [String: Member] = [:]
+        /// Credentials already used, until they'd have run out anyway: each lets an app in once.
+        var used: [String: Date] = [:]
+        var renewed = Date()
         init(generation: Int, apps: [String: (kind: String, name: String)]) {
             self.generation = generation
             self.apps = apps
@@ -144,6 +147,8 @@ public final class Relay: @unchecked Sendable {
     /// Text waiting to go to the host past which phones' messages to it are dropped, well before the host is let go
     /// for falling behind (`RelayPeer.textLimit`). Changed only by tests, which make a host count as behind.
     nonisolated(unsafe) static var hostBehind = 128
+    /// How often a room's members are given a fresh credential over their socket. Changed only by tests.
+    nonisolated(unsafe) public static var peerRenewal: TimeInterval = 60
     private var ticker: DispatchSourceTimer?
 
     public init(key: SymmetricKey) {
@@ -316,7 +321,12 @@ public final class Relay: @unchecked Sendable {
         // A wish's room and a TV app's game are opened under different keys, so a credential says which it is for.
         if let room = rooms[app] {
             guard let claim = ControllerToken.check(hello["credential"] as? String, kinds: [.peer], app: app, generation: room.generation, key: key),
-                  let id = claim.peer, let named = room.apps[id] else { return peer.close(code: 4003) }
+                  let id = claim.peer, let named = room.apps[id], !claim.nonce.isEmpty else { return peer.close(code: 4003) }
+            // Good once: a hello seen on the network, sent again, finds its credential spent.
+            let now = Date()
+            room.used = room.used.filter { $0.value > now }
+            guard room.used[claim.nonce] == nil else { return peer.close(code: 4003) }
+            room.used[claim.nonce] = claim.expires
             return joinRoom(peer, room: room, key: app, id: id, kind: named.kind, name: named.name, device: Self.short(hello["device"], 40))
         }
         guard let game = games[app],
@@ -339,7 +349,9 @@ public final class Relay: @unchecked Sendable {
         let member = Member(peer: peer, kind: kind, name: name, device: device)
         let others = room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
         room.members[id] = member
-        peer.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "now": Self.now]))
+        let apps = room.apps.sorted { $0.key < $1.key }.map { ["peer": $0.key, "kind": $0.value.kind, "name": $0.value.name] }
+        peer.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": apps, "now": Self.now,
+                             "credential": ControllerToken.issue(kind: .peer, app: key, generation: room.generation, peer: id, key: self.key)]))
         let joined = Self.json(["t": "joined", "peer": Self.described(id, member)])
         for (other, each) in room.members where other != id { each.peer.send(joined) }
         peer.onText = { [weak self, weak room, weak member] text in
@@ -657,9 +669,18 @@ public final class Relay: @unchecked Sendable {
                 if now.timeIntervalSince(host.heard) > ControllerWire.silence { host.close(code: 4002) } else { host.send(beat) }
             }
         }
-        for room in rooms.values {
-            for member in room.members.values {
-                if now.timeIntervalSince(member.peer.heard) > ControllerWire.silence { member.peer.close(code: 4002) } else { member.peer.send(beat) }
+        for (key, room) in rooms {
+            // A fresh credential for each member every so often, over its own socket: what lets it back in once its link
+            // drops, since the one it joined with is spent and runs out in minutes.
+            let renew = now.timeIntervalSince(room.renewed) >= Self.peerRenewal
+            if renew { room.renewed = now }
+            for (id, member) in room.members {
+                if now.timeIntervalSince(member.peer.heard) > ControllerWire.silence { member.peer.close(code: 4002); continue }
+                member.peer.send(beat)
+                if renew {
+                    member.peer.send(Self.json(["t": "credential", "credential": ControllerToken.issue(kind: .peer, app: key, generation: room.generation,
+                                                                                                     peer: id, key: self.key)]))
+                }
             }
         }
     }

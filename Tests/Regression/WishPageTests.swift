@@ -49,7 +49,8 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(hello["credential"] as? String, "peer-credential")
         XCTAssertEqual(hello["device"] as? String, "TV")
         context.evaluateScript("""
-            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'peer', peer: 'tv', peers: [{ peer: 'iphone', kind: 'iphone', name: 'the iPhone app', device: 'iPhone', since: 1 }], now: Date.now() }) });
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'peer', peer: 'tv', peers: [{ peer: 'iphone', kind: 'iphone', name: 'the iPhone app', device: 'iPhone', since: 1 }], apps: [{ peer: 'tv', kind: 'tv', name: 'the TV app' }, { peer: 'iphone', kind: 'iphone', name: 'the iPhone app' }, { peer: 'android', kind: 'android', name: 'the Android app' }], credential: 'renewed-1', now: Date.now() }) });
+            var androidBefore = Lamp.wish.peer('android');
             sockets[0].onmessage({ data: JSON.stringify({ t: 'joined', peer: { peer: 'android', kind: 'android', name: 'the Android app', device: 'Android emulator', since: 2 } }) });
             sockets[0].onmessage({ data: JSON.stringify({ t: 'message', from: 'android', data: { score: 3 } }) });
             sockets[0].onmessage({ data: JSON.stringify({ t: 'left', peer: 'iphone' }) });
@@ -59,7 +60,14 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("peerLists.join('|')")?.toString(), "|iphone|iphone,android|android")
         XCTAssertEqual(context.evaluateScript("heard.join('|')")?.toString(), "android:{\"score\":3}")
         XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').name")?.toString(), "the Android app")
-        XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('iphone')")?.isNull == true)
+        // Every app of the wish is known, open or not, with why in words to show and when it was last seen.
+        XCTAssertEqual(context.evaluateScript("androidBefore.status.state + '|' + androidBefore.status.reason")?.toString(),
+                       "notOpen|The Android app isn't open.")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('iphone').status.state")?.toString(), "notOpen")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(), "The iPhone app isn't open.")
+        XCTAssertEqual(context.evaluateScript("typeof Lamp.wish.peer('iphone').status.lastSeen")?.toString(), "number")
+        XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('roku')")?.isNull == true, "no such app in the wish")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.status().state + '|' + Lamp.wish.status().reason")?.toString(), "connected|")
         XCTAssertEqual(context.evaluateScript("states.join(',')")?.toString(), "connecting,connected")
     }
 
@@ -70,7 +78,7 @@ final class WishPageTests: XCTestCase {
         context.evaluateScript("""
             sockets[0].onopen();
             var early = Lamp.wish.send({ hi: 1 }, 'iphone');
-            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'peer', peer: 'tv', peers: [{ peer: 'iphone', kind: 'iphone', name: 'the iPhone app', device: 'iPhone', since: 1 }], now: Date.now() }) });
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'peer', peer: 'tv', peers: [{ peer: 'iphone', kind: 'iphone', name: 'the iPhone app', device: 'iPhone', since: 1 }], apps: [{ peer: 'tv', kind: 'tv', name: 'the TV app' }, { peer: 'iphone', kind: 'iphone', name: 'the iPhone app' }, { peer: 'android', kind: 'android', name: 'the Android app' }], now: Date.now() }) });
             var toOne = Lamp.wish.send({ score: 3 }, 'iphone');
             var toAll = Lamp.wish.send('round 2');
             var toAbsent = Lamp.wish.send({ x: 1 }, 'android');
@@ -89,6 +97,27 @@ final class WishPageTests: XCTestCase {
         XCTAssertTrue(errors.contains("not connected"), errors)
         XCTAssertTrue(errors.contains("is not open now"), errors)
         XCTAssertTrue(errors.contains("at most 16384 bytes"), errors)
+    }
+
+    /// The room hands the page a fresh credential over its socket; a dropped link comes back with the newest one, and the
+    /// one it last used is never sent again.
+    func testADroppedLinkComesBackWithTheCredentialTheRoomLastGave() throws {
+        let context = try page()
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        context.evaluateScript("""
+            sockets[0].onopen();
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'peer', peer: 'tv', peers: [], apps: [], credential: 'from-welcome', now: Date.now() }) });
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'credential', credential: 'renewed' }) });
+            sockets[0].onclose({ code: 1006 }); later.pop()();
+            """)
+        settle(context)
+        XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 2)
+        context.evaluateScript("sockets[1].onopen();")
+        let hellos = context.evaluateScript("sent.filter(function (s) { return s.charAt(0) === '{' && JSON.parse(s).t === 'hello'; }).map(function (s) { return JSON.parse(s).credential; }).join(',')")?.toString()
+        XCTAssertEqual(hellos, "peer-credential,renewed", "the first from Lamp, then the renewed one, each once")
+        XCTAssertEqual(context.evaluateScript("sent.filter(function (s) { return s.indexOf('\"post\":\"/app/wish\"') >= 0; }).length")?.toInt32(), 1,
+                       "no need to ask Lamp again")
     }
 
     func testTurnedAwayThePageAsksLampAgainForAFreshCredential() throws {

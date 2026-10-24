@@ -128,6 +128,65 @@ final class WishRoomTests: XCTestCase {
         XCTAssertEqual(relay.members(of: room), ["iphone"])
     }
 
+    /// Someone on the Wi‑Fi who saw an app's hello has its credential. Sent again, it gets in nowhere: it was good once,
+    /// and the app it named stays in the room.
+    func testACapturedHelloCredentialNeitherGetsInNorThrowsTheAppOut() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let credential = ControllerToken.issue(kind: .peer, app: room, generation: 0, peer: "tv", key: key)
+        let tv = try await join(address, as: "tv", device: "TV", credential: credential)
+        let welcome = try await Self.text(tv)
+        XCTAssertEqual(welcome["t"] as? String, "welcome")
+        let phone = try await join(address, as: "iphone", device: "iPhone")
+        _ = try await Self.text(phone)
+        _ = try await Self.text(tv)   // joined
+
+        // The same credential, sent again from somewhere else.
+        try await Self.refused(try await join(address, as: "tv", device: "TV", credential: credential))
+        XCTAssertEqual(relay.members(of: room), ["iphone", "tv"], "the app it named is still in the room")
+        try await phone.send(.string(Self.json(["t": "send", "to": "tv", "data": "still you?"])))
+        let heard = try await Self.text(tv)
+        XCTAssertEqual(heard["data"] as? String, "still you?")
+    }
+
+    /// A credential is good for minutes, not an hour: one made a few minutes ago gets in nowhere.
+    func testAPeersCredentialRunsOutInMinutes() async throws {
+        XCTAssertLessThanOrEqual(ControllerToken.Kind.peer.lifetime, 5 * 60)
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let old = ControllerToken.issue(kind: .peer, app: room, generation: 0, peer: "tv", now: Date().addingTimeInterval(-6 * 60), key: key)
+        try await Self.refused(try await join(address, as: "tv", device: "TV", credential: old))
+    }
+
+    /// The relay hands a joined app a fresh credential over its socket, at once and again while it stays, and that is
+    /// what lets it back in after its link drops; each is good once.
+    func testTheRelayRenewsAPeersCredentialOverItsSocket() async throws {
+        let renewal = Relay.peerRenewal
+        Relay.peerRenewal = 0
+        defer { Relay.peerRenewal = renewal }
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV")
+        let welcome = try await Self.text(tv)
+        let given = try XCTUnwrap(welcome["credential"] as? String, "the welcome carries a fresh credential")
+        var renewed: String?
+        for _ in 0..<5 where renewed == nil {
+            let next = try await Self.text(tv)
+            if next["t"] as? String == "credential" { renewed = next["credential"] as? String }
+        }
+        let fresh = try XCTUnwrap(renewed, "a renewal came over the socket")
+        XCTAssertNotEqual(fresh, given)
+        tv.cancel(with: .goingAway, reason: nil)
+        for _ in 0..<50 where relay.members(of: room).contains("tv") { try await Task.sleep(for: .milliseconds(50)) }
+
+        let back = try await join(address, as: "tv", device: "TV", credential: fresh)
+        let rejoined = try await Self.text(back)
+        XCTAssertEqual(rejoined["t"] as? String, "welcome", "the renewed credential lets the app back in")
+        back.cancel(with: .goingAway, reason: nil)
+        for _ in 0..<50 where relay.members(of: room).contains("tv") { try await Task.sleep(for: .milliseconds(50)) }
+        try await Self.refused(try await join(address, as: "tv", device: "TV", credential: fresh))
+    }
+
     // MARK: Helpers
 
     private static func refused(_ socket: URLSessionWebSocketTask) async throws { try await closed(socket, code: 4003) }

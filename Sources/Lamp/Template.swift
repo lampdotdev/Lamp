@@ -240,6 +240,25 @@ enum Template {
         return "<key>LampInstall</key><dict>\(pairs)</dict>"
     }
 
+    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. An app on
+    /// its own (most apps, and every starter) gets none of it: its building blocks are written as if the wish's apps
+    /// couldn't talk at all, so it carries no code, size, rule or permission for something it can't use. A wish that gains
+    /// a second app has its blocks written again before its next turn and build, as they always are.
+    static func talksToOtherApps(_ project: LampProject) -> Bool { project.partOf != nil || !project.partFolders.isEmpty }
+
+    /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
+    static func lampSupportSwift(for project: LampProject) -> String {
+        talksToOtherApps(project) ? lampSupportSwift : withoutWish(lampSupportSwift)
+    }
+
+    /// The Swift building blocks without `LampWish`: what an app on its own is given, and what decides whether an app
+    /// built by an earlier Lamp is out of date (`BuildStamp`), so the block never makes such an app build again.
+    static func withoutWish(_ swift: String) -> String {
+        guard let start = swift.range(of: "    // MARK: - The wish's other apps\n"),
+              let end = swift.range(of: "    // MARK: - The wish's TV app\n", range: start.upperBound..<swift.endIndex) else { return swift }
+        return String(swift[..<start.lowerBound]) + String(swift[end.lowerBound...])
+    }
+
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
     static func writeSupport(for project: LampProject) throws { try project.platform.target.recipe.support(project) }
@@ -247,7 +266,7 @@ enum Template {
     /// A Swift app's building blocks: an Android app's are Kotlin, a TV app's its own script, and a device app's what its
     /// integration asks for (`Target.Recipe.support`).
     static func writeSwiftSupport(for project: LampProject) throws {
-        let contents = lampSupportSwift
+        let contents = lampSupportSwift(for: project)
         // Left alone when it's already current, so its date only moves when the app needs a rebuild.
         try put(contents, at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try writeWidgetSupport(for: project)
@@ -13568,25 +13587,51 @@ enum Template {
 
     // MARK: - The wish's other apps
 
-    /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): who is open now, and messages
+    /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): which are open now, and messages
     /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
     /// of the wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
-    /// "android". One for the whole app, started the
-    /// first time it's used; keep using `LampWish.shared`.
+    /// "android". One for the whole app, started the first time it's used; keep using `LampWish.shared`.
     ///
     ///     @ObservedObject var wish = LampWish.shared
-    ///     wish.peers                                    // the wish's other apps open now: id ("tv"), kind, name, device, since
-    ///     wish.peer("tv") != nil                        // whether the TV app is open
+    ///     wish.peers                                    // the wish's other apps open now
+    ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the wish has no "tv"
+    ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "The TV app isn't open."
     ///     wish.send(["score": 3], to: "tv")             // JSON to one app; false (with why in the app's log) when it wasn't sent
     ///     wish.send(["round": 2])                       // to every other app of the wish
     ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
-    ///     wish.state                                    // .connecting, .connected, .alone (the wish has no other app), .away (Lamp isn't reachable), .ended
+    ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable), .ended
+    ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
     ///
-    /// Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files between the wish's apps aren't
-    /// carried yet. Show plainly when an app this one needs isn't open ("Open it on the TV"), and keep every control
-    /// usable meanwhile. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
+    /// A `State` is one of the values above, and more may come: switch on it with a `default`. Show a `reason` as it is
+    /// rather than words of your own. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files
+    /// between the wish's apps aren't carried yet. Keep every control usable while an app isn't open. A TV app's game
+    /// controls (buttons, sticks, files to the TV) go with `LampController`, below.
     @MainActor final class LampWish: ObservableObject {
+        /// Where this app's link stands, or another app's. More values may come.
+        struct State: RawRepresentable, Hashable, Sendable {
+            let rawValue: String
+            init(rawValue: String) { self.rawValue = rawValue }
+            /// This app is joining the wish's other apps.
+            static let connecting = State(rawValue: "connecting")
+            /// This app is with the others; another app is open and reachable.
+            static let connected = State(rawValue: "connected")
+            /// This app's wish has no other app.
+            static let alone = State(rawValue: "alone")
+            /// This app can't reach Lamp, which carries what the wish's apps say.
+            static let away = State(rawValue: "away")
+            /// This app called `stop()`.
+            static let ended = State(rawValue: "ended")
+            /// Another app isn't open now.
+            static let notOpen = State(rawValue: "notOpen")
+        }
+        /// A state with what it means to the person, in words to show as they are ("" when there's nothing to say).
+        struct Status: Equatable, Sendable {
+            var state: State
+            var reason: String
+            /// Another app's: when it was last open, or since when while it is; nil if it hasn't been since this app joined.
+            var lastSeen: Date?
+        }
         struct Peer: Identifiable, Equatable {
             /// The peer's name: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
             let id: String
@@ -13594,22 +13639,27 @@ enum Template {
             let kind: String
             /// What Lamp calls it: "the TV app".
             let name: String
-            /// Where it runs, in its own words: "TV preview", "iPhone simulator", "Android emulator", "Mac"…
-            let device: String
-            let since: Date
+            /// Where it runs, in its own words, once it has been open: "TV preview", "iPhone simulator", "Android emulator", "Mac"…
+            var device: String
+            var status: Status
+            var isOpen: Bool { status.state == .connected }
         }
-        enum State: String { case connecting, connected, alone, away, ended }
         static let messageLimit = 16 * 1024
         static let shared = LampWish()
 
-        @Published private(set) var peers: [Peer] = []
-        @Published private(set) var state: State = .connecting
+        /// Every other app of the wish, open or not.
+        @Published private(set) var apps: [Peer] = []
+        @Published private(set) var status = Status(state: .connecting, reason: LampWish.reason(.connecting), lastSeen: nil)
         @Published private(set) var me = ""
+        /// The wish's other apps open now.
+        var peers: [Peer] { apps.filter(\.isOpen) }
+        var state: State { status.state }
 
         private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
         private let link = Link()
         private var room: String?
         private var address: URL?
+        /// Good once and for a couple of minutes: Lamp's to start with, then the one the room hands over the socket.
         private var credential: String?
         private var listeners: [(String, Any) -> Void] = []
         private var closed = false
@@ -13638,12 +13688,12 @@ enum Template {
             closed = true
             link.task?.cancel(with: .goingAway, reason: nil)
             link.task = nil
-            peers = []
-            state = .ended
+            leftAll()
+            set(.ended)
         }
 
-        /// The wish's app with this peer name, while it's open.
-        func peer(_ id: String) -> Peer? { peers.first { $0.id == id } }
+        /// The wish's app with this peer name, open or not; nil when the wish has no such app.
+        func peer(_ id: String) -> Peer? { apps.first { $0.id == id } }
 
         /// Sends `data` (anything JSON can hold) to one of the wish's apps, or with no `to` to all of them; false, with the
         /// reason in the app's log, when it wasn't sent.
@@ -13654,8 +13704,8 @@ enum Template {
                 if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
                 return false
             }
-            if let peer, self.peer(peer) == nil {
-                fputs("LampWish: \(what) wasn't sent: that app isn't open now (peers: \(peers.map(\.id))).\n", stderr)
+            if let peer, self.peer(peer)?.isOpen != true {
+                fputs("LampWish: \(what) wasn't sent: that app isn't open now (open: \(peers.map(\.id))).\n", stderr)
                 return false
             }
             var frame: [String: Any] = ["t": "send", "data": data]
@@ -13677,6 +13727,19 @@ enum Template {
         /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { listeners.append(handler) }
 
+        /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
+        static func reason(_ state: State) -> String {
+            switch state {
+            case .connecting: "Connecting to the wish's other apps…"
+            case .away: "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi."
+            default: ""
+            }
+        }
+
+        private static func notOpen(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + " isn't open." }
+
+        private func set(_ state: State) { status = Status(state: state, reason: Self.reason(state), lastSeen: nil) }
+
         /// Where this copy runs, for the others to show.
         private static var device: String {
             #if os(macOS)
@@ -13688,19 +13751,20 @@ enum Template {
             #endif
         }
 
-        // Where to join, from Lamp: the relay's socket, this app's room and peer name, and a credential for them, asked
-        // again whenever the one held has run out or was turned away.
+        // Where to join, from Lamp: the relay's socket, this app's room and peer name, and a credential for them. Once in,
+        // the room hands a fresh credential over the socket, which is what a dropped link comes back with; Lamp is asked
+        // again only when that's spent, run out or turned away.
         private func open() {
             guard !closed else { return }
-            if state != .alone { state = .connecting }
+            if state != .alone { set(.connecting) }
             Task { @MainActor in
                 do {
                     if credential == nil || address == nil {
                         let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
                         if answer["alone"] as? Bool == true {
                             // The wish has no other app: nothing to join, until one is added.
-                            state = .alone
-                            peers = []
+                            set(.alone)
+                            apps = []
                             me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
                             return again(after: (answer["renew"] as? Double ?? 300))
                         }
@@ -13714,6 +13778,8 @@ enum Template {
                         me = answer["peer"] as? String ?? ""
                     }
                     guard let address, let credential, let room, !closed else { return }
+                    // Each credential lets this app in once: the next one comes over the socket.
+                    self.credential = nil
                     let task = URLSession.shared.webSocketTask(with: address)
                     task.maximumMessageSize = Self.messageLimit + 1024
                     link.task = task
@@ -13731,7 +13797,7 @@ enum Template {
                     }
                     credential = nil
                     address = nil
-                    if state != .alone { state = .away }
+                    if state != .alone { set(.away) }
                     fputs("LampWish: \(error.localizedDescription)\n", stderr)
                     again()
                 }
@@ -13765,13 +13831,34 @@ enum Template {
                 saidAway = false
                 undeliveredSaid = []
                 if let name = m["peer"] as? String { me = name }
-                peers = (m["peers"] as? [[String: Any]] ?? []).compactMap(Self.peer)
-                state = .connected
+                if let kept = m["credential"] as? String { credential = kept }
+                let present = Dictionary((m["peers"] as? [[String: Any]] ?? []).compactMap { p in (p["peer"] as? String).map { ($0, p) } },
+                                      uniquingKeysWith: { a, _ in a })
+                apps = (m["apps"] as? [[String: Any]] ?? []).compactMap { app in
+                    guard let id = app["peer"] as? String, id != me else { return nil }
+                    let name = app["name"] as? String ?? id
+                    var peer = Peer(id: id, kind: app["kind"] as? String ?? "", name: name, device: "",
+                                    status: Status(state: .notOpen, reason: Self.notOpen(name), lastSeen: self.peer(id)?.status.lastSeen))
+                    if let seen = present[id] { Self.mark(&peer, openWith: seen) }
+                    return peer
+                }
+                set(.connected)
             case "joined":
-                guard let joined = (m["peer"] as? [String: Any]).flatMap(Self.peer) else { return }
-                peers = peers.filter { $0.id != joined.id } + [joined]
+                guard let joined = m["peer"] as? [String: Any], let id = joined["peer"] as? String else { return }
+                if let index = apps.firstIndex(where: { $0.id == id }) {
+                    Self.mark(&apps[index], openWith: joined)
+                } else {
+                    var peer = Peer(id: id, kind: joined["kind"] as? String ?? "", name: joined["name"] as? String ?? id, device: "",
+                                    status: Status(state: .notOpen, reason: "", lastSeen: nil))
+                    Self.mark(&peer, openWith: joined)
+                    apps.append(peer)
+                }
             case "left":
-                if let id = m["peer"] as? String { peers = peers.filter { $0.id != id } }
+                if let id = m["peer"] as? String, let index = apps.firstIndex(where: { $0.id == id }) {
+                    apps[index].status = Status(state: .notOpen, reason: Self.notOpen(apps[index].name), lastSeen: Date())
+                }
+            case "credential":
+                if let kept = m["credential"] as? String { credential = kept }
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
                 for listener in listeners { listener(from, data) }
@@ -13784,26 +13871,33 @@ enum Template {
             }
         }
 
-        private static func peer(_ json: [String: Any]) -> Peer? {
-            guard let id = json["peer"] as? String else { return nil }
-            return Peer(id: id, kind: json["kind"] as? String ?? "", name: json["name"] as? String ?? id, device: json["device"] as? String ?? "",
-                        since: Date(timeIntervalSince1970: Double(json["since"] as? Int ?? 0) / 1000))
+        private static func mark(_ peer: inout Peer, openWith json: [String: Any]) {
+            peer.device = json["device"] as? String ?? peer.device
+            let since = (json["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date()
+            peer.status = Status(state: .connected, reason: "", lastSeen: since)
+        }
+
+        /// The link went: no other app can be seen open until it's back.
+        private func leftAll() {
+            for index in apps.indices where apps[index].isOpen {
+                apps[index].status = Status(state: .notOpen, reason: Self.notOpen(apps[index].name), lastSeen: Date())
+            }
         }
 
         private func dropped(_ task: URLSessionWebSocketTask) {
             guard link.task === task else { return }
             let code = task.closeCode.rawValue
             link.task = nil
-            peers = []
-            // Turned away, or the room ended: the credential is no use, so a fresh one is asked for. Dropped before it was
-            // let in, the relay may have moved: where it is is asked for again too.
+            leftAll()
+            // Turned away, or the room ended: the credential is no use, so a fresh one is asked of Lamp. Dropped before it
+            // was let in, the relay may have moved: where it is is asked for again too.
             if code == 4003 || code == 4005 || state == .connecting || retry >= 3 { credential = nil; address = nil }
             again()
         }
 
         private func again(after: Double? = nil) {
             guard !closed else { return }
-            if after == nil, state == .connected { state = .connecting }
+            if after == nil, state == .connected { set(.connecting) }
             retry = min(retry + 1, 6)
             let wait = after ?? Double(retry) * 0.75
             Task { @MainActor [weak self] in
