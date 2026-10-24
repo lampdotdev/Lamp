@@ -353,6 +353,55 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 1, "and with the key, the page opened its link")
     }
 
+    /// A TV page looks for the apps Lamp's room doesn't have on its own network at each one's port, a few dozen addresses
+    /// at a time. Once that's done, finding one of them doesn't keep it from dialling another when it's told where that one
+    /// is.
+    func testATVPageSweepsItsNetworkAndStillDialsAnAppItsToldOfAfter() throws {
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "mac", "kind": "mac", "name": "the Mac app"],
+                                     ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"]]
+        let roster = String(decoding: try JSONSerialization.data(withJSONObject: apps), as: UTF8.self)
+        let context = try page(answer: "{ socket: 'ws://127.0.0.1:47900/', peer: 'tv', key: '\(key.base64EncodedString())', peers: [], apps: \(roster) }") { context in
+            context.evaluateScript("window.tizen = { systeminfo: { getPropertyValue: function (kind, ok) { if (kind === 'WIFI_NETWORK') ok({ ipAddress: '10.0.0.5' }); } } };")
+        }
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": []])
+        // The wish's port for each app, by its place in the sorted list: iphone, mac, tv.
+        let d = WishChannel.derive("lamp-wish port", key: SymmetricKey(data: key))
+        let base = 20000 + (Int(d[0]) << 8 | Int(d[1])) % 1500 * 8
+        XCTAssertEqual(context.evaluateScript("Object.keys(sockets).length")?.toInt32(), 33, "Lamp's room and 32 addresses at a time")
+        let mac = "ws://10.0.0.1:\(base + 1)/"
+        let n = try XCTUnwrap(context.evaluateScript("sockets.map(function (s) { return s.url; }).indexOf('\(mac)')")?.toInt32(), "the Mac app's port tried at the first address")
+        XCTAssertGreaterThan(n, 0)
+        // The Mac app answers there: it proves it holds the wish's key and names itself, and the page joins.
+        context.evaluateScript("sockets[\(n)].onopen();")
+        let hello = try XCTUnwrap(sentItems(context).last.flatMap(Self.parse))
+        XCTAssertEqual(hello["peer"] as? String, "tv")
+        let wishKey = SymmetricKey(data: key)
+        let tag = try XCTUnwrap((hello["tag"] as? String).flatMap { Data(base64Encoded: $0) })
+        let nonce = try XCTUnwrap((hello["nonce"] as? String).flatMap { Data(base64Encoded: $0) })
+        let ours = WishChannel.random(16)
+        let transcript = WishChannel.transcript(tag: tag, client: "tv", server: "mac", clientNonce: nonce, serverNonce: ours)
+        deliverText(context, socket: Int(n), ["t": "challenge", "peer": "mac", "nonce": ours.base64EncodedString(),
+                                              "proof": WishChannel.serverProof(key: wishKey, transcript: transcript).base64EncodedString()])
+        let keys = WishChannel.keys(key: wishKey, transcript: transcript)
+        var toPage = WishChannel.Sealer(key: keys.server)
+        let welcome = toPage.seal(try JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": "mac", "device": "Mac"]))
+        context.evaluateScript("sockets[\(n)].onmessage({ data: bytes('\(welcome.hex)').buffer });")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('mac').open")?.toBool(), true, "the Mac app is open, straight")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('mac').device")?.toString(), "Mac")
+        // Nothing else answers anywhere on the network.
+        for _ in 0..<40 {
+            context.evaluateScript("for (var i = 1; i < sockets.length; i++) if (i !== \(n) && !sockets[i].ended) { sockets[i].ended = true; sockets[i].onclose({ code: 1006 }); }")
+        }
+        XCTAssertEqual(context.evaluateScript("sockets.filter(function (s) { return /:\(base)\\/$/.test(s.url); }).length")?.toInt32(), 254,
+                       "every address once for the iPhone app, which nothing answered for")
+        // Lamp's room says where the iPhone app listens: the page dials it there.
+        deliver(context, ["t": "at", "peer": "iphone", "addresses": ["10.0.0.9:\(base)"]])
+        XCTAssertEqual(context.evaluateScript("sockets[sockets.length - 1].url")?.toString(), "ws://10.0.0.9:\(base)/")
+    }
+
     private static func parse(_ text: String) -> [String: Any]? { (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] }
     private static func quoted(_ text: String) -> String {
         String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data(), as: UTF8.self).dropFirst().dropLast().description

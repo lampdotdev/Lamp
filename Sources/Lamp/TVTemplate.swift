@@ -1431,11 +1431,12 @@ extension TVTemplate {
 
           // Straight to an app of the wish that listens: the same handshake as Lamp's room, that app taking the relay's
           // side and naming itself, so only an app holding the wish's key answers it, and only the one it was dialled as.
-          function attempt(id, place, failed) {
+          // `failed` is called if it never gets ready, `settled` once it's over either way.
+          function attempt(id, place, failed, settled) {
             var ws, d, timer;
             try { ws = new WebSocket('ws://' + place + '/'); } catch (e) { return failed(); }
             ws.binaryType = 'arraybuffer';
-            d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '' };
+            d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null };
             function end() {
               if (d.over) return;
               d.over = true;
@@ -1484,7 +1485,9 @@ extension TVTemplate {
             d.ws.send(box.buffer);
           }
           function ready(d, welcome) {
-            var had = directs[d.peer];
+            var had = directs[d.peer], settled = d.settled;
+            d.settled = null;
+            if (settled) settled();
             if (had && had !== d && had.ready) { d.ready = true; d.over = true; try { d.ws.close(); } catch (e) {} return; }
             d.ready = true;
             d.device = typeof welcome.device === 'string' ? welcome.device.slice(0, 40) : '';
@@ -1538,7 +1541,8 @@ extension TVTemplate {
                 var one = list[at++];
                 if (directs[one.id]) continue;
                 running++;
-                attempt(one.id, one.place, function () { running--; next(); });
+                var done = function () { running--; next(); };
+                attempt(one.id, one.place, done, done);
               }
               if (!running && at >= list.length) for (var j = 0; j < missing.length; j++) if (!directs[missing[j]]) dial(missing[j], []);
             }

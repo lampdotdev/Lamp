@@ -1009,6 +1009,7 @@ extension Template {
         private var server: java.net.ServerSocket? = null
         private var listenerPort: Int? = null
         private var listenerTried = 0L
+        private val upgrading = java.util.concurrent.atomic.AtomicInteger(0)
         private val found = mutableMapOf<String, String>()
         private val told = mutableMapOf<String, List<String>>()
         private val dialing = mutableSetOf<String>()
@@ -1509,8 +1510,12 @@ extension Template {
             scope.launch {
                 while (!made.isClosed) {
                     val socket = try { made.accept() } catch (e: Exception) { break }
+                    // Eight asking to upgrade at a time, each with eight seconds for its whole request, so nobody without
+                    // the key can hold this app's threads by sending its request a byte at a time.
+                    if (upgrading.incrementAndGet() > 8) { upgrading.decrementAndGet(); try { socket.close() } catch (e: Exception) {}; continue }
                     scope.launch {
-                        val taken = try { Ws.take(socket) } catch (e: Exception) { null }
+                        val watchdog = scope.launch { delay(8000); try { socket.close() } catch (e: Exception) {} }
+                        val taken = try { Ws.take(socket) } catch (e: Exception) { null } finally { watchdog.cancel(); upgrading.decrementAndGet() }
                         if (taken == null) { try { socket.close() } catch (e: Exception) {}; return@launch }
                         withContext(Dispatchers.Main) { take(socket, taken.first, taken.second) }
                     }
@@ -1530,7 +1535,7 @@ extension Template {
 
         /** An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key. */
         private fun take(socket: Socket, input: InputStream, output: java.io.OutputStream) {
-            if (opening.size >= 8 || closed) { try { socket.close() } catch (e: Exception) {}; return }
+            if (opening.count { !it.dialled } >= 8 || closed) { try { socket.close() } catch (e: Exception) {}; return }
             serve(Direct(socket, input, output, dialled = false, peer = ""))
         }
 

@@ -1813,8 +1813,13 @@ enum Template {
         }
 
         /// Those lists as Info.plist lines, or nothing.
-        var backgroundPlistLine: String {
-            lists.sorted { $0.key < $1.key }
+        var backgroundPlistLine: String { backgroundPlistLine(adding: nil) }
+
+        /// The same, with one more Bonjour type beside what the app declared: the wish's, for an app of several.
+        func backgroundPlistLine(adding service: String?) -> String {
+            var lists = lists
+            if let service, !(lists["NSBonjourServices"] ?? []).contains(service) { lists["NSBonjourServices", default: []].append(service) }
+            return lists.sorted { $0.key < $1.key }
                 .map { "  <key>\($0.key)</key><array>" + $0.value.map { "<string>\($0.xmlEscaped)</string>" }.joined() + "</array>" }
                 .joined(separator: "\n")
         }
@@ -1932,8 +1937,9 @@ enum Template {
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
         let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
         // The wish's key, for an app with others in its wish, goes the same way and only there.
-        let wish = folder != nil && !forSigning && project.platform.hasIOS && wishKey != nil
-            ? wishKeyPlistLines(wishKey) + "<key>NSBonjourServices</key><array><string>\(wishServiceType)</string></array>" : ""
+        let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        // An app of a wish of several finds the others, and is found, by the wish's Bonjour type, beside any of its own.
+        let background = capabilities.backgroundPlistLine(adding: !wish.isEmpty ? wishServiceType : nil)
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
@@ -1944,7 +1950,7 @@ enum Template {
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
             .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
                 .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
-                .replacingOccurrences(of: "{{BACKGROUND}}", with: capabilities.backgroundPlistLine)
+                .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
                 .replacingOccurrences(of: "{{NAME}}", with: project.name)
@@ -14186,11 +14192,11 @@ enum Template {
             return parameters
         }
 
-        private func listen(again: Bool = false) {
+        private func listen(again: Bool = false, anyPort: Bool = false) {
             if again { listener?.cancel(); listener = nil; listenerPort = nil; listenerTried = .distantPast }
-            guard listener == nil, Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me) else { return }
+            guard listener == nil, anyPort || Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me) else { return }
             listenerTried = Date()
-            let wanted = Self.port(for: me, among: roster.map(\.id)).flatMap { NWEndpoint.Port(rawValue: $0) }
+            let wanted = anyPort ? nil : Self.port(for: me, among: roster.map(\.id)).flatMap { NWEndpoint.Port(rawValue: $0) }
             let made = (wanted.flatMap { try? NWListener(using: Self.socketParameters(), on: $0) }) ?? (try? NWListener(using: Self.socketParameters()))
             guard let made else { return }
             made.service = NWListener.Service(name: name, type: Self.serviceType)
@@ -14208,6 +14214,8 @@ enum Template {
                         made.cancel()
                         self.listener = nil
                         self.listenerPort = nil
+                        // Another program has the wish's port: any port, found by name and told to Lamp's room instead.
+                        if wanted != nil { self.listen(anyPort: true) }
                     default:
                         break
                     }
@@ -14373,7 +14381,8 @@ enum Template {
 
         /// An app of the wish, or anyone, dialling this one: let in only once it proves it holds the wish's key.
         private func take(_ connection: NWConnection) {
-            guard opening.count < 8, !closed else { return connection.cancel() }
+            // Eight unproven at a time, counting only those dialled in, so this app's own dials never shut the others out.
+            guard opening.values.filter({ !$0.dialled }).count < 8, !closed else { return connection.cancel() }
             let direct = Direct(connection: connection, dialled: false, peer: "")
             start(direct)
             connection.stateUpdateHandler = { [weak self] state in

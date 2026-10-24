@@ -137,6 +137,61 @@ final class WishDirectTests: XCTestCase {
         let said = (try? String(contentsOf: work.appendingPathComponent("mac.txt"), encoding: .utf8)) ?? ""
         XCTAssertTrue(said.contains("heard 3 from tv"), "and the Mac app heard the page: \(said)")
     }
+
+    /// Another program has the port the wish's key gives the Mac app: it listens on another one, says so in Lamp's room,
+    /// and the TV preview's page, told there, goes on talking to it straight once Lamp's relay is gone.
+    func testAMacAppWhoseWishPortIsTakenListensElsewhereAndIsReachedThere() async throws {
+        let relay = Relay(key: SymmetricKey(size: .bits256))
+        let started: UInt16? = await withCheckedContinuation { done in relay.start { done.resume(returning: $0) } }
+        let port = try XCTUnwrap(started)
+        let key = WishChannel.random(32)
+        relay.configureRoom("wish:taken", key: key, apps: ["mac": ("mac", "the Mac app"), "tv": ("tv", "the TV app")])
+        // The Mac app's place among mac and tv is the first: the wish's port for it, held by another program.
+        let d = WishChannel.derive("lamp-wish port", key: SymmetricKey(data: key))
+        let wishPort = UInt16(20000 + (Int(d[0]) << 8 | Int(d[1])) % 1500 * 8)
+        let other = socket(AF_INET, SOCK_STREAM, 0)
+        defer { Darwin.close(other) }
+        var address = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: wishPort.bigEndian,
+                                  sin_addr: in_addr(s_addr: INADDR_ANY), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(other, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        try XCTSkipIf(bound != 0, "the wish's port was taken already")
+        XCTAssertEqual(Darwin.listen(other, 1), 0)
+
+        let work = try Self.talkerBuilt(key: key)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let suite = "lamp-wish-direct-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-mac") }
+        let command = "LAMP_SOCKET='ws://127.0.0.1:\(port)/' LAMP_APPS=mac,tv LAMP_DEFAULTS=\(suite)-mac LAMP_PEER=mac LAMP_TO=tv LAMP_SECONDS=30 ./talker > mac.txt 2>&1"
+        let mac = Task.detached { _ = TestShell.run(command, in: work) }
+
+        // The TV preview's page, which Lamp gives the key and the room through its bridge.
+        let page = PageWithSockets()
+        page.context.evaluateScript("""
+            window.webkit = { messageHandlers: { lampGateway: {} } };
+            var answer = { socket: 'ws://127.0.0.1:\(port)/', peer: 'tv', key: '\(key.base64EncodedString())', peers: [],
+                           apps: [{ peer: 'mac', kind: 'mac', name: 'the Mac app' }, { peer: 'tv', kind: 'tv', name: 'the TV app' }] };
+            var lampThere = true;
+            LampAI = { _post: function () { return lampThere ? Promise.resolve(answer) : Promise.reject(new Error("Couldn't reach Lamp.")); } };
+            """)
+        page.context.evaluateScript(TVTemplate.wishJS)
+        page.context.evaluateScript("""
+            var heard = [];
+            Lamp.wish.onMessage(function (from, data) { heard.push(data.n); });
+            Lamp.wish.start();
+            """)
+        func heard() -> Int { Int(page.context.evaluateScript("heard.length")?.toInt32() ?? 0) }
+        for _ in 0..<150 where heard() < 6 { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertGreaterThanOrEqual(heard(), 6, "the page heard the Mac app with Lamp there")
+        // Lamp goes.
+        page.context.evaluateScript("lampThere = false;")
+        relay.stop()
+        try await Task.sleep(for: .seconds(1))
+        let before = heard()
+        try await Task.sleep(for: .seconds(6))
+        XCTAssertGreaterThan(heard() - before, 6, "and straight after it went: \(page.context.evaluateScript("JSON.stringify([Lamp.wish.state(), heard, said.slice(0, 6)])")?.toString() ?? "")")
+        page.end()
+        _ = await mac.value
+    }
 }
 
 /// A JavaScript context with WebSockets, timers, storage and randomness of the Mac's, so a page's script talks to real
