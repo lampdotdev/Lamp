@@ -1253,16 +1253,46 @@ each of its apps is: open or not, in the room or not and as what device (`WishNo
 every app of such a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) says
 what the block does, its limit, to start it as the app opens, to show plainly when an app it needs isn't open and never to
 build its own server, sockets or polling between them; it says nothing about who should talk to whom. A stranger on the
-network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay takes a proof only the
-wish's key makes, and both run only while Lamp does. What one app of a wish says is readable by the wish's other apps and
-by Lamp's relay, which holds the key Lamp made and opens and seals again what it passes on, and by nothing else: on the
-network it's sealed, each link with keys of its own. A device app made through an
-integration has no `LampWish` yet. A wish of one app, which
+network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay and every app's own
+listener (below) take a proof only the wish's key makes, and Lamp's routes and relay run only while Lamp does. What one app
+of a wish says is readable by the wish's other apps and by Lamp's relay, which holds the key Lamp made and opens and seals
+again what it passes on, and by nothing else: on the network it's sealed, each link with keys of its own. A device app made
+through an integration has no `LampWish` yet.
+
+Lamp's room is one way between a wish's apps; the other is straight between them (**direct links**), so they go on
+talking with Lamp closed, the Mac asleep or Lamp updating, as long as they're on the same network. A Mac, iPhone or Android
+app listens (an `NWListener` speaking WebSocket in LampSupport.swift; a `ServerSocket` and just enough of WebSocket,
+`LampWish.Ws`, in LampSupport.kt) at the wish's port for it: 20000 plus a block of eight the wish's key picks
+(`lamp-wish port`), plus the app's place in the wish's sorted list of apps, so a TV page, which can't listen or look names
+up, knows where to try; any port when another program has that one. It's found by Bonjour (`_lampwish._tcp`,
+`Template.wishServiceType`, which an iPhone app's Info.plist names in `NSBonjourServices`) or NSD under a name only the key
+makes (`lamp-wish service` of its peer name), which says nothing of the wish or the app to anyone else, and at the
+addresses it tells Lamp's room it listens at (`at`, sealed like any message; the relay passes each member's on, eight short
+ones at most, in `welcome`, `joined` and `at`). Each app keeps on its device, by the wish's tag, who it is, the wish's apps
+and where each was reached (UserDefaults, a file in the Android app's storage, localStorage on a TV), so it finds the
+others without Lamp. A Mac app says this Mac's loopback first, for an iPhone app in the simulator, which shares the Mac's
+network. Each app dials the others at the last address it reached them at, what it was told and what Bonjour or NSD found;
+a TV page, which only dials, then sweeps its own network (its address from Tizen's or webOS's system calls, else the /24s
+of the addresses it was told) at that app's port, 32 at a time, at most once a minute and only for an app Lamp's room
+doesn't have either. Tries come again less often each time (2 to 30 seconds, with jitter), and at once when the app comes
+to the front, the network changes or Bonjour or NSD finds the other again. A link's handshake is the room's
+(`WishChannel`'s steps), the app that listens taking the relay's side and naming itself, so only an app holding the wish's
+key answers and only the one it was dialled as; a listener lets in only a hello naming an app of the wish, eight unproven
+at a time, eight seconds each to prove. Two apps that both listen and dial each other keep the link the one with the
+earlier name dialled, so both sides agree without saying. A message goes the straight way when there is one, else through
+the room; another app is open when either way says so, and this one is away (`State.away`, "Can't reach the wish's other
+apps…") only when neither way reaches anyone. An app reaches the others only while it runs: an iPhone app in the
+background doesn't, and an Android app only while its activity is open. `WishDirectTests` runs two Swift apps through
+Lamp's relay going away and opening again without it, and a TV page finding a Mac app by its port with no Lamp. A TV's own
+address on Tizen and webOS is untried on real TVs.
+
+A wish of one app, which
 is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
 has other apps (`Template.talksToOtherApps`), so its LampSupport.swift, LampSupport.kt and lamp.js are what they would be
-without the hub, the channel's crypto included, its prompt has no rule and its requests no line about the hub, no key is
-made for it and none goes in its install (`Store.wishKey(for:)` is nil), no room is opened for it and so nothing starts the
-relay, and `BuildStamp` leaves the block out, so no app is built again for code it doesn't carry (`WishHubStaysOutTests`).
+without the hub, the channel's crypto and the direct links included (no listener, no Bonjour or NSD, so no Local Network
+question), its prompt has no rule and its requests no line about the hub, no key is made for it and none goes in its install
+(`Store.wishKey(for:)` is nil), its iPhone Info.plist names no Bonjour type, no room is opened for it and so nothing starts
+the relay, and `BuildStamp` leaves the block out, so no app is built again for code it doesn't carry (`WishHubStaysOutTests`).
 
 A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) still does so as a player of
 `Lamp.controllers`, with `LampController` in LampSupport, beside `LampWish` for everything else. An iPhone part

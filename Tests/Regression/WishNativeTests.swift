@@ -29,14 +29,16 @@ final class WishNativeTests: XCTestCase {
             XCTAssertEqual(built.status, 0, built.output)
         }
 
+        let suite = "lamp-wish-native-\(UUID().uuidString)"
+        defer { for each in ["phone", "mac", "stranger"] { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-\(each)") } }
         let common = "LAMP_SOCKET='ws://127.0.0.1:\(port)/'"
         // The iPhone app waits for a message; the Mac app waits for the iPhone app to be there, then sends one.
-        async let phone = Task.detached { TestShell.run("\(common) LAMP_PEER=iphone LAMP_ROLE=listen ./wish 2>&1", in: work).output }.value
+        async let phone = Task.detached { TestShell.run("\(common) LAMP_DEFAULTS=\(suite)-phone LAMP_PEER=iphone LAMP_ROLE=listen ./wish 2>&1", in: work).output }.value
         try await Task.sleep(for: .milliseconds(500))
         // The Mac app is first told a relay that isn't there (Lamp restarted, the relay moved): it asks Lamp again.
-        async let mac = Task.detached { TestShell.run("\(common) LAMP_DEAD_SOCKET='ws://127.0.0.1:1/' LAMP_PEER=mac LAMP_ROLE=send ./wish 2>&1", in: work).output }.value
+        async let mac = Task.detached { TestShell.run("\(common) LAMP_DEFAULTS=\(suite)-mac LAMP_DEAD_SOCKET='ws://127.0.0.1:1/' LAMP_PEER=mac LAMP_ROLE=send ./wish 2>&1", in: work).output }.value
         // A copy that has another key, as one Lamp didn't put there would.
-        async let stranger = Task.detached { TestShell.run("\(common) LAMP_PEER=mac LAMP_ROLE=stranger ./stranger 2>&1", in: work).output }.value
+        async let stranger = Task.detached { TestShell.run("\(common) LAMP_DEFAULTS=\(suite)-stranger LAMP_PEER=mac LAMP_ROLE=stranger ./stranger 2>&1", in: work).output }.value
         let (phoneSaid, macSaid, strangerSaid) = try await (phone, mac, stranger)
         XCTAssertTrue(strangerSaid.contains("stranger state connecting") || strangerSaid.contains("stranger state away"),
                       "a copy with another key never gets in: \(strangerSaid)")
@@ -54,16 +56,21 @@ final class WishNativeTests: XCTestCase {
     }
 
     /// LampWish out of the support library, with a stand-in for LampAI.post that answers as Lamp's `/app/wish` does,
-    /// from the environment, and says "iPhone simulator" for the device so both apps can run on this Mac.
-    private static func program() throws -> String {
+    /// from the environment (and as an unreachable Lamp does without `LAMP_SOCKET`), says "iPhone simulator" for the
+    /// device so both apps can run on this Mac, and keeps what it keeps in defaults of its own (`LAMP_DEFAULTS`), as
+    /// two apps would.
+    static func program(main: String = harness) throws -> String {
         let support = Template.lampSupportSwift
         let start = try XCTUnwrap(support.range(of: "@MainActor final class LampWish"))
         let end = try XCTUnwrap(support.range(of: "// MARK: - The wish's TV app", range: start.upperBound..<support.endIndex))
         let block = String(support[start.lowerBound..<end.lowerBound])
             .replacingOccurrences(of: "#if os(macOS)\n            return \"Mac\"", with: "#if os(macOS)\n            return \"iPhone simulator\"")
+            .replacingOccurrences(of: "UserDefaults.standard", with: "UserDefaults(suiteName: ProcessInfo.processInfo.environment[\"LAMP_DEFAULTS\"] ?? \"lamp-wish-test\")!")
         return """
+        import AppKit
         import CryptoKit
         import Foundation
+        import Network
         import SwiftUI
         enum LampAI {
             struct Failure: Error, LocalizedError { let message: String; var errorDescription: String? { message } }
@@ -71,11 +78,19 @@ final class WishNativeTests: XCTestCase {
             static func post(_ path: String, _ body: [String: Any], timeout: Double) async throws -> [String: Any] {
                 let env = ProcessInfo.processInfo.environment
                 asked += 1
-                let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? env["LAMP_SOCKET"]!) : env["LAMP_SOCKET"]!
-                return ["socket": socket, "peer": env["LAMP_PEER"]!]
+                guard let live = env["LAMP_SOCKET"] else { throw Failure(message: "Couldn't reach Lamp.") }
+                let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? live) : live
+                // The wish's apps, as Lamp would say them: a Mac app and an iPhone app, unless the test says others.
+                let apps = (env["LAMP_APPS"] ?? "mac,iphone").split(separator: ",").map { ["peer": String($0), "kind": String($0), "name": "the " + String($0) + " app"] }
+                return ["socket": socket, "peer": env["LAMP_PEER"]!, "apps": apps]
             }
         }
         \(block)
+        \(main)
+        """
+    }
+
+    static let harness = """
         @main struct Harness {
             @MainActor static func main() {
                 setvbuf(stdout, nil, _IONBF, 0)
@@ -112,5 +127,4 @@ final class WishNativeTests: XCTestCase {
             }
         }
         """
-    }
 }

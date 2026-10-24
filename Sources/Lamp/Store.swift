@@ -7920,7 +7920,12 @@ final class Store: ObservableObject {
         // What the agent declared in capabilities.json: background work in Info.plist, the rest as
         // entitlements the ad hoc signature carries (the simulator checks them for Health and the like).
         let capabilities = Template.Capabilities.load(project)
-        for (key, names) in capabilities.lists.sorted(by: { $0.key < $1.key }) {
+        var lists = capabilities.lists
+        // An app of a wish of several is found by the wish's other apps on the network, and finds them, by Bonjour.
+        if Template.talksToOtherApps(project), !(lists["NSBonjourServices"] ?? []).contains(Template.wishServiceType) {
+            lists["NSBonjourServices", default: []].append(Template.wishServiceType)
+        }
+        for (key, names) in lists.sorted(by: { $0.key < $1.key }) {
             if let json = try? JSONSerialization.data(withJSONObject: names), let text = String(data: json, encoding: .utf8) {
                 script += "plutil -replace \(key) -json '\(text)' \"$P\"\n"
             }
