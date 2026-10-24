@@ -110,6 +110,8 @@ public final class Relay: @unchecked Sendable {
         let rate = Rate()
         var sealer: WishChannel.Sealer
         var opener: WishChannel.Sealer
+        /// Where the app listens for the wish's other apps, as it said: what they keep for when Lamp is closed.
+        var at: [String] = []
         init(peer: RelayPeer, kind: String, name: String, device: String, sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
             self.peer = peer
             self.kind = kind
@@ -118,7 +120,7 @@ public final class Relay: @unchecked Sendable {
             self.sealer = sealer
             self.opener = opener
         }
-        var described: [String: Any] { ["kind": kind, "name": name, "device": device, "since": Int(since.timeIntervalSince1970 * 1000)] }
+        var described: [String: Any] { ["kind": kind, "name": name, "device": device, "since": Int(since.timeIntervalSince1970 * 1000), "at": at] }
         /// Everything to a member goes sealed, in the order it's said, on the relay's queue.
         func send(_ text: String) { peer.send(sealed: sealer.seal(Data(text.utf8))) }
     }
@@ -437,6 +439,13 @@ public final class Relay: @unchecked Sendable {
     private func fromMember(_ room: Room, id: String, member: Member, text: String) {
         guard let message = Self.parse(text) else { return }
         let kind = message["t"] as? String ?? ""
+        // Where the app listens: a few addresses, each host:port, passed to the others to keep.
+        if kind == "at", member.rate.allowed(member.peer), let given = message["addresses"] as? [String] {
+            member.at = Array(given.filter { $0.utf8.count <= 64 && !$0.contains(where: { $0.isWhitespace }) }.prefix(8))
+            let said = Self.json(["t": "at", "peer": id, "addresses": member.at])
+            for (other, each) in room.members where other != id { each.send(said) }
+            return
+        }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String
         let out = Self.json(["t": "message", "from": id, "data": data, "at": Self.now])
