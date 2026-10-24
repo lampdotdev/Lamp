@@ -19,7 +19,9 @@ LampSupport.kt, `Lamp.wish` in lamp.js. Read the block's own comment there befor
 - `peers` lists the wish's other apps that are open now (observable: @Published, a StateFlow, onPeers).
 - `peer("tv")` is that app, open or not, with its `status`: `state`, a `reason` in words to show as they are ("Open
   the TV app on your TV.", "The TV app was last open 5 min ago. Open it on your TV.", "The TV app isn't ready yet."
-  for one Lamp hasn't made) and `lastSeen`. Every app the wish asks for is there, even one not made yet.
+  for one Lamp hasn't made) and `lastSeen`. Every app the wish asks for is there, even one not made yet. A reason
+  changes as time goes by: watch every app's (`apps`, observable as `peers` is; `onApps` in lamp.js), not only the open
+  ones.
 - `send(data, to: "tv")` sends JSON of 16 KB at most to one of them, `send(data)` to all; false, with why in the app's
   log, when it wasn't sent. `onMessage { from, data in … }` hears what they send.
 - The app's own `status` says how its link stands, with a `reason` when something keeps it from the others (on a Mac

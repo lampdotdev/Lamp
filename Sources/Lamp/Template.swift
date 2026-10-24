@@ -13873,7 +13873,8 @@ enum Template {
         /// and when it was last open here when it has been.
         static func notOpen(name: String, kind: String, lastSeen: Date?, waiting: Bool = false, now: Date = Date()) -> String {
             let title = name.prefix(1).uppercased() + name.dropFirst()
-            if waiting { return "\(title) isn't ready yet." }
+            // Having been open here outranks a list that still says it isn't made.
+            if waiting, lastSeen == nil { return "\(title) isn't ready yet." }
             let place = ["tv": "your TV", "mac": "your Mac", "iphone": "your iPhone", "android": "your Android device"][kind] ?? "its device"
             guard let lastSeen else { return "Open \(name) on \(place)." }
             return "\(title) was last open \(ago(now.timeIntervalSince(lastSeen))). Open it on \(place)."

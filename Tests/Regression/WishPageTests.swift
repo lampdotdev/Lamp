@@ -284,6 +284,29 @@ final class WishPageTests: XCTestCase {
                        "The Android app was last open a moment ago. Open it on your Android device.")
     }
 
+    /// A page's own view of every app hears a closed app's reason age as the beats go by, and an app once open is never
+    /// called not ready again by a list that still marks it so.
+    func testEveryAppsReasonIsHeardAsItChangesAndBeingSeenOutranksAWaitingMark() throws {
+        let context = try page(before: { $0.evaluateScript("""
+            var beaters = []; setInterval = function (fn) { beaters.push(fn); return 1; };
+            var clock = Date.now(); Date.now = function () { return clock; };
+            """) })
+        context.evaluateScript("var heardApps = []; Lamp.wish.onApps(function (list) { heardApps.push(list.map(function (p) { return p.peer + ':' + p.status.reason; }).join('|')); }); Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": []])
+        deliver(context, ["t": "joined", "peer": ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 2]])
+        deliver(context, ["t": "left", "peer": "android"])
+        // Lamp's list comes again still marking it not made (sent before it knew).
+        deliver(context, ["t": "apps", "apps": apps])
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
+                       "The Android app was last open a moment ago. Open it on your Android device.")
+        context.evaluateScript("clock += 5 * 60000 + 1000; beaters[0]();")
+        XCTAssertEqual(context.evaluateScript("heardApps[heardApps.length - 1]")?.toString(),
+                       "android:The Android app was last open 5 min ago. Open it on your Android device.")
+    }
+
     /// Just enough of a page's document for the status view: elements that hold children, a style and text.
     private static func document(_ context: JSContext) {
         context.evaluateScript("""

@@ -1096,7 +1096,8 @@ extension Template {
          *  it, and when it was last open here when it has been. */
         fun notOpen(name: String, kind: String, lastSeen: Long?, waiting: Boolean = false, now: Long = System.currentTimeMillis()): String {
             val title = name.replaceFirstChar { it.uppercase() }
-            if (waiting) return "$title isn't ready yet."
+            // Having been open here outranks a list that still says it isn't made.
+            if (waiting && lastSeen == null) return "$title isn't ready yet."
             val place = mapOf("tv" to "your TV", "mac" to "your Mac", "iphone" to "your iPhone", "android" to "your Android device")[kind] ?: "its device"
             if (lastSeen == null) return "Open $name on $place."
             return "$title was last open ${ago(now - lastSeen)}. Open it on $place."
