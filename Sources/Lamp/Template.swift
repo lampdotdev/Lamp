@@ -249,6 +249,10 @@ enum Template {
         key.map { "<key>\(wishKeyName)</key><string>\($0.base64EncodedString())</string>" } ?? ""
     }
 
+    /// The Bonjour type the apps of a wish of several are found by on the network (`LampWish`), each under a name only the
+    /// wish's key makes. iOS lets an app advertise and browse only the types its Info.plist names.
+    static let wishServiceType = "_lampwish._tcp"
+
     /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. An app on
     /// its own (most apps, and every starter) gets none of it: its building blocks are written as if the wish's apps
     /// couldn't talk at all, so it carries no code, size, rule or permission for something it can't use. A wish that gains
@@ -1928,7 +1932,8 @@ enum Template {
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
         let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
         // The wish's key, for an app with others in its wish, goes the same way and only there.
-        let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        let wish = folder != nil && !forSigning && project.platform.hasIOS && wishKey != nil
+            ? wishKeyPlistLines(wishKey) + "<key>NSBonjourServices</key><array><string>\(wishServiceType)</string></array>" : ""
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)

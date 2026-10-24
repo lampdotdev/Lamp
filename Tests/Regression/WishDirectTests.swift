@@ -196,7 +196,7 @@ final class PageWithSockets: NSObject, URLSessionWebSocketDelegate {
         }
         context.evaluateScript("""
             var window = this, store = {}, sockets = {};
-            var said = [], opened = []; var console = { error: function (m) { said.push(String(m)); }, log: function () {} };
+            var said = []; var console = { error: function (m) { said.push(String(m)); }, log: function () {} };
             window.crypto = { getRandomValues: function (a) { var r = macRandom(a.length); for (var i = 0; i < a.length; i++) a[i] = r[i]; return a; } };
             window.localStorage = { getItem: function (k) { return k in store ? store[k] : null; }, setItem: function (k, v) { store[k] = String(v); }, removeItem: function (k) { delete store[k]; } };
             window.Lamp = {};
@@ -204,7 +204,7 @@ final class PageWithSockets: NSObject, URLSessionWebSocketDelegate {
             function XMLHttpRequest() {}
             XMLHttpRequest.prototype.open = function () {}; XMLHttpRequest.prototype.setRequestHeader = function () {};
             XMLHttpRequest.prototype.send = function () { var x = this; setTimeout(function () { x.onerror(); }, 1); };
-            function WebSocket(url) { opened.push(url); this.url = url; this.readyState = 0; this.id = macOpen(url); sockets[this.id] = this; }
+            function WebSocket(url) { this.url = url; this.readyState = 0; this.id = macOpen(url); sockets[this.id] = this; }
             WebSocket.prototype.send = function (x) { macSend(this.id, typeof x === 'string' ? x : Array.prototype.slice.call(new Uint8Array(x))); };
             WebSocket.prototype.close = function () { macClose(this.id); };
             function setTimeout(fn, ms) { return macLater(fn, ms || 0, false); } function clearTimeout(id) { if (id) macCancel(id); }
