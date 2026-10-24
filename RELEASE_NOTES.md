@@ -5,6 +5,21 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.19.0
+
+- One wish can now be several apps that work together, with one chat: a TV app with the iPhone app that controls it,
+  or a Mac, iPhone, Android and TV app side by side. A wish that could be for more than one device, and doesn't say
+  which, asks you first, and "make it work on my TV too" adds an app without rewriting the one you have.
+- The apps of a wish see each other and send each other messages, and phones talk straight to the TV, so a phone can
+  hand the TV a game, a photo or a song.
+- Share a whole wish: every app in it goes in the file, TV apps included.
+- A new app's first build reads as chapters in the chat: each part of the plan, ticked as it's done, with what was
+  said and done under it, and Lamp's question where it was asked.
+- Xbox games have sound, and Xbox apps play sound from the start instead of after the first button press.
+- A new starter wish, New York: Mr.doob's Slop New York, all of Manhattan to explore on foot, by car, by bike or by
+  helicopter. It takes Drive Anywhere's place on new desks; add it from Starter wishes at the end of the desk.
+- A wish made by a newer Lamp is left as it is, shown faded on the desk, instead of being opened as an empty one.
+
 ## 0.18.11
 
 - Share a wish as a link: Share Link… shows you exactly what will be public, then copies a lamp.dev link with a preview
