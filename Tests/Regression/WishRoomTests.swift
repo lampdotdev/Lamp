@@ -176,6 +176,30 @@ final class WishRoomTests: XCTestCase {
         }
     }
 
+    /// Someone who saw a wish's tag on the network can start handshakes they can't finish: from one address, no more
+    /// than eight sockets wait unproven at once, through the hello and the proof alike.
+    func testOneAddressHoldsNoMoreThanEightUnprovenSockets() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let tag = WishChannel.tag(for: SymmetricKey(data: key)).base64EncodedString()
+        var waiting: [URLSessionWebSocketTask] = []
+        for _ in 0..<8 {
+            let socket = URLSession.shared.webSocketTask(with: address)
+            socket.resume()
+            try await socket.send(.string(Self.json(["t": "hello", "tag": tag, "peer": "tv", "nonce": WishChannel.random(16).base64EncodedString()])))
+            guard case .string(let text) = try await socket.receive() else { return XCTFail("no challenge") }
+            XCTAssertEqual(Self.parse(text)?["t"] as? String, "challenge")
+            waiting.append(socket)
+        }
+        defer { for socket in waiting { socket.cancel(with: .goingAway, reason: nil) } }
+        // The ninth from the same address isn't taken at all: no challenge comes.
+        let ninth = URLSession.shared.webSocketTask(with: address)
+        ninth.resume()
+        try? await ninth.send(.string(Self.json(["t": "hello", "tag": tag, "peer": "tv", "nonce": WishChannel.random(16).base64EncodedString()])))
+        let answered = try? await ninth.receive()
+        if case .string(let text)? = answered { XCTFail("a ninth unproven socket was answered: \(text)") }
+    }
+
     func testANewKeyOrTheRoomsEndLetsItsMembersGo() async throws {
         let (relay, address) = try await start()
         defer { relay.stop() }

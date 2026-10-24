@@ -148,7 +148,7 @@ public final class Relay: @unchecked Sendable {
     /// Each room by its tag, which is all a hello says of which wish it's for.
     private var tags: [Data: String] = [:]
     /// Sockets past their hello and not yet in a room: proving they hold the wish's key.
-    private var proving: [ObjectIdentifier: RelayPeer] = [:]
+    private var proving: [ObjectIdentifier: (peer: RelayPeer, from: String)] = [:]
     /// Who is in a room, each time that changes: the room's key and its members (`peer`, `kind`, `name`, `device`, `since`).
     public var onRoomChanged: @Sendable (_ room: String, _ members: [[String: Any]]) -> Void = { _, _ in }
     /// Sockets not yet past their hello: held here, since nothing else holds them until they're a player or a host.
@@ -232,7 +232,7 @@ public final class Relay: @unchecked Sendable {
             for room in Array(self.rooms.keys) { self.endRoom(room) }
             for waiting in self.greeting.values { waiting.peer.close(code: 1001) }
             self.greeting = [:]
-            for waiting in self.proving.values { waiting.close(code: 1001) }
+            for waiting in self.proving.values { waiting.peer.close(code: 1001) }
             self.proving = [:]
             self.ticker?.cancel()
             self.ticker = nil
@@ -315,7 +315,10 @@ public final class Relay: @unchecked Sendable {
             default: from = "\(host)"
             }
         }
-        guard greeting.count + proving.count < Self.greetingLimit.all, greeting.values.filter({ $0.from == from }).count < Self.greetingLimit.each else {
+        // Unproven sockets are held to these from their hello through a wish's handshake, which a tag seen on the
+        // network is enough to start.
+        guard greeting.count + proving.count < Self.greetingLimit.all,
+              greeting.values.filter({ $0.from == from }).count + proving.values.filter({ $0.from == from }).count < Self.greetingLimit.each else {
             return connection.cancel()
         }
         let peer = RelayPeer(connection: connection)
@@ -328,7 +331,7 @@ public final class Relay: @unchecked Sendable {
             guard let self, let peer, !greeted else { return }
             greeted = true
             self.greeting[id] = nil
-            self.hello(peer, text: text)
+            self.hello(peer, text: text, from: from)
         }
         peer.start(on: queue)
         startTicking()
@@ -339,10 +342,10 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
-    private func hello(_ peer: RelayPeer, text: String) {
+    private func hello(_ peer: RelayPeer, text: String, from: String) {
         guard let hello = Self.parse(text), hello["t"] as? String == "hello" else { return peer.close(code: 4003) }
         // A wish's app names its wish by its tag alone; a TV app's game is named by its app, with a credential for it.
-        if hello["tag"] != nil { return prove(peer, hello: hello) }
+        if hello["tag"] != nil { return prove(peer, hello: hello, from: from) }
         guard let app = hello["app"] as? String, let game = games[app],
               let claim = ControllerToken.check(hello["credential"] as? String, kinds: [.host, .join, .controller], app: app,
                                                 generation: game.session.generation, key: key)
@@ -357,7 +360,7 @@ public final class Relay: @unchecked Sendable {
     /// id, with a nonce; the relay answers with its own nonce and its proof, and lets it into the room once its proof
     /// checks and its first sealed message says what device it is. Anything else, or nothing for a few seconds, and the
     /// socket goes, with one code for all of it so nobody learns which part was wrong.
-    private func prove(_ peer: RelayPeer, hello: [String: Any]) {
+    private func prove(_ peer: RelayPeer, hello: [String: Any], from: String) {
         guard let tag = (hello["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), tag.count == WishChannel.tagSize,
               let roomKey = tags[tag], let room = rooms[roomKey],
               let id = hello["peer"] as? String, WishChannel.isName(id), room.apps[id] != nil,
@@ -366,7 +369,7 @@ public final class Relay: @unchecked Sendable {
         let serverNonce = WishChannel.random(WishChannel.nonceSize)
         let transcript = WishChannel.transcript(tag: tag, client: id, server: WishChannel.relayName, clientNonce: clientNonce, serverNonce: serverNonce)
         let handle = ObjectIdentifier(peer)
-        proving[handle] = peer
+        proving[handle] = (peer, from)
         peer.onClose = { [weak self] in self?.proving[handle] = nil }
         peer.send(Self.json(["t": "challenge", "peer": WishChannel.relayName, "nonce": serverNonce.base64EncodedString(),
                              "proof": WishChannel.serverProof(key: room.key, transcript: transcript).base64EncodedString()]))
@@ -392,7 +395,7 @@ public final class Relay: @unchecked Sendable {
         }
         peer.onBinary = { [weak peer] _ in peer?.close(code: 4003) }
         queue.asyncAfter(deadline: .now() + 5) { [weak self, weak peer] in
-            guard let self, let peer, self.proving[handle] === peer else { return }
+            guard let self, let peer, self.proving[handle]?.peer === peer else { return }
             self.proving[handle] = nil
             peer.close(code: 4001)
         }

@@ -1133,7 +1133,7 @@ extension TVTemplate {
           // Lamp through its bridge; a TV asks Lamp for it sealed to a key pair it makes, just after Lamp put the app
           // there (`claim`), and keeps it.
           var installed = /*LAMP_INSTALL*/null;
-          var key = null, claiming = null;
+          var key = null, claiming = null, claims = 0;
 
           function emit(name, args) {
             var list = on[name];
@@ -1328,7 +1328,15 @@ extension TVTemplate {
             if (!started || socket) return;
             if (!key && !bridge) {
               if (!installed) { setState('away', 'This copy wasn\'t opened from Lamp, so it can\'t reach the wish\'s other apps. Open it from Lamp on your Mac.'); return; }
-              claim().then(function (fresh) { key = fresh; open(); }, function (error) { setState('away', error.message); });
+              // Tried again while the page is open, less often each time, since the claim stays open for a while after
+              // Lamp put the app here and the network may just have been down.
+              claim().then(function (fresh) { key = fresh; claims = 0; open(); }, function (error) {
+                if (!started) return;
+                setState('away', error.message);
+                claims = Math.min(claims + 1, 5);
+                clearTimeout(askTimer);
+                askTimer = setTimeout(open, 2000 * Math.pow(2, claims));
+              });
               return;
             }
             if (address && key) return connect();
