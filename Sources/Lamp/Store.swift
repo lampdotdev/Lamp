@@ -2100,10 +2100,6 @@ final class Store: ObservableObject {
             return "It's already played on \(GameKit.spoken(places))."
         }
         if places.contains(.device), Integrations.integration(GameKit.xbox) == nil { return "This copy of Lamp has no way to reach an Xbox." }
-        // The kit has no host on Android yet: a C++ game stays off it.
-        if places.contains(.android), !current.openPlaces.contains(.android), GameKit.engine(current) == .native {
-            return "A game written in C++ can't be played on Android yet; only one drawn with three.js can. It's still played on \(GameKit.spoken(current.openPlaces))."
-        }
         for place in gone where place == .ios { await quit(current, only: .ios) }
         guard let now = self.current(current), let index = projects.firstIndex(where: { $0.id == now.id }) else { return "Lamp can't find the game." }
         var changed = now
@@ -6349,6 +6345,15 @@ final class Store: ObservableObject {
         let game = GameKit.isGame(project)
         // A game's shaders are compiled with a tool Lamp fetches the first time, a small download with nothing to accept.
         if game, GameKit.engine(project) == .native {
+            // A C++ game on Android is built with Google's NDK, fetched the first time one goes there (about 1 GB).
+            if project.onAndroid, AndroidTools.isReady, !AndroidTools.hasNDK {
+                note("Getting Android's tools for games in C++…", for: project)
+                log(project, .status, "Getting Android's tools for games in C++, about 1 GB. This happens once.")
+                do { try await AndroidTools.installNDK() } catch {
+                    log(project, .error, error.localizedDescription)
+                    return error.localizedDescription
+                }
+            }
             do { try await GameKit.toolsForApple() } catch {
                 log(project, .error, error.localizedDescription)
                 return error.localizedDescription
@@ -6356,7 +6361,8 @@ final class Store: ObservableObject {
         }
         let command = universal || game ? "./build.sh \(project.onIOS ? "ios" : project.onAndroid ? "android" : "mac")" : "./build.sh"
         // An Android app's build is Gradle's, with Google's tools where Lamp put them (`AndroidTools.environment`).
-        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.onAndroid ? AndroidTools.buildEnvironment
+        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team]
+            : project.onAndroid ? AndroidTools.buildEnvironment.merging(game ? WindowsTools.buildEnvironment : [:]) { $1 }
             : game && GameKit.engine(project) == .native ? WindowsTools.buildEnvironment : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.

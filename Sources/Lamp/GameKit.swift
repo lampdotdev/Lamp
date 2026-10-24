@@ -159,14 +159,16 @@ enum GameKit {
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
         for file in appleFiles + webFiles { hasher.update(data: Data((file.path + file.text).utf8)) }
-        hasher.update(data: Data((buildSh + packageSwift + webBuildSh + webPackageSwift).utf8))
+        hasher.update(data: Data((nativeBuildSh + packageSwift + webBuildSh + webPackageSwift).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }()
 
     /// Every path Lamp owns in a game, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
-        guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path) + common }
+        guard engine(project) == .web else {
+            return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path) + common + GameAndroid.paths(for: project)
+        }
         return webFiles.map(\.path) + ["\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
             + GameAndroid.paths(for: project)
     }
@@ -203,7 +205,8 @@ enum GameKit {
         }
         try Template.put(stamp, at: project.dir.appendingPathComponent("\(folder)/kit.stamp"), for: project)
         for file in appleFiles { try Template.write(file.text, to: file.path, for: project) }
-        try Template.write(buildSh, to: "build.sh", for: project, executable: true)
+        if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
+        try Template.write(nativeBuildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
         try Template.write("A game made with Lamp: C++ in Game/ against Lamp's game kit in Lamp/.\nengine: native\n", to: marker, for: project)
         // A game made before games were a kind of their own was marked as a device app's.
@@ -301,6 +304,12 @@ enum GameKit {
 
     """
 
+    /// A C++ game's build.sh: `buildSh` with Android's place first, its build Gradle's around the NDK's library.
+    static var nativeBuildSh: String {
+        buildSh.replacingOccurrences(of: "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n",
+                                     with: GameAndroid.buildSteps(.native) + "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n")
+    }
+
     /// A three.js game's build.sh: the C++ game's, with nothing compiled of the game's own and its page copied into the
     /// app (Contents/Resources/Web on the Mac, Web/ at an iOS bundle's top), where the app's web view reads it.
     static var webBuildSh: String {
@@ -310,7 +319,7 @@ enum GameKit {
         }
         var script = buildSh
         // Android first: its build is Gradle's, with nothing of Swift's.
-        script = swap(script, "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n", GameAndroid.buildSteps + "if [[ \"$PLACE\" == \"ios\" ]]; then\n")
+        script = swap(script, "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n", GameAndroid.buildSteps(.web) + "if [[ \"$PLACE\" == \"ios\" ]]; then\n")
         script = swap(script, "  sh Lamp/build.sh mac\n", "")
         script = swap(script, " -Xlinker \"$PWD/build/ios-sim/libgame.a\")", ")")
         script = swap(script, " -Xlinker \"$PWD/build/mac/libgame.a\")", ")")
@@ -638,7 +647,7 @@ extension Agent.Rules {
     static let gameHeader = """
     You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
     or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone or \
-    tablet (a game drawn with three.js) and on the person's Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
+    tablet and on the person's Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
     sound. You try it in a preview on this Mac, the same code drawn out of sight. The request's device line says where \
     it's played and what that allows: never say it's on a device it isn't on. Read APP.md first for context.
     """
@@ -708,10 +717,10 @@ extension Agent.Rules {
     Game/, and what it loads in Assets/. Every .cpp and .glsl in Game/ is built. Lamp/, Sources/, build.sh and \
     Package.swift are Lamp's (the kit and the app around the game, written before every build): read Lamp/, never \
     edit or delete any of them. Lamp builds by itself when you look and, at the end of your turn, opens the game \
-    where Try On points (the Mac, a simulator or the Xbox), so don't run the build or reach a device yourself, and \
-    leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it on their iPhone, iPad or \
-    Xbox, call make_app_for with every place it's to be played (["mac", "iphone"], ["mac", "xbox-one"]…); it stays the \
-    same game.
+    where Try On points (the Mac, a simulator, the Android emulator or the Xbox), so don't run the build or reach a \
+    device yourself, and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it on \
+    their iPhone, iPad, Android phone or Xbox, call make_app_for with every place it's to be played (["mac", \
+    "iphone"], ["mac", "android"], ["mac", "xbox-one"]…); it stays the same game.
     """
 
     static let gameKit = """
@@ -720,7 +729,7 @@ extension Agent.Rules {
     `frame->swapchain`, then sg_end_pass and sg_commit) and is called about 60 times a second, always at 1920x1080 \
     (scaled to the window or screen, so lay the game out for that size). Lamp's host makes the device and presents \
     each frame: never present, sleep, wait or loop for time yourself, and move things by `frame->dt`. Draw with \
-    sokol_gfx (Lamp/sokol_gfx.h: Metal on Apple's devices, D3D11 on the console); shapes from sokol_shape.h (boxes, \
+    sokol_gfx (Lamp/sokol_gfx.h: Metal on Apple's devices, OpenGL ES 3 on Android, D3D11 on the console); shapes from sokol_shape.h (boxes, \
     spheres, cylinders, tori, planes), text with sokol_debugtext.h (on a canvas a third of the screen, so letters are \
     24 px), lines and quick 2D with sokol_gl.h, maths with HandmadeMath.h (right-handed, `HMM_Perspective_RH_ZO`), glTF \
     models with cgltf.h (.glb, read through `lamp_asset` and `cgltf_parse` with the data) and pictures with \
@@ -731,7 +740,7 @@ extension Agent.Rules {
     `frame->pads[0]`: sticks -1 to 1 with up positive and the dead zone already out, triggers 0 to 1, buttons as \
     LAMP_A… bits in `down`, `pressed` and `released`. Every place gives the game that same pad: a controller connected \
     to the device, the Mac's keyboard (WASD or the arrows the left stick, IJKL the right, Space or Return A, Esc B, F X, \
-    R Y, Q and E the bumpers, Z and C the triggers, P Menu, Tab View) or the touch controls on an iPhone or iPad (a \
+    R Y, Q and E the bumpers, Z and C the triggers, P Menu, Tab View) or the touch controls on a phone or tablet (a \
     left stick, and the buttons `lamp_touch_buttons` names in game_init: A, B and Menu unless you say otherwise; keep \
     a game playable with those few on a phone). B is the game's, for back or cancel, and Menu for pause. Nothing \
     outside the kit: no Windows or Apple headers, no threads, no files but `lamp_asset`, `lamp_save` and `lamp_load`, \

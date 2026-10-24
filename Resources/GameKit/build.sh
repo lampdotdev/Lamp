@@ -6,6 +6,7 @@
 #   sh Lamp/build.sh mac       the game for the Mac app: build/mac/libgame.a, which ./build.sh links into the app
 #   sh Lamp/build.sh ios-sim   the same for the iPhone and iPad simulator: build/ios-sim/libgame.a
 #   sh Lamp/build.sh ios       the same for an iPhone or iPad: build/ios/libgame.a
+#   sh Lamp/build.sh android   the same for Android, with the NDK in $ANDROID_NDK: build/android-jni/<abi>/libgame.so
 #   sh Lamp/build.sh xbox      the console's app: build/xbox/App.exe, and build/xbox.zip with it and Assets/
 #
 # The game is every .cpp and .c in Game/, and every .glsl there is a shader, compiled by sokol-shdc into
@@ -24,7 +25,7 @@ for shader in Game/*.glsl; do
   name=$(basename "$shader")
   out="build/shaders/$name.h"
   if [ ! -f "$out" ] || [ "$shader" -nt "$out" ] || [ "$tools/bin/sokol-shdc" -nt "$out" ] || [ Lamp/build.sh -nt "$out" ]; then
-    "$tools/bin/sokol-shdc" --input "$shader" --output "$out" --slang hlsl5:metal_macos:metal_ios:metal_sim >&2 || { rm -f "$out"; exit 1; }
+    "$tools/bin/sokol-shdc" --input "$shader" --output "$out" --slang hlsl5:metal_macos:metal_ios:metal_sim:glsl300es >&2 || { rm -f "$out"; exit 1; }
   fi
 done
 
@@ -51,6 +52,33 @@ if [ "$target" = preview ]; then
   done
   clang++ $objects -o "$out/lamp_preview" -framework Foundation -framework Metal -framework QuartzCore -framework ImageIO \
     -framework CoreGraphics -framework UniformTypeIdentifiers
+  exit 0
+fi
+
+# Android: the game, the kit and its host as one shared library for each kind of processor (arm64 for phones and the
+# emulator on Apple silicon, x86_64 for the emulator on Intel), which Lamp's Android app loads.
+if [ "$target" = android ]; then
+  ndk="${ANDROID_NDK:?Lamp gives the build the NDK for a game on Android}"
+  bin="$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+  for abi in arm64-v8a x86_64; do
+    case "$abi" in arm64-v8a) triple=aarch64-linux-android26 ;; *) triple=x86_64-linux-android26 ;; esac
+    out="build/android/$abi"
+    mkdir -p "$out" "build/android-jni/$abi"
+    flags="--target=$triple -std=c++20 -O2 -g0 -fPIC -DLAMP_ANDROID=1 -DSOKOL_GLES3 -ILamp -Ibuild/shaders -IGame"
+    fresh "$out/lamp_kit.o" Lamp/lamp_kit.cpp || "$bin/clang++" $flags -w -c Lamp/lamp_kit.cpp -o "$out/lamp_kit.o"
+    fresh "$out/lamp_android.o" Lamp/lamp_android.cpp || "$bin/clang++" $flags -w -c Lamp/lamp_android.cpp -o "$out/lamp_android.o"
+    fresh "$out/lamp_sound.o" Lamp/lamp_sound.cpp || "$bin/clang++" $flags -w -c Lamp/lamp_sound.cpp -o "$out/lamp_sound.o"
+    objects="$out/lamp_kit.o $out/lamp_android.o $out/lamp_sound.o"
+    for source in Game/*.cpp Game/*.c; do
+      [ -e "$source" ] || continue
+      object="$out/$(basename "$source").o"
+      case "$source" in *.c) "$bin/clang" --target=$triple -std=c17 -O2 -g0 -fPIC -DLAMP_ANDROID=1 -ILamp -Ibuild/shaders -IGame -c "$source" -o "$object" ;;
+                        *) "$bin/clang++" $flags -c "$source" -o "$object" ;; esac
+      objects="$objects $object"
+    done
+    "$bin/clang++" --target=$triple -shared -static-libstdc++ -Wl,--no-undefined -o "build/android-jni/$abi/libgame.so" $objects \
+      -landroid -llog -lEGL -lGLESv3 -laaudio
+  done
   exit 0
 fi
 

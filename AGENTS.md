@@ -895,10 +895,13 @@ call gives "game" for a 3D game or one played with a controller or on an Xbox (a
 tapping stays a Mac or iPhone app), with the devices it's played on beside it. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
 `LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator for
-now: Lamp doesn't put a game on the person's own phone yet) and Android (`.android`, a three.js game only: Lamp's Android app in the game's `Lamp/Android` (never `Android/`, which `Parts.folders` reads as a wish's Android app), `GameAndroid`, a WebView
-serving `Web/` from the app's assets, reading the controllers natively and handing them to the page's `lampNativePad`,
-built and installed like any Android app of Lamp's; a C++ game has no Android host, since the NDK isn't among Lamp's
-tools) and the Xbox (`.device`, with `LampProject.integration`
+now: Lamp doesn't put a game on the person's own phone yet) and Android (`.android`: Lamp's Android app in the game's `Lamp/Android` (never `Android/`, which `Parts.folders` reads as
+a wish's Android app), `GameAndroid`, built and installed like any Android app of Lamp's. For three.js it's a WebView
+serving `Web/` from the app's assets, the controllers read natively and handed to the page's `lampNativePad`; for C++
+it's a SurfaceView drawn by the kit's Android host (`lamp_android.cpp`: EGL and OpenGL ES 3 at 1920x1080, AAudio,
+assets and saves through Android's own calls), built with Google's NDK into `libgame.so` for arm64 and x86_64, with
+the touch controls drawn natively and each controller its own pad; the NDK, about 1 GB, is fetched by Google's package
+manager the first time a C++ game goes on Android, `AndroidTools.installNDK`) and the Xbox (`.device`, with `LampProject.integration`
 "xbox-one:game", the Xbox integration's `kinds.game`, which is only the package a game goes there as). `make_app_for` on
 a game sets its places (`Store.gamePlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind;
 Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
@@ -957,7 +960,7 @@ the controller's moves (`hold <frames> <sticks> <triggers> <buttons>`, `shot <na
 sokol's draws and vertices counted. `build.sh xbox` compiles with clang-cl for x86_64-pc-windows-msvc against the
 Windows SDK and links with lld-link as an app-container exe with a static C++ runtime (so the console needs no package
 of Microsoft's beside it), and zips App.exe with Assets/; `build.sh preview` compiles with the Mac's clang. Shaders are
-annotated GLSL compiled by sokol-shdc into one header with HLSL and Metal; the console compiles the HLSL at launch with
+annotated GLSL compiled by sokol-shdc into one header with HLSL, Metal and GLSL ES; the console compiles the HLSL at launch with
 its own d3dcompiler. Both builds, and every play of the preview, run in the app's sandbox (`Sandbox.run`).
 
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`); `use_app` takes

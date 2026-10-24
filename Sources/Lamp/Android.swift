@@ -59,6 +59,7 @@ enum AndroidTools {
     /// sandbox refuses Lamp's server anyway, so its port isn't passed on.
     static var buildEnvironment: [String: String] {
         var env = environment
+        if hasNDK { env["ANDROID_NDK"] = ndkFolder.path }
         env["ANDROID_USER_HOME"] = Edition.sharedCachesFolder.appendingPathComponent("android-home").path
         env["ANDROID_ADB_SERVER_PORT"] = nil
         env["ADB_LOCAL_TRANSPORT_MAX_PORT"] = nil
@@ -72,6 +73,36 @@ enum AndroidTools {
     static let buildTools = "36.0.0"
     static let platformLevel = 36
     static let systemImage = "system-images;android-\(platformLevel);google_apis;\(isArm ? "arm64-v8a" : "x86_64")"
+    /// The NDK, for a game in C++ on Android: fetched by Google's package manager the first time such a game goes there
+    /// (`installNDK`), never with the rest, since nothing else needs it and it's the biggest piece.
+    static let ndkVersion = "30.0.16248370"
+    static var ndkFolder: URL { sdkFolder.appendingPathComponent("ndk/\(ndkVersion)") }
+    static var hasNDK: Bool {
+        !Pretend.isMissing("ndk")
+            && FileManager.default.isExecutableFile(atPath: ndkFolder.appendingPathComponent("toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++").path)
+    }
+
+    @MainActor private static var fetchingNDK: Task<Void, Error>?
+
+    /// Gets the NDK when it isn't here, with Google's package manager, which checks what it downloads; builds that ask
+    /// while it's coming wait for the same download. Google's terms for it were accepted with the rest of Android's.
+    @MainActor static func installNDK() async throws {
+        if hasNDK { return }
+        guard hasCommandLineTools, hasJDK else { throw Failure(message: "Android's tools aren't set up yet.") }
+        if let fetchingNDK { return try await fetchingNDK.value }
+        let task = Task {
+            let accept = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --licenses > /dev/null 2>&1; \"$LAMP_SDKMANAGER\" --install \"ndk;\(ndkVersion)\" 2>&1"
+            var output: [String] = []
+            let status = await Shell.run(accept, cwd: folder, env: environment.merging(["LAMP_SDKMANAGER": sdkmanager]) { $1 }, login: false) { output.append($0) }
+            guard status == 0, hasNDK else {
+                throw Failure(message: "Google's tools couldn't download the NDK.\n\n" + output.suffix(4).joined(separator: "\n"))
+            }
+        }
+        fetchingNDK = task
+        defer { fetchingNDK = nil }
+        try await task.value
+    }
+
     static let packages = ["platform-tools", "build-tools;\(buildTools)", "platforms;android-\(platformLevel)", "emulator", systemImage]
     /// The emulator Lamp makes: one phone, named so Try On can say which.
     static let avdName = "Lamp Phone"

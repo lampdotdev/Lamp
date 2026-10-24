@@ -1862,8 +1862,7 @@ private struct TryOnChoices: View {
             Divider()
             deviceChoices
         }
-        // Android only for a game drawn with three.js: the C++ kit has no host there yet.
-        let android = !places.contains(.android) && GameKit.engine(project) == .web
+        let android = !places.contains(.android)
         if !places.contains(.ios) || android || !places.contains(.device) {
             Divider()
             if !places.contains(.ios) { Button("Play on iPhone and iPad Too") { store.addPlace(project, .ios) } }
