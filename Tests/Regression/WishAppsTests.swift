@@ -100,6 +100,14 @@ final class WishAppsKeptTests: XCTestCase {
         }
     }
 
+    /// A wish waiting for two apps (an iPhone app and an Android app, both toolchains missing) follows each setup on
+    /// its own: the setups under way are kept per app and kind, where the app at the root's is kept per app.
+    func testEachWaitingAppsSetupIsFollowedOnItsOwn() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .tv, in: root)
+        XCTAssertNotEqual(IPhoneSetupLine.key(wish, wanted: .iphone, part: true), IPhoneSetupLine.key(wish, wanted: .android, part: true))
+        XCTAssertEqual(IPhoneSetupLine.key(wish, wanted: .iphone, part: false), wish.id)
+    }
+
     /// An Android app in Android/ is one of the wish's parts, found from its files as the others are.
     func testAnAndroidPartIsFoundInItsFolder() throws {
         let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)

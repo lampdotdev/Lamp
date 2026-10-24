@@ -469,14 +469,19 @@ struct IPhoneSetupLine: View {
     /// The kind's setup, or the iPhone's for a line about a kind that has none.
     static func setup(for wanted: Platform) -> SetupLater { wanted.target.setup.later ?? Target.iphone.setup.later! }
 
+    /// The setups under way, one per app and, for a wish's other app, per kind: a wish waiting for an iPhone app and
+    /// an Android app follows each setup on its own.
     @MainActor final class Asked: ObservableObject {
         static let shared = Asked()
         @Published var ids: Set<String> = []
     }
 
+    /// What a setup under way is kept as: the app, and for one of a wish's other apps its kind too.
+    static func key(_ project: LampProject, wanted: Platform, part: Bool) -> String { part ? project.id + "." + wanted.rawValue : project.id }
+
     var body: some View {
         ChatLook.ActionLine(symbol: Self.setup(for: wanted).symbol, text: Self.text(project.name, wanted: wanted, part: part), button: "See What's Needed…",
-                            disabled: asked.ids.contains(project.id) || Self.isOff(for: project),
+                            disabled: asked.ids.contains(Self.key(project, wanted: wanted, part: part)) || Self.isOff(for: project, wanted: wanted, part: part),
                             action: setUp)
     }
 
@@ -499,9 +504,9 @@ struct IPhoneSetupLine: View {
 
     /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
     /// waiting or running. The in-app chat's line asks the same.
-    @MainActor static func isOff(for project: LampProject) -> Bool {
+    @MainActor static func isOff(for project: LampProject, wanted: Platform = .iphone, part: Bool = false) -> Bool {
         let store = Store.shared
-        return Asked.shared.ids.contains(project.id)
+        return Asked.shared.ids.contains(key(project, wanted: wanted, part: part))
             || (store.queued[project.id] ?? []).contains { requests.contains($0.text) }
             || (store.busy.contains(project.id) && requests.contains { store.isRunning($0, for: project) })
     }
@@ -512,7 +517,7 @@ struct IPhoneSetupLine: View {
     /// opens the setup itself for one of a wish's other apps (`Store.recordNeeds`), so finishing the setup there adds
     /// the app without a click in the chat. One at a time per app.
     @MainActor static func follow(_ project: LampProject, wanted: Platform, part: Bool) {
-        let later = setup(for: wanted), id = project.id
+        let later = setup(for: wanted), id = key(project, wanted: wanted, part: part)
         guard !Asked.shared.ids.contains(id) else { return }
         Asked.shared.ids.insert(id)
         // Asked again each time: an app that's gone, no longer only a Mac app, or a wish that has the app by now, has

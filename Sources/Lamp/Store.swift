@@ -1757,16 +1757,18 @@ final class Store: ObservableObject {
     /// Adds a part of another kind to a wish (`Parts`): a folder of its own inside the wish's, with its meta.json and
     /// its kind's scaffold, which the wish's next version keeps. Nil, after saying why in `problem`, when this Mac can't
     /// build that kind yet or the folder can't be made.
-    func addPart(_ kind: Platform, to wish: LampProject) async -> (part: LampProject?, problem: String?) {
-        guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.") }
-        if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil) }
-        guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.") }
-        if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem) }
+    /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
+    /// and not tried again by itself.
+    func addPart(_ kind: Platform, to wish: LampProject) async -> (part: LampProject?, problem: String?, setup: Bool) {
+        guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
+        if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
+        guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
+        if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem, true) }
         let folder = Parts.folder(for: kind)
         let dir = wish.dir.appendingPathComponent(folder)
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing.
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
-            return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.")
+            return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.", false)
         }
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
@@ -1775,11 +1777,11 @@ final class Store: ObservableObject {
             try Template.saveMeta(part)
             try Template.fill(part)
         } catch {
-            return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)")
+            return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)", false)
         }
         setApps(wish, Parts.listing(kind, madeFor: wish, parts: parts(of: wish)))
         reload()
-        return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil)
+        return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil, false)
     }
 
     /// Takes a part away from a wish: quit wherever it's open, and its folder gone (the wish's versions still have it).
@@ -2837,21 +2839,23 @@ final class Store: ObservableObject {
     private func makeWaitingParts(of wish: LampProject) async {
         guard let wish = current(wish), !wish.isPart else { return }
         for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
-            let (part, problem) = await addPart(app.kind, to: wish)
+            let (part, problem, setup) = await addPart(app.kind, to: wish)
             if let part { log(wish, .status, "\(wish.name) has \(Parts.name(of: part.platform)) to go with it now.") }
-            else if let problem { recordNeeds(problem, for: app.kind, of: wish) }
+            else if let problem { recordNeeds(problem, for: app.kind, of: wish, setup: setup) }
         }
     }
 
-    /// What stops one of a wish's apps being made, kept with the app in the wish's list, and said once in the chat: with
-    /// the setup a click away when the kind has one, else as an error.
-    private func recordNeeds(_ problem: String, for kind: Platform, of wish: LampProject) {
+    /// What stops one of a wish's apps being made, kept with the app in the wish's list, and said once in the chat. For
+    /// this Mac's setup (`setup`) the line has it a click away, and the setup window the check opened is followed, so
+    /// finishing it there adds the app; anything else (a folder in the way) is said as an error, and the app waits for
+    /// the agent to ask for it again once the person has dealt with it, never for a setup that's already done, which
+    /// would ask again at once, turn after turn.
+    private func recordNeeds(_ problem: String, for kind: Platform, of wish: LampProject, setup: Bool) {
         guard let wish = current(wish) else { return }
         setApps(wish, Parts.setting(WishApp(kind: kind, needs: problem), in: wish.apps))
         let line = IPhoneSetupLine.lineText(kind, part: true)
-        if kind.target.setup.later != nil {
+        if setup, kind.target.setup.later != nil {
             if !(logs[wish.id] ?? []).contains(where: { $0.kind == .iphoneSetup && $0.text == line }) { log(wish, .iphoneSetup, line) }
-            // The kind's check opened its setup window: followed through there, the app is added without a click in the chat.
             IPhoneSetupLine.follow(wish, wanted: kind, part: true)
         } else {
             log(wish, .error, "T\(Parts.name(of: kind).dropFirst()) isn't made yet: \(problem)")
@@ -5157,9 +5161,9 @@ final class Store: ObservableObject {
                 continue
             }
             if parts(of: wish).contains(where: { $0.platform == wanted }) { continue }
-            let (part, problem) = await addPart(wanted, to: wish)
+            let (part, problem, setup) = await addPart(wanted, to: wish)
             guard let part else {
-                recordNeeds(problem ?? "Lamp couldn't make it.", for: wanted, of: wish)
+                recordNeeds(problem ?? "Lamp couldn't make it.", for: wanted, of: wish, setup: setup)
                 said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it.") Tell the person in a sentence; " +
                             "build the rest. Lamp keeps it on the wish's list and makes it once that's done.")
                 continue
