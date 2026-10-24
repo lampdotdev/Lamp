@@ -371,50 +371,101 @@ enum Gallery {
 
     // MARK: Build
 
+    /// A new app's first build as its plan's chapters (`BuildChapters`), under the bar that says where it is, from the
+    /// chat's own segments of made-up lines: before the plan, a part going on, asking first and once it's made.
     private static let buildEntries: [Entry] = [
-        // A new app before the model has first answered, which has no plan yet.
-        build("Just started") { _ in },
-        build("Working on its plan") {
+        firstBuild("Before the plan", Array(tipBuild.prefix(4)), plan: []) { $0.sketch = ["Type in the bill", "Pick a tip"] },
+        firstBuild("Asking first", tipAsk, plan: []) { $0.wait() },
+        firstBuild("Part 2 of 3", Array(tipBuild.prefix(12)), plan: tipPlan) {
             $0.activity = "Working on the interface"
-            $0.plan = [PlanPart(id: 0, title: "Type in the bill", done: true, files: ["BillField.swift"]),
-                       PlanPart(id: 1, title: "Pick a tip percent", done: false, files: ["TipPicker.swift"]),
-                       PlanPart(id: 2, title: "See the tip and the total", done: false, files: ["Totals.swift"])]
-            $0.files = ["BillField.swift"]
-            $0.currentFile = "TipPicker.swift"
+            $0.reached = 1
+            $0.plan[0].done = true
         },
-        build("Ready") { $0.finish(worked: true) },
-        build("Didn't finish") { $0.finish(worked: false) },
-        build("Asking first") { $0.wait() },
-        // A long first build: the steps so far behind one line under the plan, as "Worked for…" holds them after.
-        Entry(group: "Build card", name: "With its steps so far") {
-            var progress = TurnProgress(newApp: true)
-            progress.activity = "Building…"
-            progress.activitySince = Date().addingTimeInterval(-95)
-            progress.plan = [PlanPart(id: 0, title: "The big number and the + button", done: true, files: ["Counter.swift"]),
-                             PlanPart(id: 1, title: "Remembering the count after closing", done: true, files: ["Model.swift"])]
-            let steps = [LogLine(kind: .status, text: "Ran: cat APP.md", said: "Reading how the app is laid out"),
-                         LogLine(kind: .status, text: "Working on the interface"),
-                         LogLine(kind: .status, text: "Ran: ./gradlew assembleDebug", said: "Building the app"),
-                         LogLine(kind: .status, text: "Ran: ./gradlew assembleDebug", said: "Building the app again")]
-            return AnyView(BuildCardView(title: "Droid Lab", name: "Droid Lab", iconReady: false, progress: progress, steps: steps) {
-                BlueprintIcon(letter: "D", size: 44)
-            })
+        firstBuild("Ready", tipBuild + [tipSummary, LogLine(kind: .status, text: "Tip Calculator is ready")], plan: tipPlan) {
+            $0.chaptersClosed = true
+            $0.finish(worked: true)
         },
     ]
 
-    private static func build(_ name: String, _ change: @escaping (inout TurnProgress) -> Void) -> Entry {
-        Entry(group: "Build card", name: name) {
+    private static let tipPlan = [PlanPart(id: 0, title: "Type in the bill", done: false, files: ["BillField.swift"]),
+                                  PlanPart(id: 1, title: "Pick a tip percent", done: false, files: ["TipPicker.swift"]),
+                                  PlanPart(id: 2, title: "See the tip and the total", done: false, files: ["Totals.swift"])]
+
+    private static func at(_ seconds: TimeInterval) -> Date { Date().addingTimeInterval(seconds - 300) }
+
+    private static func line(_ kind: LogLine.Kind, _ text: String, part: Int?, at seconds: TimeInterval, said: String? = nil) -> LogLine {
+        var line = LogLine(kind: kind, text: text, said: said, at: at(seconds))
+        line.part = part
+        return line
+    }
+
+    private static let tipAsk = [
+        line(.user, "a tip calculator for dinners with friends", part: nil, at: 0),
+        line(.agent, "One thing first, since it changes what I make.", part: nil, at: 6),
+        LogLine(kind: .ask, text: "", ask: Talk.Ask(layout: .steps, questions: [Talk.Question(
+            question: "Do you split the bill too?", options: [option("Just the tip", "percent"), option("Split it", "person.2"),
+                                                          option(TalkCard.youDecide, "wand.and.stars")])])),
+    ]
+
+    private static let tipBuild = [
+        line(.user, "a tip calculator for dinners with friends", part: nil, at: 0),
+        line(.tool, "read App.swift", part: nil, at: 4),
+        line(.tool, "plan", part: nil, at: 9),
+        line(.progress, "Three parts: the bill, the tip, the totals. The bill first.", part: 0, at: 12),
+        line(.tool, "write BillField.swift", part: 0, at: 20, said: "Making the bill field"),
+        line(.tool, "edit App.swift", part: 0, at: 31, said: "Putting the field in the window"),
+        line(.tool, "look_at_app", part: 0, at: 40, said: "Checking the bill field"),
+        line(.status, "Building…", part: 0, at: 41),
+        line(.progress, "The bill goes in. Next, picking the tip.", part: 1, at: 70),
+        line(.tool, "write TipPicker.swift", part: 1, at: 80, said: "Adding the tip buttons"),
+        line(.tool, "look_at_app", part: 1, at: 95, said: "Checking the tip buttons"),
+        line(.status, "Building…", part: 1, at: 96),
+        line(.progress, "Tips work. Now the totals.", part: 2, at: 130),
+        line(.tool, "write Totals.swift", part: 2, at: 140, said: "Showing the tip and total"),
+        line(.tool, "look_at_app", part: 2, at: 160, said: "Checking the totals"),
+        line(.agent, "Tip Calculator is ready. Type the bill, pick a tip, and the total shows under it.", part: 2, at: 190),
+    ]
+
+    private static var tipSummary: LogLine {
+        var summary = LogLine(kind: .summary, text: "Worked for 3m 12s", at: at(192))
+        summary.plan = tipPlan.map(\.title)
+        return summary
+    }
+
+    private static func firstBuild(_ name: String, _ lines: [LogLine], plan: [PlanPart],
+                                   _ change: @escaping (inout TurnProgress) -> Void) -> Entry {
+        Entry(group: "First build", name: name) {
             var progress = TurnProgress(newApp: true)
+            progress.plan = plan
+            progress.started = at(0)
             change(&progress)
-            return AnyView(BuildCardView(title: "Tip Calculator", name: "Tip Calculator", iconReady: false, progress: progress) {
-                BlueprintIcon(letter: "T", size: 44)
+            let shown = LogLine.visible(lines, details: false)
+            let dir = URL(fileURLWithPath: "/nonexistent")
+            return AnyView(VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(Chapters.segments(shown, progress: progress).enumerated()), id: \.offset) { _, segment in
+                        switch segment {
+                        case .lines(let lines): Transcript(lines: lines, dir: dir, busy: false)
+                        case .build(let build):
+                            BuildChapters(build: build, progress: build.live ? progress : nil) { part, now in
+                                if now {
+                                    Transcript(lines: build.parts[part], dir: dir, busy: true, progressShown: true)
+                                    ActivityRow(progress: progress, lines: build.parts[part], dir: dir).padding(.top, 10)
+                                } else {
+                                    Transcript(lines: build.parts[part], dir: dir, busy: false, chapterOf: shown)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(16)
             })
         }
     }
 
     // MARK: Activity
 
-    /// What a turn says it's doing as the wait goes on (`Activity`): the build card and the line under a change, fed
+    /// What a turn says it's doing as the wait goes on (`Activity`): the first build's bar and the line under a change, fed
     /// the same activity and clock, at moments of a long think and a long build, and under the agent's progress lines.
     private static let activityEntries: [Entry] = [
         activity("Thinking, just begun", Activity.thinking, waited: 1),
@@ -501,12 +552,7 @@ enum Gallery {
             progress.activity = activity
             progress.started = Date().addingTimeInterval(-waited)
             progress.activitySince = progress.started
-            progress.plan = [PlanPart(id: 0, title: "Add a countdown", done: false),
-                             PlanPart(id: 1, title: "See the days left at a glance", done: false)]
             return AnyView(VStack(alignment: .leading, spacing: 16) {
-                BuildCardView(title: "Countdowns", name: "Countdowns", iconReady: false, progress: progress) {
-                    BlueprintIcon(letter: "C", size: 44)
-                }
                 ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince)
             })
         }

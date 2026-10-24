@@ -72,7 +72,6 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                           backing: .buffered, defer: false)
         super.init()
         controller.add(self, name: "lampConsole")
-        controller.add(self, name: "lampController")
         controller.addScriptMessageHandler(self, contentWorld: .page, name: "lampGateway")
         webView.navigationDelegate = self
         window.title = "\(project.name) on TV"
@@ -87,7 +86,6 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
 
     func windowWillClose(_ notification: Notification) {
-        PhoneControllers.shared.detachPreview(project)
         // Closing the window doesn't end the page: WebKit runs it, its sound and timers included, for as long as the web
         // view lives, and the web view's script handlers hold on to this preview, which holds the web view. So the app's
         // page is swapped for an empty one and the handlers let go, and the web view goes with the window.
@@ -194,39 +192,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        if message.name == "lampController" { return controller(message) }
         guard let text = message.body as? String else { return }
         write(String(text.prefix(4000)))
     }
 
     private func write(_ line: String) { log?.write(Data((line + "\n").utf8)) }
 
-    /// Phones as controllers in the preview (`Lamp.controllers` in lamp.js): the page is the app's host in Lamp itself
-    /// (`PhoneControllers`), which passes it what the phones send. Only the app's own page, as for its AI.
-    private func controller(_ message: WKScriptMessage) {
-        guard isOwnPage(message), let call = message.body as? [String: Any], let op = call["op"] as? String else { return }
-        switch op {
-        case "start":
-            PhoneControllers.shared.attachPreview(project) { [weak self] text in self?.deliverController(text) }
-        case "send":
-            if let message = call["message"] as? [String: Any] { PhoneControllers.shared.fromPreview(project, message) }
-        case "stop":
-            PhoneControllers.shared.detachPreview(project)
-        default:
-            break
-        }
-    }
-
     /// The app's phone page has moved to another port: the page's `Lamp.phonePage` is told at once.
     static func phonePageMoved(_ app: String, to address: String) {
         guard let preview = open[app], let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) else { return }
         let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
         preview.webView.evaluateJavaScript("window.__lampPhonePage && window.__lampPhonePage(\(value));", completionHandler: nil)
-    }
-
-    private func deliverController(_ json: String) {
-        guard Self.open[project.id] === self, (try? JSONSerialization.jsonObject(with: Data(json.utf8))) is [String: Any] else { return }
-        webView.evaluateJavaScript("window.__lampControllers && window.__lampControllers(\(json));", completionHandler: nil)
     }
 
     /// Whether a message came from the app's own page, at the address the preview opens it at: never a frame inside it
@@ -247,14 +223,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
         // anyone's and would use AI as the app.
         guard isOwnPage(message), let call = message.body as? [String: Any], let path = call["path"] as? String,
-              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page"].contains(path),
+              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page", "/app/controller", "/app/wish"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
             replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
             return
         }
-        let request = Gateway.Request(method: "POST", path: path,
+        var request = Gateway.Request(method: "POST", path: path,
                                       headers: ["authorization": "Bearer " + Template.token(for: current), "host": "127.0.0.1:\(Gateway.port)"],
                                       body: Data((call["body"] as? String ?? "{}").utf8))
+        // Phones as controllers: the page opens its own sockets to its players (`PhoneControllers`), as it does on a TV,
+        // and only asks Lamp here who they are.
+        request.fromPreview = true
         Task { @MainActor in
             let (status, json) = await Store.shared.handleAI(request)
             let body = (try? JSONSerialization.data(withJSONObject: json)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"

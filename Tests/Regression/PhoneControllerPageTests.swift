@@ -13,7 +13,7 @@ final class PhoneControllerPageTests: XCTestCase {
         context.exceptionHandler = { _, value in failure = value?.toString() }
         context.evaluateScript("""
             var window = this, sent = [], sockets = [], store = {};
-            var location = { hash: \(String(reflecting: hash)), pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860' };
+            var location = { hash: \(String(reflecting: hash)), pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860', hostname: '192.168.1.20' };
             var history = { replaceState: function () { location.hash = ''; } };
             var sessionStorage = {
               getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
@@ -23,11 +23,13 @@ final class PhoneControllerPageTests: XCTestCase {
             function WebSocket(url) { this.url = url; this.readyState = 1; sockets.push(this); }
             WebSocket.prototype.send = function (text) { sent.push(text); };
             WebSocket.prototype.close = function () {};
+            function fetch() { return Promise.resolve({ ok: true, json: function () { return { port: 47900, app: 'padgame' }; } }); }
             function setInterval() { return 0; } function clearInterval() {} function setTimeout() { return 0; }
             """)
         if let kept { context.evaluateScript("store['lamp-controller:/'] = \(String(reflecting: kept));") }
         context.evaluateScript(TVTemplate.phoneControllerJS)
-        context.evaluateScript("LampController.connect({}); sockets[0].onopen();")
+        context.evaluateScript("LampController.connect({});")
+        context.evaluateScript("sockets[0].onopen();")
         XCTAssertNil(failure)
         let hello = context.evaluateScript("sent.length ? JSON.parse(sent[0]).credential : null")
         return hello?.isNull == false ? hello?.toString() : nil
@@ -133,7 +135,7 @@ final class PhoneControllerPageTests: XCTestCase {
             weak var site: Gateway?
             weak var listener: NWListener?
             do {
-                let gateway = Gateway(site: port, pages: { _ in Gateway.Page(status: 404) }, sockets: { _, connection, _ in connection.cancel() })
+                let gateway = Gateway(site: port, pages: { _ in Gateway.Page(status: 404) })
                 site = gateway
                 // The callback holds the site, as the one PhoneSites gives it may.
                 let started = await gateway.startSite(onFailure: { _ = gateway })
@@ -156,7 +158,7 @@ final class PhoneControllerPageTests: XCTestCase {
         context.exceptionHandler = { _, value in failure = value?.toString() }
         context.evaluateScript("""
             var window = this, sockets = [], later = [], store = {};
-            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860' };
+            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860', hostname: '192.168.1.20' };
             var history = { replaceState: function () { location.hash = ''; } };
             var sessionStorage = {
               getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
@@ -165,13 +167,14 @@ final class PhoneControllerPageTests: XCTestCase {
             function WebSocket(url) { this.readyState = 1; sockets.push(this); }
             WebSocket.prototype.send = function () {};
             WebSocket.prototype.close = function () {};
+            function fetch() { return Promise.resolve({ ok: true, json: function () { return { port: 47900, app: 'padgame' }; } }); }
             function setTimeout(fn) { later.push(fn); return later.length; }
             function clearTimeout(id) { if (id) later[id - 1] = null; }
             function setInterval() { return 0; } function clearInterval() {}
             """)
         context.evaluateScript(TVTemplate.phoneControllerJS)
+        context.evaluateScript("var pad = LampController.connect({});")
         context.evaluateScript("""
-            var pad = LampController.connect({});
             sockets[0].onclose({ code: 1006 });   // the Wi-Fi dropped: a reconnect waits
             pad.close();
             later.forEach(function (fn) { if (fn) fn(); });
@@ -180,13 +183,13 @@ final class PhoneControllerPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 1, "no socket opens after the pad is closed")
     }
 
-    /// An app whose phone page stops being served (deleted, or set to open nowhere) ends its game: stopping the site's
-    /// listener leaves the sockets it took open, so its credentials stop working and its phones are let go.
+    /// An app whose phone page stops being served (deleted, or set to open nowhere) ends its game: its credentials stop
+    /// working, and the relay lets its phones go.
     @MainActor func testAGameEndsWhenItsPhonePageIsNoLongerServed() {
         PhoneSites.forgetAll()
         defer { PhoneSites.forgetAll() }
         let project = LampProject(id: "unserved", name: "Unserved", exe: "Unserved", dir: URL(fileURLWithPath: "/tmp/unserved"))
-        let host = PhoneControllers.shared.hostCredential(for: project)
+        let host = PhoneControllers.shared.hostCredential(for: project, preview: false)
         XCTAssertNotNil(ControllerCredential.check(host, kinds: [.host], app: project.id))
         PhoneSites.sync([])
         XCTAssertNil(ControllerCredential.check(host, kinds: [.host], app: project.id), "the host's credential is worthless once the page isn't served")

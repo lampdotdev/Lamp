@@ -14,7 +14,9 @@ struct BuildStamp: Equatable {
     /// It covers the reasons a Mac app gives for its permissions too: an app built before one was added is
     /// killed when it asks, until it's built again. And the build's App Intents step: an app built before it
     /// has none of its intents where the system looks for them. And the chat Lamp puts in a Mac app's window
-    /// (`Sidebar`): an app installed with an earlier one shows that until it's built again.
+    /// (`Sidebar`): an app installed with an earlier one shows that until it's built again. It leaves out `LampWish`,
+    /// which only an app of several in a wish is given (`Template.talksToOtherApps`): an app on its own must never be
+    /// built again for a block it doesn't have.
     var support: String?
 
     private static let lampKey = "LampVersion"
@@ -23,7 +25,7 @@ struct BuildStamp: Equatable {
     /// What this Lamp stamps on the apps it builds.
     static let current = BuildStamp(
         lamp: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1",
-        support: SHA256.hash(data: Data((Template.lampSupportSwift + Template.lampSceneSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)
+        support: SHA256.hash(data: Data((Template.withoutWish(Template.lampSupportSwift) + Template.lampSceneSwift + Template.macUsagePlistLines(name: "") + Template.appIntentsSetup(ios: false) + Template.appIntentsSetup(ios: true)
                                          + Template.buildSh + Template.universalBuildSh).utf8)
                              + (Bundle.main.url(forResource: "LampSidebar", withExtension: nil).flatMap { try? Data(contentsOf: $0) } ?? Data()))
             .prefix(6).map { String(format: "%02x", $0) }.joined())

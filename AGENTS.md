@@ -61,7 +61,8 @@ A capability given to one engine must be given to all of them that can take it, 
   ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`), by the small model on the route that
   built the turn (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model on this Mac that
   built it, or not at all, whatever key is saved): a stretch of steps is asked about once, in a call of its own, as soon as
-  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
+  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`) or a
+  first build moves on to its next part, so the
   lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
   failed) in one call after the turn's summary, never waited on. A stretch whose early call is still out then is asked
   for when that call comes to nothing. The call at the end is the last: when it fails, or a title it gives isn't fit to
@@ -88,10 +89,22 @@ A capability given to one engine must be given to all of them that can take it, 
   forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
   failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
   (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
-  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first turn has the build card in
-  the live line's place: the agent's plan with ticks, and under it the turn's steps so far behind one line
-  (`BuildCardView.steps`, "4 steps so far"), folded, so a long first build reads without Agent Details. The card folds
-  to its first line (its name, Ready) once the turn is over, with no picture of the app. What each piece
+  Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first build is drawn as the
+  chat's chapters (`Chapters`, `BuildChapters`), not as a card over it: each part of the agent's plan is a heading with
+  its tick and how long it took, with what the agent said during it and its steps, folded, under it; the part going
+  on has its steps so far and the live line, as any turn has; the parts still to come wait greyed below, with Lamp's
+  own last one, building and opening it; and a question card comes where it was asked, in its part. A part's steps are
+  its own: a stretch of steps ends where the build moves to the next part, as where something is said, and is titled
+  then like any fold (`StepTitles.closed(in:)`), so a part's last steps read what they did, not how many they were. Once the app is made the build folds to one line ("Built it in 3 parts · 4 min 29 s") that opens to the
+  parts, with the agent's answer under it; a build that asked on the way, failed or was stopped stays open. Which
+  part a line goes under is decided as it's logged (`TurnProgress.chapter(for:)`) from what Lamp is sure of: the plan,
+  the files it lists for each part and the files written. A file listed for a later part moves the build on, and so
+  does something said (a message, a progress line, a question, a new plan) once the part it's on is done, to the next part; anything
+  else (a read, a command, a look, a fix to an earlier part's file) stays with the part the build is on. The part is
+  kept on the line (`LogLine.part`) and the plan's parts on the run's summary (`LogLine.plan`), so the chat reads the
+  same after the turn and a relaunch; a line with no part (before the plan came) goes with the line before it, the
+  first part at the start. Agent Details shows the lines as they came, with no chapters. The chat beside the app
+  has the live line only. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
@@ -245,7 +258,8 @@ A capability given to one engine must be given to all of them that can take it, 
   Undo would take back just this change, and when the older code can still read what the newer saves: the compiler's
   layout of each type with coding keys (`LiveReload.layout` with raw values) is compared by the keys and values
   actually written: a removed, renamed or retyped required field, a retyped optional one, or an enum value the older
-  code doesn't know hides it. Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
+  code doesn't know hides it. In a wish of several apps every Swift app of it is compared, each in its own folder, since
+  Undo takes the whole wish back. Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
   (`DataSnapshots`, beside the app's own once-a-launch copies).
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
@@ -286,10 +300,10 @@ A capability given to one engine must be given to all of them that can take it, 
   before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
   end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
   run's model is heard from.
-- **What Lamp shows the user** (`BuildCard.activity`, `ToolCall`): tool names must be recognised in every
+- **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognised in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
-  `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: the build card, the line
+  `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: a first build's last part, the line
   under a change and the chat beside the app (`SidebarState.workingActivitySince`). How it reads as the wait goes on is `Activity.words`, in one place: while the model thinks, its
   phrases (never a bare "Thinking"; each think opens on one picked by when it began) turn over every 3.5
   seconds and grow more reassuring the longer it goes; a build says "Still building…"
@@ -320,7 +334,7 @@ A capability given to one engine must be given to all of them that can take it, 
   engine's output says (its tool call starting, a streamed reply) doesn't change the activity (`Store.noteAgent`):
   every engine reports the call a moment after the look began, and its fixed word would cover each stage after it
   (building, installing, opening, looking at the app, watching it move); when the look ends it's "Thinking". No clock
-  is shown beside the activity, in the chat or the build card: the turn's whole time is its "Worked for…".
+  is shown beside the activity, in the chat or a first build's chapters: the turn's whole time is its "Worked for…".
 - **Models**: each engine has its own model list and picker (`Builder.engineModel`); never default to Haiku.
   Lamp's providers are Claude Code, ChatGPT Codex, OpenRouter (pi builds through it; its key is the only one
   Lamp keeps, `Provider.keyProviders`) and Native Mac AI (`LocalModels`: Lamp's own model servers, never another
@@ -435,7 +449,9 @@ and one what it's about (Hot Shelf as a beer tracker), in that order. Each is so
 that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
 are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
-A starter whose code imports RealityKit (Drive Anywhere) gets LampScene.swift and macOS 15 like any app with a 3D scene
+A starter may be a game drawn by a web page: New York is Slop New York's three.js city in a WebKit view, its page in
+`Assets/Web` served at an address of the app's own (`GameFiles`) and loaded again when its files change.
+A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
 
@@ -925,7 +941,8 @@ setting to `{isGame}` and puts the person's back once the app has been launched 
 held by `DeviceApps.install` across install and launch, one at a time per device): the console settles the type after the
 install's last step, and put back sooner, a person's "on" made a non-game a game. The type stays with the package after. `{isGame}` is `DeviceApps.isGame`: a native
 game always, and a web app when its capabilities.json says `{"game": true}` (`Template.Capabilities.game`), which the
-rules ask of anything played. That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
+rules ask of anything played, or its icon.json does (`IconSpec.game`, which the agent has written for every game, so one
+made before capabilities.json asked is a game too). That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
 that aren't games and a game may not use it. The native host logs the memory the console gave it, which says which it got.
 
 **On the Mac first, the Xbox later.** A kind that plays on the Mac (`DeviceApps.playsOnMac`: a web kind with a
@@ -1005,7 +1022,9 @@ input kept open until the TV's answer, since it gives up when its input closes (
 `Subprocess.run`'s `keepInputOpenUntil`), and the
 developer-mode session renewed with LG at every install. Play with a TV chosen under Try On (`Store.setTVDevice`, which
 runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
-network description; the first scan brings macOS's firewall and local network questions. TV apps aren't shared yet.
+network description; the first scan brings macOS's firewall and local network questions. A TV app is shared as a
+`.lampapp` like any other (format 10): its Web/ and Phone/ travel (`TVFiles`: pages and scripts as code, which the review
+reads, pictures and sounds as data), never Lamp's lamp.js, which the Mac that opens it writes back as it installs them.
 
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-controllers`
@@ -1026,31 +1045,52 @@ which lamp.js asks for again as the page opens and every half minute (`/app/phon
 when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows the page. The address is plain http at the Mac's local address, so a phone's browser won't give the page motion sensors or the camera, which
 need https.
 
-Phones as controllers go through Lamp itself (`PhoneControllers`), over the home network the phone page is already
-served on, so nothing is hosted and nothing leaves the home. The phone page loads `lamp-controller.js`, which Lamp
-serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s buttons, sticks and messages, and
-tilt asked for from a tap), and opens a WebSocket at `/socket` on the app's own site (`Gateway` hands an upgrade there
-to `Store.phoneSocket`, held to the page's own Host rules; `WebSocketPeer` speaks it). A link just opened always wins
-over a credential the page kept from before. The TV page has
-`Lamp.controllers` in lamp.js (`TVTemplate.controllersJS`): in the preview it is the app's host in Lamp itself, through
-the `lampController` bridge (`TVPreview`); on a TV it asks Lamp's gateway for a host credential (`/app/controller`) and
-opens the same socket, at the app's port, over the Wi‑Fi. The credentials are the controllers' own (`ControllerCredential`, signed with a key kept
-only in Lamp's memory: a host's for the session, a join link's for fifteen minutes, a phone's for two, renewed over its
-socket), never the app's token for its AI, and ending a session (the preview closed with no TV chosen, or the app's page no longer served anywhere, deleted
-included: `PhoneSites.sync`) makes all of them worthless and lets its sockets go. A phone is let in only from the page's own origin; a dropped phone keeps its number while its
-credential lasts. Lamp keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is behind,
-and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than 300 ms.
-A message is at most `Limits.message` (1,024 bytes of JSON), and Lamp closes a socket that sends a bigger one, so every
-library of Lamp's (lamp.js, lamp-controller.js, `LampController` in LampSupport) refuses one before it goes: `send`
-returns false, the reason with the limit goes to the console or the app's log, and a phone's library tells the TV app
-(`too-big`, passed on by Lamp), whose log the builder reads. Nothing a library doesn't send goes unsaid; the
-phone-controllers skill says how to send a file in pieces.
-The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt only where the
-person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for that.
+Phones as controllers never go through Lamp's own process: Lamp introduces the two sides and hands out short-lived
+credentials, and they talk directly or through a relay of Lamp's own (`PhoneControllers`), over the home network the
+phone page is already served on, so nothing is hosted and nothing leaves the home. The relay (`LampRelayKit`'s `Relay`)
+runs as a process of its own, `LampRelay` in Lamp's Helpers, started by `ControllerRelay` while a TV app takes players
+or a wish's apps have a room there (`WishRooms`, under "Wishes of more than one app") and ended when none does, or when
+Lamp quits (its input closes). Lamp tells it on its input which apps' sessions are open
+(their generation, phone page port and address, this Mac's names) and gives it the controllers' key; it speaks
+WebSocket with the Network framework on a queue of its own and keeps the port it had while Lamp runs. The phone page
+loads `lamp-controller.js`, which Lamp serves beside the app's files (`TVTemplate.phoneControllerJS`: `LampController`'s
+buttons, sticks, messages and files, and tilt asked for from a tap), asks the page's own site where the relay is
+(`lamp-relay.json`, before each try) and opens its socket there, by the name the page was reached at. A link just opened
+always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
+(`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp who its players are (`/app/controller`,
+through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own sockets to each: the
+relay, with a host credential, and each of the wish's iPhone apps listening (below), with a ticket. The preview's page
+reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
+the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own
+(`ControllerCredential`, `ControllerToken`, signed with a key kept only in Lamp's memory and the relay's: a host's for
+the session, marked when it's the preview's so a TV running the same app waits for it; a join link's for fifteen
+minutes; a phone's for two, renewed over its socket), never the app's token for its AI, and ending a session (the
+preview closed with no TV chosen, or the app's page no longer served anywhere, deleted included: `PhoneSites.sync`)
+makes all of them worthless and has the relay let its sockets go. Of web pages, the relay lets in only an app's own
+phone page, by its origin (an http origin at a phone page's port and one of this Mac's names); a TV page (the
+preview's own address, a TV's `file://` or `null`) and anything that isn't a browser (no origin) are let in by their
+credential alone, since such a client could say any origin it liked. A dropped phone keeps its place while its
+credential lasts. The relay keeps no message, beats every five seconds, drops a phone's stick or tilt while the TV is
+behind, and tells the host when a phone leaves, when lamp.js lets go of what it held; lamp.js drops movement older than
+300 ms. A message is at most 16 KB of JSON (`ControllerWire.message`), and the relay closes a socket that sends a
+bigger one, so every library of Lamp's (lamp.js, lamp-controller.js, `LampController` in LampSupport) refuses one before
+it goes: `send` returns false, the reason with the limit goes to the console or the app's log, and a phone's library
+tells the TV app (`too-big`, passed on by the relay), whose log the builder reads. Anything bigger is a file
+(`sendFile`/`onFile` both ways, `TVTemplate.filesJS`, `ControllerWire`): up to 64 MB, in pieces of 64 KB in binary
+messages, the sender never more than 512 KB past what the receiver has acknowledged, two at a time each way per phone.
+The relay holds each file to the size it was announced at and to that window, and cuts off one that doesn't keep to
+them; it and the libraries hand the network one piece at a time and text at once, so a button never waits behind more
+than one piece. The relay never holds more than it must for anyone: a socket that hasn't said hello within five seconds is
+let go (cancelled outright before its handshake ends, since a close frame can't go then), at most 64 wait at once (8 from
+one address, an IPv6 one by its /64), a phone past its rate for ten seconds is let go, what phones send a TV that's
+behind is dropped, any peer more than 256 messages or 2 MB behind is let go, and an acknowledgement goes on only for a
+piece the relay passed. A wish's iPhone app takes each ticket once. The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt
+only where the person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for
+that, and such a page can't reach the relay, which speaks plain ws.
 
 ## Apps for both the Mac and the iPhone
 
-An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choice beside Mac and iPhone & iPad), as
+An app can be made for both (`Platform.universal`: the devices `mac` and `iphone` together, from the naming call or `make_app_for`), as
 Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
 one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
 app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
@@ -1080,17 +1120,21 @@ for both is shared as a `.lampapp` like any other (the file says what it's made 
 
 ## Wishes of more than one app
 
-A wish can be more than one app made to work together: a TV app with an iPhone app that controls it (`Parts`). Its main
-part is the app at its root, as every wish has; each other part is an app of its own kind in a folder of the wish's
-(`iPhone/`, `Mac/`, `Apple/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
+A wish can be more than one app made to work together: a TV app with an iPhone app that controls it, a Mac app with an
+Android app (`Parts`). The wish is its own thing, apart from its apps: its name, chat, versions and icon are the wish's,
+and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its meta.json; below). One app is at its
+root, as every wish has one; each other part is an app of its own kind in a folder of the wish's
+(`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
-wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat, versions or icon of its own: what's logged
-for it goes to its wish's chat (`Store.log`), the wish's history keeps its folder, and its icon is the wish's
-(`Icons.home`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
+wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat or versions of its own: what's logged
+for it goes to its wish's chat (`Store.log`), and the wish's history keeps its folder. No app of a wish comes first
+beyond that: each carries the wish's icon. Its design and artwork are the wish's (`Icons.home`), drawn into each app's
+own `.lamp/` (its build and finishing run in its sandbox, which opens only its folder), and new artwork or a new design
+reaches every app of the wish (`Store.iconToParts`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
 told where its folder is when it's installed (`folder` in `Template.installValues`, read by `LampInstall.app`), since its
 id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
 scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
-never kept in a list beside them, so a rename, an Undo or a restored version can't part a wish from its
+never from the wish's list, so a rename, an Undo or a restored version can't part a wish from its
 apps, and every restore takes them in again at once (`Store.followRestored`, comparing folders and kinds,
 `Parts.match`: a part the version doesn't have is quit and then forgotten, one the person keeps open over unsaved work
 stays listed until it's closed, and one it brings back or changes is listed again). A wish's name is in its meta.json,
@@ -1105,19 +1149,66 @@ build folders, sign-ins and place in the lists), as taking a part away does; the
 game. A part never has a turn of its own: Lamp's own requests for it (carrying on after its Reload, fixing its crash) are
 its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by (whose turn has the app, whether the
 person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
-its apps waits. A copy is found by its install place only for an app with a Mac copy there, since a TV wish's Mac app is
-installed under the wish's name. Which kinds a list
-of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), the kind that leads
-a wish (a TV app) is its main one, and the rest are its parts; Android and device apps still stand alone.
+its apps waits. No app of a wish comes first in what a turn and the wish's history do to it. At a turn's end each app the
+agent changed is built, its errors sent back to the agent with its name and folder, before the version is saved, then
+opened as the app at the root is (`Store.settle`). An app whose change went into the open app counts as built there
+(`Runtime.needsBuild`): its whole build, which writes what it was built from, runs on after the turn. Each keeps its own look and crash on launch in the turn
+(`Turn.Look.installed`, `crashes`, `LaunchWatch.app`), and a crash is fixed as that app's (`Store.crashRequest`). A part
+is worked on under the wish's turn (`Store.asPartOf`, and a part's look through `underTurn`, each leaving the hold as it
+found it). Undo and every restore rebuild each part whose files changed, and a copy builds every app, each under a hold of
+its own so its crash is fixed through the wish (`Store.rebuildParts`); a rename puts the new name in every app's code and
+APP.md. Each app's own menu (Open, Rebuild & Open) is still for that app alone. A copy is found by its install place only
+for an app with a Mac copy there, since a TV wish's Mac app is installed under the wish's name. Which kinds a list
+of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), in `Targets.all`'s
+order. No kind leads: which app is at a wish's root is the wish's own affair, never the list's (`Parts.root`). A wish keeps
+the app it began with at its root, and a new wish's root is the first of its kinds this Mac can build now (`Store.rootKind`:
+a TV app with an iPhone app, on a Mac without Xcode, starts as the TV app with the iPhone app waiting), else the first.
+The TV app of a wish takes the wish's other apps as players from its root or from TV/ alike (`Store.takesPlayers`,
+`controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
+stands alone.
+Every app of a wish, Android's included, reaches the wish's other apps through `LampWish` (below)
+and is told so (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
+as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
+`Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
+opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
+can't build yet is kept on the wish's list with its files beside the wish (`Sharing.keep`, `.lamp/waiting/<family>`,
+by the part's family since the file's folder for it may not be this Mac's, unversioned, gone with the wish), which go in
+over the scaffold, with the family the file gave them, once the part is made (`addPart`, `Sharing.kept`). An update from a
+file replaces each part the file carries, changes one of another kind of the same family in place (`convert`, so it
+keeps its folder and data), adds the ones the wish doesn't have, and leaves a part the file lacks as it is; a part whose
+files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
+with a part says 10.
 
-What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
+The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
+what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
+asking for an app and making it loses nothing. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
+which take the app at the root and each part found as made whatever the list says). The apps a wish waits for are made at
+the start of its next turn (`Store.makeWaitingParts`), each tried once rather than at every turn, since the kind's check
+opens its setup window: one this Mac can't build yet keeps what stops it and gets the chat's setup line
+(`IPhoneSetupLine` with `part`, `LogLine.text` "iphone part"), whose setup, once done, clears it and sends the request
+that adds it (`Store.retryWaitingApp`, `Parts.request`); the agent is told what waits at the end of each request
+(`Parts.brief`, once per conversation and when it changes) and never makes one itself. The list follows every change:
+`make_app_for` writes what it asked for, a part taken away or Undone leaves it (`forgetPart`), and the app at the root
+changing kind (`convert`, a restore) takes its place in it. A wish for a device Lamp can't make apps for yet
+(`waitsForDevice`) and one given its kinds in a turn begun without any (`decided`, whose engines' conversations are
+forgotten when that turn ends, or at Lamp's next start) are kept in the meta.json too.
+
+What the agent knows follows the parts. The wish's prompt is the kind's of the app at its root, with one rule naming the other parts
 (`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,
-`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole), named
+`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole, written
+for the folder the wish's part is in, since an iPhone app made for the Mac too stays in iPhone/), named
 with the request while the wish has that part (`Skills.applying`, so a compacted conversation is told again), and given
 whole in `make_app_for`'s reply when the part is added. So a conversation never carries the rules of a kind its wish
 doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), and run under the wish's turn
-(`Store.underTurn`). `make_app_for` takes the whole list: the main kind is changed by `convert` as before, a part is added
-(`Store.addPart`), changed in place, or taken away. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all (`Store.openWish`, `quitWish`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
+(`Store.underTurn`). `make_app_for` takes the whole list and makes the wish those apps by adding and taking away folders, never by
+writing an app over again as another kind: the app at the root stays, changed by `convert` only inside its family (an
+iPhone app that's to be for the Mac too); a part is added (`Store.addPart`), changed in place inside its family, or taken
+away when it's left out. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/. A list that
+leaves the root app's family out is refused with why, and the agent tells the person the wish keeps that app (a wish
+still to be told what it's for has nothing written, so its root takes the first kind listed this Mac can build now,
+`Store.rootKind`, and the rest wait as parts). So a wish read as an Android app and made as a Mac app while Google's tools
+were missing gets, once they're set up, the Android app beside its Mac app (`Target.android.setup.later.request`), not in
+its place. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
 
 A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
 (kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
@@ -1125,12 +1216,85 @@ A new wish that could be for more than one kind and doesn't say which (the namin
 conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
 starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 
-The parts talk through `PhoneControllers`: an iPhone or Mac part joins its wish's TV app as a player, the way a phone's
-page does, with `LampController` in LampSupport. It asks Lamp's gateway (`/app/controller`, with its own token) for the
-TV app's socket and a join credential, which Lamp gives only to a part of the same wish while the TV app is open. A
-socket with no Origin is let in as a player like one from the app's own page: browsers always send one, so none means
-no browser, and anything that isn't a browser could send any origin it liked, so the credential is what lets it in. A TV
-app with a part takes players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
+The apps of a wish see each other and talk through a **room** for the wish at the controllers' relay (`WishRooms`,
+WishHub.swift; `Relay.configureRoom`): each app of the wish, by its own token, asks `/app/wish` and is told the relay's
+socket (by the name it reached Lamp at), which peer it is (its folder in the wish, lowercased: "tv", "iphone", "apple",
+"mac", "android", kept when its kind changes in place; an app at the root is named by the folder its kind gets, so the name
+survives a move into one; `kind` stays the device word the tools use), and who is in the room now; never anything that
+lets it in. What lets it in is the **wish's key** (`WishKeys`): 32 random bytes per wish, made the first time an app of a
+wish of several needs one, kept in Lamp's own folder by the wish's instance (never the wish's folder, which the agent's
+commands read and versions and shared files carry), gone with the wish, and given to each app only as Lamp puts it on its
+device and only by a way nobody on the network can read: the installed Mac app's Info.plist and the phone's build in
+Lamp's own folder (`LampWishKey`, `Template.wishKeyPlistLines`), the simulator app's own folder after its install
+(`Simulator.tellApp`), the Android app's storage through adb with its token (`androidInstallValues`), the TV preview's
+page through its bridge (`/app/wish` with `preview`), and a TV over the network only sealed to an X25519 key pair the page
+just made (`/app/wish/claim`, `WishRooms.claim`). That request is plain HTTP, so someone on the network between the TV and
+this Mac could put their own public half in it and have the key sealed to them; only an encrypted link to the gateway would
+stop that, so the claim is open as little as it can be (`WishClaims`, apart from the token's half-hour claim): from that
+TV's address, two minutes from when Lamp starts putting the app there and two more from when it's open unless a claim was
+answered meanwhile, and spent by the first claim answered, which in a normal install is the page's own a moment after it
+opens. A request that fails spends nothing, and once spent the claim is answered again, for its minutes, only to the public
+half it was spent on, which the page keeps across its tries, so an answer lost on its way doesn't need another install.
+Over legacy `adb tcpip` (no TLS) the key
+crosses in clear with the token. An app proves
+it holds the key in a handshake that sends nothing anyone could use again (`WishChannel`, LampRelayKit): its hello names
+the wish by a tag only the key makes and itself by peer id, with a nonce; the relay answers with its own nonce and an HMAC
+proof over both; the app checks it, sends its own, and from then on everything but beats is AES-GCM, sealed each way under
+a key from the wish's key and both nonces, numbered so a message changed, replayed, dropped or reordered lets the link go.
+The connecting side is written four times (the relay's side in `WishChannel`, LampSupport.swift, LampSupport.kt, and
+lamp.js's own SHA-256, HMAC, AES-GCM and X25519 in ES5, since a TV's page has no WebCrypto), held byte for byte to
+CryptoKit's answers by `WishChannelTests`; change one and change them all. Every app of a wish holds the same key, so a
+device with one of them could join as any; there is no forward secrecy; and a reset of a wish's key isn't offered yet. The
+relay lets a peer in only once it has proved it holds the room's key and named an app the wish has, tells every member who joins and leaves
+(`welcome`, with every app the wish has; `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as
+a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
+phone's size and rate limits (16 KB of JSON a message, `ControllerWire`); files between peers aren't carried yet. The same
+block in every language, under one name: `LampWish.shared` in LampSupport.swift (a WebSocket of its own to the relay),
+`Lamp.wish` in lamp.js (the same, from the TV page, in the preview and on a TV), and `LampWish` in LampSupport.kt, whose
+blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app
+(`WishProxies`, `/app/wish/open`, numbered so nothing of an old link reaches a new handshake) and carries its handshake and
+sealed messages each way as they are, unread: the app posts them to `/app/wish/send`, in the order it sealed them, and polls
+`/app/wish/poll` for what came (answered as soon as something has, or after 25 seconds with nothing), and Lamp answers the
+relay's beats for it. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
+library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
+`status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
+added to (a `RawRepresentable` struct in Swift, a value class in Kotlin, a string in lamp.js), so code that switches on one
+keeps compiling when later work adds reasons. Lamp
+keeps what came only until the next poll (an app that falls 256 behind has its link ended, since a sealed message can't be
+skipped) and lets the socket go when the app has stopped polling. A room is opened the
+first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
+`Store.syncLocalNetwork`), and ended when the wish is gone, has no other app, or has had nobody in it and nobody asking for
+fifteen minutes, so the relay process runs only while a game or a room needs it (`ControllerRelay` keeps rooms beside
+sessions, and starts the relay for either). Where a wish's apps are is asked of `Store.apps(of:)` and `Store.wish(of:)`
+alone, and a wish is alone when it has fewer than two apps, so nothing in the hub knows which app is at the root. The relay says who is in each room on its output as that changes
+(`ControllerRelay.presence`), and the builder is told, at the end of each request for a wish of more than one app, where
+each of its apps is: open or not, in the room or not and as what device (`WishNote`, sent like `DeviceNote`). The rule
+every app of such a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) says
+what the block does, its limit, to start it as the app opens, to show plainly when an app it needs isn't open and never to
+build its own server, sockets or polling between them; it says nothing about who should talk to whom. A stranger on the
+network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay takes a proof only the
+wish's key makes, and both run only while Lamp does. What one app of a wish says is readable by the wish's other apps and
+by Lamp's relay, which holds the key Lamp made and opens and seals again what it passes on, and by nothing else: on the
+network it's sealed, each link with keys of its own. A device app made through an
+integration has no `LampWish` yet. A wish of one app, which
+is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
+has other apps (`Template.talksToOtherApps`), so its LampSupport.swift, LampSupport.kt and lamp.js are what they would be
+without the hub, the channel's crypto included, its prompt has no rule and its requests no line about the hub, no key is
+made for it and none goes in its install (`Store.wishKey(for:)` is nil), no room is opened for it and so nothing starts the
+relay, and `BuildStamp` leaves the block out, so no app is built again for code it doesn't carry (`WishHubStaysOutTests`).
+
+A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) still does so as a player of
+`Lamp.controllers`, with `LampController` in LampSupport, beside `LampWish` for everything else. An iPhone part
+listens for the TV page itself (an `NWListener` speaking WebSocket, on the phone or in the simulator) and tells Lamp
+where (`/app/controller` with `as: listener`, its own token, every 20 seconds); Lamp keeps where it is and gives it a key
+of its own for that listener (`PhoneControllers.register`), and the TV page's answer lists it with a ticket signed with
+that key (`PhoneControllers.ticket`: for that listener, for two minutes), so the page opens its socket straight to the
+phone and Lamp carries nothing. A phone in the simulator registers from the loopback address: the preview reaches it
+there, and a TV on the network at this Mac's address on that network. The phone lets in one page at a time, the
+preview's before a TV's, and says who it is (a device id it keeps), so lamp.js gives it its number back when it returns.
+A Mac part, and an iPhone part that can't listen, joins at the relay as a player instead, with a link's credential
+(`as: player`), which Lamp gives only to a part of the same wish while the TV app is open. A TV app with a part takes
+players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
 
 ## iCloud
 
@@ -1376,7 +1540,8 @@ pixels are clear, and a clear window lets clicks on clear pixels through. The pa
 without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
 window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
 Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
-once, so the extension keeps it as it's read, `Link.sharing`), Agent Details and Delete, then Undo Last Change and Versions.
+once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file in its own caches folder that each share
+replaces in one step, `SharedCopy`, as Lamp's own Share… does), Agent Details and Delete, then Undo Last Change and Versions.
 Where the title and every button don't fit, Undo stays and a button for the rest takes their place, which pressed stays
 lit and puts the rest, Versions beside Undo, in the title's place. The room between the buttons moves the chat. ⌘` goes
 through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves

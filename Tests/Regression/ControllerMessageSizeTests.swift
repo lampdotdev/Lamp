@@ -1,13 +1,16 @@
 import JavaScriptCore
+import LampRelayKit
 import XCTest
 @testable import Lamp
 
-/// Lamp passes at most `PhoneControllers.Limits.message` bytes in one message between devices and closes a socket that
-/// sends more. A TV app whose phone sent a file in 1,200-character pieces lost every one of them, and its builder saw
-/// only a transfer that stopped: each library of Lamp's refuses such a message before it goes, says so with the limit,
-/// and tells the TV app, whose log the builder reads.
+/// The relay passes at most `ControllerWire.message` bytes in one message between devices and closes a socket that
+/// sends more. A TV app whose phone sent a file in pieces too big for a message lost every one of them, and its builder
+/// saw only a transfer that stopped: each library of Lamp's refuses such a message before it goes, says so with the
+/// limit, and tells the TV app, whose log the builder reads. (A file goes with `sendFile` now, in pieces of its own.)
 final class ControllerMessageSizeTests: XCTestCase {
-    private static let limit = PhoneControllers.Limits.message
+    private static let limit = ControllerWire.message
+    /// A message a little over the limit.
+    private static let tooMany = limit + 600
 
     // MARK: The wish's iPhone or Mac app (LampController in LampSupport)
 
@@ -26,6 +29,7 @@ final class ControllerMessageSizeTests: XCTestCase {
         let start = try XCTUnwrap(support.range(of: "@MainActor final class LampController"))
         let end = try XCTUnwrap(support.range(of: "// MARK: - Mac building blocks", range: start.upperBound..<support.endIndex))
         let program = """
+        import CryptoKit
         import Foundation
         import Network
         import SwiftUI
@@ -49,7 +53,7 @@ final class ControllerMessageSizeTests: XCTestCase {
         return TestShell.run("./pad 2>&1", in: work).output
     }
 
-    /// A stand-in for Lamp's socket that holds to its limit as Lamp does, and the 1,200-character piece that broke.
+    /// A stand-in for the relay's socket that holds to its limit as the relay does, and a piece over it.
     private static let harness = #"""
     @main struct Harness {
         @MainActor static func main() throws {
@@ -100,7 +104,7 @@ final class ControllerMessageSizeTests: XCTestCase {
             let pad = LampController.connect()
             spin(10) { pad.state == .connected }
             print("state \(pad.state.rawValue)")
-            let big = pad.send(["chunk": String(repeating: "A", count: 1200)])
+            let big = pad.send(["chunk": String(repeating: "A", count: limit + 600)])
             print("big sent: \(big)")
             spin(0.5)
             let small = pad.send(["chunk": "small"])
@@ -119,7 +123,7 @@ final class ControllerMessageSizeTests: XCTestCase {
         context.evaluateScript("""
             var window = this, sent = [], errors = [], sockets = [], store = {};
             var console = { error: function (m) { errors.push(String(m)); }, log: function () {} };
-            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860' };
+            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860', hostname: '192.168.1.20' };
             var history = { replaceState: function () { location.hash = ''; } };
             var sessionStorage = {
               getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
@@ -128,14 +132,15 @@ final class ControllerMessageSizeTests: XCTestCase {
             function WebSocket(url) { this.readyState = 1; sockets.push(this); }
             WebSocket.prototype.send = function (text) { sent.push(text); };
             WebSocket.prototype.close = function () {};
+            function fetch() { return Promise.resolve({ ok: true, json: function () { return { port: 47900, app: 'padgame' }; } }); }
             function setInterval() { return 0; } function clearInterval() {} function setTimeout() { return 0; }
             """)
         context.evaluateScript(TVTemplate.phoneControllerJS)
+        context.evaluateScript("var pad = LampController.connect({});")
         context.evaluateScript("""
-            var pad = LampController.connect({});
             sockets[0].onopen();
-            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', player: 2, host: true, credential: 'kept' }) });
-            var big = pad.send({ chunk: new Array(1201).join('A') });
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', place: 2, host: true, credential: 'kept' }) });
+            var big = pad.send({ chunk: new Array(\(Self.tooMany)).join('A') });
             var small = pad.send({ chunk: 'small' });
             """)
         XCTAssertNil(failure)
@@ -156,7 +161,7 @@ final class ControllerMessageSizeTests: XCTestCase {
         context.exceptionHandler = { _, value in failure = value?.toString() }
         context.evaluateScript("""
             var window = this, sent = [], sockets = [], store = {}, later = [], results = [];
-            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860' };
+            var location = { hash: '#join', pathname: '/', search: '', protocol: 'http:', host: '192.168.1.20:47860', hostname: '192.168.1.20' };
             var history = { replaceState: function () { location.hash = ''; } };
             var sessionStorage = {
               getItem: function (k) { return store.hasOwnProperty(k) ? store[k] : null; },
@@ -165,18 +170,23 @@ final class ControllerMessageSizeTests: XCTestCase {
             function WebSocket(url) { this.readyState = 1; sockets.push(this); }
             WebSocket.prototype.send = function (text) { sent.push(text); };
             WebSocket.prototype.close = function () {};
+            function fetch() { return Promise.resolve({ ok: true, json: function () { return { port: 47900, app: 'padgame' }; } }); }
             function setInterval() { return 0; } function clearInterval() {}
             function setTimeout(fn) { later.push(fn); return later.length; } function clearTimeout() {}
             """)
         context.evaluateScript(TVTemplate.phoneControllerJS)
+        // The relay welcomes the phone, saying the TV app is there, and the TV app gives it its number.
         context.evaluateScript("""
             var pad = LampController.connect({ onPlayer: function (n) { results.push(pad.send({ ready: n })); } });
-            var welcome = JSON.stringify({ t: 'welcome', player: 2, host: true, credential: 'kept' });
-            sockets[0].onopen(); sockets[0].onmessage({ data: welcome });
+            var welcome = JSON.stringify({ t: 'welcome', place: 2, host: true, credential: 'kept' });
+            var number = JSON.stringify({ t: 'player', number: 2 });
+            """)
+        context.evaluateScript("""
+            sockets[0].onopen(); sockets[0].onmessage({ data: welcome }); sockets[0].onmessage({ data: number });
             sockets[0].onclose({ code: 1006 });   // the Wi-Fi dropped, and the page joins again
             later.shift()();
-            sockets[1].onopen(); sockets[1].onmessage({ data: welcome });
             """)
+        context.evaluateScript("sockets[1].onopen(); sockets[1].onmessage({ data: welcome }); sockets[1].onmessage({ data: number });")
         XCTAssertNil(failure)
         XCTAssertEqual(context.evaluateScript("results.join(',')")?.toString(), "true,true")
         XCTAssertEqual(context.evaluateScript("sent.filter(function (s) { return JSON.parse(s).t === 'message'; }).length")?.toInt32(), 2)
@@ -187,28 +197,39 @@ final class ControllerMessageSizeTests: XCTestCase {
         var failure: String?
         context.exceptionHandler = { _, value in failure = value?.toString() }
         context.evaluateScript("""
-            var window = this, posted = [], errors = [], heardErrors = [];
+            var window = this, sent = [], errors = [], heardErrors = [], sockets = [], later = [];
             var console = { error: function (m) { errors.push(String(m)); }, log: function () {} };
             window.Lamp = {};
-            window.webkit = { messageHandlers: { lampController: { postMessage: function (m) { posted.push(m); } } } };
-            function setInterval() { return 0; } function clearInterval() {} function setTimeout() { return 0; }
+            var LampAI = { _post: function () {
+              return Promise.resolve({ links: [{ kind: 'relay', socket: 'ws://127.0.0.1:47900/', app: 'padgame', credential: 'host' }] });
+            } };
+            function WebSocket(url) { this.readyState = 1; sockets.push(this); }
+            WebSocket.prototype.send = function (text) { sent.push(text); };
+            WebSocket.prototype.close = function () {};
+            function setInterval() { return 0; } function clearInterval() {}
+            function setTimeout(fn) { later.push(fn); return later.length; } function clearTimeout() {}
             """)
         context.evaluateScript(TVTemplate.controllersJS)
         context.evaluateScript("""
             Lamp.controllers.onError(function (m) { heardErrors.push(m); });
             Lamp.controllers.start();
-            var big = Lamp.controllers.send(1, { chunk: new Array(1201).join('A') });
-            var small = Lamp.controllers.send(1, { chunk: 'small' });
-            window.__lampControllers({ t: 'too-big', player: 2, bytes: 1260 });
+            later.shift()();   // asks Lamp who the players are
+            """)
+        context.evaluateScript("""
+            sockets[0].onopen();
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'welcome', role: 'host', players: [2], now: Date.now() }) });
+            var big = Lamp.controllers.send(2, { chunk: new Array(\(Self.tooMany)).join('A') });
+            var small = Lamp.controllers.send(2, { chunk: 'small' });
+            sockets[0].onmessage({ data: JSON.stringify({ t: 'too-big', player: 2, bytes: 17000 }) });
             """)
         XCTAssertNil(failure)
         XCTAssertEqual(context.evaluateScript("big")?.toBool(), false)
         XCTAssertEqual(context.evaluateScript("small")?.toBool(), true)
-        XCTAssertEqual(context.evaluateScript("posted.filter(function (m) { return m.op === 'send'; }).length")?.toInt32(), 1,
+        XCTAssertEqual(context.evaluateScript("sent.filter(function (s) { return JSON.parse(s).t === 'send'; }).length")?.toInt32(), 1,
                        "only the small one went")
         let errors = context.evaluateScript("errors.join('\\n')")?.toString() ?? ""
         XCTAssertTrue(errors.contains("A message of"), errors)
-        XCTAssertTrue(errors.contains("Player 2's message of 1260 bytes was not sent: a message between devices is at most \(Self.limit) bytes"), errors)
+        XCTAssertTrue(errors.contains("Player 2's message of 17000 bytes was not sent: a message between devices is at most \(Self.limit) bytes"), errors)
         XCTAssertEqual(context.evaluateScript("heardErrors.length")?.toInt32(), 2)
     }
 }

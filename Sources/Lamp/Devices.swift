@@ -166,7 +166,7 @@ enum Devices {
     /// the agent's to change after any look at it. Gives back the copy. `started` gets the copy's process, so
     /// Stop can end it like the build.
     @discardableResult
-    static func stage(_ project: LampProject, team: String, in folder: URL? = nil,
+    static func stage(_ project: LampProject, team: String, in folder: URL? = nil, wishKey: Data? = nil,
                       started: (@MainActor (Process) -> Void)? = nil) async throws -> URL {
         let fm = FileManager.default
         // The app's folder swapped for a link: the copy below couldn't read through it, and an empty app isn't one.
@@ -175,7 +175,7 @@ enum Devices {
         let files = dir.appendingPathComponent("app")
         try? fm.removeItem(at: files)
         try fm.createDirectory(at: files, withIntermediateDirectories: true)
-        try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files)
+        try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files, wishKey: wishKey)
         let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
         let copy = "cd \"$LAMP_FROM\" && for name in \(names.map(Sandbox.quoted).joined(separator: " ")); do "
             + "if [ -e \"$name\" ] || [ -L \"$name\" ]; then /bin/cp -Rp \"$name\" \"$LAMP_TO/\" || exit 1; fi; done"

@@ -139,6 +139,8 @@ enum Runtime {
         private(set) var crash: String?
         /// The death was told to the agent: in a look's answer, or as a note with a later one.
         var told = false
+        /// Which app was opened: a wish's apps share its turn's watches.
+        var app = ""
         /// Lamp is closing the app itself (a rebuild, Stop, another app taking the simulator): its going is a death only
         /// when it's surely a crash. Taken back when the app stays open (`resume`).
         private(set) var retired = false
@@ -412,6 +414,13 @@ enum Runtime {
         guard FileManager.default.fileExists(atPath: project.builtURL.path),
               let built = try? String(contentsOf: builtURL(project), encoding: .utf8), !built.isEmpty else { return true }
         return built != fingerprint(project)
+    }
+
+    /// Whether the app's code is still to be built: changed since its last build, and not the code that went into the
+    /// open app with its whole build still running (`Store.reloadBeforeBuilding`). That build writes what it was built
+    /// from only when it's done, a minute later, and the app already runs this code meanwhile.
+    static func needsBuild(_ project: LampProject) -> Bool {
+        sourcesChanged(project) && LiveReload.buildingFrom(project) != fingerprint(project)
     }
 
     // MARK: - Log

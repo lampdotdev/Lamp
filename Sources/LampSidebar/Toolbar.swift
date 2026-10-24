@@ -151,16 +151,8 @@ struct ChatBar: View {
     /// The share menu, at the share button, for the file Lamp made (`SidebarState.sharing`). This process can't read
     /// Lamp's files, so the file comes whole and is kept here, where the service it's shared with reads it.
     private func share(_ sharing: SidebarSharing) {
-        // Only the latest file is kept: the one shared before has been handed to its service by now.
-        let temporary = FileManager.default.temporaryDirectory
-        for old in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] where old.hasPrefix("share-") {
-            try? FileManager.default.removeItem(at: temporary.appendingPathComponent(old))
-        }
-        let folder = temporary.appendingPathComponent("share-\(sharing.id.uuidString)")
-        let name = (sharing.file.name as NSString).lastPathComponent
-        let url = folder.appendingPathComponent(name.isEmpty ? "Wish.lampapp" : name)
-        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
-              (try? sharing.file.data.write(to: url)) != nil, let view = shareAnchor.view, view.window != nil else { return }
+        SharedCopy.removeEarlierFolders()
+        guard let url = try? SharedCopy.keep(sharing), let view = shareAnchor.view, view.window != nil else { return }
         NSSharingServicePicker(items: [url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
     }
 }

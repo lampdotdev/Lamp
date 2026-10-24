@@ -52,7 +52,7 @@ final class WritesThroughLinksTests: XCTestCase {
         Runtime.holdBuild(project)
         BuildStamp.write(for: project)
         LiveReload.awaitInstall(project)
-        LiveReload.startedBuilding(project)
+        LiveReload.startedBuilding(project, from: "fingerprint")
         LiveReload.markRunning(project)
         LiveReload.keepLayout(["a layout"], for: project)
         try? Template.writeOwnedFiles(for: project)

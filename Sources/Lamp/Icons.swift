@@ -237,17 +237,19 @@ enum Icons {
 
     // MARK: Spec
 
-    /// Where an app's icon is kept: its folder, and for a wish's other part (`Parts`) its wish's, since a wish has one icon.
+    /// Where an icon's design and artwork are kept: the app's folder, and for a wish's other part (`Parts`) its wish's,
+    /// since a wish has one icon. What's drawn from them is each app's own (below): every app of a wish carries the
+    /// icon, and an app's build and finishing run in its sandbox, which opens only its own folder.
     static func home(_ project: LampProject) -> URL { project.isPart ? project.dir.deletingLastPathComponent() : project.dir }
     static func specURL(_ project: LampProject) -> URL { home(project).appendingPathComponent("icon.json") }
-    static func icnsURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/AppIcon.icns") }
-    static func carURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/Assets.car") }
-    static func documentURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/AppIcon.icon") }
-    static func previewURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/icon.png") }
+    static func icnsURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icns") }
+    static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/Assets.car") }
+    static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icon") }
+    static func previewURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon.png") }
     /// There while the icon on the app is the blueprint waiting for its artwork, so a relaunch of Lamp picks it up again.
-    static func waitingURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/icon-waiting") }
+    static func waitingURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon-waiting") }
     /// The icon as iOS takes it: a plain 1024px square, which the device rounds itself.
-    static func squareURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/AppIcon-square.png") }
+    static func squareURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon-square.png") }
 
     /// The icon at its largest size (1024px) as a PNG for Quick Look, named after the app so the panel's title reads well.
     /// It's drawn from the design as it is now, not copied from the .icns: while a turn has the app, new artwork is
@@ -653,7 +655,7 @@ enum Icons {
     }
 
     /// Where `write` notes what the icon's files were drawn from.
-    static func renderKeyURL(_ project: LampProject) -> URL { home(project).appendingPathComponent(".lamp/icon-drawn") }
+    static func renderKeyURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/icon-drawn") }
 
     /// What the icon's files are drawn from: the design, its artwork, Xcode's icon tools, and this Lamp, whose way of
     /// drawing may change. Nil when the artwork can't be read back, so the icon is drawn again.

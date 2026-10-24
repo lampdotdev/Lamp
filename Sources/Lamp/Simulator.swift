@@ -111,6 +111,26 @@ enum Simulator {
         guard result.ok else { throw Failure(message: "Couldn't put the app on the simulator: \(result.output.trimmed)") }
     }
 
+    /// Where an app of a wish of several finds its wish's key on the simulator: in its own folder there, written after
+    /// each install, since the bundle Lamp installs is built in the app's own folder, which versions and shared copies
+    /// carry and the agent's commands write.
+    static let wishKeyFile = "Library/Lamp/wish-key"
+
+    /// Writes the wish's key into the app's own folder on the simulator, readable only by the person's own account, as
+    /// Android's are written into the app's storage (`Android.tellApp`). A failure is logged: the app opens, and says it
+    /// can't reach its wish's other apps.
+    static func tellApp(wishKey: Data, bundleID: String, on udid: String) async {
+        let result = await Subprocess.run(DeveloperTools.path("simctl"), ["get_app_container", udid, bundleID, "data"], mergeErrors: false, timeout: 30)
+        let container = result.output.trimmed
+        guard result.ok, container.hasPrefix("/") else { return NSLog("Lamp couldn't tell \(bundleID) its wish's key: \(result.errors.trimmed)") }
+        let file = URL(fileURLWithPath: container).appendingPathComponent(wishKeyFile)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        if !fm.createFile(atPath: file.path, contents: Data(wishKey.base64EncodedString().utf8), attributes: [.posixPermissions: 0o600]) {
+            NSLog("Lamp couldn't tell \(bundleID) its wish's key.")
+        }
+    }
+
     /// Launches the app with its output going to `log`. Returns its process id.
     static func launch(_ bundleID: String, on udid: String, log: URL) async throws -> Int32 {
         let result = await Subprocess.run(DeveloperTools.path("simctl"), ["launch", "--stdout=\(log.path)", "--stderr=\(log.path)", udid, bundleID],

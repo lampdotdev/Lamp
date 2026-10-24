@@ -1,15 +1,25 @@
 import Foundation
 
-/// A wish made of more than one app: a TV app with an iPhone app that controls it, say. Its main part is the app at its
-/// root, as every wish has; each other part is an app of its own kind in a folder of the wish's (`iPhone/`, `Mac/`,
-/// `TV/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built, opened, looked at
-/// and used exactly as an app of that kind is. What a part doesn't have of its own is the wish's: the chat and its
-/// turns, the versions (one history for the whole folder), the icon and the name. Lamp keeps a part in
-/// `Store.projects` beside its wish (`LampProject.partOf`), never on the desk.
+/// A wish made of more than one app: a TV app with an iPhone app that controls it, say. No app of a wish leads: one is
+/// at the wish's root, where every wish made so far keeps its first app, and each other part is an app of its own kind
+/// in a folder of the wish's (`iPhone/`, `Mac/`, `TV/`), with its own `.lamp/meta.json`, build files, bundle id and
+/// runtime folder, so it's built, opened, looked at and used exactly as an app of that kind is. The root is one more
+/// place an app lives, not a role: the TV app of a wish is reached the same way from its root or from `TV/`. What a part
+/// doesn't have of its own is the wish's: the chat and its turns, the versions (one history for the whole folder), the
+/// icon and the name. Lamp keeps a part in `Store.projects` beside its wish (`LampProject.partOf`), never on the desk.
 ///
-/// What the agent knows follows the parts: the wish's prompt is its main kind's, with one rule naming the other parts,
-/// and each other part's rules are a skill of their own (`target-iphone`, …, `Parts.packs`), named with the request
-/// once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when its wish has one.
+/// What the agent knows follows the parts: the wish's prompt is the kind's of the app at its root, with one rule naming
+/// the other parts, and each other part's rules are a skill of their own (`target-iphone`, …, `Parts.packs`), named
+/// with the request once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when
+/// its wish has one.
+/// One of the apps a wish should have (`LampProject.apps`, kept in the wish's own meta.json beside what its folder
+/// holds): its kind and, while it isn't made yet, what stops it ("this Mac can't build the iPhone app yet…"), so a quit
+/// or a failure between asking for an app and making it loses neither.
+struct WishApp: Codable, Hashable {
+    var kind: Platform
+    var needs: String? = nil
+}
+
 enum Parts {
     /// The folder a part of this kind lives in, inside the wish's.
     static func folder(for kind: Platform) -> String { kind.target.part?.folder ?? kind.rawValue.prefix(1).uppercased() + kind.rawValue.dropFirst() }
@@ -78,25 +88,39 @@ enum Parts {
         }
     }
 
-    /// The kinds a wish for these devices is made of: one main kind, and the others beside it as parts. The devices of
-    /// one part family are one kind between them (Apple's: `Platform(devices:)`); a TV app is a kind of its own. The kind
-    /// that leads a wish is the main one (a TV app: what's on the TV is what the wish is about and the rest reach it). An
-    /// Android app, and a device with an integration that declares its apps, still stand alone (`Target.Words.alone`).
-    /// Nil for a list Lamp can't make.
-    static func kinds(for devices: Set<String>) -> (main: Platform, parts: [Platform])? {
-        if let one = Platform(devices: devices) { return (one, []) }
+    /// The kinds a wish for these devices is made of, in Lamp's order: the devices of one part family are one kind between
+    /// them (Apple's: `Platform(devices:)`); a TV app and an Android app are each a kind of their own. No kind leads:
+    /// which of them is at the wish's root is the wish's own affair (`root`), never the list's. A device with an
+    /// integration that declares its apps still stands alone (`Target.Words.alone`). Nil for a list Lamp can't make.
+    static func kinds(for devices: Set<String>) -> [Platform]? {
+        if let one = Platform(devices: devices) { return [one] }
         var byFamily: [String: Set<String>] = [:]
         for word in devices {
             guard let owner = Targets.owner(of: word) else { return nil }
-            byFamily[owner.part?.family ?? owner.platform.rawValue, default: []].insert(word)
+            byFamily[group(owner.platform), default: []].insert(word)
         }
         let kinds = byFamily.values.map { Platform(devices: $0) }
         guard kinds.count > 1, !kinds.contains(nil) else { return nil }
         let all = Targets.all.map(\.platform).filter { kinds.contains($0) }
-        let leading = all.filter { $0.target.identity.devices.leads }
-        guard all.allSatisfy({ !$0.target.identity.devices.alone }), leading.count == 1, let main = leading.first else { return nil }
-        return (main, all.filter { $0 != main })
+        guard all.allSatisfy({ !$0.target.identity.devices.alone && $0.target.part != nil }) else { return nil }
+        return all
     }
+
+    /// The kind the app at a wish's root is once the wish is for these kinds: the one of its own family (an iPhone app
+    /// that's to be for the Mac too is changed in place, keeping its code), or, while nothing is written for it yet (a
+    /// wish still to be told what it's for), the first in Lamp's order, where `Store.rootKind` prefers one this Mac
+    /// can build now. Nil when the list leaves its family out and its code is written: no app is ever written over
+    /// again as another kind, and a wish keeps the app it began with, so "tv" added to a Mac wish keeps the Mac app
+    /// and adds the TV app beside it.
+    static func root(among kinds: [Platform], for wish: LampProject) -> Platform? {
+        kinds.first { group($0) == group(wish.platform) } ?? (wish.scaffolded ? nil : kinds.first)
+    }
+
+    /// The kinds beside the one at the root: every other family's.
+    static func others(among kinds: [Platform], root: Platform) -> [Platform] { kinds.filter { group($0) != group(root) } }
+
+    /// What a wish has one of: a part family, or for a kind that's no part the kind itself.
+    static func group(_ kind: Platform) -> String { kind.target.part?.family ?? kind.rawValue }
 
     /// The part of a wish (or the wish itself) a device word names: "iphone" is whichever has an iPhone, "mac" whichever
     /// runs on the Mac. Nil when none does.
@@ -111,6 +135,55 @@ enum Parts {
         }
     }
 
+    // MARK: The apps a wish should have
+
+    /// The apps a wish should have (`LampProject.apps`), as they are: the list its meta.json keeps, with what's made
+    /// (the app at its root, each part found in its folder) taken as made whatever the list said, and listed when the
+    /// list left it out (a wish from before wishes kept the list). An app made as another kind of the same family (the
+    /// iPhone app that became one for both) counts as made.
+    static func wanted(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        var apps = wish.apps
+        for made in [wish.platform] + parts.map(\.platform) {
+            if let index = apps.firstIndex(where: { group($0.kind) == group(made) }) { apps[index] = WishApp(kind: made) }
+            else { apps.append(WishApp(kind: made)) }
+        }
+        return apps
+    }
+
+    /// The apps a wish should have and doesn't yet: each with what stops it (`needs`), or nothing when it's only not
+    /// made yet (its turn hasn't started, or what stopped it was cleared for another try).
+    static func waiting(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        let made = Set(([wish.platform] + parts.map(\.platform)).map(group))
+        return wish.apps.filter { !made.contains(group($0.kind)) }
+    }
+
+    /// The list once a part of this kind is made: every app the wish has, the one at its root included (a wish from
+    /// before the list has none written), with this one in place of any of its family.
+    static func listing(_ kind: Platform, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        setting(WishApp(kind: kind), in: wanted(in: wish, parts: parts))
+    }
+
+    /// The list with one app set: in place of the one of its family, or added.
+    static func setting(_ app: WishApp, in apps: [WishApp]) -> [WishApp] {
+        var apps = apps
+        if let index = apps.firstIndex(where: { group($0.kind) == group(app.kind) }) { apps[index] = app } else { apps.append(app) }
+        return apps
+    }
+
+    /// The request a wish's chat sends once the setup an app was waiting for is done, as the person would ask.
+    static func request(for kind: Platform) -> String { "Add \(name(of: kind)) that goes with it now." }
+
+    /// The line at the end of a request about the apps the wish should have and doesn't yet, so the agent tells the
+    /// person rather than making them itself (Lamp makes each once this Mac can build it). Nothing when none wait.
+    static func waitingLine(for wish: LampProject, parts: [LampProject]) -> String {
+        let waiting = waiting(in: wish, parts: parts)
+        guard !waiting.isEmpty else { return "" }
+        return waiting.map { app in
+            "- \(name(of: app.kind)): " + (app.needs.map { "not made yet, since \($0.prefix(1).lowercased() + $0.dropFirst())" }
+                                             ?? "Lamp makes it as soon as it can.")
+        }.joined(separator: "\n")
+    }
+
     // MARK: What the agent is told
 
     /// The skill holding a kind's rules for a part of that kind.
@@ -121,17 +194,20 @@ enum Parts {
 
     /// The rules for a part of each kind, as skills: the kind's own rules, for the files in its folder, without the
     /// ones about the wish as a whole, which the wish's prompt has. Made when asked, since some follow Lamp's settings.
-    static var packs: [String: Skills.Skill] {
+    /// A part the wish has (`parts`) is told of its own folder: an iPhone app made for the Mac too stays in iPhone/,
+    /// not in the Apple/ an app for both is added in.
+    static func packs(for parts: [LampProject] = []) -> [String: Skills.Skill] {
         var skills: [String: Skills.Skill] = [:]
         for kind in partKinds {
             let skill = skill(for: kind)
-            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside its main app, in \(folder(for: kind))/: how it's written, built, tried and how it talks to the rest.",
-                                        body: pack(for: kind))
+            let folder = parts.first { $0.platform == kind }?.dir.lastPathComponent ?? folder(for: kind)
+            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside the app at its root, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
+                                        body: pack(for: kind, in: folder))
         }
         return skills
     }
 
-    static func pack(for kind: Platform) -> String { kind.target.part?.rules(folder(for: kind)) ?? "" }
+    static func pack(for kind: Platform, in folder: String? = nil) -> String { kind.target.part?.rules(folder ?? self.folder(for: kind)) ?? "" }
 
     /// The rule the wish's own prompt gets when it has other parts: what they are, where, how to reach each with the
     /// tools, and to open each one's rules before changing it.
@@ -146,7 +222,7 @@ enum Parts {
         its rules with `read_skill` (once per conversation) and follow them for the files in its folder; the rules \
         above are for the app at the root. `look_at_app` and `use_app` reach another part with `part` (left out, \
         they're for the app at the root): look at each part you changed before finishing.
-        """ + Targets.all.filter { kind in ([wish] + parts).contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
+        """ + Agent.Rules.wishTalk + Targets.all.filter { kind in ([wish] + parts).contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
     }
 }
 
@@ -161,19 +237,23 @@ extension Agent.Rules {
         """
     }
 
-    /// How a Swift part reaches the wish's TV app: as a player of its `Lamp.controllers`, through `LampController`.
+    /// How a Swift part reaches the wish's other apps (`wishTalk`), and its TV app's game as a player of
+    /// `Lamp.controllers`, through `LampController`.
     static func partTalk(mac: Bool) -> String {
-        """
+        wishTalk + """
 
-        - When the wish has a TV app, this app talks to it with `LampController` from LampSupport.swift: \
-        `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, through Lamp on \
-        the person's Mac and the home Wi‑Fi, with nothing to pair or set up. `pad.press("next")` taps a button, \
-        `pad.button("fire", down: true)` and `down: false` hold and let go, `pad.axis("stick", x: 0.5, y: 0)` moves \
-        a stick (-1 to 1), and `pad.send(["volume": 4])` sends anything small (at most 1,024 bytes as JSON; a file goes in pieces, as the \
-        phone-controllers skill shows); the TV app hears them in \
-        `Lamp.controllers`' onButton, onAxis and onMessage. `pad.onMessage { data in … }` hears what it sends back. \
-        `pad` is observable: show `pad.state` plainly (`.waiting` means the TV app isn't open: "Open it on the TV"), \
-        and keep every control usable while it connects. \(mac ? "" : "In the simulator it reaches the TV preview on this Mac.")
+        - When the wish has a TV app and this app steers it (a game's controller, a remote), that goes with \
+        `LampController` from LampSupport.swift, beside `LampWish` for everything else: \
+        `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
+        Wi‑Fi, with nothing to pair or set up\(mac ? "" : ": the TV app connects straight to the phone, and Lamp on the Mac only introduces them"). \
+        `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \
+        `pad.axis("stick", x: 0.5, y: 0)` moves a stick (-1 to 1), and `pad.send(["volume": 4])` sends JSON of \
+        16 KB at most; the TV app hears them in `Lamp.controllers`' onButton, onAxis and onMessage. Anything bigger \
+        (a photo, a game, a song) goes with `pad.sendFile(data, name: "game.nes")`, up to 64 MB, which the TV app \
+        gets in onFile; the transfer it returns is observable (`sent`, `progress`, `state`) and has `cancel()`, so \
+        show its progress. `pad.onMessage { data in … }` and `pad.onFile { file in … }` hear what the TV app sends \
+        back. `pad` is observable: show `pad.state` plainly (`.waiting` means the TV app isn't open: "Open it on the \
+        TV"), and keep every control usable while it connects. \(mac ? "" : "In the simulator it reaches the TV preview on this Mac.")
         """
     }
 }
@@ -209,4 +289,24 @@ extension Parts {
     static func device(_ word: String) -> String? {
         Targets.asked(word.lowercased())
     }
+}
+
+extension Parts {
+    /// The line at the end of a request about the apps the wish should have and doesn't yet, sent as `Skills.brief` is:
+    /// once per conversation and again when it changes. Nothing while none wait.
+    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
+        let line = waitingLine(for: project, parts: Store.shared.parts(of: project))
+        guard note.telling(line, for: project, engine: engine, session: session) != .nothing, !line.isEmpty else { return "" }
+        return "\n\n---\nApps this wish should have and doesn't yet (from Lamp, not part of the request above). Don't make them " +
+            "yourself: Lamp makes each as soon as this Mac can build it, and the person has its setup a click away in the chat. " +
+            "Build the rest, and say in a sentence what's waiting if the person asks about it:\n" + line
+    }
+
+    /// The agent answered, so the request and the line in it arrived.
+    @MainActor static func delivered(to project: LampProject, session: String? = nil) { note.delivered(to: project, session: session) }
+
+    /// The engine summed up its conversation, and the line may have gone with it.
+    @MainActor static func compacted(_ project: LampProject) { note.compacted(project) }
+
+    @MainActor private static let note = RequestNote(file: ".lamp/apps-shown.json")
 }

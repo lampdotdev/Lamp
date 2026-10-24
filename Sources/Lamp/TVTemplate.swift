@@ -22,7 +22,7 @@ enum TVTemplate {
     }
 
     static func writeOwnedFiles(for project: LampProject) throws {
-        try Template.write(lampJS, to: supportFile, for: project)
+        try Template.write(lampJS(for: project), to: supportFile, for: project)
     }
 
     static func fill(_ project: LampProject) throws {
@@ -152,7 +152,16 @@ enum TVTemplate {
     /// Lamp's building blocks in every TV app, written before every build: LampAI, LampStore and LampAssets
     /// (`DeviceSupport.webJS`, shared with the web apps integrations declare), then the remote. It runs on Samsung's and
     /// LG's TVs and in the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
-    static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS }
+    static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS + wishJS }
+
+    /// lamp.js as an app is given it: with `Lamp.wish` only for a TV app with others in its wish
+    /// (`Template.talksToOtherApps`), so a TV app on its own is written as it was before the block existed.
+    static func lampJS(for project: LampProject) -> String {
+        Template.talksToOtherApps(project) ? lampJS
+            : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
+    }
+
+    private static let wishLine = " * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below\n"
 
     static let remoteJS = """
         /* The remote, for a TV app. Written by Lamp before every build; don't edit. LampAI, LampStore and LampAssets
@@ -171,6 +180,7 @@ enum TVTemplate {
          *   with "#" + hash after it when given; null when the app has no Phone/index.html
          * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there
          * Lamp.controllers   phones on the same Wi-Fi as controllers: see its comment below
+         * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below
          *
          * The arrows move focus between what can take it (buttons, links, fields, and anything with data-focus),
          * to the nearest in that direction; OK clicks what has it.
@@ -315,40 +325,228 @@ enum TVTemplate {
 }
 
 extension TVTemplate {
-    /// Phones as controllers (`PhoneControllers`): the TV page's half. In the preview the page is the app's host in Lamp
-    /// itself (the `lampController` bridge); on a TV it asks Lamp for a credential once and opens a socket to Lamp's
-    /// gateway over the Wi‑Fi. What a phone holds down is let go when it leaves or the link drops, and movement that
-    /// arrives late is dropped.
+    /// Files between a phone and the TV in pieces (`ControllerWire`), the same code in lamp.js and lamp-controller.js:
+    /// at most a window ahead of what the receiver has acknowledged, a piece only once the socket has sent the one before,
+    /// so a button pressed meanwhile never waits long, and each file held to the size it was announced at.
+    static let filesJS = #"""
+          // Files in pieces: the same on the TV and on the phone.
+          function lampFiles(onIncoming) {
+            var CHUNK = 65536, HEADER = 8, WINDOW = 524288, LIMIT = 67108864, STALL = 20000;
+            var TAKING = 134217728;   // bytes of files coming in at once, from everyone: a TV's memory is small
+            var TOO_BIG = 'The file is too big to send: 64 MB at most.';
+            var nextID = 1, outgoing = {}, incoming = {}, taking = 0;
+            function noop() {}
+            function key(route, id) { return route.key + ':' + id; }
+            function fire(list, args) {
+              for (var i = 0; i < list.length; i++) { try { list[i].apply(null, args); } catch (e) { if (window.console) console.error(e); } }
+            }
+            function bytesOf(data) {
+              if (data instanceof ArrayBuffer) return Promise.resolve(new Uint8Array(data));
+              if (data && data.buffer instanceof ArrayBuffer && typeof data.byteLength === 'number') {
+                return Promise.resolve(new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength));
+              }
+              if (typeof Blob !== 'undefined' && data instanceof Blob) {
+                // Refused by its size before it's read: reading a whole video into memory could end the page first.
+                if (data.size > LIMIT) return Promise.reject(new Error(TOO_BIG));
+                return new Promise(function (resolve, reject) {
+                  var reader = new FileReader();
+                  reader.onload = function () { resolve(new Uint8Array(reader.result)); };
+                  reader.onerror = function () { reject(new Error('The file couldn\'t be read.')); };
+                  reader.readAsArrayBuffer(data);
+                });
+              }
+              if (typeof data === 'string') {
+                var text = unescape(encodeURIComponent(data)), out = new Uint8Array(text.length);
+                for (var i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
+                return Promise.resolve(out);
+              }
+              return Promise.reject(new Error('sendFile takes a File, a Blob, an ArrayBuffer, bytes or text.'));
+            }
+
+            function send(route, data, info) {
+              info = info || {};
+              var id = nextID++;
+              if (nextID > 2147483646) nextID = 1;
+              var progress = [], settled = false, bytes = null, offset = 0, acked = 0, timer = null, watch = null, resolve, reject;
+              var transfer = {
+                id: id, name: String(info.name || (data && data.name) || 'file'),
+                type: String(info.type || (data && data.type) || 'application/octet-stream'), size: 0, sent: 0,
+                onProgress: function (fn) { progress.push(fn); },
+                cancel: function () { if (!settled) { route.text({ t: 'file-cancel', id: id }); fail('The file was cancelled.'); } }
+              };
+              transfer.done = new Promise(function (yes, no) { resolve = yes; reject = no; });
+              transfer.done.catch(noop);
+              function fail(message) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer); clearTimeout(watch);
+                delete outgoing[key(route, id)];
+                reject(new Error(message));
+              }
+              function stalled() { route.text({ t: 'file-cancel', id: id }); fail('The file stopped moving.'); }
+              function pump() {
+                clearTimeout(timer); timer = null;
+                if (settled) return;
+                while (offset < transfer.size && offset - acked < WINDOW) {
+                  if (route.buffered() > CHUNK) { timer = setTimeout(pump, 10); return; }
+                  var n = Math.min(CHUNK, transfer.size - offset), piece = new Uint8Array(HEADER + n);
+                  piece[0] = 1; piece[1] = route.place || 0;
+                  piece[4] = (id >>> 24) & 255; piece[5] = (id >>> 16) & 255; piece[6] = (id >>> 8) & 255; piece[7] = id & 255;
+                  piece.set(bytes.subarray(offset, offset + n), HEADER);
+                  if (!route.binary(piece.buffer)) return fail('The link was lost.');
+                  offset += n;
+                }
+              }
+              bytesOf(data).then(function (read) {
+                if (settled) return;
+                if (read.length > LIMIT) return fail(TOO_BIG);
+                bytes = read;
+                transfer.size = read.length;
+                outgoing[key(route, id)] = {
+                  ack: function (got) {
+                    if (typeof got !== 'number' || got < acked || got > offset) return;
+                    acked = got;
+                    transfer.sent = got;
+                    clearTimeout(watch); watch = setTimeout(stalled, STALL);
+                    fire(progress, [got, transfer.size]);
+                    if (got === transfer.size) {
+                      settled = true;
+                      clearTimeout(timer); clearTimeout(watch);
+                      delete outgoing[key(route, id)];
+                      resolve(transfer);
+                    } else pump();
+                  },
+                  fail: fail
+                };
+                if (!route.text({ t: 'file', id: id, name: transfer.name, type: transfer.type, size: transfer.size })) return fail('Not connected.');
+                watch = setTimeout(stalled, STALL);
+                pump();
+              }, function (error) { fail(error.message); });
+              return transfer;
+            }
+
+            function receive(route, m) {
+              var id = m.id, size = m.size, k = key(route, id);
+              if (typeof id !== 'number' || typeof size !== 'number' || size < 0 || size > LIMIT || incoming[k] || taking + size > TAKING) {
+                route.text({ t: 'file-refuse', id: id, reason: 'The file is too big to take now.' });
+                return;
+              }
+              taking += size;
+              var parts = [], got = 0, progress = [], settled = false, resolve, reject;
+              var file = {
+                id: id, name: String(m.name || 'file'), type: String(m.type || ''), size: size, received: 0,
+                onProgress: function (fn) { progress.push(fn); },
+                cancel: function () { if (!settled) { route.text({ t: 'file-refuse', id: id, reason: 'Turned down.' }); fail('The file was cancelled.'); } }
+              };
+              file.done = new Promise(function (yes, no) { resolve = yes; reject = no; });
+              file.done.catch(noop);
+              function fail(message) {
+                if (settled) return;
+                settled = true;
+                taking -= size;
+                delete incoming[k];
+                reject(new Error(message));
+              }
+              function finish() {
+                var all = new Uint8Array(size), at = 0;
+                for (var i = 0; i < parts.length; i++) { all.set(parts[i], at); at += parts[i].length; }
+                parts = [];
+                settled = true;
+                taking -= size;
+                delete incoming[k];
+                resolve(all.buffer);
+              }
+              incoming[k] = {
+                piece: function (bytes) {
+                  if (settled) return;
+                  if (got + bytes.length > size) { route.text({ t: 'file-refuse', id: id, reason: 'The file was bigger than it said.' }); return fail('The file was bigger than it said.'); }
+                  parts.push(new Uint8Array(bytes));
+                  got += bytes.length;
+                  file.received = got;
+                  route.text({ t: 'file-ack', id: id, got: got });
+                  fire(progress, [got, size]);
+                  if (got === size) finish();
+                },
+                fail: fail
+              };
+              onIncoming(route, file);
+              if (size === 0 && !settled) { route.text({ t: 'file-ack', id: id, got: 0 }); finish(); }
+            }
+
+            return {
+              send: send,
+              // A file message: true when it was one.
+              text: function (route, m) {
+                var k = key(route, m.id);
+                if (m.t === 'file') { receive(route, m); return true; }
+                if (m.t === 'file-ack') { if (outgoing[k]) outgoing[k].ack(m.got); return true; }
+                if (m.t === 'file-refuse') { if (outgoing[k]) outgoing[k].fail(m.reason || 'The file was turned down.'); return true; }
+                if (m.t === 'file-cancel') { if (incoming[k]) incoming[k].fail('The sender cancelled the file.'); return true; }
+                return false;
+              },
+              binary: function (route, view) {
+                if (view.length < HEADER || view[0] !== 1) return;
+                var id = view[4] * 16777216 + (view[5] << 16) + (view[6] << 8) + view[7];
+                var file = incoming[key(route, id)];
+                if (file) file.piece(view.subarray(HEADER));
+              },
+              // The link to someone is gone: every file on its way to or from them ends.
+              drop: function (route, reason) {
+                var prefix = route.key + ':', k;
+                for (k in outgoing) if (k.indexOf(prefix) === 0) outgoing[k].fail(reason);
+                for (k in incoming) if (k.indexOf(prefix) === 0) incoming[k].fail(reason);
+              }
+            };
+          }
+
+        """#
+
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp who its players are
+    /// (`/app/controller`), as it opens and every few seconds after, and opens its own sockets to them: one to the relay,
+    /// where phones' pages and the wish's Mac app join, and one straight to each of the wish's iPhone apps that's
+    /// listening. Lamp carries none of it. The page numbers the players itself, whichever way they came. What a phone holds
+    /// down is let go when it leaves or its link drops, and movement that arrives late is dropped.
     static let controllersJS = #"""
         /* Phones as controllers. Written by Lamp before every build; don't edit.
          *
          * Lamp.controllers.start()                    opens a game for phones on this Wi-Fi; Promise. The phones' page is
-         *                                              Phone/index.html, loading lamp-controller.js (its own comment says how).
+         *                                              Phone/index.html, loading lamp-controller.js (its own comment says how);
+         *                                              the wish's iPhone or Mac app joins with LampController.
          * Lamp.controllers.onLink(fn(url))             the address phones open (show it as a QR code); it changes every
          *                                              few minutes, and fn is called each time
          * Lamp.controllers.onJoin(fn(player)), onLeave(fn(player))      players are numbered 1, 2, ... as phones join
          * Lamp.controllers.onButton(fn(player, name, down))             a button held (down true) or let go
          * Lamp.controllers.onAxis(fn(player, name, x, y))               a stick, or the phone's tilt ('tilt'), -1 to 1
-         * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone's page sent
+         * Lamp.controllers.onMessage(fn(player, data))                  anything else a phone sent (JSON, 16 KB at most)
+         * Lamp.controllers.onFile(fn(player, file))                     a phone is sending a file (up to 64 MB):
+         *     file.name, file.type, file.size; file.onProgress(fn(received, size)); file.cancel();
+         *     file.done.then(fn(arrayBuffer)) once all of it is here, or .catch(fn(error)) when it didn't come
          * Lamp.controllers.onError(fn(message))                         it couldn't start, the link was lost, or a
          *                                                               message was too big to send (messageLimit)
-         * Lamp.controllers.send(player, data)          to one phone, or to every phone with player 0; false when it
+         * Lamp.controllers.send(player, data)          JSON to one phone, or to every phone with player 0; false when it
          *                                              wasn't sent, with the reason in the console
-         * Lamp.controllers.messageLimit                1024: the most bytes one message takes as JSON, either way
+         * Lamp.controllers.messageLimit                16384: the most bytes one message takes as JSON, either way; anything
+         *                                              bigger goes with sendFile
+         * Lamp.controllers.sendFile(player, data, { name, type })       a File, Blob, ArrayBuffer, bytes or text, to one
+         *     phone; gives a transfer: onProgress(fn(sent, size)), cancel(), done (a Promise)
          * Lamp.controllers.isHeld(player, name), players()
          * Lamp.controllers.stop()
          *
          * A phone that leaves, or whose link drops, has every button it held let go (onButton with down false) before
-         * onLeave. Movement that arrives late is dropped rather than acted on. A message over messageLimit isn't sent,
-         * from the TV or from a phone, and the console here says so: send something big (a file, a picture) in numbered
-         * pieces of at most 700 characters of base64, each once the other side has answered the last.
+         * onLeave, and its files end. Movement that arrives late is dropped rather than acted on. A message over
+         * messageLimit isn't sent, from the TV or from a phone, and the console here says so.
          */
         (function () {
           'use strict';
-          var LATE = 300;   // ms after which a stick or tilt reading is dropped as stale
-          var LIMIT = 1024; // bytes of JSON in one message, the most Lamp passes on (PhoneControllers.Limits.message)
-          var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], error: [] };
-          var held = {}, seen = {}, joined = {}, offset = null, link = null, transport = null, linkTimer = null, started = false, away = false;
+          var LATE = 300;          // ms after which a stick or tilt reading is dropped as stale
+          var MESSAGE = 16384;     // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
+          var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], file: [], error: [] };
+          var players = {}, byKey = {}, kept = {}, links = {}, link = null, linkTimer = null, askTimer = null, beatTimer = null, started = false, away = false;
+        /*LAMP_FILES*/
+          var files = lampFiles(function (route, file) {
+            var number = byKey[route.key];
+            if (number) emit('file', [number, file]); else file.cancel();
+          });
 
           function emit(name, args) {
             var list = on[name];
@@ -361,179 +559,898 @@ extension TVTemplate {
               return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
             };
           }
+
+          // Players: numbered here, whichever way they came, the lowest free number first; one who drops off and comes
+          // back within two minutes gets the number they had.
+          function numberFor(key, prefer) {
+            var now = Date.now(), taken = {}, n, mine = kept[key];
+            delete kept[key];
+            for (n in players) taken[n] = true;
+            for (n in kept) { if (kept[n].until > now) taken[kept[n].number] = true; else delete kept[n]; }
+            if (mine && mine.until > now && !taken[mine.number]) return mine.number;
+            if (prefer && !taken[prefer]) return prefer;
+            for (n = 1; taken[n]; n++) {}
+            return n;
+          }
+          function join(key, route) {
+            if (byKey[key]) return byKey[key];
+            var number = numberFor(key, route.place);
+            byKey[key] = number;
+            players[number] = { key: key, route: route, held: {}, seen: {} };
+            route.text({ t: 'player', number: number });
+            emit('join', [number]);
+            return number;
+          }
+          function leave(key) {
+            var number = byKey[key];
+            if (!number) return;
+            var player = players[number];
+            files.drop(player.route, 'The player left.');
+            for (var name in player.held) if (player.held[name]) emit('button', [number, name, false]);
+            delete players[number];
+            delete byKey[key];
+            kept[key] = { number: number, until: Date.now() + 120000 };
+            emit('leave', [number]);
+          }
           // Each phone counts its messages from 1 on every new link, so what's been seen is forgotten when it leaves.
-          function fresh(m) {
-            var mine = seen[m.player] || (seen[m.player] = {});
-            var key = m.t + ':' + m.name;
-            if (mine[key] !== undefined && m.seq <= mine[key]) return false;
-            mine[key] = m.seq;
+          function fresh(player, m) {
+            var name = m.t + ':' + m.name;
+            if (player.seen[name] !== undefined && m.seq <= player.seen[name]) return false;
+            player.seen[name] = m.seq;
             return true;
           }
-          function release(player) {
-            var names = held[player] || {};
-            for (var name in names) if (names[name]) emit('button', [player, name, false]);
-            held[player] = {};
-          }
-          function leave(player) {
-            delete seen[player];
-            if (!joined[player]) return;
-            release(player);
-            delete joined[player];
-            emit('leave', [player]);
-          }
-          function join(player) {
-            delete seen[player];
-            if (joined[player]) return;
-            joined[player] = true;
-            held[player] = {};
-            emit('join', [player]);
-          }
-          function leaveAll() { for (var p in joined) leave(+p); seen = {}; }
-
-          function receive(m) {
-            if (!m || typeof m !== 'object') return;
-            if (m.now) offset = m.now - Date.now();
-            if (m.t === 'welcome') {
-              for (var i = 0; i < (m.players || []).length; i++) join(m.players[i]);
-              askLink();
-            } else if (m.t === 'link') {
-              link = m.url;
-              emit('link', [link]);
-            } else if (m.t === 'joined') {
-              leave(m.player);
-              join(m.player);
-            } else if (m.t === 'left') {
-              leave(m.player);
-            } else if (m.t === 'button') {
-              if (!joined[m.player]) join(m.player);
-              if (!fresh(m)) return;
-              held[m.player][m.name] = !!m.down;
-              emit('button', [m.player, m.name, !!m.down]);
-            } else if (m.t === 'axis') {
-              if (!joined[m.player]) join(m.player);
-              if (!fresh(m)) return;
-              if (offset !== null && Date.now() + offset - m.at > LATE) return;
-              emit('axis', [m.player, m.name, m.x, m.y]);
-            } else if (m.t === 'message') {
-              emit('message', [m.player, m.data]);
-            } else if (m.t === 'too-big') {
-              tooBig('Player ' + m.player + "'s message", m.bytes);
-            } else if (m.t === 'closed') {
-              leaveAll();
-            }
-          }
-          window.__lampControllers = receive;
-
+          function clamp(v) { return typeof v === 'number' && isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0; }
           function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+          // What isn't sent is said in the console, which the preview keeps in the app's log: the code that sent it can't
+          // tell otherwise why the other side never heard it.
           function tooBig(what, size) {
             var line = 'Lamp.controllers: ' + what + ' of ' + size + ' bytes was not sent: a message between devices is at most ' +
-              LIMIT + ' bytes as JSON. Send something big in numbered pieces of at most 700 characters, each after the other side has answered the last.';
+              MESSAGE + ' bytes as JSON. Send something big with sendFile (pad.sendFile on a phone).';
             if (window.console) console.error(line);
             emit('error', [line]);
           }
-
-          function askLink() {
-            if (transport) transport.send({ t: 'link' });
-            clearInterval(linkTimer);
-            linkTimer = setInterval(function () { if (transport) transport.send({ t: 'link' }); }, 10 * 60 * 1000);
+          function input(number, m, offset) {
+            var player = players[number];
+            if (!player || (m.t !== 'message' && !(typeof m.name === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(m.name)))) return;
+            if (m.t === 'button') {
+              if (!fresh(player, m)) return;
+              player.held[m.name] = !!m.down;
+              emit('button', [number, m.name, !!m.down]);
+            } else if (m.t === 'axis') {
+              if (!fresh(player, m)) return;
+              if (offset !== null && typeof m.at === 'number' && Date.now() + offset - m.at > LATE) return;
+              emit('axis', [number, m.name, clamp(m.x), clamp(m.y)]);
+            } else if (m.t === 'message') {
+              emit('message', [number, m.data]);
+            }
           }
 
-          // The preview on the Mac: the page is the app's host in Lamp itself.
-          function bridgeTransport(handler) {
-            handler.postMessage({ op: 'start' });
+          // Links: one socket to the relay, and one to each of the wish's iPhone apps that's listening.
+          function sendOn(l, m) {
+            if (!l.socket || l.socket.readyState !== 1) return false;
+            l.socket.send(JSON.stringify(m));
+            return true;
+          }
+          function routeOn(l, place) {
+            var relay = l.kind === 'relay';
             return {
-              send: function (message) { handler.postMessage({ op: 'send', message: message }); return true; },
-              stop: function () { handler.postMessage({ op: 'stop' }); }
+              key: relay ? 'r' + place : 'd' + l.device, place: relay ? place : 0,
+              text: function (m) { if (relay) m.player = place; return sendOn(l, m); },
+              say: function (data) { return sendOn(l, relay ? { t: 'send', player: place, data: data } : { t: 'message', data: data }); },
+              binary: function (buffer) { if (!l.socket || l.socket.readyState !== 1) return false; l.socket.send(buffer); return true; },
+              buffered: function () { return l.socket ? l.socket.bufferedAmount : 0; }
             };
           }
-
-          // On a TV: a socket to Lamp on the Mac, over the Wi-Fi, opened again when it drops.
-          function socketTransport() {
-            var socket = null, beat = null, stopped = false, session = null;
-            function connect() {
-              if (stopped) return;
-              socket = new WebSocket(session.socket);
-              socket.onopen = function () { socket.send(JSON.stringify({ t: 'hello', credential: session.host })); };
-              socket.onmessage = function (event) { var m; try { m = JSON.parse(event.data); } catch (e) { return; } receive(m); };
-              socket.onclose = function () { leaveAll(); if (!stopped) setTimeout(open, 2000); };
+          function fromLink(l, m) {
+            if (typeof m.now === 'number') l.offset = m.now - Date.now();
+            if (l.kind === 'relay') {
+              if (m.t === 'welcome') {
+                for (var i = 0; i < (m.players || []).length; i++) join('r' + m.players[i], routeOn(l, m.players[i]));
+                askLink();
+              } else if (m.t === 'link') {
+                link = m.url;
+                emit('link', [link]);
+              } else if (m.t === 'joined') {
+                leave('r' + m.player);
+                join('r' + m.player, routeOn(l, m.player));
+              } else if (m.t === 'left') {
+                leave('r' + m.player);
+              } else if (m.t === 'too-big') {
+                tooBig('Player ' + (byKey['r' + m.player] || m.player) + "'s message", m.bytes);
+              } else if (typeof m.player === 'number' && !files.text(routeOn(l, m.player), m) && /^(button|axis|message)$/.test(m.t)) {
+                input(byKey['r' + m.player] || join('r' + m.player, routeOn(l, m.player)), m, l.offset);
+              }
+            } else if (m.t === 'welcome') {
+              l.welcomed = true;
+              join('d' + l.device, routeOn(l, 0));
+            } else if (l.welcomed && m.t === 'too-big') {
+              tooBig('Player ' + byKey['d' + l.device] + "'s message", m.bytes);
+            } else if (l.welcomed && !files.text(routeOn(l, 0), m)) {
+              input(byKey['d' + l.device], m, l.offset);
             }
-            function open() {
-              if (stopped) return;
+          }
+          function connect(l) {
+            clearTimeout(l.again);
+            if (!started || l.socket) return;
+            var socket;
+            try { socket = new WebSocket(l.address); } catch (e) { return lost(l, 0); }
+            socket.binaryType = 'arraybuffer';
+            l.socket = socket;
+            l.heard = Date.now();
+            socket.onopen = function () {
+              socket.send(JSON.stringify(l.kind === 'relay' ? { t: 'hello', app: l.app, credential: l.credential } : { t: 'hello', credential: l.credential }));
+            };
+            socket.onmessage = function (event) {
+              l.heard = Date.now();
+              if (typeof event.data !== 'string') {
+                var view = new Uint8Array(event.data);
+                if (view.length > 1) files.binary(routeOn(l, l.kind === 'relay' ? view[1] : 0), view);
+                return;
+              }
+              var m; try { m = JSON.parse(event.data); } catch (e) { return; }
+              if (m && typeof m === 'object') fromLink(l, m);
+            };
+            socket.onclose = function (event) { if (l.socket === socket) lost(l, event.code); };
+          }
+          // A link that drops lets its players go. The relay's is opened again after a moment (with a fresh credential
+          // once Lamp has given one); a phone's goes, and comes back if Lamp still lists it.
+          function lost(l, code) {
+            l.socket = null;
+            l.welcomed = false;
+            for (var key in byKey) if (l.kind === 'relay' ? key.charAt(0) === 'r' : key === 'd' + l.device) leave(key);
+            if (!started) return;
+            if (l.kind === 'relay') {
+              // Turned away, or the session ended: its credential is no use, and Lamp gives a fresh one.
+              if (code === 4003 || code === 4005) return ask(1000);
+              l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
+            } else {
+              delete links[l.id];
+              ask(2000);
+            }
+          }
+          function ask(after) {
+            clearTimeout(askTimer);
+            askTimer = setTimeout(function () {
+              if (!started) return;
               LampAI._post('/app/controller', {}, 20000).then(function (answer) {
-                session = answer;
-                connect();
+                if (!started) return;
+                var list = answer.links || [];
+                for (var i = 0; i < list.length; i++) {
+                  var info = list[i], id = info.kind === 'relay' ? 'relay' : 'd' + info.device;
+                  var l = links[id] || (links[id] = { id: id, kind: info.kind, device: info.device, socket: null, offset: null });
+                  l.credential = info.credential;
+                  l.app = info.app;
+                  if (!l.socket) { l.address = info.socket; connect(l); }
+                }
+                ask((answer.renew || 15) * 1000);
               }, function (error) {
                 emit('error', [error.message]);
-                if (!stopped) setTimeout(open, 5000);
+                ask(5000);
               });
+            }, after || 0);
+          }
+          function askLink() {
+            if (links.relay) sendOn(links.relay, { t: 'link' });
+            clearInterval(linkTimer);
+            linkTimer = setInterval(function () { if (links.relay) sendOn(links.relay, { t: 'link' }); }, 10 * 60 * 1000);
+          }
+          // A beat both ways: whoever hears nothing for a while lets the other go.
+          function beat() {
+            var now = Date.now();
+            for (var id in links) {
+              var l = links[id];
+              if (!l.socket || l.socket.readyState !== 1) continue;
+              if (now - l.heard > 15000) { l.socket.close(); continue; }
+              l.socket.send('{"t":"beat"}');
             }
-            open();
-            beat = setInterval(function () { if (socket && socket.readyState === 1) socket.send('{"t":"beat"}'); }, 5000);
-            return {
-              send: function (message) {
-                if (!socket || socket.readyState !== 1) return false;
-                socket.send(JSON.stringify(message));
-                return true;
-              },
-              stop: function () { stopped = true; clearInterval(beat); if (socket) socket.close(); }
-            };
           }
 
           var api = {
             start: function () {
               if (started) return Promise.resolve();
               started = true;
-              var handlers = window.webkit && window.webkit.messageHandlers;
-              transport = handlers && handlers.lampController ? bridgeTransport(handlers.lampController) : socketTransport();
+              ask(0);
+              beatTimer = setInterval(beat, 5000);
               return Promise.resolve();
             },
             stop: function () {
-              if (transport) transport.stop();
-              transport = null; started = false; link = null;
-              clearInterval(linkTimer);
-              leaveAll();
+              started = false;
+              clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
+              for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
+              for (var key in byKey) leave(key);
+              links = {}; link = null;
             },
-            // What isn't sent is said in the console, which the preview keeps in the app's log: the code that sent it
-            // can't tell otherwise why the phone never heard it. Being away is said once until the link is back.
             send: function (player, data) {
-              var message = { t: 'send', player: player || 0, data: data }, text = JSON.stringify(message);
+              var text = JSON.stringify({ t: 'send', player: 8, data: data });
               if (data === undefined || text === undefined) { if (window.console) console.error('Lamp.controllers: a message was not sent: it holds nothing JSON can.'); return false; }
-              if (bytes(text) > LIMIT) { tooBig('A message', bytes(text)); return false; }
-              if (transport && transport.send(message)) { away = false; return true; }
-              if (!away && window.console) console.error('Lamp.controllers: a message was not sent: ' + (transport ? 'the link to Lamp is down.' : 'call Lamp.controllers.start() first.'));
+              if (bytes(text) > MESSAGE) { tooBig('A message', bytes(text)); return false; }
+              var went = false;
+              if (player) {
+                went = !!players[player] && players[player].route.say(data);
+              } else {
+                for (var id in links) {
+                  var l = links[id];
+                  if (l.kind === 'relay') went = sendOn(l, { t: 'send', player: 0, data: data }) || went;
+                  else if (l.welcomed) went = sendOn(l, { t: 'message', data: data }) || went;
+                }
+              }
+              // Being away is said once until a message goes again.
+              if (went) { away = false; return true; }
+              if (!away && window.console) console.error('Lamp.controllers: a message was not sent: ' + (!started ? 'call Lamp.controllers.start() first.' : player ? 'there is no player ' + player + ' now.' : 'no phone is connected.'));
               away = true;
               return false;
             },
-            messageLimit: LIMIT,
-            isHeld: function (player, name) { return !!(held[player] && held[player][name]); },
-            players: function () { var list = []; for (var p in joined) list.push(+p); return list; },
+            messageLimit: MESSAGE,
+            sendFile: function (player, data, info) {
+              if (!players[player]) {
+                var none = { onProgress: function () {}, cancel: function () {}, done: Promise.reject(new Error('There is no player ' + player + '.')) };
+                none.done.catch(function () {});
+                return none;
+              }
+              return files.send(players[player].route, data, info);
+            },
+            isHeld: function (player, name) { return !!(players[player] && players[player].held[name]); },
+            players: function () { var list = []; for (var p in players) list.push(+p); return list.sort(function (a, b) { return a - b; }); },
             onLink: adder('link'), onJoin: adder('join'), onLeave: adder('leave'), onButton: adder('button'),
-            onAxis: adder('axis'), onMessage: adder('message'), onError: adder('error')
+            onAxis: adder('axis'), onMessage: adder('message'), onFile: adder('file'), onError: adder('error')
           };
           if (window.Lamp) window.Lamp.controllers = api;
+        })();
+
+        """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
+
+    /// The wish's other apps (`WishRooms`): the TV page's half of `LampWish`, the same block the wish's Swift and Kotlin
+    /// apps have. The page asks Lamp for its room (`/app/wish`, through the preview's bridge or the gateway), opens its own
+    /// socket to the relay there and hears who else is in it; what the apps say to each other never passes through Lamp.
+    /// The wish's channel's crypto for lamp.js (`WishChannel` on the relay's side): SHA-256, HMAC, AES-256-GCM and X25519 in
+    /// plain ES5, since a TV's page opened from its package has no WebCrypto, held to CryptoKit's own by `WishChannelTests`.
+    /// Only a TV app with others in its wish carries it.
+    static let wishCryptoJS = #"""
+        (function () {
+          'use strict';
+          // SHA-256, HMAC, AES-256-GCM and X25519 in plain ES5, for TVs whose browsers have no WebCrypto on a page
+          // opened from a file. Bytes are Uint8Arrays throughout. X25519 is TweetNaCl's (public domain).
+          var K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2];
+
+          function concat(list) {
+            var n = 0, i, out, at = 0;
+            for (i = 0; i < list.length; i++) n += list[i].length;
+            out = new Uint8Array(n);
+            for (i = 0; i < list.length; i++) { out.set(list[i], at); at += list[i].length; }
+            return out;
+          }
+
+          function sha256(data) {
+            var h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+            var length = data.length, padded = ((length + 72) >> 6) << 6, m = new Uint8Array(padded), w = new Array(64);
+            var bits = length * 8, high = Math.floor(bits / 4294967296), i, j, o;
+            m.set(data);
+            m[length] = 0x80;
+            for (i = 0; i < 4; i++) { m[padded - 1 - i] = (bits >>> (8 * i)) & 255; m[padded - 5 - i] = (high >>> (8 * i)) & 255; }
+            for (o = 0; o < padded; o += 64) {
+              for (i = 0; i < 16; i++) w[i] = (m[o + 4 * i] << 24) | (m[o + 4 * i + 1] << 16) | (m[o + 4 * i + 2] << 8) | m[o + 4 * i + 3];
+              for (i = 16; i < 64; i++) {
+                var x = w[i - 15], y = w[i - 2];
+                var s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+                var s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+                w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+              }
+              var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], k = h[7];
+              for (j = 0; j < 64; j++) {
+                var t1 = (k + (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) + ((e & f) ^ (~e & g)) + K[j] + w[j]) | 0;
+                var t2 = ((((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+                k = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+              }
+              h[0] = (h[0] + a) | 0; h[1] = (h[1] + b) | 0; h[2] = (h[2] + c) | 0; h[3] = (h[3] + d) | 0;
+              h[4] = (h[4] + e) | 0; h[5] = (h[5] + f) | 0; h[6] = (h[6] + g) | 0; h[7] = (h[7] + k) | 0;
+            }
+            var out = new Uint8Array(32);
+            for (i = 0; i < 8; i++) { out[4 * i] = h[i] >>> 24; out[4 * i + 1] = (h[i] >>> 16) & 255; out[4 * i + 2] = (h[i] >>> 8) & 255; out[4 * i + 3] = h[i] & 255; }
+            return out;
+          }
+
+          function hmac(key, data) {
+            if (key.length > 64) key = sha256(key);
+            var inner = new Uint8Array(64), outer = new Uint8Array(64);
+            for (var i = 0; i < 64; i++) { var k = i < key.length ? key[i] : 0; inner[i] = k ^ 0x36; outer[i] = k ^ 0x5c; }
+            return sha256(concat([outer, sha256(concat([inner, data]))]));
+          }
+
+          // AES-256 on one 16-byte block, byte by byte: SubBytes, ShiftRows, MixColumns and the round keys.
+          var SBOX = (function (hex) {
+            var box = new Uint8Array(256);
+            for (var i = 0; i < 256; i++) box[i] = parseInt(hex.substr(2 * i, 2), 16);
+            return box;
+          })('637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b27509832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16');
+          function xtime(x) { return ((x << 1) ^ (x & 0x80 ? 0x1b : 0)) & 255; }
+          function expand(key) {
+            var w = new Array(60), i, rcon = 1;
+            for (i = 0; i < 8; i++) w[i] = (key[4 * i] << 24) | (key[4 * i + 1] << 16) | (key[4 * i + 2] << 8) | key[4 * i + 3];
+            for (i = 8; i < 60; i++) {
+              var t = w[i - 1];
+              if (i % 8 === 0) t = ((t << 8) | (t >>> 24));
+              if (i % 8 === 0 || i % 8 === 4) t = (SBOX[t >>> 24] << 24) | (SBOX[(t >>> 16) & 255] << 16) | (SBOX[(t >>> 8) & 255] << 8) | SBOX[t & 255];
+              if (i % 8 === 0) { t ^= rcon << 24; rcon = xtime(rcon); }
+              w[i] = w[i - 8] ^ t;
+            }
+            return w;
+          }
+          function encrypt(w, block) {
+            var s = new Uint8Array(16), t = new Uint8Array(16), r, c, i;
+            function addKey(round) {
+              for (c = 0; c < 4; c++) {
+                var k = w[round * 4 + c];
+                s[4 * c] ^= k >>> 24; s[4 * c + 1] ^= (k >>> 16) & 255; s[4 * c + 2] ^= (k >>> 8) & 255; s[4 * c + 3] ^= k & 255;
+              }
+            }
+            function subShift() {
+              for (i = 0; i < 16; i++) t[i] = SBOX[s[i]];
+              for (c = 0; c < 4; c++) for (r = 0; r < 4; r++) s[r + 4 * c] = t[r + 4 * ((c + r) % 4)];
+            }
+            s.set(block);
+            addKey(0);
+            for (var round = 1; round < 14; round++) {
+              subShift();
+              for (c = 0; c < 4; c++) {
+                var a0 = s[4 * c], a1 = s[4 * c + 1], a2 = s[4 * c + 2], a3 = s[4 * c + 3], all = a0 ^ a1 ^ a2 ^ a3;
+                s[4 * c] ^= all ^ xtime(a0 ^ a1); s[4 * c + 1] ^= all ^ xtime(a1 ^ a2);
+                s[4 * c + 2] ^= all ^ xtime(a2 ^ a3); s[4 * c + 3] ^= all ^ xtime(a3 ^ a0);
+              }
+              addKey(round);
+            }
+            subShift();
+            addKey(14);
+            return s;
+          }
+
+          // GCM: counter mode from the nonce, and GHASH over what was sealed, multiplied in GF(2^128) bit by bit.
+          function words(b, at) { return [(b[at] << 24 | b[at + 1] << 16 | b[at + 2] << 8 | b[at + 3]) >>> 0, (b[at + 4] << 24 | b[at + 5] << 16 | b[at + 6] << 8 | b[at + 7]) >>> 0,
+                                           (b[at + 8] << 24 | b[at + 9] << 16 | b[at + 10] << 8 | b[at + 11]) >>> 0, (b[at + 12] << 24 | b[at + 13] << 16 | b[at + 14] << 8 | b[at + 15]) >>> 0]; }
+          function times(x, h) {
+            var z0 = 0, z1 = 0, z2 = 0, z3 = 0, v0 = h[0], v1 = h[1], v2 = h[2], v3 = h[3];
+            for (var i = 0; i < 128; i++) {
+              if ((x[i >>> 5] >>> (31 - (i & 31))) & 1) { z0 ^= v0; z1 ^= v1; z2 ^= v2; z3 ^= v3; }
+              var low = v3 & 1;
+              v3 = (v3 >>> 1) | ((v2 & 1) << 31); v2 = (v2 >>> 1) | ((v1 & 1) << 31); v1 = (v1 >>> 1) | ((v0 & 1) << 31); v0 = v0 >>> 1;
+              if (low) v0 ^= 0xe1000000;
+            }
+            return [z0 >>> 0, z1 >>> 0, z2 >>> 0, z3 >>> 0];
+          }
+          function ghash(h, data) {
+            var x = [0, 0, 0, 0], padded = new Uint8Array(((data.length + 15) >> 4) << 4), at, bits = data.length * 8;
+            padded.set(data);
+            for (at = 0; at < padded.length; at += 16) {
+              var y = words(padded, at);
+              x = times([x[0] ^ y[0], x[1] ^ y[1], x[2] ^ y[2], x[3] ^ y[3]], h);
+            }
+            return times([x[0], x[1], x[2] ^ Math.floor(bits / 4294967296), (x[3] ^ bits) >>> 0], h);
+          }
+          function counter(w, nonce, data) {
+            var out = new Uint8Array(data.length), block = new Uint8Array(16), n = 2, at, i;
+            block.set(nonce);
+            for (at = 0; at < data.length; at += 16, n++) {
+              block[12] = n >>> 24; block[13] = (n >>> 16) & 255; block[14] = (n >>> 8) & 255; block[15] = n & 255;
+              var stream = encrypt(w, block);
+              for (i = 0; i < 16 && at + i < data.length; i++) out[at + i] = data[at + i] ^ stream[i];
+            }
+            return out;
+          }
+          function tag(w, nonce, sealed) {
+            var h = words(encrypt(w, new Uint8Array(16)), 0), j0 = new Uint8Array(16), mask, out = new Uint8Array(16), i;
+            j0.set(nonce); j0[15] = 1;
+            mask = encrypt(w, j0);
+            var x = ghash(h, sealed);
+            for (i = 0; i < 16; i++) out[i] = mask[i] ^ ((x[i >> 2] >>> (24 - 8 * (i & 3))) & 255);
+            return out;
+          }
+          function same(a, b) {
+            if (a.length !== b.length) return false;
+            var d = 0;
+            for (var i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+            return d === 0;
+          }
+          // What was said, then its 16-byte tag, as CryptoKit's AES.GCM writes it with no additional data.
+          function seal(key, nonce, plain) {
+            var w = expand(key), sealed = counter(w, nonce, plain);
+            return concat([sealed, tag(w, nonce, sealed)]);
+          }
+          function open(key, nonce, box) {
+            if (box.length < 16) return null;
+            var w = expand(key), sealed = box.subarray(0, box.length - 16);
+            if (!same(tag(w, nonce, sealed), box.subarray(box.length - 16))) return null;
+            return counter(w, nonce, sealed);
+          }
+
+          // X25519, from TweetNaCl.
+          function gf(init) { var r = new Float64Array(16); if (init) for (var i = 0; i < init.length; i++) r[i] = init[i]; return r; }
+          var C121665 = gf([0xdb41, 1]);
+          function car(o) {
+            var i, v, c = 1;
+            for (i = 0; i < 16; i++) { v = o[i] + c + 65535; c = Math.floor(v / 65536); o[i] = v - c * 65536; }
+            o[0] += c - 1 + 37 * (c - 1);
+          }
+          function sel(p, q, b) { var t, c = ~(b - 1); for (var i = 0; i < 16; i++) { t = c & (p[i] ^ q[i]); p[i] ^= t; q[i] ^= t; } }
+          function pack(o, n) {
+            var i, j, b, m = gf(), t = gf();
+            for (i = 0; i < 16; i++) t[i] = n[i];
+            car(t); car(t); car(t);
+            for (j = 0; j < 2; j++) {
+              m[0] = t[0] - 0xffed;
+              for (i = 1; i < 15; i++) { m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1); m[i - 1] &= 0xffff; }
+              m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
+              b = (m[15] >> 16) & 1;
+              m[14] &= 0xffff;
+              sel(t, m, 1 - b);
+            }
+            for (i = 0; i < 16; i++) { o[2 * i] = t[i] & 0xff; o[2 * i + 1] = t[i] >> 8; }
+          }
+          function unpack(o, n) { for (var i = 0; i < 16; i++) o[i] = n[2 * i] + (n[2 * i + 1] << 8); o[15] &= 0x7fff; }
+          function add(o, a, b) { for (var i = 0; i < 16; i++) o[i] = a[i] + b[i]; }
+          function sub(o, a, b) { for (var i = 0; i < 16; i++) o[i] = a[i] - b[i]; }
+          function mul(o, a, b) {
+            var i, j, t = new Float64Array(31);
+            for (i = 0; i < 16; i++) for (j = 0; j < 16; j++) t[i + j] += a[i] * b[j];
+            for (i = 0; i < 15; i++) t[i] += 38 * t[i + 16];
+            for (i = 0; i < 16; i++) o[i] = t[i];
+            car(o); car(o);
+          }
+          function inverse(o, i) {
+            var c = gf(), a;
+            for (a = 0; a < 16; a++) c[a] = i[a];
+            for (a = 253; a >= 0; a--) { mul(c, c, c); if (a !== 2 && a !== 4) mul(c, c, i); }
+            for (a = 0; a < 16; a++) o[a] = c[a];
+          }
+          function x25519(scalar, point) {
+            var z = new Uint8Array(32), x = new Float64Array(80), q = new Uint8Array(32), r, i;
+            var a = gf(), b = gf(), c = gf(), d = gf(), e = gf(), f = gf();
+            for (i = 0; i < 31; i++) z[i] = scalar[i];
+            z[31] = (scalar[31] & 127) | 64;
+            z[0] &= 248;
+            unpack(x, point);
+            for (i = 0; i < 16; i++) { b[i] = x[i]; d[i] = a[i] = c[i] = 0; }
+            a[0] = d[0] = 1;
+            for (i = 254; i >= 0; --i) {
+              r = (z[i >>> 3] >>> (i & 7)) & 1;
+              sel(a, b, r); sel(c, d, r);
+              add(e, a, c); sub(a, a, c); add(c, b, d); sub(b, b, d);
+              mul(d, e, e); mul(f, a, a); mul(a, c, a); mul(c, b, e);
+              add(e, a, c); sub(a, a, c); mul(b, a, a); sub(c, d, f);
+              mul(a, c, C121665); add(a, a, d); mul(c, c, a); mul(a, d, f); mul(d, b, x); mul(b, e, e);
+              sel(a, b, r); sel(c, d, r);
+            }
+            for (i = 0; i < 16; i++) { x[i + 16] = a[i]; x[i + 32] = c[i]; x[i + 48] = b[i]; x[i + 64] = d[i]; }
+            var x32 = x.subarray(32), x16 = x.subarray(16);
+            inverse(x32, x32);
+            mul(x16, x16, x32);
+            pack(q, x16);
+            return q;
+          }
+          var BASE = new Uint8Array(32);
+          BASE[0] = 9;
+
+          var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+          function toBase64(b) {
+            var out = '';
+            for (var i = 0; i < b.length; i += 3) {
+              var n = (b[i] << 16) | ((i + 1 < b.length ? b[i + 1] : 0) << 8) | (i + 2 < b.length ? b[i + 2] : 0);
+              out += B64.charAt((n >>> 18) & 63) + B64.charAt((n >>> 12) & 63) + (i + 1 < b.length ? B64.charAt((n >>> 6) & 63) : '=') + (i + 2 < b.length ? B64.charAt(n & 63) : '=');
+            }
+            return out;
+          }
+          // Null for anything that isn't base64.
+          function fromBase64(s) {
+            if (typeof s !== 'string' || !/^[A-Za-z0-9+\/]*={0,2}$/.test(s) || s.length % 4) return null;
+            var clean = s.replace(/=+$/, ''), out = new Uint8Array(Math.floor(clean.length * 3 / 4)), j = 0, n = 0, bits = 0;
+            for (var i = 0; i < clean.length; i++) {
+              n = ((n << 6) | B64.indexOf(clean.charAt(i))) & 0xffffff;
+              bits += 6;
+              if (bits >= 8) { bits -= 8; out[j++] = (n >>> bits) & 255; }
+            }
+            return out.subarray(0, j);
+          }
+          function utf8(text) {
+            var s = unescape(encodeURIComponent(text)), b = new Uint8Array(s.length);
+            for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+            return b;
+          }
+          // Throws for bytes that aren't UTF-8.
+          function fromUtf8(b) {
+            var s = '';
+            for (var i = 0; i < b.length; i += 4096) s += String.fromCharCode.apply(null, Array.prototype.slice.call(b.subarray(i, i + 4096)));
+            return decodeURIComponent(escape(s));
+          }
+          function random(n) {
+            var c = window.crypto || window.msCrypto;
+            if (!c || !c.getRandomValues) throw new Error('This browser has no source of random numbers, which the wish\'s apps need to talk.');
+            return c.getRandomValues(new Uint8Array(n));
+          }
+          // Every value the channel derives: an HMAC under the wish's key of a label, a zero byte and what it's about.
+          function derive(label, key, data) { return hmac(key, concat([utf8(label), new Uint8Array(1), data || new Uint8Array(0)])); }
+          function nonce(count) {
+            var n = new Uint8Array(12), high = Math.floor(count / 4294967296);
+            for (var i = 0; i < 4; i++) { n[11 - i] = (count >>> (8 * i)) & 255; n[7 - i] = (high >>> (8 * i)) & 255; }
+            return n;
+          }
+          return { sha256: sha256, hmac: hmac, seal: seal, open: open, x25519: x25519, base: BASE, concat: concat, same: same,
+                   toBase64: toBase64, fromBase64: fromBase64, utf8: utf8, fromUtf8: fromUtf8, random: random, derive: derive, nonce: nonce };
+        })()
+        """#
+
+    static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
+
+    private static let wishJSBody = #"""
+        /* The wish's other apps. Written by Lamp before every build; don't edit.
+         *
+         * The other apps of this app's wish (an iPhone app, a Mac app, an Android app): which are open now, and messages
+         * between them, through Lamp on the Mac over the home Wi-Fi, with nothing to pair, host or set up. What they say is
+         * sealed with a key only the wish's apps have. Each app of the wish is a peer named by its folder in the wish: "tv"
+         * (this one), "iphone", "apple" (an app for iPhone and Mac), "mac", "android"; its kind is the device word the tools
+         * use for it.
+         *
+         * Lamp.wish.start()                  joins the wish's room; call it as the app opens (the other calls do it too)
+         * Lamp.wish.peers()                  the wish's other apps open now: [{ peer: 'iphone', kind, name, device, status }]
+         * Lamp.wish.apps()                   every other app of the wish, open or not
+         * Lamp.wish.peer('iphone')           that app, open or not ({ ..., open, status }); null when the wish has none
+         * Lamp.wish.peer('iphone').status    { state: 'connected' or 'notOpen', reason, lastSeen }: show reason as it is
+         *                                     ("The iPhone app isn't open."); lastSeen is ms since 1970, or null
+         * Lamp.wish.onPeers(fn(list))        fn now and whenever any app's status changes (the open ones)
+         * Lamp.wish.send(data, 'iphone')     JSON to one app; false (with why in the console) when it wasn't sent
+         * Lamp.wish.send(data)               to every other app of the wish
+         * Lamp.wish.onMessage(fn(from, data))   what another app sent: its peer name and its JSON
+         * Lamp.wish.state(), status()        this app's link: 'connecting', 'connected', 'alone' (the wish has no other
+         *                                     app), 'away' (Lamp isn't reachable), 'ended'; status() is { state, reason }
+         * Lamp.wish.onState(fn(state, status))   fn now and whenever this app's link changes
+         * Lamp.wish.me()                     this app's own peer name
+         * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; files aren't carried yet
+         * Lamp.wish.stop()
+         *
+         * More states may come: compare with the names above and treat any other as not connected. Show a reason as it
+         * is rather than words of your own, and keep the app usable while an app isn't open. A phone steering this app as
+         * a game controller is Lamp.controllers (above), not this.
+         */
+        (function () {
+          'use strict';
+          var MESSAGE = 16384;
+          var REASONS = { connecting: "Connecting to the wish's other apps…",
+                          away: "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi." };
+          var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
+          var C = /*LAMP_WISH_CRYPTO*/;
+          var on = { peers: [], message: [], state: [] };
+          var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
+          var address = null, mine = '', apps = [], state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
+          // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
+          var hello = null, sent = 0, opened = 0, sendKey = null, openKey = null;
+          var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
+          var device = bridge ? 'TV preview' : 'TV';
+          // Where Lamp is, filled in by Lamp in the package it puts on a TV, and the wish's key: the preview is given it by
+          // Lamp through its bridge; a TV asks Lamp for it sealed to a key pair it makes, just after Lamp put the app
+          // there (`claim`), and keeps it.
+          var installed = /*LAMP_INSTALL*/null;
+          var key = null, claiming = null, claims = 0, claimPair = null;
+
+          function emit(name, args) {
+            var list = on[name];
+            for (var i = 0; i < list.length; i++) { try { list[i].apply(null, args); } catch (e) { if (window.console) console.error(e); } }
+          }
+          function status() { return { state: state, reason: reason !== null ? reason : (REASONS[state] || '') }; }
+          function setState(next, why) {
+            var said = why === undefined ? null : why;
+            if (state === next && reason === said) return;
+            state = next; reason = said;
+            emit('state', [state, status()]);
+          }
+          function copy(p) { return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open,
+                                      status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } }; }
+          function openOnes() { var list = []; for (var i = 0; i < apps.length; i++) if (apps[i].open) list.push(copy(apps[i])); return list; }
+          function changed() { emit('peers', [openOnes()]); }
+          function find(id) { for (var i = 0; i < apps.length; i++) if (apps[i].peer === id) return apps[i]; return null; }
+          function notOpen(name) { return name.charAt(0).toUpperCase() + name.slice(1) + " isn't open."; }
+          function shut(p, when) { p.open = false; p.status = { state: 'notOpen', reason: notOpen(p.name), lastSeen: when }; }
+          function opened_(p, info) {
+            p.open = true;
+            if (typeof info.device === 'string') p.device = info.device;
+            p.status = { state: 'connected', reason: '', lastSeen: typeof info.since === 'number' ? info.since : Date.now() };
+          }
+          function leftAll() { var now = Date.now(); for (var i = 0; i < apps.length; i++) if (apps[i].open) shut(apps[i], now); changed(); }
+          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+          function say(line) { if (window.console) console.error('Lamp.wish: ' + line); }
+
+          // What the page keeps on the TV, beside LampAI's own: the routes it was told and the wish's key it claimed.
+          function storage(name, value) {
+            try {
+              if (value === undefined) { var v = window.localStorage.getItem('lamp:' + name); return v === null ? null : JSON.parse(v); }
+              window.localStorage.setItem('lamp:' + name, JSON.stringify(value));
+            } catch (e) {}
+            return null;
+          }
+          // The wish's key from Lamp, sealed to a key pair made here and now, so nobody else on the network can open it.
+          function claim() {
+            if (claiming) return claiming;
+            var routes = (storage('install.routes') || []).concat(installed && installed.routes || []);
+            var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
+            routes = routes.filter(function (r) { return ipv4.test(r); }).concat(routes.filter(function (r) { return !ipv4.test(r); }));
+            // One key pair for the page's tries, so a try after an answer lost on its way is answered again.
+            if (!claimPair) { var made = C.random(32); claimPair = { secret: made, ours: C.x25519(made, C.base) }; }
+            var secret = claimPair.secret, ours = claimPair.ours;
+            function attempt(i) {
+              if (i >= routes.length) return Promise.reject(new Error(UNCLAIMED));
+              return new Promise(function (resolve, reject) {
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', routes[i] + '/app/wish/claim');
+                xhr.timeout = 10000;
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.onload = function () { var r = null; try { r = JSON.parse(xhr.responseText); } catch (e) {} resolve({ status: xhr.status, reply: r || {} }); };
+                xhr.onerror = xhr.ontimeout = function () { reject(new Error('unreachable')); };
+                xhr.send(JSON.stringify({ app: installed.app, 'public': C.toBase64(ours) }));
+              }).then(function (answer) {
+                if (answer.status !== 200) throw new Error(UNCLAIMED);
+                var theirs = C.fromBase64(answer.reply['public']), nonce = C.fromBase64(answer.reply.nonce), box = C.fromBase64(answer.reply.sealed);
+                if (!theirs || theirs.length !== 32 || !nonce || nonce.length !== 12 || !box) throw new Error(UNCLAIMED);
+                var shared = C.x25519(secret, theirs), zero = 0;
+                // A key that makes every secret zero (a low-order point) seals nothing anyone should trust.
+                for (var z = 0; z < shared.length; z++) zero |= shared[z];
+                if (!zero) throw new Error(UNCLAIMED);
+                var sealing = C.derive('lamp-wish claim', shared, C.concat([theirs, ours]));
+                var unsealed = C.open(sealing, nonce, box);
+                if (!unsealed || unsealed.length !== 32) throw new Error(UNCLAIMED);
+                storage('install.wish', { app: installed.app, key: C.toBase64(unsealed) });
+                return unsealed;
+              }, function () { return attempt(i + 1); });
+            }
+            claiming = attempt(0);
+            claiming.then(function () { claiming = null; }, function () { claiming = null; });
+            return claiming;
+          }
+          function kept() {
+            var k = storage('install.wish');
+            var b = k && installed && k.app === installed.app ? C.fromBase64(k.key) : null;
+            return b && b.length === 32 ? b : null;
+          }
+          // On a TV, opened by Lamp's install, the page asks for the key at once, while the claim is open; one kept from
+          // before is used meanwhile, and the new one replaces it.
+          if (installed && !bridge) {
+            key = kept();
+            claim().then(function (fresh) { key = fresh; }, function () {});
+          }
+
+          function hear(m) {
+            if (m.t === 'welcome') {
+              retry = 0; away = false; undeliveredSaid = {};
+              if (typeof m.peer === 'string') mine = m.peer;
+              var present = {}, i, list = m.peers || [], roster = m.apps || [], next = [];
+              for (i = 0; i < list.length; i++) if (list[i] && typeof list[i].peer === 'string') present[list[i].peer] = list[i];
+              for (i = 0; i < roster.length; i++) {
+                var a = roster[i];
+                if (!a || typeof a.peer !== 'string' || a.peer === mine) continue;
+                var known = find(a.peer), name = typeof a.name === 'string' ? a.name : a.peer;
+                var p = { peer: a.peer, kind: a.kind || '', name: name, device: known ? known.device : '', open: false, status: null };
+                shut(p, known ? known.status.lastSeen : null);
+                if (present[a.peer]) opened_(p, present[a.peer]);
+                next.push(p);
+              }
+              apps = next;
+              changed();
+              setState('connected');
+            } else if (m.t === 'joined' && m.peer && typeof m.peer.peer === 'string') {
+              var j = find(m.peer.peer);
+              if (!j) { j = { peer: m.peer.peer, kind: m.peer.kind || '', name: m.peer.name || m.peer.peer, device: '', open: false, status: null }; apps.push(j); }
+              opened_(j, m.peer);
+              changed();
+            } else if (m.t === 'left') {
+              var l = find(m.peer);
+              if (l) { shut(l, Date.now()); changed(); }
+            } else if (m.t === 'apps') {
+              // The wish gained an app or lost one: the others keep what's known of them.
+              var kept_ = [], given = m.apps || [];
+              for (var k = 0; k < given.length; k++) {
+                var g = given[k];
+                if (!g || typeof g.peer !== 'string' || g.peer === mine) continue;
+                var had = find(g.peer);
+                if (!had) { had = { peer: g.peer, kind: g.kind || '', name: typeof g.name === 'string' ? g.name : g.peer, device: '', open: false, status: null }; shut(had, null); }
+                kept_.push(had);
+              }
+              apps = kept_;
+              changed();
+            } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
+              emit('message', [m.from, m.data]);
+            } else if (m.t === 'undelivered' && typeof m.to === 'string') {
+              if (!undeliveredSaid[m.to]) { undeliveredSaid[m.to] = true; say('a message to "' + m.to + '" did not arrive: ' + (m.reason || 'it is not in the room') + '.'); }
+            }
+          }
+          // Seals a message with the next number this way and sends it.
+          function seal(text) {
+            var box = C.seal(sendKey, C.nonce(sent), C.utf8(text));
+            sent++;
+            socket.send(box.buffer);
+          }
+          // The relay proved it holds the wish's key: this page proves it does too, and both seal from here on.
+          function answer(m) {
+            var theirs = C.fromBase64(m.nonce), proof = C.fromBase64(m.proof);
+            if (!hello || typeof m.peer !== 'string' || m.peer.length < 1 || m.peer.length > 32 || !theirs || theirs.length !== 16 || !proof) return false;
+            var me8 = C.utf8(mine), them8 = C.utf8(m.peer);
+            var transcript = C.concat([hello.tag, new Uint8Array([me8.length]), me8, new Uint8Array([them8.length]), them8, hello.nonce, theirs]);
+            if (!C.same(proof, C.derive('lamp-wish server', key, transcript))) return false;
+            hello = null;
+            socket.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
+            sendKey = C.derive('lamp-wish c2s', key, transcript); openKey = C.derive('lamp-wish s2c', key, transcript);
+            sent = 0; opened = 0;
+            seal(JSON.stringify({ t: 'join', device: device }));
+            return true;
+          }
+          // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages and beats.
+          // Anything else was made up on the way, and lets the link go.
+          function arrived(s, data) {
+            if (typeof data === 'string') {
+              var m; try { m = JSON.parse(data); } catch (e) { m = null; }
+              if (m && m.t === 'beat') return;
+              if (!sendKey && m && m.t === 'challenge' && answer(m)) return;
+            } else if (openKey) {
+              var plain = C.open(openKey, C.nonce(opened), new Uint8Array(data)), said = null;
+              if (plain) { opened++; try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
+              if (said && typeof said === 'object') return hear(said);
+            }
+            say('the link to the wish\'s other apps heard something that was not theirs, and started again.');
+            socket = null; s.close(); lost(0);
+          }
+          function connect() {
+            if (!started || socket) return;
+            var s;
+            try { s = new WebSocket(address); } catch (e) { return lost(0); }
+            s.binaryType = 'arraybuffer';
+            socket = s;
+            sendKey = openKey = null;
+            heard = Date.now();
+            s.onopen = function () {
+              hello = { nonce: C.random(16), tag: C.derive('lamp-wish tag', key).subarray(0, 8) };
+              s.send(JSON.stringify({ t: 'hello', tag: C.toBase64(hello.tag), peer: mine, nonce: C.toBase64(hello.nonce) }));
+            };
+            s.onmessage = function (event) {
+              if (socket !== s) return;
+              heard = Date.now();
+              arrived(s, event.data);
+            };
+            s.onclose = function (event) { if (socket === s) lost(event.code); };
+          }
+          // Turned away, or the room ended, or dropped before it was let in: Lamp is asked again where to join and who this
+          // page is; dropped otherwise, the page comes back after a moment.
+          function lost(code) {
+            socket = null; hello = null; sendKey = openKey = null;
+            leftAll();
+            if (!started) return;
+            if (state === 'connected') setState('connecting');
+            if (code === 4003 || code === 4005 || state === 'connecting' || retry >= 3) address = null;
+            retry = Math.min(retry + 1, 6);
+            clearTimeout(again);
+            again = setTimeout(open, retry * 750);
+          }
+          function open() {
+            if (!started || socket) return;
+            if (!key && !bridge) {
+              if (!installed) { setState('away', 'This copy wasn\'t opened from Lamp, so it can\'t reach the wish\'s other apps. Open it from Lamp on your Mac.'); return; }
+              // Tried again while the page is open, less often each time, since the claim stays open for a while after
+              // Lamp put the app here and the network may just have been down.
+              claim().then(function (fresh) { key = fresh; claims = 0; open(); }, function (error) {
+                if (!started) return;
+                setState('away', error.message);
+                claims = Math.min(claims + 1, 5);
+                clearTimeout(askTimer);
+                askTimer = setTimeout(open, 2000 * Math.pow(2, claims));
+              });
+              return;
+            }
+            if (address && key) return connect();
+            clearTimeout(askTimer);
+            LampAI._post('/app/wish', { device: device }, 20000).then(function (answer) {
+              if (!started) return;
+              if (answer.alone) {
+                // The wish has no other app: nothing to join, until one is added.
+                apps = []; changed(); setState('alone');
+                if (answer.me && answer.me.peer) mine = answer.me.peer;
+                askTimer = setTimeout(open, (answer.renew || 300) * 1000);
+                return;
+              }
+              if (bridge && answer.key) key = C.fromBase64(answer.key);
+              if (!answer.socket || !answer.peer || !key || key.length !== 32) throw new Error(answer.error || 'Lamp did not say where the wish\'s apps meet.');
+              address = answer.socket; mine = answer.peer;
+              if (state !== 'connected') setState('connecting');
+              connect();
+            }, function (error) {
+              if (!started) return;
+              if (state !== 'alone') setState('away');
+              say(error.message);
+              askTimer = setTimeout(open, 3000);
+            });
+          }
+          // A beat both ways, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
+          function beat() {
+            if (!socket || socket.readyState !== 1) return;
+            if (Date.now() - heard > 15000) { var s = socket; socket = null; s.close(); lost(0); return; }
+            socket.send('{"t":"beat"}');
+          }
+          function adder(name) {
+            return function (fn) {
+              on[name].push(fn);
+              api.start();
+              if (name === 'peers') fn(openOnes());
+              if (name === 'state') fn(state, status());
+              return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
+            };
+          }
+
+          var api = {
+            start: function () {
+              if (started) return;
+              started = true;
+              open();
+              beatTimer = setInterval(beat, 5000);
+            },
+            stop: function () {
+              started = false;
+              clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
+              if (socket) { var s = socket; socket = null; s.close(); }
+              sendKey = openKey = null;
+              leftAll();
+              setState('ended');
+            },
+            peers: function () { api.start(); return openOnes(); },
+            apps: function () { api.start(); var list = []; for (var i = 0; i < apps.length; i++) list.push(copy(apps[i])); return list; },
+            peer: function (id) { api.start(); var p = find(id); return p ? copy(p) : null; },
+            me: function () { api.start(); return mine; },
+            state: function () { api.start(); return state; },
+            status: function () { api.start(); return status(); },
+            messageLimit: MESSAGE,
+            send: function (data, to) {
+              api.start();
+              var what = to ? 'a message to "' + to + '"' : 'a message to the wish\'s apps';
+              if (state !== 'connected' || !socket || socket.readyState !== 1 || !sendKey) {
+                if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
+                return false;
+              }
+              if (to) { var p = find(to); if (!p || !p.open) { say(what + ' was not sent: that app is not open now.'); return false; } }
+              var frame = { t: 'send', data: data };
+              if (to) frame.to = to;
+              var text = JSON.stringify(frame);
+              if (data === undefined || text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
+              if (bytes(text) > MESSAGE) { say(what + ' of ' + bytes(text) + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
+              seal(text);
+              return true;
+            },
+            onMessage: adder('message'), onPeers: adder('peers'), onState: adder('state')
+          };
+          if (window.Lamp) window.Lamp.wish = api;
         })();
 
         """#
 
     /// Phones as controllers: the phone page's half, served by Lamp beside the app's Phone/ files as lamp-controller.js
-    /// (`Store.phonePage`). Its socket is the page's own address with `socket` in place of the page, so it's the same
-    /// whichever way the page was reached, http on the Wi‑Fi or https the person put in front.
+    /// (`Store.phonePage`). Its socket goes to the controllers' relay, on this Mac by the name the page was reached at, at
+    /// the port Lamp says before each try (`lamp-relay.json`), never to Lamp.
     static let phoneControllerJS = #"""
         /* Lamp's phone controller. The page is the app's own; this joins it to the TV app as a player and carries its
-         * buttons, sticks and tilt there, through Lamp on the Mac, over this Wi-Fi.
+         * buttons, sticks, tilt and files there, over this Wi-Fi, through Lamp's relay on the Mac.
          *
          *   var pad = LampController.connect({
-         *     onPlayer: function (n) { ... },        // the player number this phone was given (1, 2, ...)
+         *     onPlayer: function (n) { ... },        // the player number the TV app gave this phone (1, 2, ...)
          *     onMessage: function (data) { ... },   // what the TV app sent this phone (or every phone)
+         *     onFile: function (file) { ... },      // the TV app is sending a file: file.name, .type, .size,
+         *                                           // .onProgress(fn(received, size)), .cancel(), .done.then(fn(arrayBuffer))
          *     onState: function (state) { ... }     // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
          *   });
          *   pad.button('a', true); pad.button('a', false);   // a button held, then let go
          *   pad.axis('stick', x, y);                          // a stick or slider, each from -1 to 1
-         *   pad.send({ ready: true });                        // anything small to the TV app; false when not sent
-         *   LampController.messageLimit                       // 1024: the most bytes one message takes as JSON. A bigger
-         *                                                     // one isn't sent, and the TV app's log says so; send a file
-         *                                                     // in numbered pieces of at most 700 characters of base64,
-         *                                                     // each once the TV app has answered the last
+         *   pad.send({ ready: true });                        // JSON to the TV app; false when it wasn't sent
+         *   LampController.messageLimit                       // 16384: the most bytes one message takes as JSON. A bigger
+         *                                                     // one isn't sent, and the TV app's log says so: send it
+         *                                                     // with sendFile
+         *   var t = pad.sendFile(file, { name, type });       // a File (from <input type="file">), Blob, ArrayBuffer, bytes
+         *   t.onProgress(fn(sent, size)); t.cancel();         // or text, up to 64 MB; t.done is a Promise
          *   LampController.tilt(pad)                          // from a tap (a Start button): asks for the motion sensors,
          *     .then(function () { ... })                     // then sends the phone's tilt as axis 'tilt' (x: left -1 to
          *     .catch(function (error) { ... });              // right 1, y: away -1 to toward 1) about 30 times a second.
@@ -542,20 +1459,40 @@ extension TVTemplate {
          */
         (function () {
           'use strict';
+          var MESSAGE = 16384;   // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
+          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
           var base = location.pathname.replace(/[^\/]*$/, '');
           var keyName = 'lamp-controller:' + base;
-          var socketURL = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + base + 'socket';
-          var LIMIT = 1024;   // bytes of JSON in one message, the most Lamp passes on (PhoneControllers.Limits.message)
-          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+        /*LAMP_FILES*/
+          // Where the relay is: asked of Lamp before each try, since it may have started again elsewhere.
+          function where() {
+            return fetch(base + 'lamp-relay.json', { cache: 'no-store' }).then(function (answer) {
+              if (!answer.ok) throw new Error('Lamp isn\'t there.');
+              return answer.json();
+            });
+          }
 
           function connect(handlers) {
             handlers = handlers || {};
             var socket = null, seq = 0, player = null, closedForGood = false, lastHeard = 0, retry = 0, again = null, host = false;
+            var route = {
+              key: 'tv', place: 0,
+              text: function (m) { if (!socket || socket.readyState !== 1) return false; socket.send(JSON.stringify(m)); return true; },
+              binary: function (buffer) { if (!socket || socket.readyState !== 1) return false; socket.send(buffer); return true; },
+              buffered: function () { return socket ? socket.bufferedAmount : 0; }
+            };
+            var files = lampFiles(function (r, file) { if (handlers.onFile) handlers.onFile(file); else file.cancel(); });
             // The link's credential is read once and taken out of the address, so it isn't left in the history or shared
             // by mistake; the phone then keeps the one Lamp gives it, for coming back as the same player.
             var join = (location.hash || '').replace(/^#/, '');
             if (join) history.replaceState(null, '', location.pathname + location.search);
             function state(s) { if (handlers.onState) handlers.onState(s); }
+            function later() {
+              if (closedForGood) return;
+              state('connecting');
+              retry = Math.min(retry + 1, 5);
+              again = setTimeout(open, 500 * retry);
+            }
 
             // A link just opened always wins over a credential kept from before: that one may be for a game that has
             // ended, or have run out while the page was away, and the link is what the person just chose.
@@ -566,55 +1503,62 @@ extension TVTemplate {
               var credential = join || sessionStorage.getItem(keyName);
               if (!credential) { state('ended'); return; }
               state('connecting');
-              socket = new WebSocket(socketURL);
-              socket.onopen = function () {
-                lastHeard = Date.now();
-                socket.send(JSON.stringify({ t: 'hello', credential: credential }));
-              };
-              socket.onmessage = function (event) {
-                lastHeard = Date.now();
-                var m; try { m = JSON.parse(event.data); } catch (e) { return; }
-                if (m.t === 'welcome') {
-                  retry = 0; join = ''; seq = 0;
-                  player = m.player;
-                  sessionStorage.setItem(keyName, m.credential);
-                  // Whether the TV app is there is known before onPlayer, so a page that says it's ready from there is heard.
-                  host = !!m.host;
-                  if (handlers.onPlayer) handlers.onPlayer(player);
-                  state(m.host ? 'connected' : 'waiting');
-                } else if (m.t === 'credential') {
-                  sessionStorage.setItem(keyName, m.credential);
-                } else if (m.t === 'state') {
-                  host = !!m.host;
-                  state(m.host ? 'connected' : 'waiting');
-                } else if (m.t === 'message') {
-                  if (handlers.onMessage) handlers.onMessage(m.data);
-                } else if (m.t === 'full') {
-                  closedForGood = true; state('full');
-                }
-              };
-              socket.onclose = function (event) {
-                socket = null; host = false;
-                if (event.code === 4003 || event.code === 4005) {
-                  sessionStorage.removeItem(keyName);
-                  closedForGood = true; state('ended');
-                }
+              where().then(function (relay) {
                 if (closedForGood) return;
-                state('connecting');
-                retry = Math.min(retry + 1, 5);
-                again = setTimeout(open, 500 * retry);
-              };
+                var s = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.hostname + ':' + relay.port + '/');
+                s.binaryType = 'arraybuffer';
+                socket = s;
+                s.onopen = function () {
+                  lastHeard = Date.now();
+                  s.send(JSON.stringify({ t: 'hello', app: relay.app, credential: credential }));
+                };
+                s.onmessage = function (event) {
+                  lastHeard = Date.now();
+                  if (typeof event.data !== 'string') { files.binary(route, new Uint8Array(event.data)); return; }
+                  var m; try { m = JSON.parse(event.data); } catch (e) { return; }
+                  if (!m || typeof m !== 'object' || files.text(route, m)) return;
+                  if (m.t === 'welcome') {
+                    retry = 0; join = ''; seq = 0;
+                    sessionStorage.setItem(keyName, m.credential);
+                    host = !!m.host;
+                    state(m.host ? 'connected' : 'waiting');
+                  } else if (m.t === 'player') {
+                    player = m.number;
+                    if (handlers.onPlayer) handlers.onPlayer(player);
+                  } else if (m.t === 'credential') {
+                    sessionStorage.setItem(keyName, m.credential);
+                  } else if (m.t === 'state') {
+                    if (!m.host) files.drop(route, 'The TV app left.');
+                    host = !!m.host;
+                    state(m.host ? 'connected' : 'waiting');
+                  } else if (m.t === 'message') {
+                    if (handlers.onMessage) handlers.onMessage(m.data);
+                  } else if (m.t === 'full') {
+                    closedForGood = true; state('full');
+                  }
+                };
+                s.onclose = function (event) {
+                  if (socket !== s) return;
+                  socket = null; host = false;
+                  files.drop(route, 'The link was lost.');
+                  if (event.code === 4003 || event.code === 4005) {
+                    sessionStorage.removeItem(keyName);
+                    closedForGood = true; state('ended');
+                  }
+                  later();
+                };
+              }, later);
             }
 
-            // Too big for Lamp to pass on: refused here, with a word to the TV app, whose log the builder reads (this
-            // page's console is on the phone, where nobody looks), rather than sent for Lamp to close the link over.
+            // Too big to pass on: refused here, with a word to the TV app, whose log the builder reads (this page's
+            // console is on the phone, where nobody looks), rather than sent for the relay to close the link over.
             function post(message) {
-              // While the TV app isn't there ('waiting'), Lamp has no one to give it to.
+              // While the TV app isn't there ('waiting'), there's no one to give it to.
               if (!socket || socket.readyState !== 1 || !host) return false;
               message.seq = seq + 1;
               var text = JSON.stringify(message), size = bytes(text);
-              if (size > LIMIT) {
-                if (window.console) console.error('LampController: a message of ' + size + ' bytes was not sent: a message between devices is at most ' + LIMIT + ' bytes as JSON.');
+              if (size > MESSAGE) {
+                if (window.console) console.error('LampController: a message of ' + size + ' bytes was not sent: a message between devices is at most ' + MESSAGE + ' bytes as JSON. Send something big with pad.sendFile.');
                 socket.send(JSON.stringify({ t: 'too-big', bytes: size }));
                 return false;
               }
@@ -623,7 +1567,7 @@ extension TVTemplate {
               return true;
             }
 
-            // A beat both ways: Lamp lets a quiet phone go, and a phone that hears nothing opens its link again.
+            // A beat both ways: Lamp's relay lets a quiet phone go, and a phone that hears nothing opens its link again.
             var beat = setInterval(function () {
               if (!socket || socket.readyState !== 1) return;
               if (Date.now() - lastHeard > 12000) { socket.close(); return; }
@@ -636,6 +1580,7 @@ extension TVTemplate {
               button: function (name, down) { return post({ t: 'button', name: name, down: !!down }); },
               axis: function (name, x, y) { return post({ t: 'axis', name: name, x: x, y: y }); },
               send: function (data) { return post({ t: 'message', data: data }); },
+              sendFile: function (data, info) { return files.send(route, data, info); },
               close: function () { closedForGood = true; clearInterval(beat); clearTimeout(again); again = null; if (socket) socket.close(); }
             };
           }
@@ -669,10 +1614,10 @@ extension TVTemplate {
             });
           }
 
-          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt, messageLimit: LIMIT };
+          window.LampController = { connect: connect, tilt: tilt, canTilt: canTilt, messageLimit: MESSAGE };
         })();
 
-        """#
+        """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
 
 }
 
@@ -748,12 +1693,13 @@ extension Agent.Rules {
     runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
     """
 
-    /// For a TV app with an iPhone or Mac app beside it in the same wish (`Parts`): how the two talk.
-    static let tvParts = """
-    - When the wish has an iPhone or Mac app beside the TV app, that app joins the TV app the way a phone's page \
-    does, as a player of `Lamp.controllers`: its buttons, sticks and messages arrive in onButton, onAxis and \
-    onMessage, and `Lamp.controllers.send` reaches it. Call `Lamp.controllers.start()` as the TV app opens; it \
-    needs no page in Phone/ for that.
+    /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone
+    /// or Mac app steers the TV app's game as a player of `Lamp.controllers`.
+    static let tvParts = String(wishTalk.dropFirst()) + """
+    - When the wish's iPhone or Mac app steers the TV app (a game's controller, a remote), it joins the TV app the way a \
+    phone's page does, as a player of `Lamp.controllers`, beside `Lamp.wish` for everything else: its buttons, sticks \
+    and messages arrive in onButton, onAxis and onMessage, the files it sends in onFile, and `Lamp.controllers.send` \
+    and `sendFile` reach it. Call `Lamp.controllers.start()` as the TV app opens; it needs no page in Phone/ for that.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.
