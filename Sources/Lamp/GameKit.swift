@@ -589,7 +589,7 @@ enum GameKit {
                 else { return (lines, said, "\(key) isn't a button: \((buttons.keys.sorted() + ["lt", "rt"]).joined(separator: ", ")).") }
                 words = "held \(key.uppercased()) for \(seconds.formatted()) s"
             default:
-                return (lines, said, "An Xbox game takes `stick`, `button` and `wait`.")
+                return (lines, said, "A game takes `stick`, `button` and `wait`.")
             }
             // A stick moved while a button is held: both at once.
             if kind == "stick", let key = (action["key"] as? String)?.lowercased() {
@@ -784,7 +784,7 @@ extension Agent.Rules {
     static let gameTry = """
     - `look_at_app` builds the preview on this Mac and plays the game from its start for two seconds, with no one \
     touching the controller, and shows you the last frame, what the game logged (`lamp_log`, a line per event, never \
-    per frame) and the preview's stats (draws and vertices a frame); with `motion` it shows a frame every half \
+    per frame) and the preview's stats (draws a frame, and vertices for C++ or triangles for three.js); with `motion` it shows a frame every half \
     second, and what it played on its speakers. `use_app` plays on from there with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \

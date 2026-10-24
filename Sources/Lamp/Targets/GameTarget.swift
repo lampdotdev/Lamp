@@ -12,11 +12,13 @@ extension Target {
         identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, or an Xbox", analytics: "game",
                            made: { _, _ in "a game" },
                            devices: Words(words: [("game", "\"game\" for a game (with \"mac\", \"iphone\" and \"xbox-one\" for the places it's played on)",
-                                                   "\"game\" for a 3D game or one played with a controller")],
-                                          hint: "[\"game\"] for a 3D game, or a game played with a controller or on their Xbox, whatever device it names; "
-                                              + "with \"iphone\" when it's to be played on a phone or iPad too, and with \"xbox-one\" when it's for their Xbox. "
-                                              + "A 2D game played with the mouse or by tapping (a puzzle, a board, card or word game, a simple arcade game) "
-                                              + "is an app for this Mac or the iPhone",
+                                                   "\"game\" for a game played in real time"),
+                                                  ("native", "", "\"native\" with \"game\" for a heavy 3D game in C++")],
+                                          hint: "[\"game\"] for a game played in real time (3D, racing, a platformer, a shooter, an arcade or sports game, "
+                                              + "anything played with a controller or on their Xbox), whatever device it names; with \"iphone\" when it's to "
+                                              + "be played on a phone or iPad too, with \"xbox-one\" when it's for their Xbox, and with \"native\" too only "
+                                              + "for a heavy 3D game the wish says needs the console's whole power (a big world, hundreds of things moving at "
+                                              + "once). A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
                            tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, or your Xbox" },
                            place: { _ in .window }),

@@ -234,7 +234,7 @@ enum Targets {
     /// `make_app_for`'s devices (`{{DEVICES}}`): the kinds that can be one wish, then those that stand alone, and last
     /// what has no word of its own.
     static var toolDevices: String {
-        let say = { (kinds: [Target]) in kinds.flatMap { $0.identity.devices.words.map(\.tool) } + kinds.compactMap(\.identity.devices.toolNote) }
+        let say = { (kinds: [Target]) in kinds.flatMap { $0.identity.devices.words.map(\.tool).filter { !$0.isEmpty } } + kinds.compactMap(\.identity.devices.toolNote) }
         let alone = say(all.filter(\.identity.devices.alone))
         return say(all.filter { !$0.identity.devices.alone }).joined(separator: ", ") + (alone.isEmpty ? "" : "; " + alone.joined(separator: ", "))
     }

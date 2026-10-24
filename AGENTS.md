@@ -905,6 +905,21 @@ One's, else an iPhone's, else this Mac's) ride with the request in the device li
 not in the prompt, since a place may be given at any time. Places on the project are general: only games take them now,
 and an app kind that takes places one at a time (an Apple TV or a TV beside a SwiftUI app) is a `startsAt` away.
 
+A game has one of two engines (`GameKit.Engine`, written in its `.lamp-game` mark so a restored version keeps it, and in
+meta.json for a draft): three.js (`web`, the start for every game, since the model writes it best and every place has a
+web view) or C++ on the kit (`native`, which the naming call gives with "native" only for a heavy 3D game that needs an
+Xbox's whole power). A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
+with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
+seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
+controls on a touch screen) and three.js in `Web/three` beside it. On the Mac and iOS the Swift around it is
+`LampWebGame.swift` (a web view serving the bundle's Web/ at `lamp-game://app/`, its log into the app's log, sound with
+no tap first), built by `GameKit.webBuildSh`; on the Xbox it goes as the integration's web app ("xbox-one", the package
+its declared step makes, `Web/lamp.js` written then), installed as a game. The agent's preview of it is
+`WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
+script as the C++ preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
+clock and random numbers fixed, pausing at each `shot` while Lamp pictures the whole page, HTML over the canvas
+included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`).
+
 A game made before games were a kind of their own (a device app of "xbox-one:game") reads as a game with the Mac and
 the Xbox as its places, still pointed at the Xbox, and is kept so (`GameKit.migrated`, in `Store.readWish`); its folder's
 old `.lamp-device` marker still reads as a game's (`GameKit.isMade`, the kind `refines` the device kind) until its next

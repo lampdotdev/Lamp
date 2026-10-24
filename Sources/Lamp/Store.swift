@@ -7398,7 +7398,7 @@ final class Store: ObservableObject {
 
     // MARK: Games in the preview
 
-    /// `look_at_app` for a native Xbox game: built for the preview on this Mac and played from its start for two
+    /// `look_at_app` for a game: built for the preview on this Mac and played from its start for two
     /// seconds, untouched; with `motion`, a frame every half second.
     private func lookAtGame(_ project: LampProject, turn: Turn, motion: Bool) async -> (Int, [String: Any]) {
         if let problem = gameToolsProblem(project) {
@@ -7414,7 +7414,7 @@ final class Store: ObservableObject {
         return await playGame(project, script: script, owner: turn, said: said, pictures: Set(script.filter { $0.hasPrefix("shot ") }.map { String($0.dropFirst(5)) }))
     }
 
-    /// `use_app` for a native Xbox game: the controller's moves added to the play so far, and the whole of it played
+    /// `use_app` for a game: the controller's moves added to the play so far, and the whole of it played
     /// again from the start with the code as it is now.
     private func useOnGame(_ project: LampProject, actions: [[String: Any]]) async -> (Int, [String: Any]) {
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -7665,7 +7665,7 @@ final class Store: ObservableObject {
     }
 
     /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
-    /// What keeps a native Xbox game from being built on this Mac (its tools), or nil.
+    /// What keeps a C++ game from being built for the Xbox on this Mac (the console's tools), or nil.
     private func gameToolsProblem(_ project: LampProject) -> String? {
         guard GameKit.isGame(project), project.onDevice, GameKit.engine(project) == .native else { return nil }
         return WindowsTools.problem
@@ -10183,7 +10183,7 @@ final class Store: ObservableObject {
     /// way, asking about unsaved work, and opens a fresh copy: for what only a launch shows (how long it takes to
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
-    /// `onDevice`: for a native Xbox game, on the Xbox rather than in the preview on this Mac (`GameKit`).
+    /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than in the preview (`GameKit`).
     private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false) async -> (Int, [String: Any]) {
         withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice), of: project)
     }
