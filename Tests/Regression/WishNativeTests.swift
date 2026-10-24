@@ -80,8 +80,9 @@ final class WishNativeTests: XCTestCase {
                 asked += 1
                 guard let live = env["LAMP_SOCKET"] else { throw Failure(message: "Couldn't reach Lamp.") }
                 let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? live) : live
-                return ["socket": socket, "peer": env["LAMP_PEER"]!,
-                        "apps": [["peer": "mac", "kind": "mac", "name": "the Mac app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"]]]
+                // The wish's apps, as Lamp would say them: a Mac app and an iPhone app, unless the test says others.
+                let apps = (env["LAMP_APPS"] ?? "mac,iphone").split(separator: ",").map { ["peer": String($0), "kind": String($0), "name": "the " + String($0) + " app"] }
+                return ["socket": socket, "peer": env["LAMP_PEER"]!, "apps": apps]
             }
         }
         \(block)

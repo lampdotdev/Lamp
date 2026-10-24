@@ -1,4 +1,5 @@
 import CryptoKit
+import JavaScriptCore
 import LampRelayKit
 import XCTest
 @testable import Lamp
@@ -6,6 +7,7 @@ import XCTest
 /// Two Swift apps of one wish go on talking without Lamp: they meet in Lamp's room, each listens and is found on the
 /// network, and when the relay goes (Lamp quit, the Mac asleep) their messages keep arriving over the link straight
 /// between them, sealed with the wish's key. Opened again with no Lamp at all, they find each other from what they kept.
+@MainActor
 final class WishDirectTests: XCTestCase {
     /// Each app sends the other a number every half second and says what it heard, for as long as it's told to run.
     static let talker = """
@@ -40,15 +42,8 @@ final class WishDirectTests: XCTestCase {
         let key = WishChannel.random(32)
         relay.configureRoom("wish:direct", key: key, apps: ["mac": ("mac", "the Mac app"), "iphone": ("iphone", "the iPhone app")])
 
-        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-direct-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let work = try Self.talkerBuilt(key: key)
         defer { try? FileManager.default.removeItem(at: work) }
-        try WishNativeTests.program(main: Self.talker).write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
-        let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.direct</string>"
-            + Template.wishKeyPlistLines(key) + "</dict></plist>"
-        try plist.write(to: work.appendingPathComponent("wish.plist"), atomically: true, encoding: .utf8)
-        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o talker main.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker wish.plist 2>&1", in: work)
-        XCTAssertEqual(built.status, 0, built.output)
 
         let suite = "lamp-wish-direct-\(UUID().uuidString)"
         defer { for each in ["mac", "iphone"] { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-\(each)") } }
@@ -82,5 +77,188 @@ final class WishDirectTests: XCTestCase {
         _ = await (phone2.value, mac2.value)
         XCTAssertGreaterThan(heard("phone2.txt").count, 5, "no Lamp: \((try? String(contentsOf: work.appendingPathComponent("phone2.txt"), encoding: .utf8)) ?? "")")
         XCTAssertGreaterThan(heard("mac2.txt").count, 5, "both ways")
+    }
+
+    /// The talker built with the wish's key in its Info.plist, as Lamp installs an app of a wish.
+    static func talkerBuilt(key: Data) throws -> URL {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-direct-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        try WishNativeTests.program(main: talker).write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.direct</string>"
+            + Template.wishKeyPlistLines(key) + "</dict></plist>"
+        try plist.write(to: work.appendingPathComponent("wish.plist"), atomically: true, encoding: .utf8)
+        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o talker main.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker wish.plist 2>&1", in: work)
+        XCTAssertEqual(built.status, 0, built.output)
+        return work
+    }
+
+    /// A TV page can't listen nor look names up: with Lamp gone it finds the Mac app by sweeping its own network at the
+    /// port the wish's key gives that app, which the Mac app worked out the same way, and they talk, sealed.
+    func testATVPageFindsTheMacAppOnItsNetworkWithoutLamp() async throws {
+        let relay = Relay(key: SymmetricKey(size: .bits256))
+        let started: UInt16? = await withCheckedContinuation { done in relay.start { done.resume(returning: $0) } }
+        let port = try XCTUnwrap(started)
+        let key = WishChannel.random(32)
+        let apps: [String: (String, String)] = ["mac": ("mac", "the Mac app"), "tv": ("tv", "the TV app")]
+        relay.configureRoom("wish:tv", key: key, apps: apps)
+        let work = try Self.talkerBuilt(key: key)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let suite = "lamp-wish-direct-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-mac") }
+        // The Mac app learns its wish from Lamp's room, then Lamp goes.
+        let command = "LAMP_SOCKET='ws://127.0.0.1:\(port)/' LAMP_APPS=mac,tv LAMP_DEFAULTS=\(suite)-mac LAMP_PEER=mac LAMP_TO=tv LAMP_SECONDS=30 ./talker > mac.txt 2>&1"
+        let mac = Task.detached { _ = TestShell.run(command, in: work) }
+        try await Task.sleep(for: .seconds(4))
+        relay.stop()
+
+        // The TV page, with the key it claimed and the wish's apps it kept from an earlier opening, and nothing about
+        // where the Mac app is.
+        let page = PageWithSockets()
+        let tag = WishChannel.tag(for: SymmetricKey(data: key)).map { String(format: "%02x", $0) }.joined()
+        page.context.evaluateScript("""
+            store['lamp:install.wish'] = JSON.stringify({ app: 'wishapp', key: '\(key.base64EncodedString())' });
+            store['lamp:wish.\(tag)'] = JSON.stringify({ me: 'tv', apps: [{ peer: 'mac', kind: 'mac', name: 'the Mac app' }, { peer: 'tv', kind: 'tv', name: 'the TV app' }], at: {} });
+            window.tizen = { systeminfo: { getPropertyValue: function (kind, ok) { if (kind === 'WIFI_NETWORK') ok({ ipAddress: '127.0.0.1' }); } } };
+            """)
+        page.context.evaluateScript(TVTemplate.wishJS.replacingOccurrences(of: DeviceSupport.webMarker, with: #"/*LAMP_INSTALL*/{"app":"wishapp","routes":[]}"#))
+        page.context.evaluateScript("""
+            var heard = [], n = 0;
+            Lamp.wish.onMessage(function (from, data) { heard.push(from + ':' + data.n); });
+            Lamp.wish.start();
+            setInterval(function () { if (Lamp.wish.peer('mac') && Lamp.wish.peer('mac').open) Lamp.wish.send({ n: ++n }, 'mac'); }, 500);
+            """)
+        for _ in 0..<200 where (page.context.evaluateScript("heard.length")?.toInt32() ?? 0) < 6 { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertGreaterThanOrEqual(page.context.evaluateScript("heard.length")?.toInt32() ?? 0, 6,
+                                    "the page heard the Mac app: \(page.context.evaluateScript("JSON.stringify([Lamp.wish.state(), heard, said.slice(0, 6)])")?.toString() ?? "")")
+        XCTAssertEqual(page.context.evaluateScript("Lamp.wish.state()")?.toString(), "connected")
+        try await Task.sleep(for: .seconds(2))
+        page.end()
+        _ = await mac.value
+        let said = (try? String(contentsOf: work.appendingPathComponent("mac.txt"), encoding: .utf8)) ?? ""
+        XCTAssertTrue(said.contains("heard 3 from tv"), "and the Mac app heard the page: \(said)")
+    }
+}
+
+/// A JavaScript context with WebSockets, timers, storage and randomness of the Mac's, so a page's script talks to real
+/// apps over real sockets.
+@MainActor
+final class PageWithSockets: NSObject, URLSessionWebSocketDelegate {
+    let context: JSContext
+    private var session: URLSession!
+    private var tasks: [Int: URLSessionWebSocketTask] = [:]
+    private var timers: [Int: Timer] = [:]
+    private var count = 0
+
+    override init() {
+        context = JSContext()
+        super.init()
+        session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: .main)
+        context.exceptionHandler = { _, value in XCTFail(value?.toString() ?? "?") }
+        let random: @convention(block) (Int) -> [UInt8] = { count in [UInt8](WishChannel.random(count)) }
+        context.setObject(random, forKeyedSubscript: "macRandom" as NSString)
+        let open: @convention(block) (String) -> Int = { [unowned self] url in
+            MainActor.assumeIsolated {
+                self.count += 1
+                guard let address = URL(string: url) else { return self.count }
+                let task = self.session.webSocketTask(with: address)
+                task.taskDescription = String(self.count)
+                self.tasks[self.count] = task
+                task.resume()
+                return self.count
+            }
+        }
+        let send: @convention(block) (Int, JSValue) -> Void = { [unowned self] id, value in
+            MainActor.assumeIsolated {
+                guard let task = self.tasks[id] else { return }
+                if value.isString { task.send(.string(value.toString())) { _ in } }
+                else { task.send(.data(Data((value.toArray() as? [NSNumber] ?? []).map { $0.uint8Value }))) { _ in } }
+            }
+        }
+        let close: @convention(block) (Int) -> Void = { [unowned self] id in
+            MainActor.assumeIsolated { self.tasks[id]?.cancel(with: .goingAway, reason: nil); self.closed(id, code: 1000) }
+        }
+        let later: @convention(block) (JSValue, Double, Bool) -> Int = { [unowned self] fn, ms, repeats in
+            MainActor.assumeIsolated {
+                self.count += 1
+                let id = self.count
+                self.timers[id] = Timer.scheduledTimer(withTimeInterval: max(ms, 1) / 1000, repeats: repeats) { _ in
+                    MainActor.assumeIsolated {
+                        if !repeats { self.timers[id] = nil }
+                        fn.call(withArguments: [])
+                    }
+                }
+                return id
+            }
+        }
+        let cancel: @convention(block) (Int) -> Void = { [unowned self] id in MainActor.assumeIsolated { self.timers[id]?.invalidate(); self.timers[id] = nil } }
+        for (name, block) in [("macOpen", open as Any), ("macSend", send), ("macClose", close), ("macLater", later), ("macCancel", cancel)] {
+            context.setObject(block, forKeyedSubscript: name as NSString)
+        }
+        context.evaluateScript("""
+            var window = this, store = {}, sockets = {};
+            var said = [], opened = []; var console = { error: function (m) { said.push(String(m)); }, log: function () {} };
+            window.crypto = { getRandomValues: function (a) { var r = macRandom(a.length); for (var i = 0; i < a.length; i++) a[i] = r[i]; return a; } };
+            window.localStorage = { getItem: function (k) { return k in store ? store[k] : null; }, setItem: function (k, v) { store[k] = String(v); }, removeItem: function (k) { delete store[k]; } };
+            window.Lamp = {};
+            var LampAI = { _post: function () { return Promise.reject(new Error("Couldn't reach Lamp.")); } };
+            function XMLHttpRequest() {}
+            XMLHttpRequest.prototype.open = function () {}; XMLHttpRequest.prototype.setRequestHeader = function () {};
+            XMLHttpRequest.prototype.send = function () { var x = this; setTimeout(function () { x.onerror(); }, 1); };
+            function WebSocket(url) { opened.push(url); this.url = url; this.readyState = 0; this.id = macOpen(url); sockets[this.id] = this; }
+            WebSocket.prototype.send = function (x) { macSend(this.id, typeof x === 'string' ? x : Array.prototype.slice.call(new Uint8Array(x))); };
+            WebSocket.prototype.close = function () { macClose(this.id); };
+            function setTimeout(fn, ms) { return macLater(fn, ms || 0, false); } function clearTimeout(id) { if (id) macCancel(id); }
+            function setInterval(fn, ms) { return macLater(fn, ms || 0, true); } function clearInterval(id) { if (id) macCancel(id); }
+            function deliver(id, data) { var s = sockets[id]; if (s && s.onmessage) s.onmessage({ data: data }); }
+            function bytes(list) { return new Uint8Array(list).buffer; }
+            """)
+    }
+
+    func end() {
+        for timer in timers.values { timer.invalidate() }
+        timers = [:]
+        for task in tasks.values { task.cancel(with: .goingAway, reason: nil) }
+        tasks = [:]
+        session.invalidateAndCancel()
+    }
+
+    private func closed(_ id: Int, code: Int) {
+        guard tasks.removeValue(forKey: id) != nil else { return }
+        context.evaluateScript("(function () { var s = sockets[\(id)]; if (s) { s.readyState = 3; delete sockets[\(id)]; if (s.onclose) s.onclose({ code: \(code) }); } })();")
+    }
+
+    private func receive(_ id: Int, _ task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            MainActor.assumeIsolated {
+                guard let self, self.tasks[id] === task else { return }
+                switch result {
+                case .success(.string(let text)):
+                    self.context.objectForKeyedSubscript("deliver").call(withArguments: [id, text])
+                case .success(.data(let data)):
+                    let buffer = self.context.objectForKeyedSubscript("bytes").call(withArguments: [[UInt8](data).map(NSNumber.init(value:))])
+                    self.context.objectForKeyedSubscript("deliver").call(withArguments: [id, buffer as Any])
+                case .success:
+                    break
+                case .failure:
+                    return self.closed(id, code: 1006)
+                }
+                self.receive(id, task)
+            }
+        }
+    }
+
+    nonisolated func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        MainActor.assumeIsolated {
+            guard let id = Int(webSocketTask.taskDescription ?? ""), tasks[id] === webSocketTask else { return }
+            context.evaluateScript("(function () { var s = sockets[\(id)]; if (s) { s.readyState = 1; if (s.onopen) s.onopen(); } })();")
+            receive(id, webSocketTask)
+        }
+    }
+
+    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        MainActor.assumeIsolated {
+            guard let id = Int(task.taskDescription ?? "") else { return }
+            closed(id, code: 1006)
+        }
     }
 }

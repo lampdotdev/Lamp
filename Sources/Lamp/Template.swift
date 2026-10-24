@@ -14182,7 +14182,7 @@ enum Template {
         }
 
         private func listen(again: Bool = false) {
-            if again { listener?.cancel(); listener = nil; listenerPort = nil }
+            if again { listener?.cancel(); listener = nil; listenerPort = nil; listenerTried = .distantPast }
             guard listener == nil, Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me) else { return }
             listenerTried = Date()
             let wanted = Self.port(for: me, among: roster.map(\.id)).flatMap { NWEndpoint.Port(rawValue: $0) }

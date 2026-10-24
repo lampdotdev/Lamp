@@ -1089,8 +1089,8 @@ extension TVTemplate {
         /* The wish's other apps. Written by Lamp before every build; don't edit.
          *
          * The other apps of this app's wish (an iPhone app, a Mac app, an Android app): which are open now, and messages
-         * between them, through Lamp on the Mac over the home Wi-Fi, with nothing to pair, host or set up. What they say is
-         * sealed with a key only the wish's apps have. Each app of the wish is a peer named by its folder in the wish: "tv"
+         * between them over the home Wi-Fi, through Lamp on the Mac and straight to the apps that listen, so they go on
+         * with Lamp closed, with nothing to pair, host or set up. What they say is sealed with a key only the wish's apps have. Each app of the wish is a peer named by its folder in the wish: "tv"
          * (this one), "iphone", "apple" (an app for iPhone and Mac), "mac", "android"; its kind is the device word the tools
          * use for it.
          *
@@ -1105,7 +1105,8 @@ extension TVTemplate {
          * Lamp.wish.send(data)               to every other app of the wish
          * Lamp.wish.onMessage(fn(from, data))   what another app sent: its peer name and its JSON
          * Lamp.wish.state(), status()        this app's link: 'connecting', 'connected', 'alone' (the wish has no other
-         *                                     app), 'away' (Lamp isn't reachable), 'ended'; status() is { state, reason }
+         *                                     app), 'away' (neither Lamp nor another app of the wish is reachable), 'ended';
+         *                                     status() is { state, reason }
          * Lamp.wish.onState(fn(state, status))   fn now and whenever this app's link changes
          * Lamp.wish.me()                     this app's own peer name
          * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; files aren't carried yet
@@ -1119,12 +1120,12 @@ extension TVTemplate {
           'use strict';
           var MESSAGE = 16384;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
-                          away: "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi." };
+                          away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
           var C = /*LAMP_WISH_CRYPTO*/;
           var on = { peers: [], message: [], state: [] };
           var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
-          var address = null, mine = '', apps = [], state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
+          var address = null, mine = '', state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
           // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
           var hello = null, sent = 0, opened = 0, sendKey = null, openKey = null;
           var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
@@ -1134,6 +1135,13 @@ extension TVTemplate {
           // there (`claim`), and keeps it.
           var installed = /*LAMP_INSTALL*/null;
           var key = null, claiming = null, claims = 0, claimPair = null;
+          // Two ways to the others, used together: Lamp's room while Lamp is open on the Mac, and a link straight to each
+          // app of the wish that listens (a TV page can't listen itself), at the address it was last reached at or said it
+          // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the
+          // wish's key; a message goes the straight way when there is one. So the apps go on talking with Lamp closed.
+          var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
+          var directs = {}, dialing = {}, nextDial = {}, told = {}, openSince = {}, lastSeen = {}, devices = {};
+          var apps = [], lastOpen = '[]', swept = 0, here = null;
 
           function emit(name, args) {
             var list = on[name];
@@ -1149,20 +1157,55 @@ extension TVTemplate {
           function copy(p) { return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open,
                                       status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } }; }
           function openOnes() { var list = []; for (var i = 0; i < apps.length; i++) if (apps[i].open) list.push(copy(apps[i])); return list; }
-          function changed() { emit('peers', [openOnes()]); }
           function find(id) { for (var i = 0; i < apps.length; i++) if (apps[i].peer === id) return apps[i]; return null; }
           function notOpen(name) { return name.charAt(0).toUpperCase() + name.slice(1) + " isn't open."; }
-          function shut(p, when) { p.open = false; p.status = { state: 'notOpen', reason: notOpen(p.name), lastSeen: when }; }
-          function opened_(p, info) {
-            p.open = true;
-            if (typeof info.device === 'string') p.device = info.device;
-            p.status = { state: 'connected', reason: '', lastSeen: typeof info.since === 'number' ? info.since : Date.now() };
-          }
-          function leftAll() { var now = Date.now(); for (var i = 0; i < apps.length; i++) if (apps[i].open) shut(apps[i], now); changed(); }
           function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
           function say(line) { if (window.console) console.error('Lamp.wish: ' + line); }
+          function isName(n) { return typeof n === 'string' && /^[a-z0-9-]{1,32}$/.test(n); }
+          function hex(b) { var s = ''; for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? '0' : '') + b[i].toString(16); return s; }
 
-          // What the page keeps on the TV, beside LampAI's own: the routes it was told and the wish's key it claimed.
+          // The state and the list of apps, from what each way says now.
+          function rebuild() {
+            var now = Date.now(), next = [], any = false;
+            for (var i = 0; i < roster.length; i++) {
+              var a = roster[i];
+              if (a.peer === mine) continue;
+              var d = directs[a.peer] && directs[a.peer].ready ? directs[a.peer] : null, r = relayPresent[a.peer];
+              var open = started && (!!d || !!r);
+              if (open) {
+                if (!openSince[a.peer]) openSince[a.peer] = r && r.since || now;
+                var dev = d ? d.device : r.device;
+                if (dev) devices[a.peer] = dev;
+              } else if (openSince[a.peer]) { delete openSince[a.peer]; lastSeen[a.peer] = now; }
+              next.push({ peer: a.peer, kind: a.kind, name: a.name, device: devices[a.peer] || '', open: open,
+                          status: open ? { state: 'connected', reason: '', lastSeen: openSince[a.peer] }
+                                       : { state: 'notOpen', reason: notOpen(a.name), lastSeen: lastSeen[a.peer] || null } });
+            }
+            apps = next;
+            for (var id in directs) if (directs[id].ready) any = true;
+            var said = JSON.stringify(openOnes());
+            if (said !== lastOpen) { lastOpen = said; emit('peers', [openOnes()]); }
+            if (!started) return;
+            var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
+            if (s === 'connected') away = false;
+            if (s !== state || reason !== null) setState(s);
+          }
+          function setRoster(list) {
+            var given = [];
+            for (var i = 0; list && i < list.length; i++) {
+              var a = list[i];
+              if (a && isName(a.peer)) given.push({ peer: a.peer, kind: a.kind || '', name: typeof a.name === 'string' ? a.name : a.peer });
+            }
+            if (!given.length) return;
+            roster = given;
+            for (var id in directs) if (!inRoster(id)) drop(directs[id]);
+            keep();
+            rebuild();
+          }
+          function inRoster(id) { for (var i = 0; i < roster.length; i++) if (roster[i].peer === id) return true; return false; }
+
+          // What the page keeps on the TV, beside LampAI's own: the routes it was told and the wish's key it claimed, and
+          // by the wish's tag who it is, the wish's apps and where each was last reached, so it finds them with Lamp closed.
           function storage(name, value) {
             try {
               if (value === undefined) { var v = window.localStorage.getItem('lamp:' + name); return v === null ? null : JSON.parse(v); }
@@ -1170,6 +1213,27 @@ extension TVTemplate {
             } catch (e) {}
             return null;
           }
+          function keptName() { return key ? 'wish.' + hex(C.derive('lamp-wish tag', key).subarray(0, 8)) : null; }
+          function keep() { var n = keptName(); if (n) storage(n, { me: mine, apps: roster, at: told }); }
+          function restore() {
+            if (restored || !key) return;
+            restored = true;
+            var k = storage(keptName());
+            if (!k) return;
+            if (!mine && isName(k.me)) mine = k.me;
+            if (k.at && typeof k.at === 'object') for (var id in k.at) if (isName(id) && k.at[id] instanceof Array) told[id] = k.at[id].slice(0, 6);
+            if (!roster.length && k.apps instanceof Array) { setRoster(k.apps); alone = roster.length < 2 && roster.length > 0; }
+          }
+          function remember(id, places) {
+            if (id === mine || !(places instanceof Array)) return;
+            var list = [], had = told[id] || [], i;
+            for (i = 0; i < places.length; i++) if (typeof places[i] === 'string' && places[i] && list.indexOf(places[i]) < 0) list.push(places[i]);
+            if (!list.length) return;
+            for (i = 0; i < had.length; i++) if (list.indexOf(had[i]) < 0) list.push(had[i]);
+            told[id] = list.slice(0, 6);
+            keep();
+          }
+
           // The wish's key from Lamp, sealed to a key pair made here and now, so nobody else on the network can open it.
           function claim() {
             if (claiming) return claiming;
@@ -1221,48 +1285,35 @@ extension TVTemplate {
           }
 
           function hear(m) {
+            var i;
             if (m.t === 'welcome') {
-              retry = 0; away = false; undeliveredSaid = {};
-              if (typeof m.peer === 'string') mine = m.peer;
-              var present = {}, i, list = m.peers || [], roster = m.apps || [], next = [];
-              for (i = 0; i < list.length; i++) if (list[i] && typeof list[i].peer === 'string') present[list[i].peer] = list[i];
-              for (i = 0; i < roster.length; i++) {
-                var a = roster[i];
-                if (!a || typeof a.peer !== 'string' || a.peer === mine) continue;
-                var known = find(a.peer), name = typeof a.name === 'string' ? a.name : a.peer;
-                var p = { peer: a.peer, kind: a.kind || '', name: name, device: known ? known.device : '', open: false, status: null };
-                shut(p, known ? known.status.lastSeen : null);
-                if (present[a.peer]) opened_(p, present[a.peer]);
-                next.push(p);
-              }
-              apps = next;
-              changed();
-              setState('connected');
-            } else if (m.t === 'joined' && m.peer && typeof m.peer.peer === 'string') {
-              var j = find(m.peer.peer);
-              if (!j) { j = { peer: m.peer.peer, kind: m.peer.kind || '', name: m.peer.name || m.peer.peer, device: '', open: false, status: null }; apps.push(j); }
-              opened_(j, m.peer);
-              changed();
+              retry = 0; undeliveredSaid = {}; lampAway = false; relayIn = true; alone = false;
+              if (isName(m.peer)) mine = m.peer;
+              setRoster(m.apps || []);
+              relayPresent = {};
+              var list = m.peers || [];
+              for (i = 0; i < list.length; i++) present(list[i]);
+              rebuild();
+              reach();
+            } else if (m.t === 'joined' && m.peer) {
+              present(m.peer); rebuild(); reach();
             } else if (m.t === 'left') {
-              var l = find(m.peer);
-              if (l) { shut(l, Date.now()); changed(); }
+              delete relayPresent[m.peer]; rebuild();
+            } else if (m.t === 'at' && isName(m.peer)) {
+              remember(m.peer, m.addresses); lookAgain();
             } else if (m.t === 'apps') {
               // The wish gained an app or lost one: the others keep what's known of them.
-              var kept_ = [], given = m.apps || [];
-              for (var k = 0; k < given.length; k++) {
-                var g = given[k];
-                if (!g || typeof g.peer !== 'string' || g.peer === mine) continue;
-                var had = find(g.peer);
-                if (!had) { had = { peer: g.peer, kind: g.kind || '', name: typeof g.name === 'string' ? g.name : g.peer, device: '', open: false, status: null }; shut(had, null); }
-                kept_.push(had);
-              }
-              apps = kept_;
-              changed();
+              setRoster(m.apps || []);
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
               emit('message', [m.from, m.data]);
             } else if (m.t === 'undelivered' && typeof m.to === 'string') {
               if (!undeliveredSaid[m.to]) { undeliveredSaid[m.to] = true; say('a message to "' + m.to + '" did not arrive: ' + (m.reason || 'it is not in the room') + '.'); }
             }
+          }
+          function present(p) {
+            if (!p || !isName(p.peer)) return;
+            relayPresent[p.peer] = { device: typeof p.device === 'string' ? p.device : '', since: typeof p.since === 'number' ? p.since : Date.now() };
+            if (p.at instanceof Array && p.at.length) remember(p.peer, p.at);
           }
           // Seals a message with the next number this way and sends it.
           function seal(text) {
@@ -1270,12 +1321,15 @@ extension TVTemplate {
             sent++;
             socket.send(box.buffer);
           }
+          function transcriptOf(tag, client, server, theirs, ours) {
+            var c = C.utf8(client), s = C.utf8(server);
+            return C.concat([tag, new Uint8Array([c.length]), c, new Uint8Array([s.length]), s, theirs, ours]);
+          }
           // The relay proved it holds the wish's key: this page proves it does too, and both seal from here on.
           function answer(m) {
             var theirs = C.fromBase64(m.nonce), proof = C.fromBase64(m.proof);
             if (!hello || typeof m.peer !== 'string' || m.peer.length < 1 || m.peer.length > 32 || !theirs || theirs.length !== 16 || !proof) return false;
-            var me8 = C.utf8(mine), them8 = C.utf8(m.peer);
-            var transcript = C.concat([hello.tag, new Uint8Array([me8.length]), me8, new Uint8Array([them8.length]), them8, hello.nonce, theirs]);
+            var transcript = transcriptOf(hello.tag, mine, m.peer, hello.nonce, theirs);
             if (!C.same(proof, C.derive('lamp-wish server', key, transcript))) return false;
             hello = null;
             socket.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
@@ -1321,11 +1375,11 @@ extension TVTemplate {
           // Turned away, or the room ended, or dropped before it was let in: Lamp is asked again where to join and who this
           // page is; dropped otherwise, the page comes back after a moment.
           function lost(code) {
-            socket = null; hello = null; sendKey = openKey = null;
-            leftAll();
+            var wasIn = relayIn;
+            socket = null; hello = null; sendKey = openKey = null; relayIn = false; relayPresent = {};
+            rebuild();
             if (!started) return;
-            if (state === 'connected') setState('connecting');
-            if (code === 4003 || code === 4005 || state === 'connecting' || retry >= 3) address = null;
+            if (code === 4003 || code === 4005 || !wasIn || retry >= 3) address = null;
             retry = Math.min(retry + 1, 6);
             clearTimeout(again);
             again = setTimeout(open, retry * 750);
@@ -1345,34 +1399,195 @@ extension TVTemplate {
               });
               return;
             }
+            restore();
+            reach();
             if (address && key) return connect();
             clearTimeout(askTimer);
             LampAI._post('/app/wish', { device: device }, 20000).then(function (answer) {
               if (!started) return;
               if (answer.alone) {
                 // The wish has no other app: nothing to join, until one is added.
-                apps = []; changed(); setState('alone');
-                if (answer.me && answer.me.peer) mine = answer.me.peer;
+                if (answer.me && isName(answer.me.peer)) { mine = answer.me.peer; setRoster([answer.me]); }
+                alone = true; lampAway = false; rebuild();
                 askTimer = setTimeout(open, (answer.renew || 300) * 1000);
                 return;
               }
-              if (bridge && answer.key) key = C.fromBase64(answer.key);
+              if (bridge && answer.key) { key = C.fromBase64(answer.key); restore(); }
               if (!answer.socket || !answer.peer || !key || key.length !== 32) throw new Error(answer.error || 'Lamp did not say where the wish\'s apps meet.');
-              address = answer.socket; mine = answer.peer;
-              if (state !== 'connected') setState('connecting');
+              address = answer.socket; mine = answer.peer; alone = false;
+              setRoster(answer.apps || []);
+              rebuild();
               connect();
             }, function (error) {
               if (!started) return;
-              if (state !== 'alone') setState('away');
-              say(error.message);
+              // Lamp isn't there (closed, restarting, or the Mac asleep): the apps go on the straight way meanwhile, and
+              // Lamp is asked again after a while. Said once each time Lamp goes.
+              if (!lampAway) say(error.message);
+              lampAway = true;
+              rebuild();
               askTimer = setTimeout(open, 3000);
             });
           }
-          // A beat both ways, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
+
+          // Straight to an app of the wish that listens: the same handshake as Lamp's room, that app taking the relay's
+          // side and naming itself, so only an app holding the wish's key answers it, and only the one it was dialled as.
+          function attempt(id, place, failed) {
+            var ws, d, timer;
+            try { ws = new WebSocket('ws://' + place + '/'); } catch (e) { return failed(); }
+            ws.binaryType = 'arraybuffer';
+            d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '' };
+            function end() {
+              if (d.over) return;
+              d.over = true;
+              clearTimeout(timer);
+              try { ws.close(); } catch (e) {}
+              if (directs[id] === d) { delete directs[id]; rebuild(); }
+              else if (!d.ready) failed();
+            }
+            d.end = end;
+            timer = setTimeout(function () { if (!d.ready) end(); }, 4000);
+            ws.onopen = function () {
+              d.hello = { nonce: C.random(16), tag: C.derive('lamp-wish tag', key).subarray(0, 8) };
+              ws.send(JSON.stringify({ t: 'hello', tag: C.toBase64(d.hello.tag), peer: mine, nonce: C.toBase64(d.hello.nonce) }));
+            };
+            ws.onmessage = function (event) { if (!d.over) { d.heard = Date.now(); directArrived(d, event.data); } };
+            ws.onclose = ws.onerror = end;
+            return d;
+          }
+          function directArrived(d, data) {
+            if (typeof data === 'string') {
+              var m; try { m = JSON.parse(data); } catch (e) { m = null; }
+              if (m && m.t === 'beat') return;
+              var theirs = m && C.fromBase64(m.nonce), proof = m && C.fromBase64(m.proof);
+              if (m && m.t === 'challenge' && d.hello && !d.sendKey && m.peer === d.peer && theirs && theirs.length === 16 && proof) {
+                var transcript = transcriptOf(d.hello.tag, mine, d.peer, d.hello.nonce, theirs);
+                if (C.same(proof, C.derive('lamp-wish server', key, transcript))) {
+                  d.hello = null;
+                  d.ws.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
+                  d.sendKey = C.derive('lamp-wish c2s', key, transcript); d.openKey = C.derive('lamp-wish s2c', key, transcript);
+                  directSeal(d, JSON.stringify({ t: 'join', device: device }));
+                  return;
+                }
+              }
+            } else if (d.openKey) {
+              var plain = C.open(d.openKey, C.nonce(d.opened), new Uint8Array(data)), said = null;
+              if (plain) { d.opened++; try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
+              if (said && said.t === 'welcome' && !d.ready) return ready(d, said);
+              if (said && said.t === 'message' && d.ready && said.data !== undefined) return emit('message', [d.peer, said.data]);
+              if (said && typeof said === 'object') return;
+            }
+            d.end();
+          }
+          function directSeal(d, text) {
+            var box = C.seal(d.sendKey, C.nonce(d.sent), C.utf8(text));
+            d.sent++;
+            d.ws.send(box.buffer);
+          }
+          function ready(d, welcome) {
+            var had = directs[d.peer];
+            if (had && had !== d && had.ready) { d.ready = true; d.over = true; try { d.ws.close(); } catch (e) {} return; }
+            d.ready = true;
+            d.device = typeof welcome.device === 'string' ? welcome.device.slice(0, 40) : '';
+            directs[d.peer] = d;
+            delete dialing[d.peer]; delete nextDial[d.peer];
+            if (/^[0-9.]+:\d+$/.test(d.place)) remember(d.peer, [d.place]);
+            rebuild();
+          }
+          function drop(d) { d.end(); }
+
+          // Each place in turn, the last reached first; then, once in a while, every address on this network at the
+          // wish's port for that app, a few dozen at a time; then again later, less often each time.
+          function dial(id, places) {
+            if (!places.length) {
+              delete dialing[id];
+              var tries = (nextDial[id] ? nextDial[id].tries : 0) + 1;
+              nextDial[id] = { at: Date.now() + Math.min(30, Math.pow(2, tries)) * 1000 * (0.8 + Math.random() * 0.4), tries: tries };
+              return;
+            }
+            dialing[id] = true;
+            attempt(id, places[0], function () { dial(id, places.slice(1)); });
+          }
+          function placeOk(p) {
+            var m = /^([A-Za-z0-9.-]{1,253}):(\d{1,5})$/.exec(p);
+            return !!m && +m[2] > 0 && +m[2] < 65536 && (bridge || m[1].indexOf('127.') !== 0);
+          }
+          function port(id) {
+            var ids = [], i;
+            for (i = 0; i < roster.length; i++) ids.push(roster[i].peer);
+            ids.sort();
+            var rank = ids.indexOf(id), d = C.derive('lamp-wish port', key);
+            return rank >= 0 && rank < 8 ? 20000 + ((d[0] << 8) | d[1]) % 1500 * 8 + rank : null;
+          }
+          function sweep(missing) {
+            var nets = {}, list = [], id, i, h;
+            if (here) nets[here.replace(/\.\d+$/, '')] = true;
+            for (id in told) for (i = 0; i < told[id].length; i++) {
+              var m = /^(\d+\.\d+\.\d+)\.\d+:\d+$/.exec(told[id][i]);
+              if (m && m[1].indexOf('127.') !== 0) nets[m[1]] = true;
+            }
+            for (var net in nets) for (i = 0; i < missing.length; i++) {
+              var p = port(missing[i]);
+              if (p) for (h = 1; h < 255; h++) list.push({ id: missing[i], place: net + '.' + h + ':' + p });
+            }
+            if (!list.length) return;
+            swept = Date.now();
+            var at = 0, running = 0;
+            for (i = 0; i < missing.length; i++) dialing[missing[i]] = true;
+            function next() {
+              while (running < 32 && at < list.length) {
+                var one = list[at++];
+                if (directs[one.id]) continue;
+                running++;
+                attempt(one.id, one.place, function () { running--; next(); });
+              }
+              if (!running && at >= list.length) for (var j = 0; j < missing.length; j++) if (!directs[missing[j]]) dial(missing[j], []);
+            }
+            next();
+          }
+          // This TV's own address, where its system says it: the network to look on when nothing was remembered.
+          function whereAmI() {
+            try {
+              if (window.tizen && tizen.systeminfo) {
+                ['WIFI_NETWORK', 'ETHERNET_NETWORK'].forEach(function (kind) {
+                  tizen.systeminfo.getPropertyValue(kind, function (n) { if (n && /^\d+\.\d+\.\d+\.\d+$/.test(n.ipAddress)) here = n.ipAddress; }, function () {});
+                });
+              } else if (window.webOS && webOS.service) {
+                webOS.service.request('luna://com.palm.connectionmanager', { method: 'getStatus', parameters: {}, onSuccess: function (r) {
+                  var a = r && ((r.wired && r.wired.ipAddress) || (r.wifi && r.wifi.ipAddress));
+                  if (a && /^\d+\.\d+\.\d+\.\d+$/.test(a)) here = a;
+                } });
+              }
+            } catch (e) {}
+          }
+          function reach() {
+            if (!started || alone || !key || !mine || roster.length < 2) return;
+            var now = Date.now(), missing = [];
+            for (var i = 0; i < roster.length; i++) {
+              var id = roster[i].peer;
+              if (id === mine || directs[id] || dialing[id]) continue;
+              if (nextDial[id] && nextDial[id].at > now) continue;
+              var places = (told[id] || []).filter(placeOk);
+              if (places.length && !(nextDial[id] && nextDial[id].tries >= 2)) dial(id, places);
+              else if (!relayPresent[id]) missing.push(id);
+              else if (places.length) dial(id, places);
+            }
+            // A sweep only for apps Lamp's room doesn't have either, and not more than once a minute.
+            if (missing.length && now - swept > 60000) sweep(missing);
+          }
+          function lookAgain() { nextDial = {}; reach(); }
+
+          // A beat on every link, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
           function beat() {
-            if (!socket || socket.readyState !== 1) return;
-            if (Date.now() - heard > 15000) { var s = socket; socket = null; s.close(); lost(0); return; }
-            socket.send('{"t":"beat"}');
+            if (socket && socket.readyState === 1) {
+              if (Date.now() - heard > 15000) { var s = socket; socket = null; s.close(); lost(0); }
+              else socket.send('{"t":"beat"}');
+            }
+            for (var id in directs) {
+              var d = directs[id];
+              if (Date.now() - d.heard > 15000) d.end();
+              else try { d.ws.send('{"t":"beat"}'); } catch (e) { d.end(); }
+            }
+            reach();
           }
           function adder(name) {
             return function (fn) {
@@ -1383,11 +1598,13 @@ extension TVTemplate {
               return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
             };
           }
+          if (window.addEventListener) window.addEventListener('online', function () { lookAgain(); });
 
           var api = {
             start: function () {
               if (started) return;
               started = true;
+              whereAmI();
               open();
               beatTimer = setInterval(beat, 5000);
             },
@@ -1395,8 +1612,9 @@ extension TVTemplate {
               started = false;
               clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
               if (socket) { var s = socket; socket = null; s.close(); }
-              sendKey = openKey = null;
-              leftAll();
+              sendKey = openKey = null; relayIn = false; relayPresent = {};
+              for (var id in directs) directs[id].end();
+              rebuild();
               setState('ended');
             },
             peers: function () { api.start(); return openOnes(); },
@@ -1409,7 +1627,7 @@ extension TVTemplate {
             send: function (data, to) {
               api.start();
               var what = to ? 'a message to "' + to + '"' : 'a message to the wish\'s apps';
-              if (state !== 'connected' || !socket || socket.readyState !== 1 || !sendKey) {
+              if (state !== 'connected') {
                 if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
                 return false;
               }
@@ -1419,7 +1637,18 @@ extension TVTemplate {
               var text = JSON.stringify(frame);
               if (data === undefined || text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
               if (bytes(text) > MESSAGE) { say(what + ' of ' + bytes(text) + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
-              seal(text);
+              // Each app the straight way when there is one, else through Lamp's room.
+              var targets = to ? [to] : openOnes().map(function (o) { return o.peer; }), viaRoom = [];
+              for (var i = 0; i < targets.length; i++) {
+                var d = directs[targets[i]];
+                if (d && d.ready) directSeal(d, JSON.stringify({ t: 'message', data: data }));
+                else if (relayPresent[targets[i]]) viaRoom.push(targets[i]);
+              }
+              if (viaRoom.length && socket && socket.readyState === 1 && sendKey) {
+                // To all of them in one when every app goes through the room, as it always did.
+                if (!to && viaRoom.length === targets.length) seal(text);
+                else for (var k = 0; k < viaRoom.length; k++) seal(JSON.stringify({ t: 'send', data: data, to: viaRoom[k] }));
+              }
               return true;
             },
             onMessage: adder('message'), onPeers: adder('peers'), onState: adder('state')
