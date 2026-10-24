@@ -303,6 +303,12 @@ struct Device: Identifiable, Hashable {
 /// only when it changes (Try On moved, a phone's software updated), so most requests carry nothing.
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
+        let here = place(for: project, store: store)
+        // A game says every place it's played and what the slowest allows, then where Try On points.
+        return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here : here
+    }
+
+    @MainActor private static func place(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "device"
@@ -358,7 +364,7 @@ enum DeviceNote {
             return line
         }
         let mac = store.thisMac ?? Device.thisMac()
-        return "It opens on this Mac: \(mac.forAgent)."
+        return GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent)."
     }
 
     /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's

@@ -13,14 +13,13 @@ extension Target {
                            made: { device, whose in "\(whose) \(device ?? "device")" },
                            // What a device whose integration declares its apps runs is the integration's alone.
                            devices: Words(words: [], toolNote: "or, alone, the id of a device integration that declares its apps (\"roku\", once Lamp has one)",
-                                            hint: nil, claims: { $0.count == 1 && $0.first.map(DeviceApps.makesApps) == true },
+                                            hint: nil, claims: { $0.count == 1 && $0.first.map(DeviceApps.makesApps) == true && !GameKit.claims($0) },
                                             owns: DeviceApps.makesApps, alone: true),
                            tryOnHelp: { "Where it opens: which of your \(DeviceApps.integration(for: $0)?.name ?? "devices") it goes on" },
                            place: { _ in .device }),
         guidance: Guidance(prompt: Agent.devicePrompt,
                            changeRules: { project in
-                               GameKit.isGame(project) ? Agent.Rules.gameEdit + Agent.Rules.gameKit + Agent.Rules.gameBudget + Agent.Rules.gameTry
-                                   : Agent.Rules.deviceEdit + Agent.Rules.deviceKind(DeviceApps.integration(for: project)) + Agent.Rules.deviceTry(project)
+                               Agent.Rules.deviceEdit + Agent.Rules.deviceKind(DeviceApps.integration(for: project)) + Agent.Rules.deviceTry(project)
                            },
                            skills: { [] },
                            noAI: { project in
@@ -41,18 +40,7 @@ extension Target {
                        builtURL: DeviceApps.packageURL(for:), marker: DeviceApps.marker, refills: true, integration: DeviceApps.integrationID(in:),
                        shareRefusal: "Lamp doesn't share apps for devices like this one yet."),
         part: nil,
-        setup: Setup(
-            // A native Xbox game's tools are a long download: the window that gets them opens as the first request starts.
-            canChoose: { _, integration in
-                if let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, !WindowsTools.isReady { WindowsSetup.shared.show() }
-                return true
-            },
-            notReady: { integration, _ in
-                guard let integration, DeviceApps.appKind(integration)?.lamp == GameKit.kind, let problem = WindowsTools.problem else { return nil }
-                WindowsSetup.shared.show()
-                return "this Mac can't build Xbox games. \(problem)"
-            },
-            later: nil))
+        setup: .none)
 }
 
 extension Language {

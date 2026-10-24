@@ -49,6 +49,8 @@ struct Platform: RawRepresentable, Hashable, Codable, Sendable {
     var hasDevice: Bool { target.places.contains(.device) }
     /// Opens in more than one place, where Try On last put it (`LampProject.chosen`).
     var choosesPlace: Bool { target.places.count > 1 }
+    /// Its places are given one at a time, so each app of the kind says which it has (`LampProject.places`).
+    var addsPlaces: Bool { target.startsAt != nil }
 }
 
 /// One kind of app, as the pieces that differ from kind to kind: how it's named and listed, what the agent is told,
@@ -65,6 +67,9 @@ struct Target {
     /// Nil for a kind that's never one of a wish's other apps.
     let part: Part?
     let setup: Setup
+    /// Where a new app of the kind opens, of its `places`, when the kind's places are given one at a time (a game, at
+    /// home on the Mac until it's put somewhere else too: `LampProject.places`). Nil for all of them from the start.
+    var startsAt: [Destination]? = nil
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {
@@ -199,7 +204,7 @@ struct SetupLater {
 /// Every kind of app Lamp makes, in the order they're listed: to the naming call, in `make_app_for`'s description, and
 /// to a wish still to be told what it's for.
 enum Targets {
-    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .device]
+    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .game, .device]
     static let named = Dictionary(uniqueKeysWithValues: all.map { ($0.platform.rawValue, $0) })
 
     /// The kind a wish is when nothing says otherwise: a Mac app needs nothing more than Lamp has.

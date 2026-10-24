@@ -1763,7 +1763,9 @@ private struct TryOnChoices: View {
     @State private var olderPhones: [PhoneTools.OlderPhone] = []
 
     var body: some View {
-        if project.onDevice {
+        if GameKit.isGame(project) {
+            gameChoices
+        } else if project.onDevice {
             deviceChoices
         } else if project.onTV {
             tvChoices
@@ -1810,7 +1812,7 @@ private struct TryOnChoices: View {
     @ViewBuilder private var deviceChoices: some View {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
-        Picker("Your \(name)s", selection: Binding(get: { project.device }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
+        Picker("Your \(name)s", selection: Binding(get: { project.onDevice ? project.device : nil }, set: { if let id = $0 { store.setDeviceAppDevice(project, id) } })) {
             ForEach(mine) { device in
                 let step = device.setup() == .ready && !device.isAway ? "" : " (\(device.status))"
                 Label((device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step, systemImage: device.kind.symbol)
@@ -1829,11 +1831,35 @@ private struct TryOnChoices: View {
             Button("Set Up \(device.name)…") { DeviceSetupWindow.show(device) }
         }
         if GameKit.isGame(project) {
-            Button("Check Xbox Games Setup…") { WindowsSetup.shared.show() }
+            Button("Check Xbox Setup for Games…") { WindowsSetup.shared.show() }
         }
         Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { store.refreshDevices() }
             .onAppear { store.refreshDevices() }
+    }
+
+    /// A game's places: this Mac, its home, then the simulators once it's played on an iPhone or iPad and the person's
+    /// Xboxes once it's played on one, and a way to give it each place it hasn't got.
+    @ViewBuilder private var gameChoices: some View {
+        let places = project.openPlaces
+        if places.contains(.ios) {
+            appleChoices
+        } else {
+            Picker("This Mac", selection: Binding(get: { project.destination == .mac ? Destination.mac : nil },
+                                                  set: { if $0 != nil { store.setMac(project) } })) {
+                Label("My Mac", systemImage: "laptopcomputer").tag(Optional(Destination.mac))
+            }
+            .pickerStyle(.inline)
+        }
+        if places.contains(.device) {
+            Divider()
+            deviceChoices
+        }
+        if !places.contains(.ios) || !places.contains(.device) {
+            Divider()
+            if !places.contains(.ios) { Button("Play on iPhone and iPad Too") { store.addPlace(project, .ios) } }
+            if !places.contains(.device) { Button("Play on Xbox Too") { store.addPlace(project, .device) } }
+        }
     }
 
     /// An Android app's places: the emulator Lamp made, and the person's Android devices adb can see.
@@ -1866,7 +1892,7 @@ private struct TryOnChoices: View {
     @ViewBuilder private var appleChoices: some View {
         if project.platform.choosesPlace {
             // An app for both: this Mac is a place to open it too, beside the simulators and phones.
-            Picker("This Mac", selection: Binding(get: { project.onIOS ? nil : Destination.mac },
+            Picker("This Mac", selection: Binding(get: { project.destination == .mac ? Destination.mac : nil },
                                                   set: { if $0 != nil { store.setMac(project) } })) {
                 Label("My Mac", systemImage: "laptopcomputer").tag(Optional(Destination.mac))
             }
@@ -1893,6 +1919,8 @@ private struct TryOnChoices: View {
                 .pickerStyle(.inline)
             }
         }
+        // A game goes on the simulators; Lamp doesn't put one on the person's own iPhone or iPad yet.
+        if !GameKit.isGame(project) {
         do {
             // The person's phones, each by its exact model, and what it still needs before Play can put the app
             // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.
@@ -1927,8 +1955,11 @@ private struct TryOnChoices: View {
                 Text("No iPhone or iPad found. Plug one in with a cable and unlock it, then look again.")
             }
         }
+        }
         Divider()
-        Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
+        if !GameKit.isGame(project) {
+            Button("Check iPhone & iPad Setup…") { PhoneSetup.shared.show(family: project.family, phone: project.device) }
+        }
         // Every device Lamp knows, with where its setup stands, is in Settings → Building.
         Button("All Your Devices…") { settingsTab = "building"; openSettings() }
         Button("Look for Devices Again") { refresh() }

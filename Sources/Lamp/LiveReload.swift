@@ -11,7 +11,8 @@ import CryptoKit
 enum LiveReload {
     /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS
+        // A game is C++, which a live change can't put into the running app: it's opened again.
+        project.platform.hasMac && !project.onIOS && !GameKit.isGame(project)
     }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }

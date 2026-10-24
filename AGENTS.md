@@ -515,7 +515,7 @@ Xcode, the person's own Claude Code and Codex or tools from the PATH; a new chec
 
 ## Kinds of app
 
-What an app is for (`Platform`, kept in meta.json as "mac", "iphone", "universal", "android", "tv", "device") is one
+What an app is for (`Platform`, kept in meta.json as "mac", "iphone", "universal", "android", "tv", "game", "device") is one
 `Target` in `Sources/Lamp/Targets/`, listed in `Targets.all`, made of the pieces that differ from kind to kind: its
 `identity` (its names, the device words it's chosen by, which `Targets` puts together for the naming call,
 `make_app_for` and an undecided wish, Try On's help and the desk's place), its `guidance` (prompt, the rules
@@ -888,17 +888,38 @@ hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and p
 the rest Edge's `Gamepad…` names), and `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
-## Xbox games
+## Games
 
-The Xbox takes two kinds of app: its integration's web app (`app`, menus and pages), and native 3D games, Lamp's own
-kind (`GameKit`, GameKit.swift), offered beside it in the integration's `kinds` (`"game": {"lamp": "native-game"}`).
-A native game needs a 2 GB download, so it's for heavy 3D games only: the web app takes apps and games, 3D ones
-included, and the native kind only a wish that says it needs the console's full power. Which a wish becomes is the
-naming call's choice, from the wish: each kind is named to it with its `purpose`
-(`AppName.deviceKinds`), "xbox-one" for an app and "xbox-one:game" for a 3D game, and that name is what
-`LampProject.integration` keeps (`DeviceApps.split`; `deviceIntegration` is the integration's own id, which devices are
-found by). `make_app_for` takes either. A kind in `kinds` is Lamp's only: the check refuses one in an integration the
-builder writes.
+A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, `GameKit`), never a device's: the naming
+call gives "game" for a 3D game or one played with a controller or on an Xbox (a 2D game played with the mouse or by
+tapping stays a Mac or iPhone app), with the devices it's played on beside it. Its home is the Mac, and the places it's
+played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
+`LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator for
+now: Lamp doesn't put a game on the person's own phone yet) and the Xbox (`.device`, with `LampProject.integration`
+"xbox-one:game", the Xbox integration's `kinds.game`, which is only the package a game goes there as). `make_app_for` on
+a game sets its places (`Store.gamePlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind;
+Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
+opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
+first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox
+One's, else an iPhone's, else this Mac's) ride with the request in the device line (`DeviceNote`, `Rules.gamePlaces`),
+not in the prompt, since a place may be given at any time. Places on the project are general: only games take them now,
+and an app kind that takes places one at a time (an Apple TV or a TV beside a SwiftUI app) is a `startsAt` away.
+
+A game made before games were a kind of their own (a device app of "xbox-one:game") reads as a game with the Mac and
+the Xbox as its places, still pointed at the Xbox, and is kept so (`GameKit.migrated`, in `Store.readWish`); its folder's
+old `.lamp-device` marker still reads as a game's (`GameKit.isMade`, the kind `refines` the device kind) until its next
+build writes `.lamp-game`.
+
+On the Mac and on iOS a game is an app like any other Lamp makes: a Swift package of Lamp's own (`GameKit.packageSwift`,
+`GameKit.buildSh`, `Sources/LampGame.swift` and LampSupport.swift, none the agent's), so its Mac copy is installed,
+opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and the chat beside
+it. The game's C++, the kit and the Apple host (`lamp_apple.mm`) are compiled by `Lamp/build.sh mac|ios-sim|ios` into
+`build/<place>/libgame.a`, which the package links (Swift reads the host through `Lamp/host`, a C module of its own). The
+host draws into the window's CAMetalLayer at 1920x1080 scaled to fit, plays the kit's mix through AVAudioEngine, reads the
+controllers with GameController, the Mac's keyboard as the first pad, and on iPhone and iPad touch controls drawn in
+SwiftUI (a left stick and the buttons `lamp_touch_buttons` names) while no controller is connected or once the screen is
+touched. A change to a game never goes into the open app (`LiveReload.eligible`): it reopens, held for Reload while the
+person has it open.
 
 A game is C++ against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
 controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`, and sound: `lamp_sound_load`,
@@ -910,7 +931,7 @@ game's timing never depends on it: the preview reports what played and how loud 
 "Lamp sound:" line), and a fifth argument writes the mix as a WAV file to listen to. Lamp
 writes the kit flat into the game's `Lamp/` before every turn and build (`GameKit.write`, only what changed, and
 `kit.stamp` so the build compiles Lamp's code again only then); the agent writes `Game/` (.cpp and .glsl) and `Assets/`.
-The kit has two hosts, Lamp's too: `lamp_xbox.cpp`, a CoreWindow app with a Direct3D 11 swap chain at 1920x1080,
+The kit has three hosts, Lamp's too: `lamp_apple.mm` (above), `lamp_xbox.cpp`, a CoreWindow app with a Direct3D 11 swap chain at 1920x1080,
 Windows.Gaming.Input, the log and saves in the app's LocalState, B kept from leaving the game, and Present with vsync
 (without it the console ends the app after one frame), which logs its frame times every ten seconds; and
 `lamp_preview.mm`, the same game drawn with Metal out of sight at 60 frames of game time a second, from a script of
@@ -923,8 +944,10 @@ its own d3dcompiler. Both builds, and every play of the preview, run in the app'
 
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`); `use_app` takes
 `stick`, `button` and `wait`, adds them to that play and plays the whole of it again from the start (`GameKit.plays`,
-`Store.useOnGame`), so after a change to the code the same moves show what changed. `look_at_app` with `on_device`,
-Play and the end of a turn build for the console and put it on the Xbox through the integration's bridge: `stop` ends
+`Store.useOnGame`), so after a change to the code the same moves show what changed, wherever the game is played.
+`look_at_app` with `on_device` opens it where Try On points and looks there: its window on this Mac, the simulator, or the
+Xbox. On the Xbox, `on_device`, Play and the end of a turn build for the console and put it there through the
+integration's bridge: `stop` ends
 the copy there first (installing over a running copy can leave the next launch failing with 0x800700BF), then
 `install` and `launch` (asked again after a few seconds when the console refuses a launch just after an update,
 0x80073D00); `look` is Device Portal's screenshot and `log` reads the game's log from its LocalState. Deleting a wish
@@ -942,12 +965,15 @@ rules ask of anything played, or its icon.json does (`IconSpec.game`, which the 
 made before capabilities.json asked is a game too). That's an explicit line the agent writes, not a guess from the code: three.js draws scenes
 that aren't games and a game may not use it. The native host logs the memory the console gave it, which says which it got.
 
-The tools are a download (`WindowsTools`, the setup window `WindowsSetup`), in `Edition.sharedDeveloperFolder`/Windows
-like Android's: clang and lld (with clang's own headers) out of LLVM's release for Apple silicon and sokol-shdc at a
-pinned commit, each against its published SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp
+The tools are a download (`WindowsTools`), in `Edition.sharedDeveloperFolder`/Windows like Android's, in two parts.
+sokol-shdc at a pinned commit (for Apple silicon and Intel), which every build of a game needs, is fetched by itself the
+first time a game is built (`installPreview`), with nothing to accept. The console's part, asked for only when a game
+first goes on an Xbox (the setup window `WindowsSetup`): clang and lld (with clang's own headers) out of LLVM's release
+for Apple silicon, against its published SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp
 ships (built by build.sh with cargo, pinned and locked; a release needs it) and which checks Microsoft's packages
 against Microsoft's manifest. Microsoft's licence is the person's to accept, in the setup window, before xwin runs:
-nothing of Microsoft's is passed on. Intel Macs can't build games (LLVM publishes no such build).
+nothing of Microsoft's is passed on. Intel Macs make and play games, but can't put them on an Xbox (LLVM publishes no
+such build).
 
 ## TV apps
 

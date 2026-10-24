@@ -43,6 +43,7 @@ enum Template {
         try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
                                              platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform.choosesPlace ? project.chosen : nil,
+                                             places: project.platform.addsPlaces ? project.places : nil,
                                              simulator: project.platform.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
@@ -3190,6 +3191,7 @@ enum Template {
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
         guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
+        if GameKit.isGame(project) { return GameKit.isScaffold(project) }
         guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
         else { return false }
         return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }

@@ -40,11 +40,13 @@ enum DeviceApps {
     static func makesApps(_ kind: String) -> Bool { appKind(kind) != nil }
 
     /// Every kind of app a device's integration offers, with what each is for: the names the naming call and
-    /// `make_app_for` may give.
+    /// `make_app_for` may give. A game isn't one: it's a kind of its own (`Platform.game`), which the Xbox's game kind
+    /// is only the package of when it's played there.
     static func kinds() -> [(id: String, integration: Integration, kind: Integration.AppKind)] {
         Integrations.all().filter { $0.app?.declared != nil }.flatMap { integration -> [(String, Integration, Integration.AppKind)] in
             [(integration.id, integration, integration.app!)]
-                + (integration.kinds ?? [:]).sorted { $0.key < $1.key }.map { ("\(integration.id):\($0.key)", integration, $0.value) }
+                + (integration.kinds ?? [:]).filter { $0.value.lamp != GameKit.kind }.sorted { $0.key < $1.key }
+                    .map { ("\(integration.id):\($0.key)", integration, $0.value) }
         }
     }
 
@@ -63,11 +65,6 @@ enum DeviceApps {
 
     /// Writes the integration's scaffold, with Lamp's own names for the app put in (`{{NAME}}`), and the app's APP.md.
     static func fill(_ project: LampProject) throws {
-        if GameKit.isGame(project) {
-            try GameKit.fill(project)
-            try Template.write((project.integration ?? "") + "\n", to: marker, for: project)
-            return
-        }
         guard let integration = integration(for: project), let declared = integration.app?.declared else {
             throw Failure(message: "Lamp no longer has the integration this app is made for.")
         }
@@ -96,7 +93,7 @@ enum DeviceApps {
     /// What the app is built from: everything in its folder but what the package step makes, Lamp's folder and the
     /// person's attachments.
     static func sourceRoots(_ project: LampProject) -> [URL] {
-        let output = GameKit.isGame(project) ? "build" : integration(for: project)?.app?.declared?.output.split(separator: "/").first.map(String.init)
+        let output = integration(for: project)?.app?.declared?.output.split(separator: "/").first.map(String.init)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: project.dir.path)) ?? []
         return names.filter { !$0.hasPrefix(".") && $0 != output && $0 != Attachments.folder && $0 != "APP.md" }
             .sorted().map { project.dir.appendingPathComponent($0) }
@@ -405,7 +402,6 @@ enum DeviceApps {
 extension Agent {
     /// The rules for a device app: the integration's own words on writing for its device, in the shape of the others'.
     static func devicePrompt(for project: LampProject) -> String {
-        if GameKit.isGame(project) { return gamePrompt(for: project) }
         let integration = DeviceApps.integration(for: project)
         let name = integration?.name ?? "the device"
         let rules = [Rules.deviceEdit, Rules.ask, Rules.shell, Rules.deviceKind(integration), Rules.deviceBlocks(project), Rules.icon, Rules.about,

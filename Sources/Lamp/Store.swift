@@ -73,6 +73,10 @@ struct LampProject: Identifiable, Hashable {
     var device: String?
     /// For an app made for both: where Try On last put it. Meaningless for the other kinds, which have one place.
     var chosen: Destination = .mac
+    /// Where it has been given to open, of the places its kind can (`Target.places`), for a kind whose places are given
+    /// one at a time (`Platform.addsPlaces`: a game, on the Mac first, then an iPhone or iPad and an Xbox when they're
+    /// asked for). Nil for the kind's own start (`Target.startsAt`). Adding a place never changes what the app is.
+    var places: [Destination]?
     /// iOS apps: the simulator chosen by name under Try On (its udid), or nil for Lamp's own pick of the family.
     var simulator: String?
     /// For a part of a wish (a TV app's iPhone app, say): the wish's id. A part is an app of its own kind in a folder
@@ -102,13 +106,20 @@ struct LampProject: Identifiable, Hashable {
     func named(_ name: String, id: String? = nil, exe: String? = nil, dir: URL? = nil) -> LampProject {
         LampProject(id: id ?? self.id, name: name, exe: exe ?? self.exe, dir: dir ?? self.dir, instance: instance,
                     deviceSetup: deviceSetup, platform: platform, integration: integration, family: family, device: device,
-                    chosen: chosen, simulator: simulator, partOf: partOf, partFolders: partFolders, undecided: undecided,
+                    chosen: chosen, places: places, simulator: simulator, partOf: partOf, partFolders: partFolders, undecided: undecided,
                     apps: apps, waitsForDevice: waitsForDevice, decided: decided)
+    }
+    /// Where the app can open now: its kind's places, or for a kind whose places are given one at a time, those it was
+    /// given (never empty: a meta.json can say anything, and the kind's start stands in for nothing).
+    var openPlaces: [Destination] {
+        let target = platform.target
+        guard let start = target.startsAt else { return target.places }
+        let given = (places ?? start).filter(target.places.contains)
+        return given.isEmpty ? start : given
     }
     /// Where the app is built for and opened now.
     var destination: Destination {
-        // Only one of its kind's: a meta.json can say anything.
-        let places = platform.target.places
+        let places = openPlaces
         return places.contains(chosen) ? chosen : places[0]
     }
     /// On iOS now: the simulator, or the person's phone. The rest of Lamp's phone work follows this, and an
@@ -154,6 +165,7 @@ struct ProjectMeta: Codable {
     var family: DeviceFamily?  // iOS apps: which simulator they open on; nil means iPhone
     var device: String?        // iOS apps: the person's own phone (its udid) that Play puts the app on, if any
     var target: Destination?   // apps for both: where Try On last put it; nil means the Mac
+    var places: [Destination]? // LampProject.places
     var simulator: String?     // iOS apps: the simulator chosen by name under Try On, if any
     var instance: String?      // LampProject.instance
     var wish: Bool?            // LampProject.fromWish
@@ -1027,14 +1039,20 @@ final class Store: ObservableObject {
         guard NewerWish.read(at: dir) == nil,
               let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
               let meta = try? JSONDecoder().decode(ProjectMeta.self, from: data) else { return nil }
-        return LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
+        let project = LampProject(id: dir.lastPathComponent, name: meta.name, exe: meta.exe, dir: dir,
                            instance: meta.instance ?? dir.lastPathComponent,
                            untitled: meta.untitled ?? false, fromWish: meta.wish ?? false, finding: meta.finding ?? false,
                            deviceSetup: meta.deviceSetup,
                            platform: meta.platform ?? .mac, integration: meta.integration, family: meta.family ?? .iphone,
-                           device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator,
+                           device: meta.device, chosen: meta.target ?? .mac, places: meta.places, simulator: meta.simulator,
                            partFolders: Parts.folders(in: dir), undecided: meta.undecided,
                            apps: meta.apps ?? [], waitsForDevice: meta.waitsForDevice ?? false, decided: meta.decided ?? false)
+        // A game made before games were a kind of their own reads as one now, and is kept so.
+        if let game = GameKit.migrated(project) {
+            try? Template.saveMeta(game)
+            return game
+        }
+        return project
     }
 
     func reload() {
@@ -1741,8 +1759,18 @@ final class Store: ObservableObject {
     /// the build says what's missing. A line in the chat says what it'll be unless it's a Mac app, and the person
     /// changes it by asking (`convert`, the agent's `make_app_for`).
     func chooseKind(_ project: LampProject, _ kind: Platform, said: Bool, watch: Bool = false, integration: String? = nil,
-                    parts: [Platform] = []) async -> LampProject {
+                    parts: [Platform] = [], places: [Destination]? = nil) async -> LampProject {
         guard !project.scaffolded, kind != project.platform || integration != project.integration else { return project }
+        // A game is at home on the Mac, and played from the start wherever else the wish named (an Xbox: Lamp asks for
+        // its tools only when it first goes there).
+        if kind == .game {
+            setKind(project, kind, places: places)
+            guard let chosen = current(project) else { return project }
+            let elsewhere = chosen.openPlaces.filter { $0 != .mac }
+            log(chosen, .status, elsewhere.isEmpty ? "Making this as a game for your Mac."
+                : "Making this as a game for your Mac, to play on \(GameKit.spoken(elsewhere)) too.")
+            return chosen
+        }
         // Not asked for and not buildable here yet: a Mac app, with the setup a button away (the kind's own check).
         guard await kind.target.setup.canChoose(said, integration) else {
             log(project, .iphoneSetup, kind.rawValue)
@@ -1855,11 +1883,14 @@ final class Store: ObservableObject {
 
     /// A draft's kind: a draft only says what it will be, so this is a change to that, made while its first
     /// request is under way (`chooseKind`), before anything is written for it.
-    private func setKind(_ project: LampProject, _ platform: Platform, integration: String? = nil) {
+    private func setKind(_ project: LampProject, _ platform: Platform, integration: String? = nil, places: [Destination]? = nil) {
         guard !project.scaffolded, let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         var changed = projects[index]
         changed.platform = platform
         changed.integration = platform.hasDevice ? integration : nil
+        changed.places = platform.addsPlaces ? places : nil
+        // A game on an Xbox is the Xbox's game kind there.
+        if platform == .game { changed.integration = changed.openPlaces.contains(.device) ? GameKit.xboxKind : nil }
         // Choosing what to make doesn't need installed tools. Send checks the selected simulator
         // before building and explains the next setup action without blocking this draft's picker.
         if !platform.hasIOS { changed.device = nil }
@@ -1887,7 +1918,12 @@ final class Store: ObservableObject {
     /// keeps the one chosen, and `.some(nil)` goes back to Lamp's own pick of the family.
     func setDevice(_ project: LampProject, _ udid: String?, family: DeviceFamily? = nil, simulator: String?? = nil) {
         let family = family ?? project.family
-        let moving = project.platform.choosesPlace && project.chosen != .ios
+        // A game not played on an iPhone or iPad yet is given them, as Try On's own "Play on iPhone and iPad Too" does.
+        if project.platform.addsPlaces, !project.openPlaces.contains(.ios) {
+            addPlace(project, .ios, family: family)
+            return
+        }
+        let moving = project.platform.choosesPlace && project.destination != .ios
         let newSimulator = simulator ?? project.simulator
         let otherSimulator = newSimulator != project.simulator
         guard project.platform.hasIOS, project.device != udid || project.family != family || moving || otherSimulator,
@@ -1960,11 +1996,14 @@ final class Store: ObservableObject {
     /// Which of the person's devices a device app goes on (`DeviceApps`), by its id as its integration found it. One not
     /// set up yet is set up first, in its setup window, and chosen once it's ready.
     func setDeviceAppDevice(_ project: LampProject, _ id: String) {
-        guard project.onDevice, let device = devices.first(where: { $0.id == id }) else { return }
+        // A game has the Xbox among its places, and may be pointed at another of them now.
+        let reaches = project.onDevice || (GameKit.isGame(project) && project.openPlaces.contains(.device))
+        guard reaches, let device = devices.first(where: { $0.id == id }) else { return }
         let choose = { [self] in
-            guard let current = current(project), current.device != id, begin(current) != nil else { return }
+            guard let current = current(project), current.device != id || !current.onDevice, begin(current) != nil else { return }
             var changed = current
             changed.device = id
+            changed.chosen = .device
             try? Template.saveMeta(changed)
             if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
             log(changed, .status, "\(changed.name) will go on \(device.name) when you press Play.")
@@ -2005,6 +2044,9 @@ final class Store: ObservableObject {
 
     /// What Try On shows beside Play: the simulator's kind, or the chosen phone's name, or this Mac.
     func tryOnName(_ project: LampProject) -> String {
+        if project.onDevice, GameKit.isGame(project) {
+            return DeviceApps.device(for: project, among: devices)?.name ?? "Xbox"
+        }
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "Device"
             return DeviceApps.device(for: project, among: devices)?.name ?? (project.device == nil ? "Choose a \(name)" : "Your \(name)")
@@ -2024,8 +2066,56 @@ final class Store: ObservableObject {
 
     /// An app for both, back on this Mac: Try On's "My Mac". Its next open is a Mac build; the iOS copy stays
     /// open, and Stop quits it once Try On points there again.
+    /// Gives a game a place to be played besides those it has (an iPhone or iPad, an Xbox), and points Try On there so
+    /// the person sees it: the same game, never another kind (`setPlaces`).
+    func addPlace(_ project: LampProject, _ place: Destination, family: DeviceFamily? = nil) {
+        guard let current = current(project), !current.openPlaces.contains(place), begin(current) != nil else { return }
+        Task {
+            _ = await setPlaces(current, current.openPlaces + [place], family: family)
+            finish(self.current(current) ?? current)
+        }
+    }
+
+    /// The places a game is played from now on: the Mac always, its home, and each other one given. A place given is
+    /// where it opens next; a copy on a place taken away is quit. What each new place needs (Xcode and a simulator for
+    /// an iPhone, the console's tools and the Xbox itself) is asked for when the game first goes there, not now. Returns
+    /// what changed, in words for the agent, or why nothing did.
+    func setPlaces(_ project: LampProject, _ wanted: [Destination], family: DeviceFamily? = nil) async -> String {
+        guard let current = current(project), current.platform.addsPlaces else { return "Lamp can't find the game." }
+        let target = current.platform.target
+        let places = target.places.filter { $0 == .mac || wanted.contains($0) }
+        let added = places.filter { !current.openPlaces.contains($0) }, gone = current.openPlaces.filter { !places.contains($0) }
+        guard !added.isEmpty || !gone.isEmpty || family.map({ $0 != current.family }) == true else {
+            return "It's already played on \(GameKit.spoken(places))."
+        }
+        if places.contains(.device), Integrations.integration(GameKit.xbox) == nil { return "This copy of Lamp has no way to reach an Xbox." }
+        for place in gone where place == .ios { await quit(current, only: .ios) }
+        guard let now = self.current(current), let index = projects.firstIndex(where: { $0.id == now.id }) else { return "Lamp can't find the game." }
+        var changed = now
+        changed.places = places
+        changed.integration = places.contains(.device) ? GameKit.xboxKind : nil
+        if let family { changed.family = family }
+        if let place = added.last {
+            changed.chosen = place
+            // Where it goes in that place is chosen afresh: the simulator, and the only Xbox found until one is chosen.
+            changed.device = nil
+            changed.simulator = place == .ios ? nil : changed.simulator
+        } else if !places.contains(changed.chosen) {
+            changed.chosen = .mac
+        }
+        do { try Template.saveMeta(changed) } catch { return "Lamp couldn't save the change: \(error.localizedDescription)" }
+        projects[index] = changed
+        syncLocalNetwork()
+        var said: [String] = []
+        if !added.isEmpty { said.append("\(changed.name) plays on \(GameKit.spoken(added)) too now.") }
+        if !gone.isEmpty { said.append("\(changed.name) isn't played on \(GameKit.spoken(gone)) any more.") }
+        log(changed, .status, said.joined(separator: " "))
+        if added.contains(.device), DeviceApps.device(for: changed, among: devices) == nil { refreshDevices() }
+        return said.joined(separator: " ")
+    }
+
     func setMac(_ project: LampProject) {
-        guard project.platform.choosesPlace, project.chosen != .mac, begin(project) != nil else { return }
+        guard project.platform.choosesPlace, project.destination != .mac, begin(project) != nil else { return }
         var changed = project
         changed.chosen = .mac
         try? Template.saveMeta(changed)
@@ -3007,7 +3097,7 @@ final class Store: ObservableObject {
             } else if let suggestion, let kind = await rootKind(among: suggestion.kinds, integration: suggestion.integration) {
                 let parts = Parts.others(among: suggestion.kinds, root: kind)
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch, integration: suggestion.integration,
-                                           parts: parts)
+                                           parts: parts, places: suggestion.places)
                 // The wish's other apps are kept in its list from here, and made once the app at its root is written
                 // (`startQueued`, `makeWaitingParts`), inside its folder.
                 if !parts.isEmpty, project.platform == kind {
@@ -4778,10 +4868,11 @@ final class Store: ObservableObject {
             }
             return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
+        // A game is played in the preview, wherever else it's played: the same moves give the same frames.
+        if GameKit.isGame(project) { return await useOnGame(project, actions: actions) }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
-        if GameKit.isGame(project) { return await useOnGame(project, actions: actions) }
         if project.onDevice { return await useOnDeviceApp(project, actions: actions, json: json) }
         // Not in the copy the person kept open: what it holds is theirs, and it isn't the agent's change.
         if Runtime.holdsBuild(project), isRunning(project) {
@@ -5272,6 +5363,8 @@ final class Store: ObservableObject {
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
         guard let wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
+        // A game stays a game: what's listed are the places it's played (the Mac always, its home).
+        if wish.platform == .game, wish.scaffolded { return await gamePlaces(devices, for: wish) }
         // A wish with nothing written yet (still to be told what it's for) takes as its root the first kind this Mac can
         // build now, as a new wish does: answered "TV and iPhone" on a Mac without Xcode, it's made as the TV app and
         // the iPhone app waits with its setup, rather than nothing being made at all.
@@ -5323,14 +5416,33 @@ final class Store: ObservableObject {
         return (200, ["text": first + said.joined(separator: "\n\n")])
     }
 
+    /// `make_app_for` on a game: the places it's played from now on, the same code everywhere, with what each place
+    /// asks of the game (the budget of the weakest, which the request's device line carries from now on).
+    private func gamePlaces(_ devices: Set<String>, for game: LampProject) async -> (Int, [String: Any]) {
+        let words = devices.subtracting(["game"])
+        guard words.allSatisfy({ GameKit.placeWords.keys.contains($0) }) else {
+            return (400, ["error": "A game is played on \"mac\" (always: its home), \"iphone\" (iPhone and iPad) and \"xbox-one\"; list those it's to be played on. " +
+                          "It can't be made for anything else: tell the person in a sentence that a new wish can be."])
+        }
+        let said = await setPlaces(game, GameKit.places(for: words))
+        guard let now = current(game) else { return (404, ["error": "Lamp can't find the game."]) }
+        return (200, ["text": said + " It's the same game everywhere: the kit gives each place its screen, controls and sound, so nothing in Game/ " +
+                      "changes for it. " + Agent.Rules.gamePlaces(now) + " Try it as before; `look_at_app` with `on_device` opens it where Try On points now."])
+    }
+
     /// The kind of the app at the wish's root, as `make_app_for` asked: `convert`, inside its family, and what to do
     /// about a watch app.
     private func changeRootKind(_ arguments: [String: Any], devices: Set<String>, kind: Platform, for project: LampProject) async -> (Int, [String: Any]) {
         // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
         let hadWatch = current(project).map(Template.hasWatch) ?? false
-        let (status, answer) = await convert(project, to: kind, integration: kind.hasDevice ? devices.first : nil)
+        let (status, answer) = await convert(project, to: kind, integration: kind.hasDevice && kind != .game ? devices.first : nil)
         guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
               let now = current(project) else { return (status, answer) }
+        // A game made now is played on the places listed beside the Mac.
+        if kind == .game {
+            let said = await setPlaces(now, GameKit.places(for: devices))
+            return (200, ["text": text + (said.hasPrefix("It's already") ? "" : "\n\n" + said)])
+        }
         // The watch app is code in Watch/, the agent's to write or take away: Lamp says which, and names the skill
         // that says how, which the prompt this turn began with may not offer.
         // A watch app is an iPhone app's: when the app at the root isn't one, it's the iPhone part's, said with that part.
@@ -5370,7 +5482,8 @@ final class Store: ObservableObject {
         }
         var changed = current
         changed.platform = kind
-        changed.integration = kind.hasDevice ? integration : nil
+        changed.integration = kind.hasDevice && kind != .game ? integration : nil
+        changed.places = nil
         // A wish held for its device has nothing written yet: given its kind, it's made now, scaffold and first version,
         // so the agent builds on it in this request as it would on any new wish.
         let undecided = current.undecided != nil
@@ -5424,6 +5537,7 @@ final class Store: ObservableObject {
         // What marks a folder as the old kind (a version restored later reads its kind off it) goes with the kind,
         // before the next version is saved.
         if kind != current.platform, let marker = before.recipe.marker { AppFolder.remove(changed.dir.appendingPathComponent(marker), in: changed.dir) }
+        if current.platform == .game, kind != .game { GameKit.remove(from: changed) }
         let (old, new) = (before.recipe.language, after.recipe.language)
         let rewrite = fresh || old == new ? "" : new.rewrite(old.code, old.leftover)
         if undecided {
@@ -6211,9 +6325,18 @@ final class Store: ObservableObject {
             if !said { log(project, .error, problem) }
             return problem
         }
-        let command = universal ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
+        let game = GameKit.isGame(project)
+        // A game's shaders are compiled with a tool Lamp fetches the first time, a small download with nothing to accept.
+        if game {
+            do { try await GameKit.toolsForApple() } catch {
+                log(project, .error, error.localizedDescription)
+                return error.localizedDescription
+            }
+        }
+        let command = universal || game ? "./build.sh \(project.onIOS ? "ios" : "mac")" : "./build.sh"
         // An Android app's build is Gradle's, with Google's tools where Lamp put them (`AndroidTools.environment`).
-        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.onAndroid ? AndroidTools.buildEnvironment : [:]
+        var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : project.onAndroid ? AndroidTools.buildEnvironment
+            : game ? WindowsTools.buildEnvironment : [:]
         // The open app takes the change first, when it can (LiveReload): a few seconds, where the whole build
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
@@ -7532,7 +7655,7 @@ final class Store: ObservableObject {
     /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
     /// What keeps a native Xbox game from being built on this Mac (its tools), or nil.
     private func gameToolsProblem(_ project: LampProject) -> String? {
-        guard GameKit.isGame(project) else { return nil }
+        guard GameKit.isGame(project), project.onDevice else { return nil }
         return WindowsTools.problem
     }
 
@@ -10285,7 +10408,8 @@ final class Store: ObservableObject {
     /// agent's first look, minutes in. Quietly: a build that fails (the agent may be writing files as it runs) just
     /// leaves it to that first look. An iPhone app waits for that look, which opens the simulator.
     private func showEarly(_ project: LampProject, in turn: Turn) {
-        guard project.platform == .mac, Template.isScaffold(project), !isRunning(project) else { return }
+        guard project.platform == .mac || (GameKit.isGame(project) && project.destination == .mac), Template.isScaffold(project),
+              !isRunning(project) else { return }
         turn.early = Task { [weak self] in
             guard let self, turns[project.id] === turn, !turn.stopped else { return }
             guard await build(project) == nil, turns[project.id] === turn, !turn.stopped, !turn.asked else { return }
