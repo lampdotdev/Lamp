@@ -611,8 +611,9 @@ struct Transcript: View {
             case .drawIcon: project.map { Icons.awaitsDrawing(line.text, in: $0, byHand: AppAI.iconsByHand) } ?? false
             // The widget's card, likewise, while there's a widget to add.
             case .widget: project.map { WidgetCard.isShown(for: $0) } ?? false
-            // The offer to set up iPhone apps, while the app is still only a Mac app.
-            case .iphoneSetup: project?.platform == .mac
+            // The offer to set up iPhone apps, while the app is still only a Mac app; for one of a wish's other apps,
+            // while the wish still waits for it.
+            case .iphoneSetup: IPhoneSetupLine.shows(line.text, for: project)
             // Reload, while the change it's for still waits: the last such line only, under the latest change.
             // A wish's line is for its other parts' changes too.
             case .reload: project.map { Runtime.waitsForReload($0) || Store.shared.parts(of: $0).contains(where: Runtime.waitsForReload) } ?? false
@@ -746,7 +747,8 @@ struct LogRow: View, Equatable {
             }
         case .iphoneSetup:
             if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
-                IPhoneSetupLine(project: project, wanted: Platform(rawValue: line.text) ?? .iphone)
+                let (kind, part) = IPhoneSetupLine.wanted(from: line.text)
+                IPhoneSetupLine(project: project, wanted: kind, part: part)
             }
         case .deviceStep:
             DeviceStepLine(deviceID: line.text)

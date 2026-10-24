@@ -563,10 +563,11 @@ final class SidebarServer {
                     card.button = "Draw Icon…"
                     out.append(card)
                 case .iphoneSetup:
-                    var card = SidebarLine(id: line.id, kind: .action, text: IPhoneSetupLine.text(project.name), gap: gap)
-                    card.symbol = "iphone"
+                    let (kind, part) = IPhoneSetupLine.wanted(from: line.text)
+                    var card = SidebarLine(id: line.id, kind: .action, text: IPhoneSetupLine.text(project.name, wanted: kind, part: part), gap: gap)
+                    card.symbol = IPhoneSetupLine.setup(for: kind).symbol
                     card.button = "See What's Needed…"
-                    card.disabled = IPhoneSetupLine.isOff(for: project)
+                    card.disabled = IPhoneSetupLine.isOff(for: project, wanted: kind, part: part)
                     out.append(card)
                 case .deviceStep:
                     // The step's card has a field and a sign-in, which happen in Lamp's window.

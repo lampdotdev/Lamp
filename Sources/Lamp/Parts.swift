@@ -10,6 +10,14 @@ import Foundation
 /// What the agent knows follows the parts: the wish's prompt is its main kind's, with one rule naming the other parts,
 /// and each other part's rules are a skill of their own (`target-iphone`, …, `Parts.packs`), named with the request
 /// once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when its wish has one.
+/// One of the apps a wish should have (`LampProject.apps`, kept in the wish's own meta.json beside what its folder
+/// holds): its kind and, while it isn't made yet, what stops it ("this Mac can't build the iPhone app yet…"), so a quit
+/// or a failure between asking for an app and making it loses neither.
+struct WishApp: Codable, Hashable {
+    var kind: Platform
+    var needs: String? = nil
+}
+
 enum Parts {
     /// The folder a part of this kind lives in, inside the wish's.
     static func folder(for kind: Platform) -> String { kind.target.part?.folder ?? kind.rawValue.prefix(1).uppercased() + kind.rawValue.dropFirst() }
@@ -78,25 +86,28 @@ enum Parts {
         }
     }
 
-    /// The kinds a wish for these devices is made of: one main kind, and the others beside it as parts. The devices of
-    /// one part family are one kind between them (Apple's: `Platform(devices:)`); a TV app is a kind of its own. The kind
-    /// that leads a wish is the main one (a TV app: what's on the TV is what the wish is about and the rest reach it). An
-    /// Android app, and a device with an integration that declares its apps, still stand alone (`Target.Words.alone`).
-    /// Nil for a list Lamp can't make.
+    /// The kinds a wish for these devices is made of: one at the wish's root, and the others beside it as parts. The
+    /// devices of one part family are one kind between them (Apple's: `Platform(devices:)`); a TV app and an Android app
+    /// are each a kind of their own. No kind has to lead: the one that does when it's there (a TV app: what's on the TV
+    /// is what the wish is about and the rest reach it) goes to the root, else the first in Lamp's order. A device with
+    /// an integration that declares its apps still stands alone (`Target.Words.alone`). Nil for a list Lamp can't make.
     static func kinds(for devices: Set<String>) -> (main: Platform, parts: [Platform])? {
         if let one = Platform(devices: devices) { return (one, []) }
         var byFamily: [String: Set<String>] = [:]
         for word in devices {
             guard let owner = Targets.owner(of: word) else { return nil }
-            byFamily[owner.part?.family ?? owner.platform.rawValue, default: []].insert(word)
+            byFamily[group(owner.platform), default: []].insert(word)
         }
         let kinds = byFamily.values.map { Platform(devices: $0) }
         guard kinds.count > 1, !kinds.contains(nil) else { return nil }
         let all = Targets.all.map(\.platform).filter { kinds.contains($0) }
-        let leading = all.filter { $0.target.identity.devices.leads }
-        guard all.allSatisfy({ !$0.target.identity.devices.alone }), leading.count == 1, let main = leading.first else { return nil }
+        guard all.allSatisfy({ !$0.target.identity.devices.alone && $0.target.part != nil }),
+              let main = all.first(where: { $0.target.identity.devices.leads }) ?? all.first else { return nil }
         return (main, all.filter { $0 != main })
     }
+
+    /// What a wish has one of: a part family, or for a kind that's no part the kind itself.
+    static func group(_ kind: Platform) -> String { kind.target.part?.family ?? kind.rawValue }
 
     /// The part of a wish (or the wish itself) a device word names: "iphone" is whichever has an iPhone, "mac" whichever
     /// runs on the Mac. Nil when none does.
@@ -109,6 +120,55 @@ enum Parts {
             default: Parts.word(for: app.platform) == word || folder(for: app.platform).lowercased() == word
             }
         }
+    }
+
+    // MARK: The apps a wish should have
+
+    /// The apps a wish should have (`LampProject.apps`), as they are: the list its meta.json keeps, with what's made
+    /// (the app at its root, each part found in its folder) taken as made whatever the list said, and listed when the
+    /// list left it out (a wish from before wishes kept the list). An app made as another kind of the same family (the
+    /// iPhone app that became one for both) counts as made.
+    static func wanted(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        var apps = wish.apps
+        for made in [wish.platform] + parts.map(\.platform) {
+            if let index = apps.firstIndex(where: { group($0.kind) == group(made) }) { apps[index] = WishApp(kind: made) }
+            else { apps.append(WishApp(kind: made)) }
+        }
+        return apps
+    }
+
+    /// The apps a wish should have and doesn't yet: each with what stops it (`needs`), or nothing when it's only not
+    /// made yet (its turn hasn't started, or what stopped it was cleared for another try).
+    static func waiting(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        let made = Set(([wish.platform] + parts.map(\.platform)).map(group))
+        return wish.apps.filter { !made.contains(group($0.kind)) }
+    }
+
+    /// The list once a part of this kind is made: every app the wish has, the one at its root included (a wish from
+    /// before the list has none written), with this one in place of any of its family.
+    static func listing(_ kind: Platform, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        setting(WishApp(kind: kind), in: wanted(in: wish, parts: parts))
+    }
+
+    /// The list with one app set: in place of the one of its family, or added.
+    static func setting(_ app: WishApp, in apps: [WishApp]) -> [WishApp] {
+        var apps = apps
+        if let index = apps.firstIndex(where: { group($0.kind) == group(app.kind) }) { apps[index] = app } else { apps.append(app) }
+        return apps
+    }
+
+    /// The request a wish's chat sends once the setup an app was waiting for is done, as the person would ask.
+    static func request(for kind: Platform) -> String { "Add \(name(of: kind)) that goes with it now." }
+
+    /// The line at the end of a request about the apps the wish should have and doesn't yet, so the agent tells the
+    /// person rather than making them itself (Lamp makes each once this Mac can build it). Nothing when none wait.
+    static func waitingLine(for wish: LampProject, parts: [LampProject]) -> String {
+        let waiting = waiting(in: wish, parts: parts)
+        guard !waiting.isEmpty else { return "" }
+        return waiting.map { app in
+            "- \(name(of: app.kind)): " + (app.needs.map { "not made yet, since \($0.prefix(1).lowercased() + $0.dropFirst())" }
+                                             ?? "Lamp makes it as soon as it can.")
+        }.joined(separator: "\n")
     }
 
     // MARK: What the agent is told
@@ -214,4 +274,24 @@ extension Parts {
     static func device(_ word: String) -> String? {
         Targets.asked(word.lowercased())
     }
+}
+
+extension Parts {
+    /// The line at the end of a request about the apps the wish should have and doesn't yet, sent as `Skills.brief` is:
+    /// once per conversation and again when it changes. Nothing while none wait.
+    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
+        let line = waitingLine(for: project, parts: Store.shared.parts(of: project))
+        guard note.telling(line, for: project, engine: engine, session: session) != .nothing, !line.isEmpty else { return "" }
+        return "\n\n---\nApps this wish should have and doesn't yet (from Lamp, not part of the request above). Don't make them " +
+            "yourself: Lamp makes each as soon as this Mac can build it, and the person has its setup a click away in the chat. " +
+            "Build the rest, and say in a sentence what's waiting if the person asks about it:\n" + line
+    }
+
+    /// The agent answered, so the request and the line in it arrived.
+    @MainActor static func delivered(to project: LampProject, session: String? = nil) { note.delivered(to: project, session: session) }
+
+    /// The engine summed up its conversation, and the line may have gone with it.
+    @MainActor static func compacted(_ project: LampProject) { note.compacted(project) }
+
+    @MainActor private static let note = RequestNote(file: ".lamp/apps-shown.json")
 }

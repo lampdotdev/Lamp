@@ -160,9 +160,13 @@ enum Sharing {
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
     static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
-        // Some kinds' files can't go in a shared file yet (a TV app's web code).
+        // Some kinds' files can't go in a shared file yet (a TV app's web code), and a wish of several apps would travel
+        // as the app at its root alone.
         if let refusal = project.platform.target.recipe.shareRefusal {
             throw ImportError("\(project.name) can't be shared yet.", detail: refusal)
+        }
+        if !Parts.folders(in: project.dir).isEmpty {
+            throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share a wish of several apps yet.")
         }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")

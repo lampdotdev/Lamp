@@ -882,24 +882,26 @@ struct ProjectView: View {
                 .help(project.platform.target.identity.tryOnHelp(project))
             }
         }
-        if let part = store.parts(of: project).first {
-            ToolbarItem {
-                // The wish's other app (an iPhone app beside its TV app): used, quit and given a place here, as the
-                // wish's own app is beside it.
-                let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
-                Menu {
-                    if store.isOpen(part) {
-                        Button("Quit the \(name)") { Task { await store.quitApp(part) } }
-                    } else {
-                        Button("Use the \(name)") { store.openPrepared(part) }
+        if !store.parts(of: project).isEmpty {
+            ToolbarItemGroup {
+                // Each of the wish's other apps (an iPhone app beside its TV app, an Android app): used, quit and given
+                // a place here, as the wish's own app is beside it.
+                ForEach(store.parts(of: project)) { part in
+                    let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
+                    Menu {
+                        if store.isOpen(part) {
+                            Button("Quit the \(name)") { Task { await store.quitApp(part) } }
+                        } else {
+                            Button("Use the \(name)") { store.openPrepared(part) }
+                        }
+                        Divider()
+                        TryOnChoices(project: part)
+                    } label: {
+                        Label(name, systemImage: symbol)
                     }
-                    Divider()
-                    TryOnChoices(project: part)
-                } label: {
-                    Label(name, systemImage: symbol)
+                    .disabled(busy)
+                    .help("The \(name.replacingOccurrences(of: " App", with: " app")) that goes with \(project.name): use it, and choose where it opens")
                 }
-                .disabled(busy)
-                .help("The \(name.replacingOccurrences(of: " App", with: " app")) that goes with \(project.name): use it, and choose where it opens")
             }
         }
         gap

@@ -84,6 +84,16 @@ struct LampProject: Identifiable, Hashable {
     /// A new wish that could be for more than one kind of device, and didn't say which (the naming call's
     /// candidates, most likely first): nothing is written for it until the agent has asked and given it its kinds.
     var undecided: [String]?
+    /// The apps this wish should have (`WishApp`, `Parts.wanted`): the one at its root and its other parts, each with
+    /// what stops it while it isn't made yet. Kept in the wish's meta.json, so a quit or a failure between asking for
+    /// an app and making it loses nothing. Empty for a wish from before wishes kept the list, which has what its folder holds.
+    var apps: [WishApp] = []
+    /// A new wish for a device Lamp can't make apps for yet: nothing is written for it until the agent has set the
+    /// device up and given the wish its kind (`Store.convert`).
+    var waitsForDevice = false
+    /// Given its kinds in a turn begun without any (`undecided`): each engine's conversation began with the prompt for
+    /// no kind, so it's forgotten once that turn ends, or at Lamp's next start if Lamp quit before it did.
+    var decided = false
     var isPart: Bool { partOf != nil }
 
     /// The same app named, and for a draft moved: everything else it is (its kind, its other parts, whether it's still
@@ -92,7 +102,8 @@ struct LampProject: Identifiable, Hashable {
     func named(_ name: String, id: String? = nil, exe: String? = nil, dir: URL? = nil) -> LampProject {
         LampProject(id: id ?? self.id, name: name, exe: exe ?? self.exe, dir: dir ?? self.dir, instance: instance,
                     deviceSetup: deviceSetup, platform: platform, integration: integration, family: family, device: device,
-                    chosen: chosen, simulator: simulator, partOf: partOf, partFolders: partFolders, undecided: undecided)
+                    chosen: chosen, simulator: simulator, partOf: partOf, partFolders: partFolders, undecided: undecided,
+                    apps: apps, waitsForDevice: waitsForDevice, decided: decided)
     }
     /// Where the app is built for and opened now.
     var destination: Destination {
@@ -150,6 +161,9 @@ struct ProjectMeta: Codable {
     var deviceSetup: String?   // LampProject.deviceSetup
     var integration: String?   // LampProject.integration
     var undecided: [String]?   // LampProject.undecided
+    var apps: [WishApp]?       // LampProject.apps: the apps the wish should have, and what each waits for
+    var waitsForDevice: Bool?  // LampProject.waitsForDevice
+    var decided: Bool?         // LampProject.decided
 }
 
 struct AppUsage: Codable {
@@ -889,6 +903,7 @@ final class Store: ObservableObject {
         }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         reload()
+        for project in wishes where project.decided { settleDecided(project) }
         restoreWaiting()
         for project in projects { discardIfUnused(project.id) }
         // The wishes Lamp comes with don't count: they're there before the welcome is.
@@ -1005,7 +1020,8 @@ final class Store: ObservableObject {
                            deviceSetup: meta.deviceSetup,
                            platform: meta.platform ?? .mac, integration: meta.integration, family: meta.family ?? .iphone,
                            device: meta.device, chosen: meta.target ?? .mac, simulator: meta.simulator,
-                           partFolders: Parts.folders(in: dir), undecided: meta.undecided)
+                           partFolders: Parts.folders(in: dir), undecided: meta.undecided,
+                           apps: meta.apps ?? [], waitsForDevice: meta.waitsForDevice ?? false, decided: meta.decided ?? false)
     }
 
     func reload() {
@@ -1741,16 +1757,18 @@ final class Store: ObservableObject {
     /// Adds a part of another kind to a wish (`Parts`): a folder of its own inside the wish's, with its meta.json and
     /// its kind's scaffold, which the wish's next version keeps. Nil, after saying why in `problem`, when this Mac can't
     /// build that kind yet or the folder can't be made.
-    func addPart(_ kind: Platform, to wish: LampProject) async -> (part: LampProject?, problem: String?) {
-        guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.") }
-        if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil) }
-        guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.") }
-        if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem) }
+    /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
+    /// and not tried again by itself.
+    func addPart(_ kind: Platform, to wish: LampProject) async -> (part: LampProject?, problem: String?, setup: Bool) {
+        guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
+        if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
+        guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
+        if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem, true) }
         let folder = Parts.folder(for: kind)
         let dir = wish.dir.appendingPathComponent(folder)
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing.
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
-            return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.")
+            return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.", false)
         }
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
@@ -1759,10 +1777,11 @@ final class Store: ObservableObject {
             try Template.saveMeta(part)
             try Template.fill(part)
         } catch {
-            return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)")
+            return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)", false)
         }
+        setApps(wish, Parts.listing(kind, madeFor: wish, parts: parts(of: wish)))
         reload()
-        return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil)
+        return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil, false)
     }
 
     /// Takes a part away from a wish: quit wherever it's open, and its folder gone (the wish's versions still have it).
@@ -1780,6 +1799,11 @@ final class Store: ObservableObject {
     /// data goes with its wish's (`trashData`, whose id it starts with); its folder is its wish's to remove.
     private func forgetPart(_ part: LampProject) async {
         let fm = FileManager.default
+        // The wish no longer should have it: taken away, or Undone, it isn't made again at the next turn. Not for a wish
+        // being deleted, whose folder is gone: writing its list would make the folder again.
+        if let wish = part.partOf.flatMap({ id in projects.first { $0.id == id } }), fm.fileExists(atPath: wish.dir.path) {
+            setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(part.platform) })
+        }
         if part.platform.hasMac {
             await WidgetProcess.end(for: part)
             // Installed under the wish's name, which the wish's own app could only share were it a Mac app too.
@@ -2798,18 +2822,53 @@ final class Store: ObservableObject {
         line.text.isEmpty ? label(attachments: line.attachments ?? []) : line.text
     }
 
-    /// Wishes for a device Lamp can't make apps for yet (`AppName.Suggestion.forOtherDevice`): no scaffold is written
-    /// for them, since one of any kind Lamp has would be the wrong one, while the agent sets the device up and gives
-    /// the wish its kind with `make_app_for` (`convert`), after which it's made as any wish is. Kept by the wish's
-    /// instance, which a rename doesn't change, as its folder and id do.
-    private var waitsForDevice: Set<String> = []
-    /// The other parts a new wish's first request asked for (`AppName.Suggestion.parts`), by its instance, made as soon
-    /// as its main part's scaffold is written.
-    private var pendingParts: [String: [Platform]] = [:]
-    /// Wishes given their kinds in this turn after beginning without any (`LampProject.undecided`), by instance: each
-    /// engine's conversation began with the prompt for no kind, so it's ended as the turn ends, and the next request
-    /// starts one with the wish's own prompt, told the chat so far (`CatchUp`).
-    private var decided: Set<String> = []
+    /// The apps a wish should have, written to its meta.json (`LampProject.apps`), so what it waits for outlives a quit.
+    /// Nothing for a part, whose wish keeps the list.
+    @discardableResult
+    func setApps(_ project: LampProject, _ apps: [WishApp]) -> LampProject {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }), !projects[index].isPart else { return project }
+        projects[index].apps = apps
+        try? Template.saveMeta(projects[index])
+        return projects[index]
+    }
+
+    /// The apps a wish should have and doesn't yet, made now where this Mac can: each not yet tried (its first turn, or
+    /// its setup just done). One this Mac can't build yet keeps what stops it in the wish's list, with the setup a click
+    /// away in the chat, and is tried again once that's done or the agent asks for it again, not at every turn, since
+    /// the check opens the setup's window.
+    private func makeWaitingParts(of wish: LampProject) async {
+        guard let wish = current(wish), !wish.isPart else { return }
+        for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
+            let (part, problem, setup) = await addPart(app.kind, to: wish)
+            if let part { log(wish, .status, "\(wish.name) has \(Parts.name(of: part.platform)) to go with it now.") }
+            else if let problem { recordNeeds(problem, for: app.kind, of: wish, setup: setup) }
+        }
+    }
+
+    /// What stops one of a wish's apps being made, kept with the app in the wish's list, and said once in the chat. For
+    /// this Mac's setup (`setup`) the line has it a click away, and the setup window the check opened is followed, so
+    /// finishing it there adds the app; anything else (a folder in the way) is said as an error, and the app waits for
+    /// the agent to ask for it again once the person has dealt with it, never for a setup that's already done, which
+    /// would ask again at once, turn after turn.
+    private func recordNeeds(_ problem: String, for kind: Platform, of wish: LampProject, setup: Bool) {
+        guard let wish = current(wish) else { return }
+        setApps(wish, Parts.setting(WishApp(kind: kind, needs: problem), in: wish.apps))
+        let line = IPhoneSetupLine.lineText(kind, part: true)
+        if setup, kind.target.setup.later != nil {
+            if !(logs[wish.id] ?? []).contains(where: { $0.kind == .iphoneSetup && $0.text == line }) { log(wish, .iphoneSetup, line) }
+            IPhoneSetupLine.follow(wish, wanted: kind, part: true)
+        } else {
+            log(wish, .error, "T\(Parts.name(of: kind).dropFirst()) isn't made yet: \(problem)")
+        }
+    }
+
+    /// The setup one of a wish's apps was waiting for is done (`IPhoneSetupLine`): what stopped it is cleared, so the
+    /// next turn makes it, and the request that asks for it is sent.
+    func retryWaitingApp(_ kind: Platform, of wish: LampProject) {
+        guard let wish = current(wish), let app = wish.apps.first(where: { Parts.group($0.kind) == Parts.group(kind) }) else { return }
+        let cleared = setApps(wish, Parts.setting(WishApp(kind: app.kind), in: wish.apps))
+        send(Parts.request(for: app.kind), to: cleared)
+    }
 
     /// The first message bootstraps the app: it names an untitled app, then designs the icon
     /// while the agent builds the first version. Returns the app as it is now.
@@ -2826,11 +2885,18 @@ final class Store: ObservableObject {
             } else if let suggestion, let kind = suggestion.kind {
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch, integration: suggestion.integration,
                                            parts: suggestion.parts)
-                // The other parts are made once the main one's scaffold is written (`startQueued`), inside its folder.
-                if !suggestion.parts.isEmpty, project.platform == kind { pendingParts[project.instance] = suggestion.parts }
+                // The wish's other apps are kept in its list from here, and made once the app at its root is written
+                // (`startQueued`, `makeWaitingParts`), inside its folder.
+                if !suggestion.parts.isEmpty, project.platform == kind {
+                    project = setApps(project, [WishApp(kind: kind)] + suggestion.parts.map { WishApp(kind: $0) })
+                }
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
-            if suggestion?.forOtherDevice == true { waitsForDevice.insert(project.instance) }
+            if suggestion?.forOtherDevice == true, let index = projects.firstIndex(where: { $0.id == project.id }) {
+                projects[index].waitsForDevice = true
+                try? Template.saveMeta(projects[index])
+                project = projects[index]
+            }
             if let color = suggestion?.color, Icons.load(project) == nil { iconColors[project.id] = color }
         }
         if Icons.load(project) == nil {
@@ -2998,12 +3064,10 @@ final class Store: ObservableObject {
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
             // Not while a wish is still being found: the agent only asks, and the wish it finds may be for the
             // iPhone, which a scaffold already written as a Mac app would rule out.
-            if !stillFinding, !waitsForDevice.contains(project.instance), project.undecided == nil {
+            if !stillFinding, !(current(project) ?? project).waitsForDevice, project.undecided == nil {
                 guard let ready = await materialize(project) else { return }
                 project = ready
-                for kind in pendingParts.removeValue(forKey: project.instance) ?? [] {
-                    if let problem = await addPart(kind, to: project).problem { log(project, .error, "T\(Parts.name(of: kind).dropFirst()) isn't made yet: \(problem)") }
-                }
+                await makeWaitingParts(of: project)
                 project = current(project) ?? project
                 if newApp { showEarly(project, in: owner) }
             }
@@ -3018,6 +3082,16 @@ final class Store: ObservableObject {
             await owner.early?.value
             worked = result.end != .failed
         }
+    }
+
+    /// A wish given its kinds in a turn begun without any (`decided`): each engine's conversation began with the prompt
+    /// for no kind, so it's forgotten now the turn is over, and the flag with it. Also at Lamp's start, for a wish whose
+    /// turn Lamp quit in the middle of.
+    private func settleDecided(_ project: LampProject) {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }), projects[index].decided else { return }
+        for engine in Engine.allCases { Self.forgetConversation(of: projects[index], engine: engine) }
+        projects[index].decided = false
+        try? Template.saveMeta(projects[index])
     }
 
     /// Posts a notification for a turn that ended while the user was looking elsewhere.
@@ -3053,10 +3127,7 @@ final class Store: ObservableObject {
 
     /// Marks the app idle again, then starts anything queued while it was busy.
     private func finish(_ project: LampProject) {
-        if decided.remove(project.instance) != nil {
-            let now = current(project) ?? project
-            for engine in Engine.allCases { Self.forgetConversation(of: now, engine: engine) }
-        }
+        settleDecided(project)
         if let turn = turns[project.id], turn.reloadedWhileAway, turn.reloadedByPerson, away.carriesOn(project.id) {
             queueCarryOn(project)
         }
@@ -3725,6 +3796,7 @@ final class Store: ObservableObject {
                     AIStatus.compacted(project)
                     Skills.compacted(project)
                     DeviceNote.compacted(project)
+                    Parts.compacted(project)
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
                     if let words = turn.naming { noteAgent(words, for: project) }
@@ -3785,6 +3857,7 @@ final class Store: ObservableObject {
                         AIStatus.delivered(to: project, session: id)
                         Skills.delivered(to: project, session: id)
                         DeviceNote.delivered(to: project, session: id)
+                        Parts.delivered(to: project, session: id)
                     }
                 }
             }
@@ -3832,7 +3905,7 @@ final class Store: ObservableObject {
         turn.steering = nil
         turn.toolRunning = false
         takeBackHanded(project)
-        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project); Parts.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -4080,6 +4153,7 @@ final class Store: ObservableObject {
         AIStatus.compacted(project)
         Skills.compacted(project)
         DeviceNote.compacted(project)
+        Parts.compacted(project)
     }
 
     /// One pi conversation per app, so the agent remembers earlier requests, including ones that were undone.
@@ -5046,9 +5120,11 @@ final class Store: ObservableObject {
         // A device app's code also says which device it's for: restoring between two such kinds changes that too.
         let integration = kind?.target.recipe.integration(project.dir)
         if let kind, projects[index].platform != kind || projects[index].integration != integration {
+            let was = projects[index].platform
             projects[index].platform = kind
             projects[index].integration = integration
             if !kind.hasIOS { projects[index].device = nil }
+            projects[index].apps = Parts.setting(WishApp(kind: kind), in: projects[index].apps.filter { Parts.group($0.kind) != Parts.group(was) })
             try? Template.saveMeta(projects[index])
             refreshOpenApps()
         }
@@ -5071,7 +5147,9 @@ final class Store: ObservableObject {
         // kind of the same devices (an iPhone app that's to be for the Mac too) is changed in place; one no longer
         // wanted is taken away.
         var said: [String] = []
-        let group: (Platform) -> String = { $0.target.part?.family ?? $0.rawValue }
+        let group = Parts.group
+        // The wish should have these from now on; what each one that can't be made yet needs is kept as it's found.
+        setApps(wish, ([kind] + kinds.parts).map { WishApp(kind: $0) })
         for part in parts(of: wish) where !kinds.parts.contains(where: { group($0) == group(part.platform) }) {
             said.append(await removePart(part) ? "Lamp took \(Parts.name(of: part.platform)) away, as asked; the wish's versions still have it."
                         : "\(Parts.name(of: part.platform)) is still there: the person kept it open. Tell them it has to close first.")
@@ -5083,9 +5161,11 @@ final class Store: ObservableObject {
                 continue
             }
             if parts(of: wish).contains(where: { $0.platform == wanted }) { continue }
-            let (part, problem) = await addPart(wanted, to: wish)
+            let (part, problem, setup) = await addPart(wanted, to: wish)
             guard let part else {
-                said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it."). Tell the person in a sentence; build the rest.")
+                recordNeeds(problem ?? "Lamp couldn't make it.", for: wanted, of: wish, setup: setup)
+                said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it.") Tell the person in a sentence; " +
+                            "build the rest. Lamp keeps it on the wish's list and makes it once that's done.")
                 continue
             }
             log(wish, .status, "\(wish.name) has \(Parts.name(of: wanted)) to go with it now.")
@@ -5149,10 +5229,13 @@ final class Store: ObservableObject {
         // A wish held for its device has nothing written yet: given its kind, it's made now, scaffold and first version,
         // so the agent builds on it in this request as it would on any new wish.
         let undecided = current.undecided != nil
-        let fresh = (waitsForDevice.remove(current.instance) != nil || undecided) && !current.scaffolded
+        let fresh = (current.waitsForDevice || undecided) && !current.scaffolded
         changed.undecided = nil
+        changed.waitsForDevice = false
         // Its conversation began with no kind's rules: the next request starts one with them (`finish`).
-        if undecided { decided.insert(current.instance) }
+        if undecided { changed.decided = true }
+        // The app at the root is this kind now in the wish's list, in place of what it was.
+        changed.apps = Parts.setting(WishApp(kind: kind), in: current.apps.filter { Parts.group($0.kind) != Parts.group(current.platform) })
         // Where it opens next: where it's newly made for, so the person sees the change.
         changed.chosen = current.platform == .mac && !undecided ? .ios : .mac
         if !kind.hasIOS { changed.device = nil }

@@ -49,7 +49,10 @@ enum Template {
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
                                              integration: project.platform.hasDevice ? project.integration : nil,
-                                             undecided: project.undecided)),
+                                             undecided: project.undecided,
+                                             apps: project.apps.isEmpty ? nil : project.apps,
+                                             waitsForDevice: project.waitsForDevice ? true : nil,
+                                             decided: project.decided ? true : nil)),
                             to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 
