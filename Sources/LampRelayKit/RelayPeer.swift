@@ -44,13 +44,18 @@ final class RelayPeer {
         receive()
     }
 
-    func send(_ text: String) {
+    func send(_ text: String) { send(Data(text.utf8), opcode: .text) }
+
+    /// A sealed message of a wish's room (`WishChannel`): binary on the wire, but what text is everywhere else, so it goes
+    /// at once and counts as text does towards how far behind the other end is.
+    func send(sealed data: Data) { send(data, opcode: .binary) }
+
+    private func send(_ data: Data, opcode: NWProtocolWebSocket.Opcode) {
         guard open else { return }
-        let data = Data(text.utf8)
         guard pendingText < Self.textLimit.messages, pendingTextBytes + data.count <= Self.textLimit.bytes else { return close(code: 4002) }
         pendingText += 1
         pendingTextBytes += data.count
-        let context = NWConnection.ContentContext(identifier: "text", metadata: [NWProtocolWebSocket.Metadata(opcode: .text)])
+        let context = NWConnection.ContentContext(identifier: "text", metadata: [NWProtocolWebSocket.Metadata(opcode: opcode)])
         connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in
             self?.pendingText -= 1
             self?.pendingTextBytes -= data.count

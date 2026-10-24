@@ -3,11 +3,12 @@ import XCTest
 
 /// A wish of one app, which is most wishes and every starter, gets nothing from the wish hub: no rule about it in the
 /// agent's prompt, no line about it with the request, none of its code in the app's building blocks (so no size, and
-/// nothing that could ask for a permission), and no room at the relay. An app with others in its wish gets all of it.
+/// nothing that could ask for a permission), no key for the wish's apps' link, and no room at the relay. An app with
+/// others in its wish gets all of it.
 @MainActor
 final class WishHubStaysOutTests: XCTestCase {
     private let kinds: [Platform] = [.mac, .iphone, .universal, .android, .tv]
-    private let hubWords = ["LampWish", "Lamp.wish", "wish's room", "wish's apps right now", "/app/wish"]
+    private let hubWords = ["LampWish", "Lamp.wish", "wish's room", "wish's apps right now", "/app/wish", "lamp-wish", "x25519"]
 
     private func project(_ kind: Platform, partOf wish: String? = nil) -> LampProject {
         LampProject(id: wish.map { "\($0).\(kind.rawValue)" } ?? "solo\(kind.rawValue)", name: "Solo", exe: "Solo",
@@ -27,16 +28,18 @@ final class WishHubStaysOutTests: XCTestCase {
         for kind in kinds {
             let alone = project(kind), several = project(kind, partOf: "pair")
             XCTAssertFalse(Template.talksToOtherApps(alone))
+            XCTAssertNil(Store.shared.wishKey(for: alone), "no key is made for an app on its own")
             XCTAssertTrue(Template.talksToOtherApps(several))
             switch kind {
             case .android:
-                XCTAssertFalse(Template.androidSupportKotlin(for: alone).contains("LampWish"))
+                for word in hubWords { XCTAssertFalse(Template.androidSupportKotlin(for: alone).contains(word), word) }
+                XCTAssertNil(Template.androidInstallValues(for: alone, onDevice: false, wishKey: Store.shared.wishKey(for: alone))["wishKey"])
                 XCTAssertTrue(Template.androidSupportKotlin(for: several).contains("object LampWish"))
             case .tv:
-                XCTAssertFalse(TVTemplate.lampJS(for: alone).contains("Lamp.wish"))
+                for word in hubWords { XCTAssertFalse(TVTemplate.lampJS(for: alone).contains(word), word) }
                 XCTAssertTrue(TVTemplate.lampJS(for: several).contains("window.Lamp.wish = api"))
             default:
-                XCTAssertFalse(Template.lampSupportSwift(for: alone).contains("LampWish"), kind.rawValue)
+                for word in hubWords + [Template.wishKeyName] { XCTAssertFalse(Template.lampSupportSwift(for: alone).contains(word), "\(kind.rawValue): \(word)") }
                 XCTAssertTrue(Template.lampSupportSwift(for: several).contains("final class LampWish"), kind.rawValue)
             }
         }

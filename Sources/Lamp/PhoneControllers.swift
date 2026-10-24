@@ -136,15 +136,14 @@ enum ControllerCredential {
 
     static func generation(_ app: String) -> Int { lock.withLock { generations[app] ?? 0 } }
 
-    /// The apps credentials have been handed out for since their sessions last ended (a TV app's game; never a wish's
-    /// room, whose credentials `WishRooms` ends by itself).
+    /// The apps credentials have been handed out for since their sessions last ended: TV apps' games. A wish's room
+    /// takes no credential (its apps prove they hold the wish's key, `WishChannel`), so the games' cleanup never touches one.
     static var apps: Set<String> { lock.withLock { known } }
 
-    static func issue(kind: Kind, app: String, player: Int? = nil, preview: Bool = false, peer: String? = nil, now: Date = Date()) -> String {
+    static func issue(kind: Kind, app: String, player: Int? = nil, preview: Bool = false, now: Date = Date()) -> String {
         lock.withLock {
-            // A wish's room (`WishRooms`) is no TV app's session: it's ended by its own rules, never with the games.
-            if kind != .peer { known.insert(app) }
-            return ControllerToken.issue(kind: kind, app: app, generation: generations[app] ?? 0, player: player, preview: preview, peer: peer, now: now, key: key)
+            known.insert(app)
+            return ControllerToken.issue(kind: kind, app: app, generation: generations[app] ?? 0, player: player, preview: preview, now: now, key: key)
         }
     }
 
@@ -165,7 +164,8 @@ enum ControllerCredential {
 /// The relay between TV apps and their phones, and between the apps of one wish (`Relay`), run as a process of its own
 /// from Lamp's Helpers while any TV app takes players or any wish's room is open (`WishRooms`), so a game's messages and
 /// files, and what a wish's apps say to each other, never pass through Lamp. Lamp tells it on its input which apps'
-/// sessions and which wishes' rooms are open, with the key their credentials are signed with; it says on its output where
+/// sessions are open, with the key their credentials are signed with, and which wishes' rooms, each with its wish's key;
+/// it says on its output where
 /// it listens and who is in each room, and it ends when Lamp does (its input closes). It keeps the port it had for as long as Lamp runs, so a phone's page that
 /// lost its socket finds it again where it was.
 @MainActor
@@ -229,9 +229,9 @@ enum ControllerRelay {
     private(set) static var presence: [String: [[String: Any]]] = [:]
     static var roomKeys: [String] { Array(rooms.keys) }
 
-    /// Opens a wish's room, or tells the relay its apps again when they changed.
-    static func openRoom(_ key: String, generation: Int, apps: [[String: Any]]) {
-        let line: [String: Any] = ["op": "room", "app": key, "generation": generation, "apps": apps]
+    /// Opens a wish's room with its wish's key, or tells the relay its apps again when they changed.
+    static func openRoom(_ key: String, wishKey: Data, apps: [[String: Any]]) {
+        let line: [String: Any] = ["op": "room", "app": key, "key": wishKey.base64EncodedString(), "apps": apps]
         guard rooms[key].map({ NSDictionary(dictionary: $0) != NSDictionary(dictionary: line) }) ?? true else { return }
         rooms[key] = line
         if process == nil { launch() } else { send(line) }

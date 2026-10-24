@@ -240,6 +240,15 @@ enum Template {
         return "<key>LampInstall</key><dict>\(pairs)</dict>"
     }
 
+    /// Where an app of a wish of several finds its wish's key (`WishKeys`) in its Info.plist: a Mac app's installed copy,
+    /// and a phone's build in Lamp's own folder. Never in anything written in the app's own folder.
+    static let wishKeyName = "LampWishKey"
+
+    /// The Info.plist line for the wish's key, or nothing for an app on its own.
+    static func wishKeyPlistLines(_ key: Data?) -> String {
+        key.map { "<key>\(wishKeyName)</key><string>\($0.base64EncodedString())</string>" } ?? ""
+    }
+
     /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. An app on
     /// its own (most apps, and every starter) gets none of it: its building blocks are written as if the wish's apps
     /// couldn't talk at all, so it carries no code, size, rule or permission for something it can't use. A wish that gains
@@ -1838,7 +1847,7 @@ enum Template {
     /// the app's sandbox with signing off, so nothing in them is trusted: what they're signed with comes from the same
     /// project written `forSigning`, in Lamp's folder over Lamp's own code in `files` (`TeamSigning`).
     static func writeDeviceProject(for project: LampProject, team: String, in folder: URL? = nil, reading files: URL? = nil,
-                                   forSigning: Bool = false) throws {
+                                   forSigning: Bool = false, wishKey: Data? = nil) throws {
         let fm = FileManager.default
         let universal = project.platform == .universal
         let dir = folder ?? project.dir.appendingPathComponent(".lamp/device")
@@ -1918,9 +1927,12 @@ enum Template {
         // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
         let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
+        // The wish's key, for an app with others in its wish, goes the same way and only there.
+        let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
         for (path, template) in files {
             let contents = template
                 .replacingOccurrences(of: "{{PHONE_SECRET}}", with: secret)
+                .replacingOccurrences(of: "{{WISH_KEY}}", with: wish)
                 .replacingOccurrences(of: "{{LAMP_INSTALL}}", with: installPlistLines(for: project))
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
@@ -2024,7 +2036,7 @@ enum Template {
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
       <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-      <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>
+      <key>LampPhoneSecret</key><string>{{PHONE_SECRET}}</string>{{WISH_KEY}}
       {{LAMP_INSTALL}}
     {{USAGE}}
     {{BACKGROUND}}
@@ -13590,7 +13602,8 @@ enum Template {
     /// The other apps of this app's wish (a TV app, an iPhone app, an Android app…): which are open now, and messages
     /// between them, through Lamp on the person's Mac over the home Wi‑Fi, with nothing to pair, host or set up. Each app
     /// of the wish is a peer named by its folder in the wish: "tv", "iphone", "apple" (an app for iPhone and Mac), "mac",
-    /// "android". One for the whole app, started the first time it's used; keep using `LampWish.shared`.
+    /// "android". One for the whole app, started the first time it's used; keep using `LampWish.shared`. What they say
+    /// is sealed with a key only the wish's apps have, which Lamp gave each as it put it on its device.
     ///
     ///     @ObservedObject var wish = LampWish.shared
     ///     wish.peers                                    // the wish's other apps open now
@@ -13657,10 +13670,11 @@ enum Template {
 
         private final class Link: @unchecked Sendable { var task: URLSessionWebSocketTask? }
         private let link = Link()
-        private var room: String?
         private var address: URL?
-        /// Good once and for a couple of minutes: Lamp's to start with, then the one the room hands over the socket.
-        private var credential: String?
+        /// This link's seals each way, once the handshake is done: nil while it isn't.
+        private var sealer: Sealer?
+        private var opener: Sealer?
+        private var handshake: (nonce: Data, tag: Data)?
         private var listeners: [(String, Any) -> Void] = []
         private var closed = false
         private var retry = 0
@@ -13688,6 +13702,7 @@ enum Template {
             closed = true
             link.task?.cancel(with: .goingAway, reason: nil)
             link.task = nil
+            sealer = nil
             leftAll()
             set(.ended)
         }
@@ -13700,7 +13715,7 @@ enum Template {
         @discardableResult
         func send(_ data: Any, to peer: String? = nil) -> Bool {
             let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
-            guard state == .connected, let task = link.task else {
+            guard state == .connected, link.task != nil, sealer != nil else {
                 if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
                 return false
             }
@@ -13718,9 +13733,7 @@ enum Template {
                 fputs("LampWish: \(what) of \(text.count) bytes wasn't sent: a message between the wish's apps is at most \(Self.messageLimit) bytes as JSON.\n", stderr)
                 return false
             }
-            task.send(.string(String(decoding: text, as: UTF8.self))) { error in
-                if let error { fputs("LampWish: a message didn't go: \(error.localizedDescription)\n", stderr) }
-            }
+            say(text)
             return true
         }
 
@@ -13738,7 +13751,7 @@ enum Template {
 
         private static func notOpen(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + " isn't open." }
 
-        private func set(_ state: State) { status = Status(state: state, reason: Self.reason(state), lastSeen: nil) }
+        private func set(_ state: State, reason: String? = nil) { status = Status(state: state, reason: reason ?? Self.reason(state), lastSeen: nil) }
 
         /// Where this copy runs, for the others to show.
         private static var device: String {
@@ -13751,15 +13764,29 @@ enum Template {
             #endif
         }
 
-        // Where to join, from Lamp: the relay's socket, this app's room and peer name, and a credential for them. Once in,
-        // the room hands a fresh credential over the socket, which is what a dropped link comes back with; Lamp is asked
-        // again only when that's spent, run out or turned away.
+        // The wish's key, which Lamp gave this copy as it put it here: in the installed app's Info.plist, or on the
+        // simulator in the app's own folder there. It never crosses the network: the app proves it holds it.
+        private static let key: SymmetricKey? = {
+            var text = Bundle.main.object(forInfoDictionaryKey: "LampWishKey") as? String
+            #if targetEnvironment(simulator)
+            if text == nil { text = try? String(contentsOfFile: NSHomeDirectory() + "/Library/Lamp/wish-key", encoding: .utf8) }
+            #endif
+            guard let data = text.flatMap({ Data(base64Encoded: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }), data.count == 32 else { return nil }
+            return SymmetricKey(data: data)
+        }()
+
+        // Where to join, from Lamp: the relay's socket and this app's peer name. What lets it in is the wish's key, proved
+        // in a handshake that sends nothing anyone could use again, and everything after it is sealed.
         private func open() {
             guard !closed else { return }
+            guard let key = Self.key else {
+                set(.away, reason: "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+                return
+            }
             if state != .alone { set(.connecting) }
             Task { @MainActor in
                 do {
-                    if credential == nil || address == nil {
+                    if address == nil || me.isEmpty {
                         let answer = try await LampAI.post("/app/wish", ["device": Self.device], timeout: 20)
                         if answer["alone"] as? Bool == true {
                             // The wish has no other app: nothing to join, until one is added.
@@ -13768,24 +13795,23 @@ enum Template {
                             me = ((answer["me"] as? [String: Any])?["peer"] as? String) ?? me
                             return again(after: (answer["renew"] as? Double ?? 300))
                         }
-                        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let room = answer["room"] as? String,
-                              let credential = answer["credential"] as? String else {
+                        guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)), let peer = answer["peer"] as? String else {
                             throw LampAI.Failure(message: answer["error"] as? String ?? "Lamp didn't say where the wish's apps meet.")
                         }
                         address = socket
-                        self.room = room
-                        self.credential = credential
-                        me = answer["peer"] as? String ?? ""
+                        me = peer
                     }
-                    guard let address, let credential, let room, !closed else { return }
-                    // Each credential lets this app in once: the next one comes over the socket.
-                    self.credential = nil
+                    guard let address, !closed else { return }
                     let task = URLSession.shared.webSocketTask(with: address)
-                    task.maximumMessageSize = Self.messageLimit + 1024
+                    task.maximumMessageSize = Self.messageLimit + 2048
                     link.task = task
+                    sealer = nil
+                    opener = nil
                     task.resume()
                     heard = Date()
-                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "app": room, "credential": credential, "device": Self.device])
+                    let nonce = Self.random(16), tag = Self.derive("lamp-wish tag", key).prefix(8)
+                    handshake = (nonce, tag)
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": me, "nonce": nonce.base64EncodedString()])
                     try await task.send(.string(String(decoding: hello, as: UTF8.self)))
                     receive(on: task)
                 } catch {
@@ -13795,7 +13821,6 @@ enum Template {
                         task.cancel(with: .goingAway, reason: nil)
                         link.task = nil
                     }
-                    credential = nil
                     address = nil
                     if state != .alone { set(.away) }
                     fputs("LampWish: \(error.localizedDescription)\n", stderr)
@@ -13809,13 +13834,10 @@ enum Template {
                 Task { @MainActor in
                     guard let self, self.link.task === task else { return }
                     switch result {
-                    case .success(.string(let text)):
+                    case .success(let message):
                         self.heard = Date()
-                        self.hear(text)
-                        self.receive(on: task)
-                    case .success:
-                        self.heard = Date()
-                        self.receive(on: task)
+                        self.arrived(message, on: task)
+                        if self.link.task === task { self.receive(on: task) }
                     case .failure:
                         self.dropped(task)
                     }
@@ -13823,15 +13845,66 @@ enum Template {
             }
         }
 
-        private func hear(_ text: String) {
-            guard let m = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else { return }
+        // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages and beats.
+        // Anything else was made up on the way, and lets the link go.
+        private func arrived(_ message: URLSessionWebSocketTask.Message, on task: URLSessionWebSocketTask) {
+            switch message {
+            case .string(let text):
+                let said = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+                if said?["t"] as? String == "beat" { return }
+                guard sealer == nil, let said, said["t"] as? String == "challenge", answer(said, on: task) else { return refuse(task) }
+            case .data(let sealed):
+                guard var box = opener, let plain = box.open(sealed),
+                      let m = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else { return refuse(task) }
+                opener = box
+                hear(m)
+            @unknown default:
+                return
+            }
+        }
+
+        // The relay proved it holds the wish's key: this app proves it does too, and both seal from here on.
+        private func answer(_ challenge: [String: Any], on task: URLSessionWebSocketTask) -> Bool {
+            guard let key = Self.key, let handshake, let server = challenge["peer"] as? String, (1...32).contains(server.utf8.count),
+                  let theirs = (challenge["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
+                  let proof = (challenge["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return false }
+            var transcript = handshake.tag
+            for name in [me, server] { transcript.append(UInt8(name.utf8.count)); transcript.append(Data(name.utf8)) }
+            transcript.append(handshake.nonce)
+            transcript.append(theirs)
+            guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return false }
+            self.handshake = nil
+            let mine = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()])
+            task.send(.string(String(decoding: mine ?? Data(), as: UTF8.self))) { _ in }
+            sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
+            opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
+            if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device]) { say(join) }
+            return true
+        }
+
+        /// Seals a message and sends it, in the order said: each is sealed with the next number this way.
+        private func say(_ json: Data) {
+            guard let task = link.task, var box = sealer else { return }
+            let sealed = box.seal(json)
+            sealer = box
+            task.send(.data(sealed)) { error in
+                if let error { fputs("LampWish: a message didn't go: \(error.localizedDescription)\n", stderr) }
+            }
+        }
+
+        private func refuse(_ task: URLSessionWebSocketTask) {
+            fputs("LampWish: the link to the wish's other apps heard something that wasn't theirs, and started again.\n", stderr)
+            task.cancel(with: .goingAway, reason: nil)
+            dropped(task)
+        }
+
+        private func hear(_ m: [String: Any]) {
             switch m["t"] as? String {
             case "welcome":
                 retry = 0
                 saidAway = false
                 undeliveredSaid = []
                 if let name = m["peer"] as? String { me = name }
-                if let kept = m["credential"] as? String { credential = kept }
                 let present = Dictionary((m["peers"] as? [[String: Any]] ?? []).compactMap { p in (p["peer"] as? String).map { ($0, p) } },
                                       uniquingKeysWith: { a, _ in a })
                 apps = (m["apps"] as? [[String: Any]] ?? []).compactMap { app in
@@ -13857,8 +13930,6 @@ enum Template {
                 if let id = m["peer"] as? String, let index = apps.firstIndex(where: { $0.id == id }) {
                     apps[index].status = Status(state: .notOpen, reason: Self.notOpen(apps[index].name), lastSeen: Date())
                 }
-            case "credential":
-                if let kept = m["credential"] as? String { credential = kept }
             case "apps":
                 // The wish gained an app or lost one: the others keep what's known of them.
                 apps = (m["apps"] as? [[String: Any]] ?? []).compactMap { app in
@@ -13897,10 +13968,13 @@ enum Template {
             guard link.task === task else { return }
             let code = task.closeCode.rawValue
             link.task = nil
+            sealer = nil
+            opener = nil
+            handshake = nil
             leftAll()
-            // Turned away, or the room ended: the credential is no use, so a fresh one is asked of Lamp. Dropped before it
-            // was let in, the relay may have moved: where it is is asked for again too.
-            if code == 4003 || code == 4005 || state == .connecting || retry >= 3 { credential = nil; address = nil }
+            // Turned away, or the room ended, or dropped before it was let in: the relay may have moved, or this app may
+            // not be of the wish it was, so Lamp is asked again where to join and who this app is.
+            if code == 4003 || code == 4005 || state == .connecting || retry >= 3 { address = nil }
             again()
         }
 
@@ -13915,7 +13989,7 @@ enum Template {
             }
         }
 
-        // A beat both ways: whoever hears nothing for a while lets the other go.
+        // A beat both ways, in clear since it carries nothing: whoever hears nothing for a while lets the other go.
         private func tick() {
             guard let task = link.task else { return }
             if Date().timeIntervalSince(heard) > 12 {
@@ -13924,6 +13998,46 @@ enum Template {
                 return
             }
             task.send(.string(#"{"t":"beat"}"#)) { _ in }
+        }
+
+        // The wish's channel, the same steps as Lamp's relay takes on its side, byte for byte: every value is an HMAC
+        // under the wish's key of a label, a zero byte and what it's about; messages are AES-GCM with a nonce that
+        // counts them, so one that was changed, sent again or put out of order doesn't open.
+        private static func derive(_ label: String, _ key: SymmetricKey, _ data: Data = Data()) -> Data {
+            var message = Data(label.utf8)
+            message.append(0)
+            message.append(data)
+            return Data(HMAC<SHA256>.authenticationCode(for: message, using: key))
+        }
+
+        private static func same(_ a: Data, _ b: Data) -> Bool {
+            a.count == b.count && zip(a, b).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+        }
+
+        private static func random(_ count: Int) -> Data {
+            var generator = SystemRandomNumberGenerator()
+            return Data((0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) })
+        }
+
+        private struct Sealer {
+            let key: SymmetricKey
+            var count: UInt64 = 0
+            private func nonce() -> AES.GCM.Nonce {
+                var bytes = Data(repeating: 0, count: 4)
+                withUnsafeBytes(of: count.bigEndian) { bytes.append(contentsOf: $0) }
+                return try! AES.GCM.Nonce(data: bytes)
+            }
+            mutating func seal(_ plain: Data) -> Data {
+                defer { count += 1 }
+                let box = try! AES.GCM.seal(plain, using: key, nonce: nonce())
+                return box.ciphertext + box.tag
+            }
+            mutating func open(_ sealed: Data) -> Data? {
+                guard sealed.count >= 16, let box = try? AES.GCM.SealedBox(nonce: nonce(), ciphertext: sealed.dropLast(16), tag: sealed.suffix(16)),
+                      let plain = try? AES.GCM.open(box, using: key) else { return nil }
+                count += 1
+                return plain
+            }
         }
     }
 

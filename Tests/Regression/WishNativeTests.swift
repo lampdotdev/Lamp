@@ -3,34 +3,44 @@ import LampRelayKit
 import XCTest
 @testable import Lamp
 
-/// `LampWish` in LampSupport, as a wish's Swift apps have it, built as a plain program and run twice against a real
-/// relay: a Mac app and an iPhone app of one wish join the room, see each other, and the message one sends arrives at
-/// the other with who sent it.
+/// `LampWish` in LampSupport, as a wish's Swift apps have it, built as a plain program with the wish's key in its
+/// Info.plist, as Lamp installs a Mac app, and run twice against a real relay: a Mac app and an iPhone app of one wish
+/// prove they hold the key, see each other, and the message one sends arrives at the other, sealed, with who sent it. A
+/// copy with another key gets in nowhere.
 final class WishNativeTests: XCTestCase {
     func testTwoSwiftAppsOfAWishSeeEachOtherAndAMessageArrives() async throws {
-        let key = SymmetricKey(size: .bits256)
-        let relay = Relay(key: key)
+        let relay = Relay(key: SymmetricKey(size: .bits256))
         defer { relay.stop() }
         let started: UInt16? = await withCheckedContinuation { done in relay.start { done.resume(returning: $0) } }
         let port = try XCTUnwrap(started)
-        let room = "wish:native"
-        relay.configureRoom(room, generation: 0, apps: ["mac": ("mac", "the Mac app"), "iphone": ("iphone", "the iPhone app")])
+        let key = WishChannel.random(32)
+        relay.configureRoom("wish:native", key: key, apps: ["mac": ("mac", "the Mac app"), "iphone": ("iphone", "the iPhone app")])
 
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-native-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
         try Self.program().write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
-        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o wish main.swift 2>&1", in: work)
-        XCTAssertEqual(built.status, 0, built.output)
+        // The key where Lamp writes it into an installed app's Info.plist (`Template.wishKeyName`), here in the program.
+        for (name, given) in [("wish", key), ("stranger", WishChannel.random(32))] {
+            let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.\(name)</string>"
+                + Template.wishKeyPlistLines(given) + "</dict></plist>"
+            try plist.write(to: work.appendingPathComponent("\(name).plist"), atomically: true, encoding: .utf8)
+            let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o \(name) main.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker \(name).plist 2>&1", in: work)
+            XCTAssertEqual(built.status, 0, built.output)
+        }
 
-        func credential(_ peer: String) -> String { ControllerToken.issue(kind: .peer, app: room, generation: 0, peer: peer, key: key) }
-        let common = "LAMP_SOCKET='ws://127.0.0.1:\(port)/' LAMP_ROOM='\(room)'"
+        let common = "LAMP_SOCKET='ws://127.0.0.1:\(port)/'"
         // The iPhone app waits for a message; the Mac app waits for the iPhone app to be there, then sends one.
-        async let phone = Task.detached { TestShell.run("\(common) LAMP_PEER=iphone LAMP_CREDENTIAL='\(credential("iphone"))' LAMP_ROLE=listen ./wish 2>&1", in: work).output }.value
+        async let phone = Task.detached { TestShell.run("\(common) LAMP_PEER=iphone LAMP_ROLE=listen ./wish 2>&1", in: work).output }.value
         try await Task.sleep(for: .milliseconds(500))
         // The Mac app is first told a relay that isn't there (Lamp restarted, the relay moved): it asks Lamp again.
-        async let mac = Task.detached { TestShell.run("\(common) LAMP_DEAD_SOCKET='ws://127.0.0.1:1/' LAMP_PEER=mac LAMP_CREDENTIAL='\(credential("mac"))' LAMP_ROLE=send ./wish 2>&1", in: work).output }.value
-        let (phoneSaid, macSaid) = try await (phone, mac)
+        async let mac = Task.detached { TestShell.run("\(common) LAMP_DEAD_SOCKET='ws://127.0.0.1:1/' LAMP_PEER=mac LAMP_ROLE=send ./wish 2>&1", in: work).output }.value
+        // A copy that has another key, as one Lamp didn't put there would.
+        async let stranger = Task.detached { TestShell.run("\(common) LAMP_PEER=mac LAMP_ROLE=stranger ./stranger 2>&1", in: work).output }.value
+        let (phoneSaid, macSaid, strangerSaid) = try await (phone, mac, stranger)
+        XCTAssertTrue(strangerSaid.contains("stranger state connecting") || strangerSaid.contains("stranger state away"),
+                      "a copy with another key never gets in: \(strangerSaid)")
+        XCTAssertFalse(strangerSaid.contains("heard from"), strangerSaid)
         XCTAssertTrue(macSaid.contains("LampWish: "), "the first try failed and was said: \(macSaid)")
         XCTAssertTrue(macSaid.contains("me mac state connected"), "then it asked Lamp again and joined: \(macSaid)")
         XCTAssertTrue(macSaid.contains("sees iphone (the iPhone app on iPhone simulator)"), "the Mac app sees the iPhone app: \(macSaid)")
@@ -52,6 +62,7 @@ final class WishNativeTests: XCTestCase {
         let block = String(support[start.lowerBound..<end.lowerBound])
             .replacingOccurrences(of: "#if os(macOS)\n            return \"Mac\"", with: "#if os(macOS)\n            return \"iPhone simulator\"")
         return """
+        import CryptoKit
         import Foundation
         import SwiftUI
         enum LampAI {
@@ -61,7 +72,7 @@ final class WishNativeTests: XCTestCase {
                 let env = ProcessInfo.processInfo.environment
                 asked += 1
                 let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? env["LAMP_SOCKET"]!) : env["LAMP_SOCKET"]!
-                return ["socket": socket, "room": env["LAMP_ROOM"]!, "peer": env["LAMP_PEER"]!, "credential": env["LAMP_CREDENTIAL"]!]
+                return ["socket": socket, "peer": env["LAMP_PEER"]!]
             }
         }
         \(block)
@@ -81,7 +92,11 @@ final class WishNativeTests: XCTestCase {
                 }
                 spin(10) { wish.state == .connected }
                 print("me \\(wish.me) state \\(wish.state.rawValue)")
-                if role == "send" {
+                if role == "stranger" {
+                    spin(4) { false }
+                    print("stranger state \\(wish.state.rawValue)")
+                    for line in heard { print(line) }
+                } else if role == "send" {
                     spin(10) { wish.peer("iphone")?.isOpen == true }
                     for peer in wish.peers { print("sees \\(peer.id) (\\(peer.name) on \\(peer.device))") }
                     print("sent \\(wish.send(["score": 3], to: "iphone"))")

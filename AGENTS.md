@@ -1198,29 +1198,43 @@ starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 
 The apps of a wish see each other and talk through a **room** for the wish at the controllers' relay (`WishRooms`,
 WishHub.swift; `Relay.configureRoom`): each app of the wish, by its own token, asks `/app/wish` and is told the relay's
-socket (by the name it reached Lamp at), its room (`wish:<id>`, never a TV app's game key), which peer it is (its folder
-in the wish, lowercased: "tv", "iphone", "apple", "mac", "android", kept when its kind changes in place; an app at the root
-is named by the folder its kind gets, so the name survives a move into one; `kind` stays the device word the tools use), a
-`peer` credential for that room naming that peer (`ControllerToken.Kind.peer`,
-good once and for two minutes, signed with the controllers' key, worthless once the room ends), and who is in the room
-now. As with a phone's credential, the room hands each member a fresh one over its socket, in its welcome and every minute,
-and that is what a dropped link comes back with; one spent, run out or turned away sends the app back to `/app/wish`. A
-hello travels in clear on the home network, so a credential seen there is already spent: it neither gets in nor throws the
-app it named out. The relay lets a
-peer in only with such a credential for that room naming an app the wish has, tells every member who joins and leaves
+socket (by the name it reached Lamp at), which peer it is (its folder in the wish, lowercased: "tv", "iphone", "apple",
+"mac", "android", kept when its kind changes in place; an app at the root is named by the folder its kind gets, so the name
+survives a move into one; `kind` stays the device word the tools use), and who is in the room now; never anything that
+lets it in. What lets it in is the **wish's key** (`WishKeys`): 32 random bytes per wish, made the first time an app of a
+wish of several needs one, kept in Lamp's own folder by the wish's instance (never the wish's folder, which the agent's
+commands read and versions and shared files carry), gone with the wish, and given to each app only as Lamp puts it on its
+device and only by a way nobody on the network can read: the installed Mac app's Info.plist and the phone's build in
+Lamp's own folder (`LampWishKey`, `Template.wishKeyPlistLines`), the simulator app's own folder after its install
+(`Simulator.tellApp`), the Android app's storage through adb with its token (`androidInstallValues`), the TV preview's
+page through its bridge (`/app/wish` with `preview`), and a TV over the network only sealed to an X25519 key pair the page
+just made (`/app/wish/claim`, `WishRooms.claim`), inside the claim Lamp opened for that TV's address as it put the app
+there, as a TV's token is claimed. Over legacy `adb tcpip` (no TLS) the key crosses in clear with the token. An app proves
+it holds the key in a handshake that sends nothing anyone could use again (`WishChannel`, LampRelayKit): its hello names
+the wish by a tag only the key makes and itself by peer id, with a nonce; the relay answers with its own nonce and an HMAC
+proof over both; the app checks it, sends its own, and from then on everything but beats is AES-GCM, sealed each way under
+a key from the wish's key and both nonces, numbered so a message changed, replayed, dropped or reordered lets the link go.
+The connecting side is written four times (the relay's side in `WishChannel`, LampSupport.swift, LampSupport.kt, and
+lamp.js's own SHA-256, HMAC, AES-GCM and X25519 in ES5, since a TV's page has no WebCrypto), held byte for byte to
+CryptoKit's answers by `WishChannelTests`; change one and change them all. Every app of a wish holds the same key, so a
+device with one of them could join as any; there is no forward secrecy; and a reset of a wish's key isn't offered yet. The
+relay lets a peer in only once it has proved it holds the room's key and named an app the wish has, tells every member who joins and leaves
 (`welcome`, with every app the wish has; `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as
 a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
 phone's size and rate limits (16 KB of JSON a message, `ControllerWire`); files between peers aren't carried yet. The same
 block in every language, under one name: `LampWish.shared` in LampSupport.swift (a WebSocket of its own to the relay),
 `Lamp.wish` in lamp.js (the same, from the TV page, in the preview and on a TV), and `LampWish` in LampSupport.kt, whose
-blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp opens the room's socket for the Android app, as it
-(`WishProxies`), and the app polls `/app/wish/poll` for what came (answered as soon as something has, or after 25 seconds
-with nothing) and posts `/app/wish/send`; the relay sees one more peer, and the app's token is what lets it do either. Every
+blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app
+(`WishProxies`, `/app/wish/open`, numbered so nothing of an old link reaches a new handshake) and carries its handshake and
+sealed messages each way as they are, unread: the app posts them to `/app/wish/send`, in the order it sealed them, and polls
+`/app/wish/poll` for what came (answered as soon as something has, or after 25 seconds with nothing), and Lamp answers the
+relay's beats for it. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
 added to (a `RawRepresentable` struct in Swift, a value class in Kotlin, a string in lamp.js), so code that switches on one
 keeps compiling when later work adds reasons. Lamp
-keeps what came only until the next poll and lets the socket go when the app has stopped polling. A room is opened the
+keeps what came only until the next poll (an app that falls 256 behind has its link ended, since a sealed message can't be
+skipped) and lets the socket go when the app has stopped polling. A room is opened the
 first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
 `Store.syncLocalNetwork`), and ended when the wish is gone, has no other app, or has had nobody in it and nobody asking for
 fifteen minutes, so the relay process runs only while a game or a room needs it (`ControllerRelay` keeps rooms beside
@@ -1231,14 +1245,16 @@ each of its apps is: open or not, in the room or not and as what device (`WishNo
 every app of such a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) says
 what the block does, its limit, to start it as the app opens, to show plainly when an app it needs isn't open and never to
 build its own server, sockets or polling between them; it says nothing about who should talk to whom. A stranger on the
-network can reach none of it: `/app/wish` and the poll routes take an app's own token, the relay takes a credential Lamp
-signed for that room and that peer, and both run only while Lamp does. What one app of a wish says is readable by the
-wish's other apps and by nothing else; a device app made through an integration has no `LampWish` yet. A wish of one app, which
+network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay takes a proof only the
+wish's key makes, and both run only while Lamp does. What one app of a wish says is readable by the wish's other apps and
+by Lamp's relay, which holds the key Lamp made and opens and seals again what it passes on, and by nothing else: on the
+network it's sealed, each link with keys of its own. A device app made through an
+integration has no `LampWish` yet. A wish of one app, which
 is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
 has other apps (`Template.talksToOtherApps`), so its LampSupport.swift, LampSupport.kt and lamp.js are what they would be
-without the hub, its prompt has no rule and its requests no line about the hub, no room is opened for it and so nothing
-starts the relay, and `BuildStamp` leaves the block out, so no app is built again for code it doesn't carry
-(`WishHubStaysOutTests`).
+without the hub, the channel's crypto included, its prompt has no rule and its requests no line about the hub, no key is
+made for it and none goes in its install (`Store.wishKey(for:)` is nil), no room is opened for it and so nothing starts the
+relay, and `BuildStamp` leaves the block out, so no app is built again for code it doesn't carry (`WishHubStaysOutTests`).
 
 A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) still does so as a player of
 `Lamp.controllers`, with `LampController` in LampSupport, beside `LampWish` for everything else. An iPhone part

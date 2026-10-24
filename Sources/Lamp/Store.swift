@@ -399,6 +399,13 @@ final class Store: ObservableObject {
     func parts(of wish: LampProject) -> [LampProject] { projects.filter { $0.partOf == wish.id } }
     /// Every app of a wish, the one at its root first: the one place that knows where a wish's apps are.
     func apps(of wish: LampProject) -> [LampProject] { [wish] + parts(of: wish) }
+    /// The key an app of a wish of several apps is given as it's put on its device (`WishKeys`); nil for an app on its
+    /// own, which gets nothing of the wish's apps' link.
+    func wishKey(for project: LampProject) -> Data? {
+        let wish = wish(of: project)
+        guard Template.talksToOtherApps(project), apps(of: wish).count >= 2 else { return nil }
+        return WishKeys.key(for: wish)
+    }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
     /// Who a line about where an app opens names: the wish, or for one of its several apps that app ("The iPhone app"),
@@ -4345,6 +4352,7 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
+        WishKeys.forget(project)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
         unkeptChats[project.id] = nil
@@ -7424,7 +7432,7 @@ final class Store: ObservableObject {
             var kept = false
             if !fresh, await Adb.pid(of: package, on: serial) != nil { kept = await Adb.saveState(package, on: serial) }
             try await Adb.install(project.builtURL, package: package, on: serial)
-            await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: project.device != nil), package: package, on: serial)
+            await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: project.device != nil, wishKey: wishKey(for: project)), package: package, on: serial)
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             Runtime.startLog(project)
             // State the new code can't take may end it at once, before or after it's seen running; the app has used
@@ -7674,6 +7682,7 @@ final class Store: ObservableObject {
             retireLaunches(of: project)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
+            if let key = wishKey(for: project) { await Simulator.tellApp(wishKey: key, bundleID: project.bundleID, on: udid) }
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             // One Lamp app per simulator: another project's app on this device is closed first, so what the
             // simulator shows is always the app being worked on (and that app's use_app batch, if any, stops).
@@ -7807,7 +7816,7 @@ final class Store: ObservableObject {
             return nil
         }
         do {
-            try await Devices.stage(project, team: team, started: { owner.build = $0 })
+            try await Devices.stage(project, team: team, wishKey: wishKey(for: project), started: { owner.build = $0 })
             owner.build = nil
             // Where the phone's project and builds were kept before, inside the app's folder. An app for both
             // still builds its Mac half there.
@@ -8211,7 +8220,7 @@ final class Store: ObservableObject {
         defer { try? fm.removeItem(at: signing) }
         let resources = app.appendingPathComponent("Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
-        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"), root: Self.installDir)
+        Self.setInstallValues(for: project, in: app.appendingPathComponent("Contents/Info.plist"), root: Self.installDir, wishKey: wishKey(for: project))
         // Every usage description, from the one list: without its reason macOS kills the app the moment it
         // asks for the microphone, photos and the rest. Added here as well as in build.sh so apps made before
         // a reason was added get it too.
@@ -9152,7 +9161,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/poll", "/app/wish/send"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -9181,6 +9190,18 @@ final class Store: ObservableObject {
                 return (403, ["error": "Lamp didn't just put this app here."])
             }
             return (200, ["token": Template.token(for: project), "routes": DeviceSupport.installValues(for: project)["routes"] ?? []])
+        }
+        // A wish's TV app Lamp has just put on a TV asking for its wish's key, sealed to the key pair its page just made
+        // (`WishRooms.claim`): answered as the token is, only from that TV's address within the claim's half hour.
+        if route == "/app/wish/claim" {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            guard request.fromNetwork, let id = body["app"] as? String, DeviceSupport.Claims.shared.take(id, from: request.peerAddress),
+                  let project = projects.first(where: { $0.id == id }), Template.talksToOtherApps(project),
+                  let publicKey = (body["public"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
+                return (403, ["error": "Lamp didn't just put this app here."])
+            }
+            let wish = wish(of: project)
+            return WishRooms.claim(for: wish, apps: apps(of: wish), publicKey: publicKey)
         }
         // pi collecting its provider's key (Agent.keyCommand). The ticket is the whole credential, and it's
         // good once.
@@ -9274,23 +9295,27 @@ final class Store: ObservableObject {
         return (200, ["links": [relay] + direct, "renew": 15])
     }
 
-    /// The wish's apps seeing each other and talking (`WishRooms`): any app of a wish, by its own token, is told its wish's
-    /// room at the relay and who is in it (`/app/wish`), or, for one that can't hold a socket, joined to it by Lamp and
-    /// fed by long-poll (`/app/wish/poll`, `/app/wish/send`: `WishProxies`). Only the app's own wish is ever answered for.
+    /// The wish's apps seeing each other and talking (`WishRooms`): any app of a wish, by its own token, is told where its
+    /// wish's room is at the relay and who is in it (`/app/wish`), or, for one that can't hold a socket, has Lamp hold one
+    /// for it that carries its sealed messages unread (`/app/wish/open`, `/app/wish/poll`, `/app/wish/send`:
+    /// `WishProxies`). Only the app's own wish is ever answered for, and what lets an app in is never here: it's the
+    /// wish's key the app was given when it was put on its device, except for the TV preview's page, which asks through
+    /// its bridge on this Mac.
     private func wishRoom(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-        let device = String((body["device"] as? String ?? "").prefix(40))
         let wish = wish(of: project)
         let apps = apps(of: wish)
         switch route {
+        case "/app/wish/open":
+            return await WishProxies.open(project, wish: wish, apps: apps)
         case "/app/wish/poll":
-            return await WishProxies.poll(project, wish: wish, apps: apps, device: device, rejoin: body["rejoin"] as? Bool == true)
+            return await WishProxies.poll(project, link: body["link"] as? Int ?? 0)
         case "/app/wish/send":
             return await WishProxies.send(project, body: body)
         default:
             // By the name or address the app reached Lamp at, at the relay's port, as a TV app's page is told its relay.
             let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-            return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host)
+            return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
     }
 
@@ -10356,11 +10381,15 @@ final class Store: ObservableObject {
     /// before it's signed: LampSupport reads it there at launch rather than having it compiled in. `root` is the
     /// folder the bundle is in, read and written without following links out of it: the simulator's bundle is in
     /// the app's build folder, which the agent's commands can write.
+    ///
+    /// `wishKey` is the wish's key for an app with others in its wish (`WishKeys`), only ever for a copy in a folder of
+    /// Lamp's own: the installed Mac app's.
     nonisolated static func setInstallValues(for project: LampProject, in plistURL: URL, root: URL,
-                                             values: [String: String]? = nil) {
+                                             values: [String: String]? = nil, wishKey: Data? = nil) {
         guard let data = AppFile.read(plistURL, inFolder: root),
               var plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return }
         plist["LampInstall"] = values ?? Template.installValues(for: project)
+        plist[Template.wishKeyName] = wishKey?.base64EncodedString()
         if let out = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
             try? AppFolder.write(out, to: plistURL, in: root)
         }
