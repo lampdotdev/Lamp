@@ -997,6 +997,16 @@ extension Template {
         }
         @Volatile private var link: Link? = null
         private val sending = Mutex()
+        private val outbox = kotlinx.coroutines.channels.Channel<Pair<Link, String>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        private val sender: kotlinx.coroutines.Job by lazy {
+            scope.launch(start = CoroutineStart.LAZY) {
+                for ((to, text) in outbox) {
+                    try { say(to, sealed = listOf(text)) }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { Log.e("LampWish", "A message didn't go: ${e.message ?: e}") }
+                }
+            }
+        }
 
         /** The words for a state of this app's link, the same in every language Lamp's apps are written in. */
         fun reason(state: State): String = when (state) {
@@ -1068,11 +1078,10 @@ extension Template {
                 Log.e("LampWish", "$what of about $size bytes wasn't sent: a message between the wish's apps is at most $messageLimit bytes as JSON.")
                 return false
             }
-            // Undispatched, so it queues for the link in the order it was sent: the lock lets each through in turn.
-            scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                try { say(current, sealed = listOf(body.toString())) }
-                catch (e: Exception) { Log.e("LampWish", "$what didn't go: ${e.message}") }
-            }
+            // Queued, so messages go in the order they were sent, and taken by one coroutine of the link's own off the
+            // main thread, since the call comes from the UI.
+            sender.start()
+            outbox.trySend(current to body.toString())
             return true
         }
 
