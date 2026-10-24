@@ -2664,7 +2664,6 @@ final class Store: ObservableObject {
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
-                _ = await setApps(project, appsBefore)
                 try? fm.removeItem(at: waiting)
                 if hadWaiting { try? fm.copyItem(at: waitingBefore, to: waiting) }
                 guard hadArt else {
@@ -2686,11 +2685,14 @@ final class Store: ObservableObject {
             let newArtwork: Bool
             do {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
-                guard await installParts(of: package, into: project) else { throw Sharing.ImportError("A part's files couldn't be put in place.") }
+                let notIn = await installParts(of: package, into: project)
+                guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
             } catch {
                 let iconBack = await putBack()
-                // A part the file brought, or changed in kind, goes back with the files (`followRestored`).
+                // A part the file brought, or changed in kind, goes back with the files (`followRestored`), and the list
+                // after that, since forgetting a part takes it out of the list too.
                 await followRestored(project)
+                setApps(project, appsBefore)
                 print("Update \(project.name) from a shared file failed: \(error)")
                 log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                 return
@@ -2698,6 +2700,8 @@ final class Store: ObservableObject {
             if await Versions.hasUnsavedChanges(project) {
                 guard await Versions.save(project, message: "Updated from a shared file") else {
                     let iconBack = await putBack()
+                    await followRestored(project)
+                    setApps(project, appsBefore)
                     log(project, .error, Self.updateFailed + (iconBack ? "" : Self.updateChangedIcon))
                     return
                 }
@@ -2747,7 +2751,10 @@ final class Store: ObservableObject {
             defer { try? FileManager.default.removeItem(at: package.folder) }
             // The wish's other apps, each made in its folder as `make_app_for` makes one and given the file's code. One
             // this Mac can't build yet stays on the wish's list, with its setup a click away, and is made once it can.
-            _ = await installParts(of: package, into: project)
+            let notIn = await installParts(of: package, into: project)
+            if !notIn.isEmpty {
+                log(project, .error, "\(notIn.joined(separator: ", ")) didn't come in with the wish. Open the shared file again to try once more.")
+            }
             _ = await Versions.git("git init -q && git add -A && \(Self.commit) -qm 'Imported from a shared file'",
                                 cwd: project.dir) { _ in }
             await run(project)
@@ -2760,19 +2767,23 @@ final class Store: ObservableObject {
     /// another kind of the family (the Mac app that's now for the iPhone too) is changed in place as `make_app_for`
     /// changes one (`convert`), keeping its folder and so its data; one the wish doesn't have is made (`addPart`). One
     /// this Mac can't make yet keeps its files with the wish (`Sharing.keep`) and goes in once it can. A part the wish
-    /// has and the file doesn't is left as it is. False when a part's files couldn't be put in place, so an update can
-    /// put the whole wish back.
-    private func installParts(of package: Sharing.Package, into wish: LampProject) async -> Bool {
-        var allIn = true
+    /// has and the file doesn't is left as it is. Returns the apps whose files couldn't be put in place, or kept, so an
+    /// update can put the whole wish back and a fresh import can say so.
+    private func installParts(of package: Sharing.Package, into wish: LampProject) async -> [String] {
+        var notIn: [String] = []
+        func failed(_ kind: Platform) {
+            let name = Parts.name(of: kind)
+            notIn.append(name.prefix(1).uppercased() + name.dropFirst())
+        }
         for part in package.parts {
-            guard let wish = current(wish) else { return false }
+            guard let wish = current(wish) else { return [Parts.name(of: part.package.platform)] }
             let kind = part.package.platform
             var had = parts(of: wish).first { Parts.group($0.platform) == Parts.group(kind) }
             if let have = had, have.platform != kind {
                 let (status, changed) = await convert(have, to: kind)
                 guard status == 200, let text = changed["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed") else {
                     log(wish, .error, "\(Parts.name(of: have.platform)) couldn't be made \(Parts.name(of: kind)): " + (changed["text"] as? String ?? changed["error"] as? String ?? ""))
-                    allIn = false
+                    failed(kind)
                     continue
                 }
                 had = current(have)
@@ -2785,7 +2796,7 @@ final class Store: ObservableObject {
                 guard let made else {
                     do { try Sharing.keep(part, in: wish.dir) } catch {
                         log(wish, .error, "Lamp couldn't keep \(Parts.name(of: kind))'s files: \(error.localizedDescription)")
-                        allIn = false
+                        failed(kind)
                     }
                     recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, of: wish, setup: setup)
                     continue
@@ -2794,10 +2805,10 @@ final class Store: ObservableObject {
             }
             do { try Sharing.install(part.package, into: target, replacing: had != nil) } catch {
                 log(wish, .error, "Lamp couldn't put \(Parts.name(of: kind))'s files in place: \(error.localizedDescription)")
-                allIn = false
+                failed(kind)
             }
         }
-        return allIn
+        return notIn
     }
 
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
