@@ -1133,7 +1133,7 @@ extension TVTemplate {
           // Lamp through its bridge; a TV asks Lamp for it sealed to a key pair it makes, just after Lamp put the app
           // there (`claim`), and keeps it.
           var installed = /*LAMP_INSTALL*/null;
-          var key = null, claiming = null, claims = 0;
+          var key = null, claiming = null, claims = 0, claimPair = null;
 
           function emit(name, args) {
             var list = on[name];
@@ -1176,7 +1176,9 @@ extension TVTemplate {
             var routes = (storage('install.routes') || []).concat(installed && installed.routes || []);
             var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
             routes = routes.filter(function (r) { return ipv4.test(r); }).concat(routes.filter(function (r) { return !ipv4.test(r); }));
-            var secret = C.random(32), ours = C.x25519(secret, C.base);
+            // One key pair for the page's tries, so a try after an answer lost on its way is answered again.
+            if (!claimPair) { var made = C.random(32); claimPair = { secret: made, ours: C.x25519(made, C.base) }; }
+            var secret = claimPair.secret, ours = claimPair.ours;
             function attempt(i) {
               if (i >= routes.length) return Promise.reject(new Error(UNCLAIMED));
               return new Promise(function (resolve, reject) {

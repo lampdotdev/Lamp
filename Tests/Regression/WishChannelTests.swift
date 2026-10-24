@@ -111,8 +111,9 @@ final class WishChannelTests: XCTestCase {
     }
 
     /// The claim of a wish's key is answered once, for minutes: someone on the network who rewrites the page's public
-    /// half after that, or once the page has its key, gets nothing. A request that failed spends nothing, so the page's
-    /// tries again still get the key, and opening the app again on the TV doesn't open the claim again.
+    /// half after that, or once the page has its key, gets nothing. A request that failed spends nothing, and an answer
+    /// lost on its way is given again to the page's own key pair, so the page's tries again still get the key; opening
+    /// the app again on the TV doesn't open the claim again.
     @MainActor
     func testAWishsKeyIsClaimedOnceAndForMinutes() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wish-keys-\(UUID().uuidString)")
@@ -134,6 +135,8 @@ final class WishChannelTests: XCTestCase {
         XCTAssertEqual(claim(Data(count: 32)), 400, "a key that can't be used spends nothing")
         XCTAssertEqual(claim(page), 200)
         XCTAssertEqual(claim(theirs), 403, "a public half put in the page's place after it gets nothing")
+        XCTAssertEqual(claim(page), 200, "the page's own try again, after an answer lost on its way, is answered")
+        XCTAssertEqual(claim(page, from: "192.168.1.99"), 403)
         WishClaims.shared.renew(wish.id, from: tv)
         XCTAssertEqual(claim(theirs), 403, "the app opening on the TV after its claim doesn't open it again")
 
@@ -141,6 +144,10 @@ final class WishChannelTests: XCTestCase {
         let window = WishClaims.window
         WishClaims.window = 0.2
         defer { WishClaims.window = window }
+        WishClaims.shared.open(wish.id, from: tv)
+        XCTAssertEqual(claim(page), 200)
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(claim(page), 403, "the page's own key pair too, only for the claim's minutes")
         WishClaims.shared.open(wish.id, from: tv)
         Thread.sleep(forTimeInterval: 0.3)
         XCTAssertEqual(claim(theirs), 403, "minutes, not half an hour")

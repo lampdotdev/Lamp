@@ -57,7 +57,8 @@ enum WishKeys {
 
 /// The claims Lamp opens for a wish's key as it puts a wish's TV app on a TV: one per app, from that TV's address, for
 /// two minutes from when Lamp starts putting it there and, if no claim was answered by then, two from when it opened it,
-/// and spent by the first claim answered.
+/// and spent by the first claim answered, after which only that page's own key pair is answered, for the claim's
+/// minutes, in case the answer was lost on its way: sealed to the page again, it's no use to anyone else.
 /// Apart from the TV's token claim (`DeviceSupport.Claims`), which lasts half an hour and may be answered any number of
 /// times: the key, unlike the token, never crosses the network in clear, and the claim is the one moment someone on the
 /// network could get it, by answering for the page. A request that fails on the way (the network, a key that can't be
@@ -69,12 +70,13 @@ final class WishClaims: @unchecked Sendable {
     nonisolated(unsafe) static var window: TimeInterval = 2 * 60
     private let lock = NSLock()
     private var open: [String: (address: String, until: Date)] = [:]
-    private var spent: Set<String> = []
+    /// The public half each spent claim was answered for, from where, and until when it may be answered again.
+    private var spent: [String: (key: Data, address: String, until: Date)] = [:]
 
     /// Opens the claim as Lamp starts putting the app on the TV.
     func open(_ app: String, from address: String) {
         lock.withLock {
-            spent.remove(app)
+            spent[app] = nil
             open[app] = (DeviceSupport.Claims.plain(address), Date().addingTimeInterval(Self.window))
         }
     }
@@ -82,22 +84,26 @@ final class WishClaims: @unchecked Sendable {
     /// Gives it its minutes again once the app is open on the TV, unless a claim was answered meanwhile.
     func renew(_ app: String, from address: String) {
         lock.withLock {
-            guard !spent.contains(app) else { return }
+            guard spent[app] == nil else { return }
             open[app] = (DeviceSupport.Claims.plain(address), Date().addingTimeInterval(Self.window))
         }
     }
 
-    func isOpen(_ app: String, from address: String?) -> Bool {
+    func isOpen(_ app: String, from address: String?, for key: Data) -> Bool {
         lock.withLock {
+            let from = address.map(DeviceSupport.Claims.plain)
+            if let answered = spent[app] {
+                return answered.until > Date() && answered.address == from && answered.key == key
+            }
             guard let claim = open[app], claim.until > Date() else { open[app] = nil; return false }
-            return address.map(DeviceSupport.Claims.plain) == claim.address
+            return from == claim.address
         }
     }
 
-    func spend(_ app: String) {
+    func spend(_ app: String, on key: Data) {
         lock.withLock {
-            open[app] = nil
-            spent.insert(app)
+            guard spent[app] == nil, let claim = open.removeValue(forKey: app) else { return }
+            spent[app] = (key, claim.address, Date().addingTimeInterval(Self.window))
         }
     }
 }
@@ -174,9 +180,9 @@ enum WishRooms {
     /// the app there and opened it, and only until the first claim it answers, which in a normal install is the page's
     /// own a moment after it opens.
     static func claim(for project: LampProject, wish: LampProject, apps: [LampProject], publicKey: Data, from address: String?) -> (Int, [String: Any]) {
-        guard WishClaims.shared.isOpen(project.id, from: address) else { return (403, ["error": "Lamp didn't just put this app here."]) }
+        guard WishClaims.shared.isOpen(project.id, from: address, for: publicKey) else { return (403, ["error": "Lamp didn't just put this app here."]) }
         let answer = claim(for: wish, apps: apps, publicKey: publicKey)
-        if answer.0 == 200 { WishClaims.shared.spend(project.id) }
+        if answer.0 == 200 { WishClaims.shared.spend(project.id, on: publicKey) }
         return answer
     }
 

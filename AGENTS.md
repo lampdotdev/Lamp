@@ -1213,7 +1213,9 @@ this Mac could put their own public half in it and have the key sealed to them; 
 stop that, so the claim is open as little as it can be (`WishClaims`, apart from the token's half-hour claim): from that
 TV's address, two minutes from when Lamp starts putting the app there and two more from when it's open unless a claim was
 answered meanwhile, and spent by the first claim answered, which in a normal install is the page's own a moment after it
-opens. A request that fails spends nothing, so the page's tries again still work. Over legacy `adb tcpip` (no TLS) the key
+opens. A request that fails spends nothing, and once spent the claim is answered again, for its minutes, only to the public
+half it was spent on, which the page keeps across its tries, so an answer lost on its way doesn't need another install.
+Over legacy `adb tcpip` (no TLS) the key
 crosses in clear with the token. An app proves
 it holds the key in a handshake that sends nothing anyone could use again (`WishChannel`, LampRelayKit): its hello names
 the wish by a tag only the key makes and itself by peer id, with a nonce; the relay answers with its own nonce and an HMAC

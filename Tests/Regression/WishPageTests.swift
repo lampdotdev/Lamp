@@ -316,6 +316,43 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 1, "and with the key, the page opened its link")
     }
 
+    /// Lamp answered the page's claim and spent it, but the answer never reached the TV: the page asks again with the
+    /// same key pair and is answered again, so a dropped connection doesn't need another install.
+    func testOnATVAnAnswerLostOnItsWayIsAskedForAgain() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wish-keys-\(UUID().uuidString)")
+        let keptKeys = WishKeys.folder
+        WishKeys.folder = folder
+        defer { WishKeys.folder = keptKeys; try? FileManager.default.removeItem(at: folder) }
+        let wish = LampProject(id: "scoreboard", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard"), platform: .tv)
+        let phone = LampProject(id: "scoreboard.iphone", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard/iPhone"), platform: .iphone, partOf: "scoreboard")
+        WishClaims.shared.open(wish.id, from: "192.168.1.30")
+        var publics: [String] = []
+        let gateway: @convention(block) (String, String) -> String = { _, body in
+            guard let ours = ((try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any])?["public"] as? String,
+                  let data = Data(base64Encoded: ours) else { return "" }
+            publics.append(ours)
+            let answer = WishRooms.claim(for: wish, wish: wish, apps: [wish, phone], publicKey: data, from: "192.168.1.30")
+            // The first answer is lost on its way, after Lamp gave it.
+            guard publics.count > 1, answer.0 == 200 else { return "" }
+            return String(decoding: (try? JSONSerialization.data(withJSONObject: answer.1)) ?? Data(), as: UTF8.self)
+        }
+        let context = try page(installed: #"{"app":"scoreboard","routes":["http://192.168.1.20:47821"]}"#,
+                               answer: "{ socket: 'ws://192.168.1.20:47900/', peer: 'tv', peers: [], apps: [] }") { context in
+            context.setObject(gateway, forKeyedSubscript: "macGateway" as NSString)
+            context.evaluateScript("""
+                function XMLHttpRequest() {}
+                XMLHttpRequest.prototype.open = function (method, url) { this.url = url; };
+                XMLHttpRequest.prototype.setRequestHeader = function () {};
+                XMLHttpRequest.prototype.send = function (body) { var x = this, r = macGateway(x.url, body); later.push(function () { if (r) { x.responseText = r; x.status = 200; x.onload(); } else x.onerror(); }); };
+                """)
+        }
+        context.evaluateScript("Lamp.wish.start();")
+        for _ in 0..<8 { context.evaluateScript("while (later.length) later.shift()();"); settle(context) }
+        XCTAssertGreaterThan(publics.count, 1, "asked again")
+        XCTAssertEqual(Set(publics).count, 1, "with the same key pair")
+        XCTAssertEqual(context.evaluateScript("sockets.length")?.toInt32(), 1, "and with the key, the page opened its link")
+    }
+
     private static func parse(_ text: String) -> [String: Any]? { (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] }
     private static func quoted(_ text: String) -> String {
         String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data(), as: UTF8.self).dropFirst().dropLast().description
