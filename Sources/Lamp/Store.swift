@@ -9221,10 +9221,11 @@ final class Store: ObservableObject {
         // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-        // One of the wish's other apps asking for its TV app, which is at the wish's root or in its TV/ folder alike.
-        if project.isPart, !project.platform.hasTV {
+        // One of the wish's other apps asking for its TV app, which is at the wish's root or in its TV/ folder alike: the
+        // asker may be a part of a TV wish, or the Mac app at the root of a wish whose TV app is in TV/.
+        if !project.platform.hasTV {
             let wish = wish(of: project)
-            guard let tv = ([wish] + parts(of: wish)).first(where: { $0.platform.hasTV }) else { return (403, ["error": "This app's wish has no TV app."]) }
+            guard let tv = Self.tvApp(for: project, among: [wish] + parts(of: wish)) else { return (403, ["error": "This app's wish has no TV app."]) }
             if body["as"] as? String == "listener" {
                 let token = "^[A-Za-z0-9_-]{8,64}$"
                 guard let port = (body["port"] as? Int).flatMap({ UInt16(exactly: $0) }), port > 0,
@@ -9243,7 +9244,6 @@ final class Store: ObservableObject {
             guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
             return (200, ["socket": "ws://\(host):\(port)/", "app": tv.id, "join": ControllerCredential.issue(kind: .join, app: tv.id)])
         }
-        guard project.platform.hasTV else { return (403, ["error": "Only TV apps take phone controllers."]) }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
         guard Self.servesPhonePage(project) else { return (409, ["error": "The app isn't open in the TV preview or set to open on a TV."]) }
@@ -9253,6 +9253,14 @@ final class Store: ObservableObject {
         let direct = PhoneControllers.shared.directLinks(for: project.id, preview: request.fromPreview,
                                                          from: request.fromPreview ? nil : request.peerAddress)
         return (200, ["links": [relay] + direct, "renew": 15])
+    }
+
+    /// The TV app one of a wish's apps joins as a player (`controllerSession`): its wish's, at the root or in TV/ alike,
+    /// among the wish's apps (`apps`: the wish and its parts). Nil for an app that isn't of a wish with a TV app.
+    nonisolated static func tvApp(for project: LampProject, among apps: [LampProject]) -> LampProject? {
+        guard !project.platform.hasTV else { return nil }
+        let wish = project.partOf ?? project.id
+        return apps.first { $0.platform.hasTV && ($0.id == wish || $0.partOf == wish) }
     }
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
