@@ -97,7 +97,7 @@ Write `{name}`; Lamp fills it, checked to a safe alphabet. You never write a val
   then `"X-CSRF-Token": "{cookie:CSRF-Token}"` on the POST)
 - `{packageFullName}` and `{appUserModelID}` a wrapped Windows package's names, and `{base64:<one of Lamp's values>}`
   any of Lamp's values in base64, as some devices take an id in a query
-- `{isGame}` "true" when the app is a game (Lamp's native games, or `{"game": true}` in the app's capabilities.json),
+- `{isGame}` "true" when the app is a game (Lamp's native games, or `{"game": true}` in the app's capabilities.json or its icon.json),
   else "false", for a device that installs games differently from apps
 
 ### steps

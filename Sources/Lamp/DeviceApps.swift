@@ -368,9 +368,11 @@ enum DeviceApps {
     }
 
     /// A game, to a device that gives games more than apps (an Xbox gives a game about five times the memory and the
-    /// whole GPU): Lamp's native games always, and an app of another kind when its capabilities.json says it's one.
+    /// whole GPU): Lamp's native games always, and an app of another kind when its capabilities.json says it's one or
+    /// its icon is a game's. The icon's `game` is the same word from the agent, written for every game it has made, so
+    /// a game made before capabilities.json asked is installed as one without changing it.
     static func isGame(_ project: LampProject) -> Bool {
-        GameKit.isGame(project) || Template.Capabilities.load(project).game == true
+        GameKit.isGame(project) || Template.Capabilities.load(project).game == true || Icons.load(project)?.game == true
     }
 
     private static func values(_ project: LampProject, identity file: URL) -> [String: String]? {
