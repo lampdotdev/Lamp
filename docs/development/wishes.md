@@ -208,7 +208,8 @@ address on Tizen and webOS is untried on real TVs.
 Beside messages, which are for apps open now, the apps of a wish share **values** (`LampWish.values`, `set`, `onChange`
 in Swift and Kotlin; `Lamp.wish.values()`, `set`, `onChange` in lamp.js): a small map of JSON, each value at most 8 KB and
 all of them 64 KB, that every app keeps on its device beside what it keeps of the wish (by the wish's tag: UserDefaults, a
-file in the Android app's storage, localStorage) and that is the same in every app once they've met. Each setting carries
+file in the Android app's storage, localStorage; in the TV preview a store of the app's own, which a wish's TV app has
+too, by a UUID made from its instance, `TVPreview.store(for:)`) and that is the same in every app once they've met. Each setting carries
 when it was made: the clock of the app that made it, a count within that millisecond, and that app's name (`c: [ms, n,
 peer]`). An app's clock never goes back past the latest setting it has made or heard of, so what it sets next is later
 than anything it knows whatever the device's clock says, and every app orders two settings the same way. A removal is a

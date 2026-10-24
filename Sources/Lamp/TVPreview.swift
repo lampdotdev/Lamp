@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 import WebKit
@@ -55,11 +56,25 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         NSApp.activate()
     }
 
+    /// The store an app's page keeps what it saves in, by its instance, which outlasts renames: an app's own instance is a
+    /// UUID; a part of a wish's ("<the wish's>.TV", `Parts.instance`) isn't one, so it gets a UUID made from it, the same
+    /// at every opening and apart from the wish's other apps', since a TV app of a wish keeps the values the wish's apps
+    /// share there. Nil only for an app with no instance yet.
+    static func store(for instance: String) -> UUID? {
+        if let own = UUID(uuidString: instance) { return own }
+        guard !instance.isEmpty else { return nil }
+        var bytes = Array(SHA256.hash(data: Data(("lamp-tv-preview " + instance).utf8)).prefix(16))
+        bytes[6] = bytes[6] & 0x0f | 0x50   // a name-based UUID (version 5's bits)
+        bytes[8] = bytes[8] & 0x3f | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
     private init(project: LampProject) {
         self.project = project
         let configuration = WKWebViewConfiguration()
         // What the app saves stays from one opening to the next, as on a TV: a store of its own for each app.
-        configuration.websiteDataStore = UUID(uuidString: project.instance).map { WKWebsiteDataStore(forIdentifier: $0) } ?? .nonPersistent()
+        configuration.websiteDataStore = Self.store(for: project.instance).map { WKWebsiteDataStore(forIdentifier: $0) } ?? .nonPersistent()
         let controller = WKUserContentController()
         // What the page prints, and what it throws, reach the log.
         controller.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
