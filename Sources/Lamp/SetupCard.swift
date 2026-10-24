@@ -506,14 +506,20 @@ struct IPhoneSetupLine: View {
             || (store.busy.contains(project.id) && requests.contains { store.isRunning($0, for: project) })
     }
 
-    private func setUp() {
-        let later = Self.setup(for: wanted), id = project.id, part = part, wanted = wanted
-        asked.ids.insert(id)
+    private func setUp() { Self.follow(project, wanted: wanted, part: part) }
+
+    /// Opens the kind's setup and, once it's done, asks for the app: the button's click, and also what Lamp does when it
+    /// opens the setup itself for one of a wish's other apps (`Store.recordNeeds`), so finishing the setup there adds
+    /// the app without a click in the chat. One at a time per app.
+    @MainActor static func follow(_ project: LampProject, wanted: Platform, part: Bool) {
+        let later = setup(for: wanted), id = project.id
+        guard !Asked.shared.ids.contains(id) else { return }
+        Asked.shared.ids.insert(id)
         // Asked again each time: an app that's gone, no longer only a Mac app, or a wish that has the app by now, has
         // nothing to set up for, and the setup lets go of the request rather than hold up the ones behind it.
         let stillWanted = { @MainActor in
             guard let current = Store.shared.current(project) else { return false }
-            return part ? Self.stillWaits(current, for: wanted) : current.platform == .mac
+            return part ? stillWaits(current, for: wanted) : current.platform == .mac
         }
         later.open(stillWanted, { Asked.shared.ids.remove(id) }) {
             Asked.shared.ids.remove(id)

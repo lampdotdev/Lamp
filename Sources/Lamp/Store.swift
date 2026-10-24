@@ -2851,6 +2851,8 @@ final class Store: ObservableObject {
         let line = IPhoneSetupLine.lineText(kind, part: true)
         if kind.target.setup.later != nil {
             if !(logs[wish.id] ?? []).contains(where: { $0.kind == .iphoneSetup && $0.text == line }) { log(wish, .iphoneSetup, line) }
+            // The kind's check opened its setup window: followed through there, the app is added without a click in the chat.
+            IPhoneSetupLine.follow(wish, wanted: kind, part: true)
         } else {
             log(wish, .error, "T\(Parts.name(of: kind).dropFirst()) isn't made yet: \(problem)")
         }
