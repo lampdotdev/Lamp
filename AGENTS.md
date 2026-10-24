@@ -1095,9 +1095,11 @@ for both is shared as a `.lampapp` like any other (the file says what it's made 
 
 ## Wishes of more than one app
 
-A wish can be more than one app made to work together: a TV app with an iPhone app that controls it (`Parts`). Its main
-part is the app at its root, as every wish has; each other part is an app of its own kind in a folder of the wish's
-(`iPhone/`, `Mac/`, `Apple/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
+A wish can be more than one app made to work together: a TV app with an iPhone app that controls it, a Mac app with an
+Android app (`Parts`). The wish is its own thing, apart from its apps: its name, chat, versions and icon are the wish's,
+and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its meta.json; below). One app is at its
+root, as every wish has one; each other part is an app of its own kind in a folder of the wish's
+(`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
 wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat or versions of its own: what's logged
 for it goes to its wish's chat (`Store.log`), and the wish's history keeps its folder. No app of a wish comes first
@@ -1107,7 +1109,7 @@ reaches every app of the wish (`Store.iconToParts`). Its `realDir` takes the wis
 told where its folder is when it's installed (`folder` in `Template.installValues`, read by `LampInstall.app`), since its
 id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
 scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
-never kept in a list beside them, so a rename, an Undo or a restored version can't part a wish from its
+never from the wish's list, so a rename, an Undo or a restored version can't part a wish from its
 apps, and every restore takes them in again at once (`Store.followRestored`, comparing folders and kinds,
 `Parts.match`: a part the version doesn't have is quit and then forgotten, one the person keeps open over unsaved work
 stays listed until it's closed, and one it brings back or changes is listed again). A wish's name is in its meta.json,
@@ -1131,8 +1133,25 @@ found it). Undo and every restore rebuild each part whose files changed, and a c
 its own so its crash is fixed through the wish (`Store.rebuildParts`); a rename puts the new name in every app's code and
 APP.md. Each app's own menu (Open, Rebuild & Open) is still for that app alone. A copy is found by its install place only
 for an app with a Mac copy there, since a TV wish's Mac app is installed under the wish's name. Which kinds a list
-of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), the kind that leads
-a wish (a TV app) is its main one, and the rest are its parts; Android and device apps still stand alone.
+of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's); no kind has to
+lead: the one that does when it's there (a TV app) is the app at the root, else the first in `Targets.all`'s order (a Mac
+app before an Android app), and the rest are its parts. A device whose integration declares its apps still stands alone.
+An Android part has none of Lamp's building blocks for reaching the wish's other apps, and is told so
+(`Rules.androidPartTalk`).
+
+The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
+what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
+asking for an app and making it loses nothing. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
+which take the app at the root and each part found as made whatever the list says). The apps a wish waits for are made at
+the start of its next turn (`Store.makeWaitingParts`), each tried once rather than at every turn, since the kind's check
+opens its setup window: one this Mac can't build yet keeps what stops it and gets the chat's setup line
+(`IPhoneSetupLine` with `part`, `LogLine.text` "iphone part"), whose setup, once done, clears it and sends the request
+that adds it (`Store.retryWaitingApp`, `Parts.request`); the agent is told what waits at the end of each request
+(`Parts.brief`, once per conversation and when it changes) and never makes one itself. The list follows every change:
+`make_app_for` writes what it asked for, a part taken away or Undone leaves it (`forgetPart`), and the app at the root
+changing kind (`convert`, a restore) takes its place in it. A wish for a device Lamp can't make apps for yet
+(`waitsForDevice`) and one given its kinds in a turn begun without any (`decided`, whose engines' conversations are
+forgotten when that turn ends, or at Lamp's next start) are kept in the meta.json too.
 
 What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
 (`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,

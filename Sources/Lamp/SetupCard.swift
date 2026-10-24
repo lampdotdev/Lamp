@@ -436,22 +436,33 @@ struct DrawIconLine: View {
     }
 }
 
-/// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet. The
-/// button opens the iPhone setup; once it's done, the app is asked to be made for the iPhone as well (or
-/// instead), as the person would ask, so the change goes through the agent like any other.
+/// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet; or one of a
+/// wish's other apps that this Mac can't build yet (`part`: the wish keeps it on its list, `WishApp`). The button opens
+/// the kind's setup; once it's done, the app is asked to be made for the iPhone as well (or instead), or the wish's
+/// other app to be added, as the person would ask, so the change goes through the agent like any other.
 struct IPhoneSetupLine: View {
     let project: LampProject
     let wanted: Platform
+    var part = false
     @ObservedObject private var asked = Asked.shared
     @ObservedObject private var store = Store.shared
+
+    /// The line's text in the chat (`LogLine.text`): the kind wanted, and "part" for one of a wish's other apps.
+    static func lineText(_ kind: Platform, part: Bool) -> String { kind.rawValue + (part ? " part" : "") }
+    /// What a line's text says, as `lineText` wrote it; a kind Lamp no longer has reads as the iPhone's.
+    static func wanted(from text: String) -> (kind: Platform, part: Bool) {
+        let words = text.split(separator: " ")
+        return (words.first.flatMap { Platform(rawValue: String($0)) } ?? .iphone, words.count > 1 && words[1] == "part")
+    }
 
     /// Apps whose setup is under way: one click per app, so a second can't queue the same conversion again.
     /// Once setup is done the conversion is a request of the app's, waiting or running, which keeps the button
     /// off until it ends; an app still only for the Mac then (the turn failed, was stopped or undone) can try
     /// again. Any other turn leaves it on: the line shows during the app's first build, and neither Apple's setup
     /// nor the conversion, which waits its turn, needs that build to be over.
-    static func text(_ app: String, wanted: Platform = .iphone) -> String {
+    static func text(_ app: String, wanted: Platform = .iphone, part: Bool = false) -> String {
         let later = setup(for: wanted)
+        if part { return "\(app) should have \(Parts.name(of: wanted)) too. This Mac needs \(later.needs) to make \(later.apps)." }
         return "\(app) is a Mac app for now. This Mac needs \(later.needs) to make \(later.apps)."
     }
 
@@ -464,13 +475,27 @@ struct IPhoneSetupLine: View {
     }
 
     var body: some View {
-        ChatLook.ActionLine(symbol: Self.setup(for: wanted).symbol, text: Self.text(project.name, wanted: wanted), button: "See What's Needed…",
+        ChatLook.ActionLine(symbol: Self.setup(for: wanted).symbol, text: Self.text(project.name, wanted: wanted, part: part), button: "See What's Needed…",
                             disabled: asked.ids.contains(project.id) || Self.isOff(for: project),
                             action: setUp)
     }
 
-    /// What the button asks of the agent once setup is done, for each kind.
-    static var requests: [String] { Targets.all.compactMap(\.setup.later?.request) }
+    /// What the button asks of the agent once setup is done, for each kind: made for it, or added as the wish's other app.
+    static var requests: [String] { Targets.all.compactMap(\.setup.later?.request) + Parts.partKinds.map(Parts.request(for:)) }
+
+    /// Whether a wish still waits for one of its other apps of this kind: what its line is for.
+    @MainActor static func stillWaits(_ project: LampProject, for kind: Platform) -> Bool {
+        let store = Store.shared
+        return Parts.waiting(in: project, parts: store.parts(of: project)).contains { Parts.group($0.kind) == Parts.group(kind) }
+    }
+
+    /// Whether a line with this text (`lineText`) still has something to offer: the app is still only a Mac app, or
+    /// the wish still waits for the other app the line is about.
+    @MainActor static func shows(_ text: String, for project: LampProject?) -> Bool {
+        let (kind, part) = wanted(from: text)
+        guard let project else { return false }
+        return part ? stillWaits(project, for: kind) : project.platform == .mac
+    }
 
     /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
     /// waiting or running. The in-app chat's line asks the same.
@@ -482,15 +507,18 @@ struct IPhoneSetupLine: View {
     }
 
     private func setUp() {
-        let later = Self.setup(for: wanted), id = project.id
+        let later = Self.setup(for: wanted), id = project.id, part = part, wanted = wanted
         asked.ids.insert(id)
-        // Asked again each time: an app that's gone, or no longer only a Mac app, has nothing to set up for, and the
-        // setup lets go of the request rather than hold up the ones behind it.
-        let stillWanted = { @MainActor in Store.shared.current(project)?.platform == .mac }
+        // Asked again each time: an app that's gone, no longer only a Mac app, or a wish that has the app by now, has
+        // nothing to set up for, and the setup lets go of the request rather than hold up the ones behind it.
+        let stillWanted = { @MainActor in
+            guard let current = Store.shared.current(project) else { return false }
+            return part ? Self.stillWaits(current, for: wanted) : current.platform == .mac
+        }
         later.open(stillWanted, { Asked.shared.ids.remove(id) }) {
             Asked.shared.ids.remove(id)
-            guard let current = Store.shared.current(project), current.platform == .mac else { return }
-            Store.shared.send(later.request, to: current)
+            guard let current = Store.shared.current(project), stillWanted() else { return }
+            if part { Store.shared.retryWaitingApp(wanted, of: current) } else { Store.shared.send(later.request, to: current) }
         }
     }
 }

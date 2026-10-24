@@ -9,9 +9,9 @@ extension Target {
     static let android = Target(
         platform: .android, places: [.android],
         identity: Identity(name: "the Android app", phrase: "an Android app", analytics: "android", made: { _, _ in "Android" },
-                           devices: Words(words: [("android", "\"android\", alone, for an Android phone or tablet", "\"android\" (alone) for an Android phone or tablet")],
+                           devices: Words(words: [("android", "\"android\" for an Android phone or tablet", "\"android\" for an Android phone or tablet")],
                                             hint: "[\"android\"] when they mention Android, a Pixel, a Samsung phone or Google Play",
-                                            claims: { $0 == ["android"] }, alone: true,
+                                            claims: { $0 == ["android"] }, alone: false,
                                             asked: ("android", "for an Android phone", "for Android phones")),
                            tryOnHelp: { _ in "Where it opens: the emulator, or your own Android phone or tablet" },
                            place: { _ in .elsewhere("Android", symbol: "smartphone") }),
@@ -28,7 +28,10 @@ extension Target {
                        sources: { _ in [Template.androidAppFolder, "icon.json"] }, built: "build",
                        builtURL: { $0.dir.appendingPathComponent("app/build/outputs/apk/debug/app-debug.apk") },
                        shareRefusal: nil),
-        part: nil,
+        // Beside another kind's app (a Mac app's Android app, a TV app's), in a Gradle project of its own.
+        part: Part(folder: "Android", family: "android", word: "android", menu: ("Android App", "smartphone"), rules: { Agent.androidPrompt(part: $0) }) { dir, wish in
+            AppFile.read(dir.appendingPathComponent(Template.androidSettingsFile), inFolder: wish, last: 1) != nil
+        },
         setup: Setup(
             // Not asked for, it's a Mac app until Google's tools are here, with the setup a button away; asked for, the
             // setup opens now, since the build can't go on without them.

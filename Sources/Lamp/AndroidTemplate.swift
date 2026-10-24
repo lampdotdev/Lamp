@@ -19,9 +19,12 @@ extension Template {
         }.joined(separator: ".")
     }
 
+    /// Lamp's own Gradle settings file, which marks a folder as an Android project.
+    static let androidSettingsFile = "settings.gradle.kts"
+
     /// Whether an app's folder is an Android project, read off what every version keeps (`platform(fromPackageIn:)`).
     static func isAndroid(_ dir: URL) -> Bool {
-        FileManager.default.fileExists(atPath: dir.appendingPathComponent("settings.gradle.kts").path)
+        FileManager.default.fileExists(atPath: dir.appendingPathComponent(androidSettingsFile).path)
     }
 
     /// Lamp's files for an Android app, written afresh before every build.
@@ -391,12 +394,20 @@ extension Template {
 extension Agent {
     /// The rules for an Android app: the same shape as the Mac's and the iPhone's, said for Kotlin and Compose, with
     /// Lamp's building blocks (LampAI, LampStore, LampAssets) under the names they have in Swift.
-    static func androidPrompt() -> String {
-        let rules = [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
-                     Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
-                     Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(.android)),
-                     Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return (Rules.androidHeader + "\n\nRules:\n" + rules.joined())
+    /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the kind's rules alone, without the ones about
+    /// the wish as a whole, which the wish's own prompt has.
+    static func androidPrompt(part: String? = nil) -> String {
+        let rules = part == nil
+            ? [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
+               Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
+               Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(.android)),
+               Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+            : [Rules.androidEdit, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
+               Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.androidLogs, Rules.androidTry,
+               Rules.androidPartTalk, Skills.index(Skills.offered(.android))]
+        let header = part.map { Rules.partHeader("an Android app (Kotlin and Jetpack Compose, a Gradle project, Android 8.0 and later, Material 3, no Android Studio)", folder: $0) }
+            ?? Rules.androidHeader
+        return (header + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Android")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "an Android phone")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it in the emulator")
@@ -404,6 +415,14 @@ extension Agent {
 }
 
 extension Agent.Rules {
+    /// An Android app has none of Lamp's building blocks for reaching the wish's other apps: said plainly, so the agent
+    /// doesn't write to a library the app doesn't have.
+    static let androidPartTalk = """
+    - This app has no building block of Lamp's for talking to the wish's other apps (the Swift apps' `LampController` \
+    isn't in its kit): what it shares with them, it shares through its own network code or a service of their own, and \
+    only when the person asked for that. Otherwise build it as the wish's app for Android, complete on its own.
+    """
+
     static let androidHeader = """
     You are Lamp's builder agent. The current directory is a standalone Android app in Kotlin and Jetpack Compose \
     (a Gradle project, Android 8.0 and later, Material 3, no Android Studio). Lamp builds it and opens it in the \

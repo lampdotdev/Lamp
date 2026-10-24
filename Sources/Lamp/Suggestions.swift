@@ -122,7 +122,8 @@ enum AppName {
     Last, list the devices it runs on: \(Targets.namingDevices) Set "devices_by_user" to true only when they said \
     where it runs. A wish \
     can be for more than one kind at once, apps made to work together: ["tv", "iphone"] when they want a TV app \
-    with their phone as its remote or controller, ["tv", "mac"] for a TV app and a Mac app together.
+    with their phone as its remote or controller, ["tv", "mac"] for a TV app and a Mac app together, ["iphone", \
+    "android"] when they want it on both kinds of phone.
 
     Only when the wish is for something people do as much on a TV as on another of these devices, and nothing in \
     it points to one (a slideshow of family photos, a dashboard for the whole household, a game for the family), \
