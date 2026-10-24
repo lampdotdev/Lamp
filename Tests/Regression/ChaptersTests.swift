@@ -232,4 +232,50 @@ final class ChaptersTests: XCTestCase {
                                      line(.tool, "write DetailView.swift", part: 1)], details: false)
         XCTAssertEqual(steps.map(\.part), [nil, 0, 1])
     }
+
+    /// A part's steps end where the next part's begin: they're titled then, on their own, as a stretch is once
+    /// something is said after it, so a part's last steps read what they did rather than "6 steps".
+    func testAPartsLastStepsAreTitledWhenTheBuildMovesOn() {
+        let first = line(.tool, "write index.html", part: 0)
+        let lines = [line(.user, "a chore board for the kitchen TV"), first, line(.tool, "write style.css", part: 0),
+                     line(.tool, "write PadView.swift", part: 1)]
+        let groups = StepTitles.closed(in: lines).groups
+        XCTAssertEqual(groups.map(\.id), [first.id])
+        XCTAssertEqual(groups.first?.steps.count, 2)
+    }
+
+    /// Once the run is over, no fold spans two parts: each part's steps are asked about as their own.
+    func testNoFoldSpansTwoParts() {
+        let first = line(.tool, "write index.html", part: 0), second = line(.tool, "write PadView.swift", part: 1)
+        let lines = [line(.user, "a chore board for the kitchen TV"), first, line(.tool, "write style.css", part: 0),
+                     second, line(.tool, "write Player.swift", part: 1), line(.agent, "Chore Board is ready.", part: 1),
+                     line(.summary, "Worked for 1m 2s")]
+        XCTAssertEqual(StepTitles.groups(in: lines).groups.map(\.id), [first.id, second.id])
+    }
+
+    /// A part the build has moved on from shows its last steps by their title and how long they took, as any fold.
+    func testAPartsLastStepsShowTheirTitle() {
+        let start = Date()
+        var first = line(.tool, "write index.html", part: 0)
+        first.at = start
+        first.foldTitle = "Wrote the board's page"
+        let part = [line(.progress, "The board first.", part: 0), first, line(.tool, "write style.css", part: 0)]
+        let items = ChatItem.chapter(part, waiting: nil, ended: start.addingTimeInterval(12))
+        guard case .work(_, let title, let steps) = items.last else { return XCTFail("the part's last steps aren't folded") }
+        XCTAssertEqual(title, "Wrote the board's page · 12 s")
+        XCTAssertEqual(steps.count, 2)
+    }
+
+    /// The steps from before the plan go under the first part, but they're a stretch of their own there, as they were
+    /// titled: the part's last fold is its own steps, under their own title.
+    func testStepsFromBeforeThePlanAreAFoldOfTheirOwn() {
+        var made = line(.tool, "make_app_for"), planned = line(.tool, "plan", part: 0)
+        made.foldTitle = "Made it a TV app"
+        planned.foldTitle = "Wrote the board's page"
+        let part = [made, line(.status, "Chore Board is made for TVs now."), planned, line(.tool, "write index.html", part: 0)]
+        let titles = ChatItem.chapter(part, waiting: nil).compactMap { item -> String? in
+            if case .work(_, let title, _) = item { return title } else { return nil }
+        }
+        XCTAssertEqual(titles.map { $0.components(separatedBy: " · ")[0] }, ["Made it a TV app", "Wrote the board's page"])
+    }
 }

@@ -61,7 +61,8 @@ A capability given to one engine must be given to all of them that can take it, 
   ("Listed the shelf's saved entries · 12 s", `ChatItem.title(of:untitled:)`), by the small model on the route that
   built the turn (`StepTitles`, `AppAI.fastModel`; a turn built on this Mac is titled by the model on this Mac that
   built it, or not at all, whatever key is saved): a stretch of steps is asked about once, in a call of its own, as soon as
-  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`), so the
+  the agent says something after it (a message, a progress line, a question card: `StepTitles.closed(in:turn:)`) or a
+  first build moves on to its next part, so the
   lines are there when the turn ends, and what's left (the steps after the last message, and a stretch whose early call
   failed) in one call after the turn's summary, never waited on. A stretch whose early call is still out then is asked
   for when that call comes to nothing. The call at the end is the last: when it fails, or a title it gives isn't fit to
@@ -92,9 +93,9 @@ A capability given to one engine must be given to all of them that can take it, 
   chat's chapters (`Chapters`, `BuildChapters`), not as a card over it: each part of the agent's plan is a heading with
   its tick and how long it took, with what the agent said during it and its steps, folded, under it; the part going
   on has its steps so far and the live line, as any turn has; the parts still to come wait greyed below, with Lamp's
-  own last one, building and opening it; and a question card comes where it was asked, in its part. A bar above the
-  chat (`ChapterBar`) says where the build is ("Part 3 of 3", a dot for each part), that it waits for an answer, or
-  Ready. Once the app is made the build folds to one line ("Built it in 3 parts · 4 min 29 s") that opens to the
+  own last one, building and opening it; and a question card comes where it was asked, in its part. A part's steps are
+  its own: a stretch of steps ends where the build moves to the next part, as where something is said, and is titled
+  then like any fold (`StepTitles.closed(in:)`), so a part's last steps read what they did, not how many they were. Once the app is made the build folds to one line ("Built it in 3 parts · 4 min 29 s") that opens to the
   parts, with the agent's answer under it; a build that asked on the way, failed or was stopped stays open. Which
   part a line goes under is decided as it's logged (`TurnProgress.chapter(for:)`) from what Lamp is sure of: the plan,
   the files it lists for each part and the files written. A file listed for a later part moves the build on, and so

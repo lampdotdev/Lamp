@@ -429,7 +429,6 @@ enum Gallery {
             let shown = LogLine.visible(lines, details: false)
             let dir = URL(fileURLWithPath: "/nonexistent")
             return AnyView(VStack(spacing: 0) {
-                ChapterBar(title: "Tip Calculator", progress: progress) { BlueprintIcon(letter: "T", size: 20) }
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(Chapters.segments(shown, progress: progress).enumerated()), id: \.offset) { _, segment in
                         switch segment {
@@ -540,10 +539,7 @@ enum Gallery {
             progress.activity = activity
             progress.started = Date().addingTimeInterval(-waited)
             progress.activitySince = progress.started
-            progress.plan = [PlanPart(id: 0, title: "Add a countdown", done: false),
-                             PlanPart(id: 1, title: "See the days left at a glance", done: false)]
             return AnyView(VStack(alignment: .leading, spacing: 16) {
-                ChapterBar(title: "Countdowns", progress: progress) { BlueprintIcon(letter: "C", size: 20) }
                 ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince)
             })
         }

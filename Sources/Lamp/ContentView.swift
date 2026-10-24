@@ -638,10 +638,6 @@ struct ProjectView: View {
 
     private func chrome(_ lines: [LogLine]) -> some View {
         VStack(spacing: 0) {
-            // A new app's first build says where it is, above the chat, whatever is scrolled into view.
-            if !showDetails, let progress = store.progress[project.id], progress.newApp {
-                ChapterBar(title: project.title, progress: progress) { AppIcon(project: project, size: 20) }
-            }
             chat(lines)
             if let approval = store.approvals[project.id] {
                 ChatLook.ApprovalCard(title: approval.title, command: approval.command, explanation: approval.explanation?.look,
