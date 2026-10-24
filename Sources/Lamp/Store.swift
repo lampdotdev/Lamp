@@ -1743,10 +1743,10 @@ final class Store: ObservableObject {
         return chosen
     }
 
-    /// Which of a new wish's kinds goes to its root, where its first app is written: no kind leads, so the first in
-    /// Lamp's order, unless this Mac can't build that one yet and can another (a TV app with an iPhone app, on a Mac
-    /// without Xcode: the TV app is made now and the iPhone app waits with its setup a click away, rather than the
-    /// whole wish waiting). Nil for no kinds.
+    /// Which of a wish's kinds goes to its root when nothing is written for it yet (a new wish, or one still to be told
+    /// what it's for): no kind leads, so the first in Lamp's order, unless this Mac can't build that one yet and can
+    /// another (a TV app with an iPhone app, on a Mac without Xcode: the TV app is made now and the iPhone app waits
+    /// with its setup a click away, rather than the whole wish waiting). Nil for no kinds.
     private func rootKind(among kinds: [Platform], integration: String?) async -> Platform? {
         guard kinds.count > 1 else { return kinds.first }
         for kind in kinds where await kind.target.setup.canChoose(false, integration) { return kind }
@@ -5251,7 +5251,11 @@ final class Store: ObservableObject {
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
         guard let wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
-        guard let kind = Parts.root(among: kinds, for: wish) else {
+        // A wish with nothing written yet (still to be told what it's for) takes as its root the first kind this Mac can
+        // build now, as a new wish does: answered "TV and iPhone" on a Mac without Xcode, it's made as the TV app and
+        // the iPhone app waits with its setup, rather than nothing being made at all.
+        let root = wish.scaffolded ? Parts.root(among: kinds, for: wish) : await rootKind(among: kinds, integration: devices.first)
+        guard let kind = root else {
             let root = Parts.name(of: wish.platform)
             return (400, ["error": "`devices` leaves out \(root), the app at the wish's root, which stays as it is: Lamp never " +
                           "writes an app over again as another kind, and a wish keeps the app it began with. List its devices " +
@@ -5294,8 +5298,8 @@ final class Store: ObservableObject {
                         Parts.pack(for: wanted))
         }
         guard !said.isEmpty else { return (status, answer) }
-        let root = text.hasPrefix("It's already made for") ? "" : text + "\n\n"
-        return (200, ["text": root + said.joined(separator: "\n\n")])
+        let first = text.hasPrefix("It's already made for") ? "" : text + "\n\n"
+        return (200, ["text": first + said.joined(separator: "\n\n")])
     }
 
     /// The kind of the app at the wish's root, as `make_app_for` asked: `convert`, inside its family, and what to do

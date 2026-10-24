@@ -108,9 +108,10 @@ enum Parts {
 
     /// The kind the app at a wish's root is once the wish is for these kinds: the one of its own family (an iPhone app
     /// that's to be for the Mac too is changed in place, keeping its code), or, while nothing is written for it yet (a
-    /// wish still to be told what it's for), the first in Lamp's order. Nil when the list leaves its family out and its
-    /// code is written: no app is ever written over again as another kind, and a wish keeps the app it began with, so
-    /// "tv" added to a Mac wish keeps the Mac app and adds the TV app beside it.
+    /// wish still to be told what it's for), the first in Lamp's order, where `Store.rootKind` prefers one this Mac
+    /// can build now. Nil when the list leaves its family out and its code is written: no app is ever written over
+    /// again as another kind, and a wish keeps the app it began with, so "tv" added to a Mac wish keeps the Mac app
+    /// and adds the TV app beside it.
     static func root(among kinds: [Platform], for wish: LampProject) -> Platform? {
         kinds.first { group($0) == group(wish.platform) } ?? (wish.scaffolded ? nil : kinds.first)
     }

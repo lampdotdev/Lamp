@@ -1182,7 +1182,10 @@ writing an app over again as another kind: the app at the root stays, changed by
 iPhone app that's to be for the Mac too); a part is added (`Store.addPart`), changed in place inside its family, or taken
 away when it's left out. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/. A list that
 leaves the root app's family out is refused with why, and the agent tells the person the wish keeps that app (a wish
-still to be told what it's for has nothing written, so its root takes the first kind listed). Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
+still to be told what it's for has nothing written, so its root takes the first kind listed this Mac can build now,
+`Store.rootKind`, and the rest wait as parts). So a wish read as an Android app and made as a Mac app while Google's tools
+were missing gets, once they're set up, the Android app beside its Mac app (`Target.android.setup.later.request`), not in
+its place. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
 
 A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
 (kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with

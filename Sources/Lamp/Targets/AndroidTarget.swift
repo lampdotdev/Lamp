@@ -45,7 +45,9 @@ extension Target {
                 AndroidSetup.shared.show()
                 return "this Mac can't build it for Android. \(issue.title): \(issue.message) Lamp opened its setup steps."
             },
-            later: SetupLater(symbol: "smartphone", needs: "a few things from Google", apps: "Android apps", request: "Make it an Android app instead.") { _, cancelled, done in
+            // Once the setup is done, the Mac app made meanwhile stays (no app is written over again as another kind):
+            // the Android app goes beside it.
+            later: SetupLater(symbol: "smartphone", needs: "a few things from Google", apps: "Android apps", request: "Make it for Android too, keeping the Mac app.") { _, cancelled, done in
                 AndroidSetup.shared.perform(device: nil, cancelled: cancelled, then: done)
             }))
 }
