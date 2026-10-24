@@ -13901,8 +13901,8 @@ enum Template {
                     fputs("LampWish: \(what) of \(bytes) bytes wasn't set: a value is at most \(Self.valueLimit) bytes as JSON.\n", stderr)
                     return false
                 }
-                guard size(without: key) + key.utf8.count + bytes <= Self.valuesLimit else {
-                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes as JSON. Remove some first.\n", stderr)
+                guard size(without: key) + key.utf8.count + max(32, bytes) <= Self.valuesLimit else {
+                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
                     return false
                 }
                 // Kept as it reads back from JSON, so this app sees what the others will.
@@ -14089,15 +14089,14 @@ enum Template {
 
         private static func json(_ object: Any) -> Data? { try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) }
 
-        /// What a setting takes in the store: its name and value as JSON, or for a removal its name and its time.
-        private static func held(_ key: String, _ entry: Entry) -> Int { key.utf8.count + (entry.value.map(size(of:)) ?? 32) }
+        /// What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+        /// removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+        /// make, removals included, fits in what the others take from it.
+        private static func held(_ key: String, _ entry: Entry) -> Int { key.utf8.count + max(32, entry.value.map(size(of:)) ?? 32) }
 
-        /// The values' size as JSON, names included, leaving one out.
+        /// What the store takes, removals kept included, leaving one name out.
         private func size(without key: String) -> Int {
-            entries.reduce(0) { total, each in
-                guard each.key != key, let value = each.value.value else { return total }
-                return total + each.key.utf8.count + Self.size(of: value)
-            }
+            entries.reduce(0) { $1.key == key ? $0 : $0 + Self.held($1.key, $1.value) }
         }
 
         /// What every setting this app has adds up to, sealed with the wish's key: two apps with the same say the same.

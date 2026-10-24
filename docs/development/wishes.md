@@ -221,7 +221,10 @@ arrives when they meet, and where two apps set one apart, the later wins in both
 to twice a value's limit, since apps measure a little differently, and what the store holds from other apps (names,
 values, and removals at 32 bytes each) to the wish's apps times twice the whole, 64 KB: every app sets at most the whole,
 so everything they set fits and they agree whatever the order, and an app gone wrong or hostile that floods the others
-gets no further. When something needs room the oldest removals kept are let go first; a removal always goes, without
+gets no further. Every name counts its name and its value as JSON or at least 32 bytes, and a removed one 32 bytes for as long as its
+removal is kept, the same when an app sets and when it takes from others: so all an app can make, removals included,
+fits in what the others take from it, and their removals are never let go. When a flood needs room the oldest removals
+kept are let go first; a removal always goes, without
 being kept when nothing older can make room, and only a value that doesn't fit beside the others' values is left. A value set before an app
 first knew its own name takes the name once it does. Nothing here decides what goes in values or who talks to whom: that's
 the agent's, from the `wish-links` skill.

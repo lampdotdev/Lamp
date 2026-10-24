@@ -487,10 +487,10 @@ final class WishPageTests: XCTestCase {
             return context
         }
 
-        // 8,000 values of 1 under five-byte names, then each removed: removals held at 32 bytes pass the bound.
+        // 8,000 values of 1 under five-byte names, more than the bound holds, then each removed: every one taken goes.
         let kept = try joined()
         send(kept, names("k"), stamp: start, value: 1)
-        XCTAssertEqual(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 8000)
+        XCTAssertGreaterThan(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32() ?? 0, 0)
         send(kept, names("k"), stamp: start + 1, value: nil)
         XCTAssertEqual(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 0, "every removal went")
 
@@ -499,6 +499,45 @@ final class WishPageTests: XCTestCase {
         send(crowded, names("r"), stamp: start, value: nil)
         deliver(crowded, ["t": "values", "from": "iphone", "values": ["real": ["v": String(repeating: "x", count: 4000), "c": [start + 1, 0, "iphone"]]]])
         XCTAssertEqual(crowded.evaluateScript("typeof Lamp.wish.values().real")?.toString(), "string", "the value was taken")
+    }
+
+    /// Every name an app sets counts at least 32 bytes against the limit of the whole, and so does a name it removed
+    /// while the removal is kept: so all an app can make, removals included, fits in what another app takes from it,
+    /// no removal there is ever let go, and an older copy from an app that was away can't bring a removed value back.
+    func testAnAppThatWasAwayCantBringBackWhatAnotherRemoved() throws {
+        // As much as one app can set under small names, then all of it removed.
+        let setter = try page()
+        setter.evaluateScript("""
+            var made = [];
+            for (var i = 0; i < 20000; i++) { var k = 'k' + ('0000' + i.toString(36)).slice(-4); if (!Lamp.wish.set(k, 1)) break; made.push(k); }
+            var removed = made.every(function (k) { return Lamp.wish.set(k, null); });
+            """)
+        let made = setter.evaluateScript("made")?.toArray() as? [String] ?? []
+        XCTAssertEqual(setter.evaluateScript("removed")?.toBool(), true, "every removal was made")
+        XCTAssertLessThanOrEqual(made.count * (5 + 32), 65536, "each name counts at least 32 bytes: \(made.count)")
+
+        // Another app of a wish of three had them, took every removal, then hears an older copy from the app that was away.
+        let three: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
+                                      ["peer": "android", "kind": "android", "name": "the Android app"]]
+        let context = try page()
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": three, "peers": []])
+        let start = Int(Date().timeIntervalSince1970 * 1000)
+        func send(from peer: String, stamp: Int, value: Any?) {
+            for chunk in stride(from: 0, to: made.count, by: 1000) {
+                var values: [String: Any] = [:]
+                for (i, name) in made[chunk..<min(chunk + 1000, made.count)].enumerated() {
+                    values[name] = value.map { ["v": $0, "c": [stamp, chunk + i, "iphone"]] } ?? ["c": [stamp, chunk + i, "iphone"]]
+                }
+                deliver(context, ["t": "values", "from": peer, "values": values])
+            }
+        }
+        send(from: "iphone", stamp: start, value: 1)
+        send(from: "iphone", stamp: start + 1, value: nil)
+        send(from: "android", stamp: start, value: 1)
+        XCTAssertEqual(context.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 0, "nothing removed came back")
     }
 
     /// An open app built by another Lamp is shown as out of date, still open, with what to do in words to show: an

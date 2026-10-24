@@ -50,8 +50,10 @@ How to use it well:
 - Draw from `values` and redraw on `onChange`, rather than keeping a copy of your own that can drift. What an app kept
   on its device can reach `values` a moment after it opens (on a TV, once it knows its wish), so never set a default
   because `values` looks empty at launch: show an empty state, and set a value when the person does something.
+- Keep values to a few names you reuse. Each name counts at least 32 bytes against the 64 KB, and a removed one keeps
+  counting for a month, so values aren't a queue of ever-new names: keep such records in the app's own store.
 - Several apps may change the same value while apart, and the later setting wins whole. Where both sides add to one
-  list, give each item its own value ("todo.<id>") or keep each app's part under its own name, so neither undoes the
+  list, give each item of a short list its own value ("todo.<id>") or keep each app's part under its own name, so neither undoes the
   other's.
 - Watch `peers` as it changes (onChange of it, collecting the StateFlow, onPeers), not by looking now and then: an app
   closed and opened again quickly leaves and comes back between two looks.

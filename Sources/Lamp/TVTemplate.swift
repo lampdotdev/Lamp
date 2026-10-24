@@ -1332,12 +1332,14 @@ extension TVTemplate {
           function own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
           function names(o) { var list = []; for (var k in o) if (own(o, k)) list.push(k); list.sort(); return list; }
           function copyOf(v) { return v === undefined ? null : JSON.parse(JSON.stringify(v)); }
-          // What a setting takes in the store: its name and value as JSON, or for a removal its name and its time.
-          function heldBy(key, v) { return bytes(key) + (v === undefined ? 32 : bytes(JSON.stringify(v))); }
-          // The values' size as JSON, names included, leaving one out.
+          // What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+          // removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+          // make, removals included, fits in what the others take from it.
+          function heldBy(key, v) { return bytes(key) + (v === undefined ? 32 : Math.max(32, bytes(JSON.stringify(v)))); }
+          // What the store takes, removals kept included, leaving one name out.
           function sizeWithout(key) {
             var total = 0;
-            for (var k in entries) if (k !== key && entries[k].v !== undefined) total += bytes(k) + bytes(JSON.stringify(entries[k].v));
+            for (var k in entries) if (k !== key) total += heldBy(k, entries[k].v);
             return total;
           }
           function valuesNow() { var o = {}; for (var k in entries) if (entries[k].v !== undefined) o[k] = entries[k].v; return o; }
@@ -1942,7 +1944,7 @@ extension TVTemplate {
                 if (text === undefined) { say(what + ' was not set: it holds nothing JSON can.'); return false; }
                 var b = bytes(text);
                 if (b > VALUE) { say(what + ' of ' + b + ' bytes was not set: a value is at most ' + VALUE + ' bytes as JSON.'); return false; }
-                if (sizeWithout(key) + bytes(key) + b > VALUES) { say(what + ' was not set: the wish\'s values would pass ' + VALUES + ' bytes as JSON. Remove some first.'); return false; }
+                if (sizeWithout(key) + bytes(key) + Math.max(32, b) > VALUES) { say(what + ' was not set: the wish\'s values would pass ' + VALUES + ' bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.'); return false; }
               }
               // Kept as it reads back from JSON, so this page sees what the others will (NaN reads back as null, and
               // so removes it, as it does everywhere).

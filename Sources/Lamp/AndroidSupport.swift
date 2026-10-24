@@ -1232,8 +1232,8 @@ extension Template {
                 if (kept != null) {
                     val size = sizeOf(kept)
                     if (size > valueLimit) { Log.e("LampWish", "$what of $size bytes wasn't set: a value is at most $valueLimit bytes as JSON."); return false }
-                    if (sizeWithout(key) + key.toByteArray().size + size > valuesLimit) {
-                        Log.e("LampWish", "$what wasn't set: the wish's values would pass $valuesLimit bytes as JSON. Remove some first."); return false
+                    if (sizeWithout(key) + key.toByteArray().size + maxOf(32, size) > valuesLimit) {
+                        Log.e("LampWish", "$what wasn't set: the wish's values would pass $valuesLimit bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them."); return false
                     }
                 }
                 val now = System.currentTimeMillis()
@@ -1401,12 +1401,13 @@ extension Template {
         /** A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already. */
         private fun isValueName(key: String): Boolean = key.toByteArray().size in 1..64 && key != "__proto__"
 
-        /** What a setting takes in the store: its name and value as JSON, or for a removal its name and its time. */
-        private fun heldBy(key: String, entry: Entry): Int = key.toByteArray().size + (entry.value?.let(::sizeOf) ?: 32)
+        /** What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+         *  removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+         *  make, removals included, fits in what the others take from it. */
+        private fun heldBy(key: String, entry: Entry): Int = key.toByteArray().size + maxOf(32, entry.value?.let(::sizeOf) ?: 32)
 
-        /** The values' size as JSON, names included, leaving one out. Under `valuesLock`. */
-        private fun sizeWithout(key: String): Int =
-            entries.entries.sumOf { (k, e) -> if (k == key || e.value == null) 0 else k.toByteArray().size + sizeOf(e.value) }
+        /** What the store takes, removals kept included, leaving one name out. Under `valuesLock`. */
+        private fun sizeWithout(key: String): Int = entries.entries.sumOf { (k, e) -> if (k == key) 0 else heldBy(k, e) }
 
         /** Under `valuesLock`. */
         private fun publishValues() { valuesFlow.value = entries.mapNotNull { (k, e) -> e.value?.let { k to copyOf(it)!! } }.toMap() }
