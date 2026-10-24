@@ -111,6 +111,43 @@ final class UndoOfferTests: XCTestCase {
         XCTAssertEqual(offered, chat[0].version, "the older code reads an entry without an amount")
     }
 
+    /// A TV wish with a Mac app beside it: the TV app at the root, the Mac app's Swift in Mac/, a change made to that.
+    private func changedMacPart(to after: String) async throws -> (wish: LampProject, part: LampProject, chat: [LogLine]) {
+        let app = try escape.app()
+        let dir = app.project.dir, fm = FileManager.default
+        try fm.createDirectory(at: dir.appendingPathComponent("Mac"), withIntermediateDirectories: true)
+        try fm.moveItem(at: dir.appendingPathComponent("Sources"), to: dir.appendingPathComponent("Mac/Sources"))
+        try fm.createDirectory(at: dir.appendingPathComponent("Web"), withIntermediateDirectories: true)
+        try "".write(to: dir.appendingPathComponent("Web/lamp.js"), atomically: true, encoding: .utf8)
+        let wish = LampProject(id: "coinflip", name: "Coin Flip", exe: "CoinFlip", dir: dir, platform: .tv)
+        let part = LampProject(id: "coinflip.mac", name: "Coin Flip", exe: "CoinFlip", dir: dir.appendingPathComponent("Mac"),
+                               platform: .mac, partOf: "coinflip")
+        let file = dir.appendingPathComponent("Mac/Sources/App.swift")
+        try before.write(to: file, atomically: true, encoding: .utf8)
+        let first = await Versions.save(wish, message: "Log watering")
+        XCTAssertTrue(first)
+        try after.write(to: file, atomically: true, encoding: .utf8)
+        let second = await Versions.save(wish, message: "Add how much water")
+        XCTAssertTrue(second)
+        var request = LogLine(kind: .user, text: "Let me add how much water, too.")
+        request.version = await Versions.head(wish)
+        return (wish, part, [request, LogLine(kind: .status, text: "Coin Flip is ready")])
+    }
+
+    /// The wish's code is its Mac app's, in Mac/: looked for at the root, where the TV app has none, it was never
+    /// found, and Undo was never offered in a TV wish.
+    func testAChangeToAWishsMacAppIsOfferedWhenItsDataStaysReadable() async throws {
+        let (wish, part, chat) = try await changedMacPart(to: before.replacingOccurrences(of: "var how: Method", with: "var how: Method\n    var millilitres: Int?"))
+        let offered = await UndoOffer.version(for: wish, chat: chat, parts: [part])
+        XCTAssertEqual(offered, chat[0].version, "the Mac app's older code reads entries with an amount")
+    }
+
+    func testAChangeToAWishsMacAppIsNotOfferedWhenItsDataWouldBeLost() async throws {
+        let (wish, part, chat) = try await changedMacPart(to: before.replacingOccurrences(of: "var plant: String", with: "var plantName: String"))
+        let offered = await UndoOffer.version(for: wish, chat: chat, parts: [part])
+        XCTAssertNil(offered, "entries the Mac app saved without `plant` can't be read by its older code")
+    }
+
     /// A turn's end, the chat shown and the sidebar all ask at once: every one of them gets the answer.
     func testLooksAtTheSameTimeAgree() async throws {
         let (app, chat) = try await changed(to: before.replacingOccurrences(of: "var how: Method", with: "var how: Method\n    var millilitres: Int?"))

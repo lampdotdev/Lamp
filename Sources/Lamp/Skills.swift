@@ -19,8 +19,9 @@ enum Skills {
     static let all: [String: Skill] = Bundle.main.resourceURL.map { load(from: $0.appendingPathComponent("skills")) } ?? [:]
 
     /// The skills `read_skill` answers: Lamp's own, and the rules of each kind of app a wish's other part can be
-    /// (`Parts.packs`), which are made from the prompts' own rules rather than kept as files.
-    static var readable: [String: Skill] { all.merging(Parts.packs) { own, _ in own } }
+    /// (`Parts.packs`), which are made from the prompts' own rules rather than kept as files, each for the folder
+    /// the wish's part of that kind is in (`parts`).
+    static func readable(parts: [LampProject] = []) -> [String: Skill] { all.merging(Parts.packs(for: parts)) { own, _ in own } }
 
     /// Every skill in a folder of skill folders, by name. A folder whose SKILL.md can't be read is left out.
     static func load(from folder: URL) -> [String: Skill] {
@@ -79,7 +80,7 @@ enum Skills {
     }
 
     /// `read_skill`, for every engine.
-    static func read(_ arguments: [String: Any], from skills: [String: Skill] = readable) -> (Int, [String: Any]) {
+    static func read(_ arguments: [String: Any], from skills: [String: Skill] = readable()) -> (Int, [String: Any]) {
         let name = (arguments["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         guard let skill = skills[name] else {
             return (400, ["error": "There's no skill called \"\(name)\". The skills are: \(skills.keys.sorted().joined(separator: ", "))."])
@@ -157,7 +158,7 @@ enum Skills {
     }
 
     /// Which version of a skill this is: a change to its instructions in a Lamp update changes it.
-    static func revision(of name: String, in skills: [String: Skill] = readable) -> String {
+    static func revision(of name: String, in skills: [String: Skill] = readable()) -> String {
         SHA256.hash(data: Data((skills[name]?.body ?? "").utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -165,8 +166,10 @@ enum Skills {
     /// once per conversation and when it changes. Nothing when none apply. What's remembered as told includes
     /// each skill's revision, so a conversation that opened a skill before a Lamp update changed it is told to
     /// open it again rather than go on with the copy it has.
-    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, skills: [String: Skill] = readable) -> String {
-        let applying = applying(to: project, parts: Store.shared.parts(of: project))
+    @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, skills: [String: Skill]? = nil) -> String {
+        let parts = Store.shared.parts(of: project)
+        let applying = applying(to: project, parts: parts)
+        let skills = skills ?? readable(parts: parts)
         let now = applying.map { "- \($0.name): \($0.because)" }.joined(separator: "\n")
         let revisions = applying.map { "\($0.name)@\(revision(of: $0.name, in: skills))" }
         let told = note.lastTold(for: project, engine: engine, session: session)

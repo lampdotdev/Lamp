@@ -257,7 +257,8 @@ A capability given to one engine must be given to all of them that can take it, 
   Undo would take back just this change, and when the older code can still read what the newer saves: the compiler's
   layout of each type with coding keys (`LiveReload.layout` with raw values) is compared by the keys and values
   actually written: a removed, renamed or retyped required field, a retyped optional one, or an enum value the older
-  code doesn't know hides it. Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
+  code doesn't know hides it. In a wish of several apps every Swift app of it is compared, each in its own folder, since
+  Undo takes the whole wish back. Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
   (`DataSnapshots`, beside the app's own once-a-launch copies).
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
@@ -1063,7 +1064,7 @@ that, and such a page can't reach the relay, which speaks plain ws.
 
 ## Apps for both the Mac and the iPhone
 
-An app can be made for both (`Platform.universal`, the "Mac, iPhone & iPad" choice beside Mac and iPhone & iPad), as
+An app can be made for both (`Platform.universal`: the devices `mac` and `iphone` together, from the naming call or `make_app_for`), as
 Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
 one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
 app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
@@ -1134,12 +1135,13 @@ a wish (a TV app) is its main one, and the rest are its parts; Android and devic
 
 What the agent knows follows the parts. The wish's prompt is its main kind's, with one rule naming the other parts
 (`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,
-`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole), named
+`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole, written
+for the folder the wish's part is in, since an iPhone app made for the Mac too stays in iPhone/), named
 with the request while the wish has that part (`Skills.applying`, so a compacted conversation is told again), and given
 whole in `make_app_for`'s reply when the part is added. So a conversation never carries the rules of a kind its wish
 doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), and run under the wish's turn
 (`Store.underTurn`). `make_app_for` takes the whole list: the main kind is changed by `convert` as before, a part is added
-(`Store.addPart`), changed in place, or taken away. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all (`Store.openWish`, `quitWish`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
+(`Store.addPart`), changed in place, or taken away. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
 
 A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
 (kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with

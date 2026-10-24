@@ -121,17 +121,20 @@ enum Parts {
 
     /// The rules for a part of each kind, as skills: the kind's own rules, for the files in its folder, without the
     /// ones about the wish as a whole, which the wish's prompt has. Made when asked, since some follow Lamp's settings.
-    static var packs: [String: Skills.Skill] {
+    /// A part the wish has (`parts`) is told of its own folder: an iPhone app made for the Mac too stays in iPhone/,
+    /// not in the Apple/ an app for both is added in.
+    static func packs(for parts: [LampProject] = []) -> [String: Skills.Skill] {
         var skills: [String: Skills.Skill] = [:]
         for kind in partKinds {
             let skill = skill(for: kind)
-            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside its main app, in \(folder(for: kind))/: how it's written, built, tried and how it talks to the rest.",
-                                        body: pack(for: kind))
+            let folder = parts.first { $0.platform == kind }?.dir.lastPathComponent ?? folder(for: kind)
+            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside its main app, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
+                                        body: pack(for: kind, in: folder))
         }
         return skills
     }
 
-    static func pack(for kind: Platform) -> String { kind.target.part?.rules(folder(for: kind)) ?? "" }
+    static func pack(for kind: Platform, in folder: String? = nil) -> String { kind.target.part?.rules(folder ?? self.folder(for: kind)) ?? "" }
 
     /// The rule the wish's own prompt gets when it has other parts: what they are, where, how to reach each with the
     /// tools, and to open each one's rules before changing it.

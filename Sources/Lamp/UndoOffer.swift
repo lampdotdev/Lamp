@@ -6,15 +6,16 @@ import Foundation
 /// is left unsaved. And only when the app's saved data stays readable after it: Undo puts the code back, never
 /// the data, so code that can't read what the change saved would find it missing.
 enum UndoOffer {
-    /// The version the latest request made, when Undo Last Change can be offered under it.
-    static func version(for project: LampProject, chat: [LogLine]) async -> String? {
+    /// The version the latest request made, when Undo Last Change can be offered under it. `parts` are the wish's
+    /// other apps, whose code the version holds too.
+    static func version(for project: LampProject, chat: [LogLine], parts: [LampProject] = []) async -> String? {
         guard let made = chat.last(where: { $0.kind == .user })?.version else { return nil }
         let versions = await Versions.list(project)
         guard versions.first?.id == made, let (undoing, target) = Versions.undoTarget(in: versions), undoing.id == made,
               // Not the first build: going back to the empty app isn't taking back a change.
               target.message != "Scaffold",
               await !Versions.hasUnsavedChanges(project),
-              await keepsSavedDataReadable(project, from: target.id, to: made) else { return nil }
+              await keepsSavedDataReadable(project, parts: parts, from: target.id, to: made) else { return nil }
         return made
     }
 
@@ -27,11 +28,12 @@ enum UndoOffer {
     /// Whether the code of `older` can still read whatever the code of `newer` saves. Worked out from what the
     /// compiler says each saved type holds (`LiveReload.layout`), not from the code's text. Not known (the code
     /// doesn't compile here) counts as no: the offer is left to the toolbar's Undo, which asks nothing. Only a
-    /// known answer is kept, so a look that failed is made again next time.
-    @MainActor static func keepsSavedDataReadable(_ project: LampProject, from older: String, to newer: String) async -> Bool {
+    /// known answer is kept, so a look that failed is made again next time. Undo takes the whole wish back, so
+    /// every Swift app of it (the one at its root and each of `parts`) has to keep reading what it saved.
+    @MainActor static func keepsSavedDataReadable(_ project: LampProject, parts: [LampProject] = [], from older: String, to newer: String) async -> Bool {
         let key = project.dir.path + "\n" + older + ">" + newer
         if let answer = known[key] { return answer }
-        let look = looking[key] ?? Task { await findOut(project, from: older, to: newer) }
+        let look = looking[key] ?? Task { await findOut(project, parts: parts, from: older, to: newer) }
         looking[key] = look
         let answer = await look.value
         looking[key] = nil
@@ -39,31 +41,51 @@ enum UndoOffer {
         return answer ?? false
     }
 
-    private static func findOut(_ project: LampProject, from older: String, to newer: String) async -> Bool? {
+    private static func findOut(_ project: LampProject, parts: [LampProject], from older: String, to newer: String) async -> Bool? {
         let env = ["LAMP_OLDER": older, "LAMP_NEWER": newer]
         var changed = ""
         guard await Versions.git("git diff --name-only \"$LAMP_OLDER\" \"$LAMP_NEWER\" -- '*.swift'", cwd: project.dir, env: env,
-                                 onLine: { changed += $0 }) == 0 else { return nil }
-        // A change to pictures, settings or anything but code leaves what the app saves as it was.
-        if changed.trimmed.isEmpty { return true }
+                                 onLine: { changed += $0 + "\n" }) == 0 else { return nil }
+        let files = changed.components(separatedBy: .newlines).map(\.trimmed).filter { !$0.isEmpty }
+        // Each app's own files: a part's under its folder, the root's everywhere else.
+        let folders = parts.map { $0.dir.lastPathComponent + "/" }
+        for app in [project] + parts where app.platform.target.recipe.language == .swift {
+            let prefix = app.isPart ? app.dir.lastPathComponent + "/" : ""
+            let own = files.filter { prefix.isEmpty ? !folders.contains(where: $0.hasPrefix) : $0.hasPrefix(prefix) }
+            // A change to pictures, settings or anything but code leaves what the app saves as it was.
+            if own.isEmpty { continue }
+            guard let readable = await readable(app, in: project, prefix: prefix, env: env) else { return nil }
+            if !readable { return false }
+        }
+        return true
+    }
+
+    /// Whether one app of the wish, in `prefix` of its folder, reads with its older code what its newer code saves.
+    /// An app one side doesn't have (added or taken away by the change) has nothing saved by the other to read.
+    private static func readable(_ app: LampProject, in project: LampProject, prefix: String, env: [String: String]) async -> Bool? {
+        for version in ["$LAMP_OLDER", "$LAMP_NEWER"] {
+            if await Versions.git("git cat-file -e \"\(version):\(prefix)Sources\"", cwd: project.dir, env: env) != 0 { return true }
+        }
         // Both versions' code as saved, each in a folder of its own and laid out as the app's is, so the compiler
-        // reads them the same way. Not the app's own Sources: a turn may be writing there by now.
+        // reads them the same way. Not the app's own Sources: a turn may be writing there by now. Inside the app's
+        // own folder, the only one its compile's sandbox opens.
         let place = ".lamp/runtime/undo-check-" + UUID().uuidString
-        let folder = project.dir.appendingPathComponent(place)
+        let folder = app.dir.appendingPathComponent(place)
         defer { try? FileManager.default.removeItem(at: folder) }
         let widget = Template.widgetFolder + "/" + Template.sharedWidgetFolder
         let extract = ["older", "newer"].map { side in
             let version = side == "older" ? "$LAMP_OLDER" : "$LAMP_NEWER"
+            let tree = prefix.isEmpty ? "\"\(version)\"" : "\"\(version):\(prefix.dropLast())\""
             return """
-                mkdir -p '\(place)/\(side)' && git archive "\(version)" Sources | tar -x -C '\(place)/\(side)' && \
-                { ! git cat-file -e "\(version):\(widget)" 2>/dev/null || git archive "\(version)" '\(widget)' | tar -x -C '\(place)/\(side)'; }
+                mkdir -p '\(prefix)\(place)/\(side)' && git archive \(tree) Sources | tar -x -C '\(prefix)\(place)/\(side)' && \
+                { ! git cat-file -e "\(version):\(prefix)\(widget)" 2>/dev/null || git archive \(tree) '\(widget)' | tar -x -C '\(prefix)\(place)/\(side)'; }
                 """
         }.joined(separator: " && ")
         guard await Versions.git(extract, cwd: project.dir, env: env) == 0 else { return nil }
-        let ios = project.platform == .iphone
-        async let before = LiveReload.layout(of: folder.appendingPathComponent("older/Sources"), in: project, files: nil, module: project.exe, macOS: Template.macMinimum(project),
+        let ios = app.platform == .iphone
+        async let before = LiveReload.layout(of: folder.appendingPathComponent("older/Sources"), in: app, files: nil, module: app.exe, macOS: Template.macMinimum(app),
                                              ios: ios, rawValues: true)
-        async let after = LiveReload.layout(of: folder.appendingPathComponent("newer/Sources"), in: project, files: nil, module: project.exe, macOS: Template.macMinimum(project),
+        async let after = LiveReload.layout(of: folder.appendingPathComponent("newer/Sources"), in: app, files: nil, module: app.exe, macOS: Template.macMinimum(app),
                                             ios: ios, rawValues: true)
         guard let before = await before, let after = await after else { return nil }
         return readable(before: before, after: after)

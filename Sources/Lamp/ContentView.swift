@@ -850,7 +850,7 @@ struct ProjectView: View {
             // One button: Play while the app is closed, Stop while it's open, where Try On points (an app for
             // both can be open on this Mac and in a simulator at once). A wish of several apps plays and stops them
             // all; each app's own menu uses or quits it alone.
-            if store.isOpen(project) {
+            if store.isWishOpen(project) {
                 Button { Task { await store.quitWish(project) } } label: {
                     Label("Quit", systemImage: "stop.fill")
                 }
