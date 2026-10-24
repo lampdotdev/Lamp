@@ -1183,12 +1183,15 @@ extension TVTemplate {
             }
             apps = next;
             for (var id in directs) if (directs[id].ready) any = true;
+            // This page's own state first: code that hears an app arrive in peers sends to it at once, and must find this
+            // page connected when it does.
+            if (started) {
+              var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
+              if (s === 'connected') away = false;
+              if (s !== state || reason !== null) setState(s);
+            }
             var said = JSON.stringify(openOnes());
             if (said !== lastOpen) { lastOpen = said; emit('peers', [openOnes()]); }
-            if (!started) return;
-            var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
-            if (s === 'connected') away = false;
-            if (s !== state || reason !== null) setState(s);
           }
           function setRoster(list) {
             var given = [];

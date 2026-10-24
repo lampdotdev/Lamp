@@ -13878,7 +13878,7 @@ enum Template {
         /// The state and the list of apps, from what each way says now.
         private func rebuild() {
             let now = Date()
-            apps = roster.filter { $0.id != me }.map { app in
+            let list = roster.filter { $0.id != me }.map { app in
                 let direct = directs[app.id].flatMap { $0.ready ? $0 : nil }
                 let relayed = relayPresent[app.id]
                 let open = !closed && (direct != nil || relayed != nil)
@@ -13895,8 +13895,11 @@ enum Template {
             }
             let next: State = closed ? .ended : alone ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected : lampAway ? .away : .connecting
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
             if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
             if next == .connected { saidAway = false }
+            apps = list
         }
 
         private func setRoster(_ list: [[String: Any]]) {
