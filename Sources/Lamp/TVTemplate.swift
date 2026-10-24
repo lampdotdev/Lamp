@@ -1191,7 +1191,11 @@ extension TVTemplate {
                 if (answer.status !== 200) throw new Error(UNCLAIMED);
                 var theirs = C.fromBase64(answer.reply['public']), nonce = C.fromBase64(answer.reply.nonce), box = C.fromBase64(answer.reply.sealed);
                 if (!theirs || theirs.length !== 32 || !nonce || nonce.length !== 12 || !box) throw new Error(UNCLAIMED);
-                var shared = C.x25519(secret, theirs), sealing = C.derive('lamp-wish claim', shared, C.concat([theirs, ours]));
+                var shared = C.x25519(secret, theirs), zero = 0;
+                // A key that makes every secret zero (a low-order point) seals nothing anyone should trust.
+                for (var z = 0; z < shared.length; z++) zero |= shared[z];
+                if (!zero) throw new Error(UNCLAIMED);
+                var sealing = C.derive('lamp-wish claim', shared, C.concat([theirs, ours]));
                 var unsealed = C.open(sealing, nonce, box);
                 if (!unsealed || unsealed.length !== 32) throw new Error(UNCLAIMED);
                 storage('install.wish', { app: installed.app, key: C.toBase64(unsealed) });

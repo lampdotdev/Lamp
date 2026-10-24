@@ -1208,8 +1208,13 @@ device and only by a way nobody on the network can read: the installed Mac app's
 Lamp's own folder (`LampWishKey`, `Template.wishKeyPlistLines`), the simulator app's own folder after its install
 (`Simulator.tellApp`), the Android app's storage through adb with its token (`androidInstallValues`), the TV preview's
 page through its bridge (`/app/wish` with `preview`), and a TV over the network only sealed to an X25519 key pair the page
-just made (`/app/wish/claim`, `WishRooms.claim`), inside the claim Lamp opened for that TV's address as it put the app
-there, as a TV's token is claimed. Over legacy `adb tcpip` (no TLS) the key crosses in clear with the token. An app proves
+just made (`/app/wish/claim`, `WishRooms.claim`). That request is plain HTTP, so someone on the network between the TV and
+this Mac could put their own public half in it and have the key sealed to them; only an encrypted link to the gateway would
+stop that, so the claim is open as little as it can be (`WishClaims`, apart from the token's half-hour claim): from that
+TV's address, two minutes from when Lamp starts putting the app there and two more from when it's open unless a claim was
+answered meanwhile, and spent by the first claim answered, which in a normal install is the page's own a moment after it
+opens. A request that fails spends nothing, so the page's tries again still work. Over legacy `adb tcpip` (no TLS) the key
+crosses in clear with the token. An app proves
 it holds the key in a handshake that sends nothing anyone could use again (`WishChannel`, LampRelayKit): its hello names
 the wish by a tag only the key makes and itself by peer id, with a nonce; the relay answers with its own nonce and an HMAC
 proof over both; the app checks it, sends its own, and from then on everything but beats is AES-GCM, sealed each way under

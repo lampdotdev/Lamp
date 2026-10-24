@@ -6931,11 +6931,15 @@ final class Store: ObservableObject {
             // What the staged copy was made from, taken before the upload: an edit meanwhile isn't on the TV.
             let stagedFrom = Runtime.builtFingerprint(project)
             let say: @Sendable (String) -> Void = { [weak self] text in Task { @MainActor in self?.note(text, for: project) } }
-            // The app opened by this install asks for its token, which isn't in its package.
+            // The app opened by this install asks for its token, which isn't in its package, and a wish's app for its
+            // wish's key: that claim is open again once the app is open, since an install can take longer than it lasts.
             DeviceSupport.Claims.shared.open(project.id, from: record.address)
+            let claimsKey = Template.talksToOtherApps(project)
+            if claimsKey { WishClaims.shared.open(project.id, from: record.address) }
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
                 else { try await TVs.installLG(project, staged: staged, on: record, say: say) }
+                if claimsKey { WishClaims.shared.renew(project.id, from: record.address) }
                 Runtime.putOnTV(project, tv: record.id, staged: stagedFrom)
                 log(project, .status, "\(project.name) is open on \(record.name).")
                 return nil
@@ -9192,16 +9196,16 @@ final class Store: ObservableObject {
             return (200, ["token": Template.token(for: project), "routes": DeviceSupport.installValues(for: project)["routes"] ?? []])
         }
         // A wish's TV app Lamp has just put on a TV asking for its wish's key, sealed to the key pair its page just made
-        // (`WishRooms.claim`): answered as the token is, only from that TV's address within the claim's half hour.
+        // (`WishRooms.claim`): answered only from that TV's address, for minutes after Lamp put the app there, and once.
         if route == "/app/wish/claim" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-            guard request.fromNetwork, let id = body["app"] as? String, DeviceSupport.Claims.shared.take(id, from: request.peerAddress),
+            guard request.fromNetwork, let id = body["app"] as? String,
                   let project = projects.first(where: { $0.id == id }), Template.talksToOtherApps(project),
                   let publicKey = (body["public"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
                 return (403, ["error": "Lamp didn't just put this app here."])
             }
             let wish = wish(of: project)
-            return WishRooms.claim(for: wish, apps: apps(of: wish), publicKey: publicKey)
+            return WishRooms.claim(for: project, wish: wish, apps: apps(of: wish), publicKey: publicKey, from: request.peerAddress)
         }
         // pi collecting its provider's key (Agent.keyCommand). The ticket is the whole credential, and it's
         // good once.

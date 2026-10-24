@@ -110,6 +110,43 @@ final class WishChannelTests: XCTestCase {
         XCTAssertEqual(WishRooms.claim(for: wish, apps: [wish], publicKey: ours).1["alone"] as? Bool, true)
     }
 
+    /// The claim of a wish's key is answered once, for minutes: someone on the network who rewrites the page's public
+    /// half after that, or once the page has its key, gets nothing. A request that failed spends nothing, so the page's
+    /// tries again still get the key, and opening the app again on the TV doesn't open the claim again.
+    @MainActor
+    func testAWishsKeyIsClaimedOnceAndForMinutes() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wish-keys-\(UUID().uuidString)")
+        let kept = WishKeys.folder
+        WishKeys.folder = folder
+        defer { WishKeys.folder = kept; try? FileManager.default.removeItem(at: folder) }
+        let wish = LampProject(id: "scoreboard", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard"), platform: .tv)
+        let phone = LampProject(id: "scoreboard.iphone", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard/iPhone"), platform: .iphone, partOf: "scoreboard")
+        let tv = "192.168.1.30"
+        func claim(_ key: Data, from address: String = tv) -> Int {
+            WishRooms.claim(for: wish, wish: wish, apps: [wish, phone], publicKey: key, from: address).0
+        }
+        let page = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        let theirs = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+
+        // Lamp puts the app on the TV: a try that failed on the way, then the page's own claim.
+        WishClaims.shared.open(wish.id, from: tv)
+        XCTAssertEqual(claim(page, from: "192.168.1.99"), 403, "only from the TV")
+        XCTAssertEqual(claim(Data(count: 32)), 400, "a key that can't be used spends nothing")
+        XCTAssertEqual(claim(page), 200)
+        XCTAssertEqual(claim(theirs), 403, "a public half put in the page's place after it gets nothing")
+        WishClaims.shared.renew(wish.id, from: tv)
+        XCTAssertEqual(claim(theirs), 403, "the app opening on the TV after its claim doesn't open it again")
+
+        // A new install opens it again; past its minutes it's closed, answered or not.
+        let window = WishClaims.window
+        WishClaims.window = 0.2
+        defer { WishClaims.window = window }
+        WishClaims.shared.open(wish.id, from: tv)
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(claim(theirs), 403, "minutes, not half an hour")
+        XCTAssertLessThanOrEqual(window, 5 * 60)
+    }
+
     /// The wish's key is made once, kept where only this Mac's account reads it, the same for every app of the wish and
     /// through a rename, different for another wish, and gone with the wish.
     func testAWishsKeyIsKeptByItsInstanceAndForgottenWithIt() throws {
