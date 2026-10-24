@@ -269,7 +269,7 @@ enum Connectors {
 
     /// `connectors`: with no service, the list; with one, how to build on it.
     static func answer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
-        let mac = project.platform.hasMac
+        let mac = project.hasMac
         guard let asked = (arguments["service"] as? String)?.trimmingCharacters(in: .whitespaces).lowercased(), !asked.isEmpty else {
             return (200, ["text": list(mac: mac)])
         }
@@ -278,7 +278,7 @@ enum Connectors {
         guard let connector = all.first(where: { plain($0.id) == plain(asked) || plain($0.name) == plain(asked) }) else {
             return (200, ["text": "No connector is called \(asked). " + list(mac: mac)])
         }
-        return (200, ["text": guide(connector, mac: mac, phone: project.platform.hasIOS)])
+        return (200, ["text": guide(connector, mac: mac, phone: project.hasIOS)])
     }
 
     static func list(mac: Bool) -> String {

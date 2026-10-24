@@ -1175,7 +1175,7 @@ struct WishDrag: NSViewRepresentable {
         private func begin(from event: NSEvent) {
             let writer: NSPasteboardWriting
             if store.canShare(project) {
-                let installed = project.platform.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
+                let installed = project.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
                     ? project.installedURL : nil
                 let payload = Payload(project: project, app: installed) { [weak self] in self?.publish() }
                 self.payload = payload

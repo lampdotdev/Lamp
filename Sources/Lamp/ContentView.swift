@@ -1199,7 +1199,7 @@ struct AppInfoView: View {
             SidebarInfoRow(label: title, value: resolution.tier == .none ? nil : short(resolution.answer ?? ""))
         }
         var ai = Capability.allCases.filter { $0 != .browser }.map { answer($0.title, AppAI.resolve($0, for: project)) }
-        if project.platform.hasIOS {
+        if project.hasIOS {
             // Away from the Mac a phone answers only through the OpenRouter key: without one, one row says so.
             if Provider.hasKey {
                 ai += Capability.allCases.filter { $0 != .browser }.map { answer("\($0.title) away", AppAI.resolve($0, for: project, in: .phoneAway)) }
@@ -1870,7 +1870,7 @@ private struct TryOnChoices: View {
         let missing = project.platform.target.places.filter { !places.contains($0) }
         if !missing.isEmpty {
             Divider()
-            let verb = project.platform == .screen ? "Show" : "Play"
+            let verb = project.platform == .tv ? "Show" : "Play"
             ForEach(missing, id: \.self) { place in
                 Button("\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too") { store.addPlace(project, place) }
             }
@@ -1940,8 +1940,8 @@ private struct TryOnChoices: View {
                 .pickerStyle(.inline)
             }
         }
-        // A game or a screen goes on the simulators: Lamp doesn't put one on the person's own iPhone or iPad yet.
-        if !project.platform.addsPlaces {
+        // A C++ game goes on the simulators: Lamp doesn't build its library for the person's own iPhone or iPad yet.
+        if !(GameKit.isGame(project) && GameKit.engine(project) == .native) {
         do {
             // The person's phones, each by its exact model, and what it still needs before Play can put the app
             // on it. A watch isn't a place of its own: its app goes with the iPhone's, so it's listed in Settings.

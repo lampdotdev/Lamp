@@ -364,7 +364,7 @@ extension Store {
     /// The app is open on this Mac, where it can be pointed at again.
     func canPoint(in project: LampProject) -> Bool {
         // Only a Mac copy: an app for both may be open elsewhere too.
-        guard project.platform.hasMac else { return false }
-        return project.platform.hasIOS ? openOnMac.contains(project.id) : isOpen(project)
+        guard project.hasMac else { return false }
+        return project.hasIOS ? openOnMac.contains(project.id) : isOpen(project)
     }
 }

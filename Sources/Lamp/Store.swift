@@ -136,6 +136,12 @@ struct LampProject: Identifiable, Hashable {
         let given = (places ?? start).filter(target.places.contains)
         return given.isEmpty ? start : given
     }
+    /// What the app can have, as its kind's `hasMac`…: a kind whose places are given one at a time has only those it
+    /// was given, so a game played on the Mac alone asks nothing of iOS, and a TV app shown on its TV alone is no Mac app.
+    var hasMac: Bool { platform.addsPlaces ? openPlaces.contains(.mac) : platform.hasMac }
+    var hasIOS: Bool { platform.addsPlaces ? openPlaces.contains(.ios) : platform.hasIOS }
+    var hasTV: Bool { platform.addsPlaces ? openPlaces.contains(.tv) : platform.hasTV }
+    var hasDevice: Bool { platform.addsPlaces ? openPlaces.contains(.device) : platform.hasDevice }
     /// Where the app is built for and opened now.
     var destination: Destination {
         let places = openPlaces
@@ -1788,9 +1794,13 @@ final class Store: ObservableObject {
             setKind(project, kind, places: places, engine: engine)
             guard let chosen = current(project) else { return project }
             let elsewhere = chosen.openPlaces.filter { $0 != .mac }
-            let (what, verb) = kind == .screen ? ("a screen", "show") : ("a game", "play")
-            log(chosen, .status, elsewhere.isEmpty ? "Making this as \(what) for your Mac."
-                : "Making this as \(what) for your Mac, to \(verb) on \(GameKit.spoken(elsewhere)) too.")
+            let (what, verb) = kind == .tv ? ("a screen", "show") : ("a game", "play")
+            if !chosen.openPlaces.contains(.mac) {
+                log(chosen, .status, "Making this for \(GameKit.spoken(chosen.openPlaces)).")
+            } else {
+                log(chosen, .status, elsewhere.isEmpty ? "Making this as \(what) for your Mac."
+                    : "Making this as \(what) for your Mac, to \(verb) on \(GameKit.spoken(elsewhere)) too.")
+            }
             return chosen
         }
         // Not asked for and not buildable here yet: a Mac app, with the setup a button away (the kind's own check).
@@ -1887,10 +1897,10 @@ final class Store: ObservableObject {
         if let wish = part.partOf.flatMap({ id in projects.first { $0.id == id } }), fm.fileExists(atPath: wish.dir.path) {
             setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(part.platform) })
         }
-        if part.platform.hasMac {
+        if part.hasMac {
             await WidgetProcess.end(for: part)
             // Installed under the wish's name, which the wish's own app could only share were it a Mac app too.
-            let shared = projects.contains { $0.id != part.id && $0.platform.hasMac && $0.installedURL == part.installedURL }
+            let shared = projects.contains { $0.id != part.id && $0.hasMac && $0.installedURL == part.installedURL }
             if !shared, fm.fileExists(atPath: part.installedURL.path) { try? fm.trashItem(at: part.installedURL, resultingItemURL: nil) }
         }
         try? fm.removeItem(at: Devices.buildFolder(for: part))
@@ -1952,7 +1962,7 @@ final class Store: ObservableObject {
         let moving = project.platform.choosesPlace && project.destination != .ios
         let newSimulator = simulator ?? project.simulator
         let otherSimulator = newSimulator != project.simulator
-        guard project.platform.hasIOS, project.device != udid || project.family != family || moving || otherSimulator,
+        guard project.hasIOS, project.device != udid || project.family != family || moving || otherSimulator,
               begin(project) != nil else { return }
         clearPhoneRetry(project)
         var changed = project
@@ -2123,10 +2133,16 @@ final class Store: ObservableObject {
     func setPlaces(_ project: LampProject, _ wanted: [Destination], family: DeviceFamily? = nil) async -> String {
         guard let current = current(project), current.platform.addsPlaces else { return "Lamp can't find the game." }
         let target = current.platform.target
-        let places = target.places.filter { $0 == .mac || wanted.contains($0) }
+        // A game's home is the Mac, kept whatever's asked; a screen is where it's put.
+        let places = target.places.filter { ($0 == .mac && current.platform == .game) || wanted.contains($0) }
+        guard !places.isEmpty else { return "It has to be shown somewhere: name at least one place." }
+        // A TV app with other apps in its wish is the TV's alone: those apps are Mac or iPhone apps of their own.
+        if current.platform == .tv, !current.partFolders.isEmpty || current.isPart, places != [.tv] {
+            return "A TV app that's one of a wish's apps is shown on the TV alone; the wish's other apps are made for the other devices."
+        }
         let added = places.filter { !current.openPlaces.contains($0) }, gone = current.openPlaces.filter { !places.contains($0) }
         guard !added.isEmpty || !gone.isEmpty || family.map({ $0 != current.family }) == true else {
-            return "It's already \(current.platform == .screen ? "shown" : "played") on \(GameKit.spoken(places))."
+            return "It's already \(current.platform == .tv ? "shown" : "played") on \(GameKit.spoken(places))."
         }
         if places.contains(.device), Integrations.integration(GameKit.xbox) == nil { return "This copy of Lamp has no way to reach an Xbox." }
         for place in gone where place == .ios { await quit(current, only: .ios) }
@@ -2143,13 +2159,13 @@ final class Store: ObservableObject {
         } else if family != nil, places.contains(.ios) {
             changed.chosen = .ios
         } else if !places.contains(changed.chosen) {
-            changed.chosen = .mac
+            changed.chosen = places[0]
         }
         do { try Template.saveMeta(changed) } catch { return "Lamp couldn't save the change: \(error.localizedDescription)" }
         projects[index] = changed
         syncLocalNetwork()
         var said: [String] = []
-        let screen = changed.platform == .screen
+        let screen = changed.platform == .tv
         if !added.isEmpty { said.append("\(changed.name) \(screen ? "shows" : "plays") on \(GameKit.spoken(added)) too now.") }
         if !gone.isEmpty { said.append("\(changed.name) isn't \(screen ? "shown" : "played") on \(GameKit.spoken(gone)) any more.") }
         log(changed, .status, said.joined(separator: " "))
@@ -3451,7 +3467,7 @@ final class Store: ObservableObject {
         // By its place only for an app that has a Mac copy there: a TV wish's Mac app is installed under the wish's name.
         return NSWorkspace.shared.runningApplications.filter { app in
             !app.isTerminated && (app.bundleIdentifier == project.bundleID
-                || project.platform.hasMac && app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
+                || project.hasMac && app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
         }
     }
 
@@ -4901,7 +4917,7 @@ final class Store: ObservableObject {
             return (400, ["error": "use_app needs a list of actions."])
         }
         if request["sidebar"] as? Bool == true {
-            guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+            guard BrowserBridge.enabled, project.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
             // The sidebar is the open copy's too, so it's kept from the agent on the same terms as its windows (below).
             if Runtime.holdsBuild(project), isRunning(project) {
                 return held(turn, in: project, note: Runtime.waitsForReload(project) ? reloadNote(for: project) : Self.keptOpenNote, using: true)
@@ -5037,7 +5053,7 @@ final class Store: ObservableObject {
     /// `look_at_app` with `sidebar`: the app is built and opened as for any look, then its sidebar in Chrome is
     /// drawn by Lamp (BrowserPreview) in place of its windows, beside the page the agent names.
     private func lookAtSidebar(_ project: LampProject, page: String?, reopen: Bool = false) async -> (Int, [String: Any]) {
-        guard BrowserBridge.enabled, project.platform.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
+        guard BrowserBridge.enabled, project.hasMac, !project.onIOS else { return (200, ["text": Self.noSidebar]) }
         let window = await look(at: project, reopen: reopen)
         guard window.0 == 200, !macCopies(of: project).isEmpty else { return window }
         // What's open isn't the agent's change (or not the fresh launch it asked for) while it waits for the person:
@@ -5405,7 +5421,10 @@ final class Store: ObservableObject {
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         // A game stays a game: what's listed are the places it's played (the Mac always, its home), which aren't kinds.
-        if let wish = current(project), !wish.isPart, wish.platform.addsPlaces, wish.scaffolded { return await kindPlaces(devices, for: wish) }
+        // A TV app is given places the same way, when the list says it's a screen; else it's the TV app of a wish of
+        // several (an iPhone app beside it), as it always was.
+        if let wish = current(project), !wish.isPart, wish.platform.addsPlaces, wish.scaffolded,
+           wish.platform != .tv || devices.contains("screen") { return await kindPlaces(devices, for: wish) }
         guard let kinds = Parts.kinds(for: devices) else {
             let others = DeviceApps.kinds().map(\.id)
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
@@ -5470,12 +5489,12 @@ final class Store: ObservableObject {
         let kind = game.platform
         let allowed = Set(GameKit.placeWords.filter { $0.value.map(kind.target.places.contains) ?? false }.keys)
         guard words.allSatisfy(allowed.contains) else {
-            let list = kind == .screen ? "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"tv\" and \"xbox-one\""
+            let list = kind == .tv ? "\"screen\" with \"mac\", \"iphone\" or \"ipad\", \"tv\" and \"xbox-one\""
                 : "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"android\" and \"xbox-one\""
-            return (400, ["error": "\(kind == .screen ? "A screen is shown" : "A game is played") on \(list); list those it's to be on. " +
+            return (400, ["error": "\(kind == .tv ? "A screen is shown" : "A game is played") on \(list); list those it's to be on. " +
                           "It can't be made for anything else: tell the person in a sentence that a new wish can be."])
         }
-        if kind == .screen {
+        if kind == .tv {
             let said = await setPlaces(game, GameKit.places(for: words, of: kind), family: words.contains("ipad") && !words.contains("iphone") ? .ipad : nil)
             guard let now = current(game) else { return (404, ["error": "Lamp can't find the screen."]) }
             return (200, ["text": said + " It's the same page everywhere, laid out at 1920x1080 and scaled to each screen, so nothing in Web/ changes for it. " +
@@ -5571,7 +5590,7 @@ final class Store: ObservableObject {
         }
         // The Mac copy's data, from an app for both built before its data had a fixed place (`LampStore.folder`):
         // moved there now, while Lamp still knows the id it was kept under.
-        if current.platform.hasMac {
+        if current.hasMac {
             let support = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
             let fixed = support.appendingPathComponent(Edition.appBundlePrefix + current.id)
             let signed = support.appendingPathComponent(current.bundleID)
@@ -5579,7 +5598,7 @@ final class Store: ObservableObject {
                 try? FileManager.default.moveItem(at: signed, to: fixed)
             }
         }
-        if current.platform.hasMac, kind.hasMac, current.bundleID != changed.bundleID {
+        if current.hasMac, kind.hasMac, current.bundleID != changed.bundleID {
             _ = await Shell.run("/usr/bin/defaults export \"$LAMP_OLD\" - | /usr/bin/defaults import \"$LAMP_NEW\" -", cwd: changed.dir,
                                 env: ["LAMP_OLD": current.bundleID, "LAMP_NEW": changed.bundleID]) { _ in }
         }
@@ -5597,7 +5616,7 @@ final class Store: ObservableObject {
         // before the next version is saved.
         if kind != current.platform, let marker = before.recipe.marker { AppFolder.remove(changed.dir.appendingPathComponent(marker), in: changed.dir) }
         if current.platform == .game, kind != .game { GameKit.remove(from: changed) }
-        if current.platform == .screen, kind != .screen { ScreenKit.remove(from: changed) }
+        if current.platform == .tv, kind != .tv { ScreenKit.remove(from: changed) }
         let (old, new) = (before.recipe.language, after.recipe.language)
         let rewrite = fresh || old == new ? "" : new.rewrite(old.code, old.leftover)
         if undecided {
@@ -5611,14 +5630,14 @@ final class Store: ObservableObject {
     }
 
     /// Whether one of a wish's apps goes on an iPhone, so what it does away from this Mac can be set up.
-    nonisolated static func hasPhoneApp(_ wish: LampProject, parts: [LampProject]) -> Bool { ([wish] + parts).contains { $0.platform.hasIOS } }
+    nonisolated static func hasPhoneApp(_ wish: LampProject, parts: [LampProject]) -> Bool { ([wish] + parts).contains { $0.hasIOS } }
 
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
             return (400, ["error": "`capability` must be text, decisions, pictures or browser."])
         }
-        if capability == .browser && (!BrowserBridge.enabled || !project.platform.hasMac) {
+        if capability == .browser && (!BrowserBridge.enabled || !project.hasMac) {
             return (400, ["error": "A sidebar in Chrome is only for a Mac app, while Apps in Chrome is on in Lamp's Settings → Experimental."])
         }
         let away = arguments["away"] as? Bool == true
@@ -6402,7 +6421,7 @@ final class Store: ObservableObject {
                 return error.localizedDescription
             }
         }
-        let command = universal || game || ScreenKit.isScreen(project) ? "./build.sh \(project.onIOS ? "ios" : project.onAndroid ? "android" : "mac")" : "./build.sh"
+        let command = universal || game || ScreenKit.hostsOnApple(project) ? "./build.sh \(project.onIOS ? "ios" : project.onAndroid ? "android" : "mac")" : "./build.sh"
         // An Android app's build is Gradle's, with Google's tools where Lamp put them (`AndroidTools.environment`).
         var env: [String: String] = universal ? ["LAMP_TEAM": Devices.team]
             : project.onAndroid ? AndroidTools.buildEnvironment.merging(game ? WindowsTools.buildEnvironment : [:]) { $1 }
@@ -7155,7 +7174,7 @@ final class Store: ObservableObject {
         let device = previewDevice(project)
         var summary = "The app is open in the \(device) preview on this Mac."
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
-        let stale = project.platform.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
+        let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
             // A screen not pointed at a TV opens in the preview by itself; its install is its Mac or iPad app's.
             let problem = ScreenKit.isScreen(project) && !project.onTV ? await openDevicePreview(project, folder: TVTemplate.webFolder)
@@ -8274,7 +8293,7 @@ final class Store: ObservableObject {
     private func appEnded(_ app: NSRunningApplication) {
         // By its id first: a wish's Mac app is installed under the wish's name, which its TV app shares.
         guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID })
-                ?? projects.first(where: { $0.platform.hasMac && app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
+                ?? projects.first(where: { $0.hasMac && app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
               !busy.contains(project.id), reloadWatches[project.id] == nil else { return }
         let since = app.launchDate ?? Date().addingTimeInterval(-5)
         Task { [weak self] in
@@ -9226,7 +9245,7 @@ final class Store: ObservableObject {
             refreshOpenApps()
             return true
         }
-        if project.platform.hasIOS, place != .mac {
+        if project.hasIOS, place != .mac {
             if let attached = deviceApps[project.id] {
                 if attached.isRunning { attached.terminate() }
                 deviceApps[project.id] = nil
@@ -9238,7 +9257,7 @@ final class Store: ObservableObject {
             }
             simulatorApps[project.id] = nil
             refreshOpenApps()
-            if !project.platform.hasMac || place == .ios { return true }
+            if !project.hasMac || place == .ios { return true }
         }
         // Nobody is waiting once the turn is stopped or over. Not `stopped`, which the agent's exit clears.
         // A part's work is its wish's turn (`requestOwner`), never one of its own.
@@ -9289,7 +9308,7 @@ final class Store: ObservableObject {
     /// port of its own (`PhoneSites`), opened and closed here too, with the TV preview.
     func syncLocalNetwork() {
         gateway?.setLocalNetwork(projects.contains {
-            (($0.platform.hasIOS || $0.platform.hasAndroid || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
+            (($0.hasIOS || $0.platform.hasAndroid || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
         })
         PhoneSites.sync(projects)
         WishRooms.sync(wishes.map { ($0, apps(of: $0)) })
@@ -9299,7 +9318,7 @@ final class Store: ObservableObject {
     /// can't watch, for as long as it's the TV the app opens on. Lamp serves it so the agent never has to start a
     /// server of its own, which would outlive the app.
     static func servesPhonePage(_ project: LampProject) -> Bool {
-        project.platform.hasTV && (project.device != nil || TVPreview.window(project) != nil) && takesPlayers(project)
+        project.hasTV && (project.device != nil || TVPreview.window(project) != nil) && takesPlayers(project)
     }
 
     /// A TV app's phone page (`TVTemplate.phoneFolder`, as staged): GET /phone/<app>/<file>, from a phone on the
@@ -9469,7 +9488,7 @@ final class Store: ObservableObject {
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
         // One of the wish's other apps asking for its TV app, which is at the wish's root or in its TV/ folder alike: the
         // asker may be a part of a TV wish, or the Mac app at the root of a wish whose TV app is in TV/.
-        if !project.platform.hasTV {
+        if !project.hasTV {
             let wish = wish(of: project)
             guard let tv = Self.tvApp(for: project, among: [wish] + parts(of: wish)) else { return (403, ["error": "This app's wish has no TV app."]) }
             if body["as"] as? String == "listener" {
@@ -9528,9 +9547,9 @@ final class Store: ObservableObject {
     /// The TV app one of a wish's apps joins as a player (`controllerSession`): its wish's, at the root or in TV/ alike,
     /// among the wish's apps (`apps`: the wish and its parts). Nil for an app that isn't of a wish with a TV app.
     nonisolated static func tvApp(for project: LampProject, among apps: [LampProject]) -> LampProject? {
-        guard !project.platform.hasTV else { return nil }
+        guard !project.hasTV else { return nil }
         let wish = project.partOf ?? project.id
-        return apps.first { $0.platform.hasTV && ($0.id == wish || $0.partOf == wish) }
+        return apps.first { $0.hasTV && ($0.id == wish || $0.partOf == wish) }
     }
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or
@@ -9539,13 +9558,13 @@ final class Store: ObservableObject {
     /// Read off the wish itself (its parts as found in its folder), never off the list of apps, which is being set
     /// while Lamp reads its apps again: a game must not end because, for a moment, the list was half made.
     nonisolated static func takesPlayers(_ project: LampProject) -> Bool {
-        project.platform.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart)
+        project.hasTV && (TVs.hasPhonePage(project) || !project.partFolders.isEmpty || project.isPart)
     }
 
     /// Where a TV app's phone page is now (`Lamp.phonePage` in lamp.js, which asks as the page opens and now and then
     /// after): the address its site is listening at, which moves when another program has taken the port it had.
     private func phonePageAddress(for project: LampProject) async -> (Int, [String: Any]) {
-        guard project.platform.hasTV else { return (403, ["error": "Only TV apps have phone pages."]) }
+        guard project.hasTV else { return (403, ["error": "Only TV apps have phone pages."]) }
         guard TVs.hasPhonePage(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
         guard let port = await PhoneSites.ready(project.id) else { return (503, ["error": "Lamp couldn't open the phone page."]) }
@@ -9886,7 +9905,7 @@ final class Store: ObservableObject {
     /// `AppAI.resolve` has them for `.phoneAway`. Only for iPhone apps; a Mac app
     /// or the simulator never needs it, and the key stays in the phone's Keychain, put there by the app itself.
     private func keysForPhone(_ project: LampProject) -> (Int, [String: Any]) {
-        guard project.platform.hasIOS else { return (403, ["error": "Not for this app."]) }
+        guard project.hasIOS else { return (403, ["error": "Not for this app."]) }
         guard AppAI.resolve(.text, for: project, in: .phoneAway).tier != .none, let key = KeyStore.openRouterKey else {
             return (404, ["error": "There's no OpenRouter key to keep."])
         }

@@ -41,16 +41,16 @@ enum Template {
     /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
         try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
-                                             platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
+                                             platform: project.platform, family: project.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform.choosesPlace ? project.chosen : nil,
                                              places: project.platform.addsPlaces ? project.places : nil,
                                              engine: project.platform.addsPlaces ? project.engine : nil,
-                                             simulator: project.platform.hasIOS ? project.simulator : nil,
+                                             simulator: project.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform.hasDevice ? project.integration : nil,
+                                             integration: project.hasDevice ? project.integration : nil,
                                              undecided: project.undecided,
                                              apps: project.apps.isEmpty ? nil : project.apps,
                                              waitsForDevice: project.waitsForDevice ? true : nil,
@@ -144,7 +144,7 @@ enum Template {
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
         // extension's beside them.
-        if project.platform.hasIOS {
+        if project.hasIOS {
             try put(Capabilities.load(project).simulatorEntitlementsPlist(for: project),
                     at: project.dir.appendingPathComponent(".lamp/entitlements.plist"), for: project)
             for (has, suffix) in [(widget, "widget"), (share, "share")] {
@@ -222,7 +222,7 @@ enum Template {
             "sidebarPort": String(sidebarPort(for: project)),
             "sidebarTries": String(sidebarPortTries),
             "sidebarHost": sidebarHost(for: project),
-            "sidebarKey": project.platform.hasMac ? sidebarKey(for: project) : "",
+            "sidebarKey": project.hasMac ? sidebarKey(for: project) : "",
             "sidebarFramer": sidebarFramer,
         ]
     }
@@ -973,7 +973,7 @@ enum Template {
     /// Whether the app has a watch app to build: Swift of the agent's in Watch/, outside Complications/. Only
     /// an app with an iPhone half has one. Asked before every build, as `hasWidget` is.
     static func hasWatch(_ project: LampProject) -> Bool {
-        guard project.platform.hasIOS else { return false }
+        guard project.hasIOS else { return false }
         let folder = project.dir.appendingPathComponent(watchFolder)
         let complications = folder.appendingPathComponent(complicationsFolder).path + "/"
         return swiftFiles(in: folder).contains { !$0.path.hasPrefix(complications) && $0.lastPathComponent != watchSupportFile }
@@ -1697,7 +1697,7 @@ enum Template {
         /// after the id the app is signed with, team and all: containers are global, so one named after
         /// the plain id would be taken by whichever team made an app of that name first.
         func container(for project: LampProject) -> String? {
-            icloud == true && project.platform.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
+            icloud == true && project.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
         }
 
         /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
@@ -1705,11 +1705,11 @@ enum Template {
         /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
         /// differently on each platform.
         func entitlementsPlist(for project: LampProject, platform: Destination = .ios, appGroup: String? = nil) -> String {
-            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS, appGroup: appGroup)
+            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.hasIOS, appGroup: appGroup)
         }
 
         /// Whether the app gets the weather: declared, and signed for a team (an iPhone half).
-        func weather(for project: LampProject) -> Bool { weather == true && project.platform.hasIOS }
+        func weather(for project: LampProject) -> Bool { weather == true && project.hasIOS }
 
         /// The simulator build's entitlements, which build.sh puts in the binary: the iPhone's, with the app's
         /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
@@ -1911,6 +1911,7 @@ enum Template {
         var pbxproj = universal ? universalPbxproj : devicePbxproj
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
+        if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -1961,9 +1962,9 @@ enum Template {
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
         // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
-        let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
+        let secret = folder != nil && !forSigning && project.hasIOS ? phoneSecret(in: dir) : ""
         // The wish's key, for an app with others in its wish, goes the same way and only there.
-        let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        let wish = folder != nil && !forSigning && project.hasIOS ? wishKeyPlistLines(wishKey) : ""
         // An app of a wish of several finds the others, and is found, by the wish's Bonjour type, beside any of its own.
         let background = capabilities.backgroundPlistLine(adding: !wish.isEmpty ? wishServiceType : nil)
         for (path, template) in files {
@@ -1985,6 +1986,29 @@ enum Template {
             let url = dir.appendingPathComponent(path)
             if AppFile.read(url, inFolder: root) != Data(contents.utf8) { try AppFolder.write(contents, to: url, in: root) }
         }
+    }
+
+    /// Whether the app is a page in a web view of its own (a three.js game, a screen), whose Web/ goes into the app.
+    static func showsPage(_ project: LampProject) -> Bool {
+        (GameKit.isGame(project) && GameKit.engine(project) == .web) || ScreenKit.isScreen(project)
+    }
+
+    /// The app's Web/ as a folder in the app beside Assets, where the page's host reads it (`Bundle.main…/Web`).
+    static func withWebFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000001 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000002 /* Web */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000002 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Web; path = ../../Web; sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */,",
+                    "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
     }
 
     /// The project names the app's folders by where it sits inside the app (../../Sources). Written anywhere
@@ -2686,7 +2710,7 @@ enum Template {
     static func writeWidgetSupport(for project: LampProject) throws {
         guard hasWidget(project) else { return }
         // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
-        let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
+        let contents = project.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
         try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 

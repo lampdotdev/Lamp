@@ -204,7 +204,7 @@ struct SetupLater {
 /// Every kind of app Lamp makes, in the order they're listed: to the naming call, in `make_app_for`'s description, and
 /// to a wish still to be told what it's for.
 enum Targets {
-    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .game, .screen, .device]
+    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .game, .device]
     static let named = Dictionary(uniqueKeysWithValues: all.map { ($0.platform.rawValue, $0) })
 
     /// The kind a wish is when nothing says otherwise: a Mac app needs nothing more than Lamp has.

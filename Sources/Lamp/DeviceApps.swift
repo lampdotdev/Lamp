@@ -57,7 +57,7 @@ enum DeviceApps {
     /// The folder a device app's kind previews on this Mac (`app.declared.preview`), checked; nil when it has none.
     static func previewFolder(for project: LampProject) -> String? {
         // A game is looked at in its own preview, which plays it from a script, whatever its engine.
-        guard project.platform.hasDevice, !GameKit.isGame(project), let folder = appKind(for: project)?.declared?.preview,
+        guard project.hasDevice, !GameKit.isGame(project), let folder = appKind(for: project)?.declared?.preview,
               IntegrationCheck.isAppPath(folder) else { return nil }
         return folder
     }

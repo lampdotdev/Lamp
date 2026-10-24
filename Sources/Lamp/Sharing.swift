@@ -216,9 +216,9 @@ enum Sharing {
                                                     scene: root.scene, parts: !parts.isEmpty),
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
-                                    platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
+                                    platform: project.platform, family: project.hasIOS ? project.family : nil,
                                     parts: parts.isEmpty ? nil : parts.map {
-                                        Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.platform.hasIOS ? $0.family : nil)
+                                        Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
                                     }))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 

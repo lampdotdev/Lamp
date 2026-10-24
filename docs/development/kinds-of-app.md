@@ -2,7 +2,7 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
-What an app is for (`Platform`, kept in meta.json as "mac", "iphone", "universal", "android", "tv", "game", "screen", "device") is one
+What an app is for (`Platform`, kept in meta.json as "mac", "iphone", "universal", "android", "tv", "game", "device") is one
 `Target` in `Sources/Lamp/Targets/`, listed in `Targets.all`, made of the pieces that differ from kind to kind: its
 `identity` (its names, the device words it's chosen by, which `Targets` puts together for the naming call,
 `make_app_for` and an undecided wish, Try On's help and the desk's place), its `guidance` (prompt, the rules

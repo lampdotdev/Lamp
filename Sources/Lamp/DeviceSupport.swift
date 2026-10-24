@@ -63,7 +63,7 @@ enum DeviceSupport {
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
-        guard project.platform.hasDevice, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
+        guard project.hasDevice, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
         return support.compactMap { name, path in
             guard let library = Library(rawValue: name), IntegrationCheck.isAppPath(path) else { return nil }
             return (library, path)
@@ -72,8 +72,8 @@ enum DeviceSupport {
 
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        if ScreenKit.isScreen(project) { return ScreenKit.paths }
-        if project.platform.hasTV { return [TVTemplate.supportFile] }
+        if ScreenKit.isScreen(project) { return ScreenKit.paths(for: project) }
+        if project.hasTV { return [TVTemplate.supportFile] }
         // A game's are its kit's, and on the Xbox a three.js game's are the web app's as well.
         if GameKit.isGame(project) { return GameKit.paths(for: project) + (GameKit.engine(project) == .web ? declaredPaths(for: project) : []) }
         return declaredPaths(for: project)
@@ -86,7 +86,7 @@ enum DeviceSupport {
 
     /// The icons a declared kind asks for (`app.declared.icons`), checked: a PNG at a plain path, at a size in pixels.
     static func icons(for project: LampProject) -> [(path: String, width: Int, height: Int)] {
-        guard project.platform.hasDevice, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
+        guard project.hasDevice, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
         return icons.compactMap { path, size in
             guard IntegrationCheck.isAppPath(path), path.lowercased().hasSuffix(".png"), let (width, height) = iconSize(size) else { return nil }
             return (path, width, height)

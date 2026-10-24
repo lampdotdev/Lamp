@@ -26,7 +26,7 @@ enum Sidebar {
 
     /// Whether this app gets the chat: a Mac app with windows (one that is only its widget has none).
     static func applies(to project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
+        project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
     }
 
     /// Puts the extension into a built app, before it's signed. Its program is the same for every app; what
@@ -545,7 +545,7 @@ final class SidebarServer {
                     let placed = Store.shared.placedWidgets.contains(project.id)
                     var card = SidebarLine(id: line.id, kind: .offer, text: WidgetCard.title(project.name), gap: gap)
                     card.symbol = "widget.small"
-                    card.status = project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
+                    card.status = project.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
                     card.done = placed
                     out.append(card)
                 case .reload:

@@ -3,7 +3,8 @@
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
 An app can be made for TVs (`Platform.tv`, chosen when a wish names a TV, the Frame or the living room, or by
-`make_app_for` with "tv" alone). It is a web app, HTML, CSS and JavaScript in `Web/`, the same files for Samsung
+`make_app_for` with "tv" alone; given places beside the TV it's a screen, shown on this Mac, an iPad or the Xbox too, "Screens" in
+the devices guide). It is a web app, HTML, CSS and JavaScript in `Web/`, the same files for Samsung
 (Tizen) and LG (webOS) TVs, with no build step: "building" copies `Web/` into Lamp's own folder (`TVs.stage`, a copy
 made under the app's sandbox, links refused), which is all the preview and the packages ever read. Lamp owns
 `Web/lamp.js` (`TVTemplate.lampJS`, plain ES5 for the TVs' Chrome-79-era browsers): Lamp's building blocks for the web
