@@ -253,11 +253,18 @@ enum Template {
     /// wish's key makes. iOS lets an app advertise and browse only the types its Info.plist names.
     static let wishServiceType = "_lampwish._tcp"
 
-    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. An app on
-    /// its own (most apps, and every starter) gets none of it: its building blocks are written as if the wish's apps
-    /// couldn't talk at all, so it carries no code, size, rule or permission for something it can't use. A wish that gains
-    /// a second app has its blocks written again before its next turn and build, as they always are.
-    static func talksToOtherApps(_ project: LampProject) -> Bool { project.partOf != nil || !project.partFolders.isEmpty }
+    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. That's
+    /// decided by the apps the wish asks for (`LampProject.apps`), not only those made: the first app of a wish meant to
+    /// be a Mac app and an Android app has the block from its first build, while the other waits for this Mac to be able
+    /// to build it, so it's written to talk to it from the start. Apps are counted, not devices: an app for the Mac and
+    /// the iPhone is one. An app on its own (most apps, and every starter) gets none of it: its building blocks are written
+    /// as if the wish's apps couldn't talk at all, so it carries no code, size, rule or permission for something it can't
+    /// use. A wish that comes to ask for a second app has its blocks written again before its next turn and build, as
+    /// they always are.
+    static func talksToOtherApps(_ project: LampProject) -> Bool {
+        project.partOf != nil || !project.partFolders.isEmpty
+            || Set(project.apps.map { Parts.group($0.kind) } + [Parts.group(project.platform)]).count >= 2
+    }
 
     /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
     static func lampSupportSwift(for project: LampProject) -> String {
@@ -13871,7 +13878,7 @@ enum Template {
         /// The state and the list of apps, from what each way says now.
         private func rebuild() {
             let now = Date()
-            apps = roster.filter { $0.id != me }.map { app in
+            let list = roster.filter { $0.id != me }.map { app in
                 let direct = directs[app.id].flatMap { $0.ready ? $0 : nil }
                 let relayed = relayPresent[app.id]
                 let open = !closed && (direct != nil || relayed != nil)
@@ -13888,8 +13895,11 @@ enum Template {
             }
             let next: State = closed ? .ended : alone ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected : lampAway ? .away : .connecting
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
             if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
             if next == .connected { saidAway = false }
+            apps = list
         }
 
         private func setRoster(_ list: [[String: Any]]) {

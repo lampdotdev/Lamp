@@ -81,7 +81,9 @@ final class WishNativeTests: XCTestCase {
                 guard let live = env["LAMP_SOCKET"] else { throw Failure(message: "Couldn't reach Lamp.") }
                 let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? live) : live
                 // The wish's apps, as Lamp would say them: a Mac app and an iPhone app, unless the test says others.
-                let apps = (env["LAMP_APPS"] ?? "mac,iphone").split(separator: ",").map { ["peer": String($0), "kind": String($0), "name": "the " + String($0) + " app"] }
+                // Named as Lamp names them, so what the relay says of an app and what this says agree.
+                let names = ["mac": "the Mac app", "iphone": "the iPhone app", "tv": "the TV app", "android": "the Android app"]
+                let apps = (env["LAMP_APPS"] ?? "mac,iphone").split(separator: ",").map { ["peer": String($0), "kind": String($0), "name": names[String($0)] ?? String($0)] }
                 return ["socket": socket, "peer": env["LAMP_PEER"]!, "apps": apps]
             }
         }

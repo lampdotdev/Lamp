@@ -122,8 +122,10 @@ final class WishDirectTests: XCTestCase {
             """)
         page.context.evaluateScript(TVTemplate.wishJS.replacingOccurrences(of: DeviceSupport.webMarker, with: #"/*LAMP_INSTALL*/{"app":"wishapp","routes":[]}"#))
         page.context.evaluateScript("""
-            var heard = [], n = 0;
+            var heard = [], n = 0, greeted = [];
             Lamp.wish.onMessage(function (from, data) { heard.push(from + ':' + data.n); });
+            // Caught up the moment it arrives, as an app does after the other was closed: that goes, not refused.
+            Lamp.wish.onPeers(function (list) { list.forEach(function (p) { greeted.push(p.peer + ':' + Lamp.wish.send({ n: 0 }, p.peer)); }); });
             Lamp.wish.start();
             setInterval(function () { if (Lamp.wish.peer('mac') && Lamp.wish.peer('mac').open) Lamp.wish.send({ n: ++n }, 'mac'); }, 500);
             """)
@@ -131,6 +133,7 @@ final class WishDirectTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(page.context.evaluateScript("heard.length")?.toInt32() ?? 0, 6,
                                     "the page heard the Mac app: \(page.context.evaluateScript("JSON.stringify([Lamp.wish.state(), heard, said.slice(0, 6)])")?.toString() ?? "")")
         XCTAssertEqual(page.context.evaluateScript("Lamp.wish.state()")?.toString(), "connected")
+        XCTAssertEqual(page.context.evaluateScript("greeted.join(',')")?.toString(), "mac:true", "sent to the Mac app as it arrived")
         try await Task.sleep(for: .seconds(2))
         page.end()
         _ = await mac.value

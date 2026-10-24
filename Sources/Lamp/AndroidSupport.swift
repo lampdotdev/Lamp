@@ -1197,8 +1197,6 @@ extension Template {
             }
             routes = directs.filterValues { it.ready }.toMap()
             relayed = relayPresent.keys.toSet()
-            appsFlow.value = list
-            peersFlow.value = list.filter { it.isOpen }
             val next = when {
                 closed -> State.ENDED
                 alone -> State.ALONE
@@ -1206,8 +1204,12 @@ extension Template {
                 lampAway -> State.AWAY
                 else -> State.CONNECTING
             }
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
             if (next != stateFlow.value) { statusFlow.value = Status(next, reason(next)); stateFlow.value = next }
             if (next == State.CONNECTED) saidAway = false
+            appsFlow.value = list
+            peersFlow.value = list.filter { it.isOpen }
         }
 
         private fun setRoster(list: List<JSONObject>) {

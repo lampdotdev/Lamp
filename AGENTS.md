@@ -1147,8 +1147,8 @@ a TV app with an iPhone app, on a Mac without Xcode, starts as the TV app with t
 The TV app of a wish takes the wish's other apps as players from its root or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
 stands alone.
-Every app of a wish, Android's included, reaches the wish's other apps through `LampWish` (below)
-and is told so (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
+Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
+and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
 as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
 `Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
 opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
@@ -1235,8 +1235,10 @@ block in every language, under one name: `LampWish.shared` in LampSupport.swift 
 blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app
 (`WishProxies`, `/app/wish/open`, numbered so nothing of an old link reaches a new handshake) and carries its handshake and
 sealed messages each way as they are, unread: the app posts them to `/app/wish/send`, in the order it sealed them, and polls
-`/app/wish/poll` for what came (answered as soon as something has, or after 25 seconds with nothing), and Lamp answers the
-relay's beats for it. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
+`/app/wish/poll` for what came (answered as soon as something has, or after 6 seconds with nothing), and Lamp answers the
+relay's beats for it. An app that stops polling (closed, force-stopped) has its socket let go a few seconds after its last
+poll could have ended (`WishProxies.grace`), so the others see it leave while it's gone and arrive when it's back; and an app
+back on a new socket before its old one was noticed gone is said to have left before it's said to join. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
 added to (a `RawRepresentable` struct in Swift, a value class in Kotlin, a string in lamp.js), so code that switches on one
@@ -1249,10 +1251,14 @@ fifteen minutes, so the relay process runs only while a game or a room needs it 
 sessions, and starts the relay for either). Where a wish's apps are is asked of `Store.apps(of:)` and `Store.wish(of:)`
 alone, and a wish is alone when it has fewer than two apps, so nothing in the hub knows which app is at the root. The relay says who is in each room on its output as that changes
 (`ControllerRelay.presence`), and the builder is told, at the end of each request for a wish of more than one app, where
-each of its apps is: open or not, in the room or not and as what device (`WishNote`, sent like `DeviceNote`). The rule
-every app of such a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) says
-what the block does, its limit, to start it as the app opens, to show plainly when an app it needs isn't open and never to
-build its own server, sockets or polling between them; it says nothing about who should talk to whom. A stranger on the
+each of its apps is: open or not, in the room or not and as what device, and which are still to be made (`WishNote`, sent
+like `DeviceNote`). How a wish's apps share data is the agent's choice with the person, not a rule: what every app of such
+a wish gets (`Rules.wishTalk`, in the wish's prompt through `Parts.rule` and in each part's rules) is a short pointer to the
+`wish-links` skill, which is also named with each request for such a wish (`Skills.applying`) and holds the ways: `LampWish`
+as the default, built in, how to use it well, what to do while an app of the wish isn't made yet (write the sharing with
+`LampWish` now, never stand in for the missing app with an online service), and when another way fits (one the person asks
+for, Tailscale, ntfy, their own server, or iCloud and a chosen service for apps that must reach each other away from home).
+It says nothing about who should talk to whom. A stranger on the
 network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay and every app's own
 listener (below) take a proof only the wish's key makes, and Lamp's routes and relay run only while Lamp does. What one app
 of a wish says is readable by the wish's other apps and by Lamp's relay, which holds the key Lamp made and opens and seals
@@ -1288,7 +1294,11 @@ address on Tizen and webOS is untried on real TVs.
 
 A wish of one app, which
 is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
-has other apps (`Template.talksToOtherApps`), so its LampSupport.swift, LampSupport.kt and lamp.js are what they would be
+has or asks for other apps (`Template.talksToOtherApps`: its parts, or its list of apps, `LampProject.apps`, counting apps
+and not devices, so one app for the Mac and the iPhone is one). The first app of a wish meant to be several has it from its
+first build, while the others wait for this Mac to be able to build them: the wish's key, a room that lists the apps still
+to be made as not open (`WishRooms.described`, `Parts.waiting`), the pointer in its prompt and the skill with its requests,
+so it's written to talk to them from the start. An app on its own's LampSupport.swift, LampSupport.kt and lamp.js are what they would be
 without the hub, the channel's crypto and the direct links included (no listener, no Bonjour or NSD, so no Local Network
 question), its prompt has no rule and its requests no line about the hub, no key is made for it and none goes in its install
 (`Store.wishKey(for:)` is nil), its iPhone Info.plist names no Bonjour type, no room is opened for it and so nothing starts
