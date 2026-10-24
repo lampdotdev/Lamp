@@ -15,9 +15,9 @@ water in less detail, traffic that keeps to its lanes and lights, people on the 
   Avenue, Times Square and the Chrysler Building.
 - **The city**: time of day (golden hour, midday, dusk, night) from the buttons at the top, Teleport to a landmark, M
   the full map, H hides the HUD, N sound on or off. Every sound is synthesized.
-- **A controller** paired with the Mac plays it like GTA V on a console (`gamepad-controls.js`): left stick move or
-  steer, right stick look, RT gas or pedal or up, LT brake or down, RB handbrake, A boost, X jump, Y gets in and out,
-  L3 horn, the d-pad changes vehicle and time of day, View the camera, Menu the map, with rumble on crashes.
+- **A controller** paired with the Mac works too (`gamepad-controls.js`, from the original): left stick move or steer,
+  right stick look, RT and LT gas and brake (up and down in the helicopter), A jump, X boost, LB and RB change mode, Y
+  the camera, R3 recentres it, the d-pad zooms, Menu the map and B closes it.
 - The game remembers where the player was and in what between launches (`localStorage`, "nyc-player-state").
 
 ## Code
@@ -25,8 +25,9 @@ water in less detail, traffic that keeps to its lanes and lights, people on the 
 - `Sources/App.swift`: the window. `Sources/GameView.swift`: the WebKit view, serving `Assets/Web` at
   `newyork://game/` (WebKit refuses modules and the import map to a page opened as a file), sound allowed without a
   click, the keyboard taken at once, and the page's console printed to the app's log as `[game] …`.
-- `Assets/Web/index.html`: the page and the HUD's markup; `css/style.css` the HUD's look. `three-dev/`: three.js
-  (WebGPURenderer and TSL, drawing with WebGL 2) and the few addons used, through the import map in index.html.
+- `Assets/Web/index.html`: the page and the HUD's markup; `css/style.css` the HUD's look. `three/`: three.js
+  (WebGPURenderer and TSL, drawing with WebGL 2) and, in `three/addons`, the few addons used, through the import map
+  in index.html.
 - `Assets/Web/js`, all ES modules:
   - `main.js`: start-up, `QUALITY` (what's drawn), the HUD, keys, the frame loop, and `adaptResolution` (drops the
     resolution on a Mac that can't hold 45 fps).

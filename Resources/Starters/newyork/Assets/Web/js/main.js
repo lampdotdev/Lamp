@@ -267,59 +267,8 @@ async function initApp() {
     },
     onCycleCamera: cycleCamera,
     onToggleMap: () => mapSystem.toggleFullMap(!mapSystem.isFullMapOpen),
-    onCloseMap: () => mapSystem.toggleFullMap(false),
-    // Lamp: GTA-style. Y gets in and out, the d-pad's left and right change vehicle, L3 honks, up and down the time of day
-    onEnterExit: () => {
-      if (controllerManager.activeMode === 'person') enterVehicle(lastVehicle);
-      else exitVehicle();
-    },
-    onChangeVehicle: (step) => {
-      const vehicles = ['car', 'cyclist', 'helicopter'];
-      const i = vehicles.indexOf(controllerManager.activeMode === 'person' ? lastVehicle : controllerManager.activeMode);
-      enterVehicle(vehicles[(i + step + vehicles.length) % vehicles.length]);
-    },
-    onHorn: () => audioSystem.honk(controllerManager.getActiveEntity()),
-    onCycleTime: (step) => {
-      const times = ['golden', 'midday', 'twilight', 'midnight'];
-      const i = times.indexOf(lightingSystem.activePresetId);
-      selectTime(times[((i < 0 ? 0 : i) + step + times.length) % times.length]);
-    }
+    onCloseMap: () => mapSystem.toggleFullMap(false)
   });
-
-  // Lamp: getting in brings your last vehicle to where you stand (or just gets in when it's close by), the way a GTA
-  // car is always at hand; getting out puts you on the pavement beside it
-  let lastVehicle = controllerManager.activeMode === 'person' ? 'car' : controllerManager.activeMode;
-  function enterVehicle(vehicle) {
-    const from = controllerManager.getActiveEntity();
-    const wasMode = controllerManager.activeMode;
-    lastVehicle = vehicle;
-    if (wasMode === vehicle) return;
-    const target = controllerManager.entities[vehicle];
-    const near = Math.hypot(target.position.x - from.position.x, target.position.z - from.position.z) < 9
-      && (vehicle !== 'helicopter' || target.position.y < 3);
-    selectMode(vehicle);
-    if (!near) controllerManager.teleportActiveTo(from.position.x, from.position.z, from.heading, vehicle === 'helicopter' ? 0.25 : null);
-  }
-  function exitVehicle() {
-    const vehicle = controllerManager.getActiveEntity();
-    lastVehicle = controllerManager.activeMode;
-    // Step out on the driver's side
-    const side = 2.2;
-    const x = vehicle.position.x + Math.cos(vehicle.heading) * side;
-    const z = vehicle.position.z - Math.sin(vehicle.heading) * side;
-    selectMode('person');
-    controllerManager.teleportActiveTo(x, z, vehicle.heading);
-  }
-
-  // Lamp: the controller shakes when what you're steering hits something, harder the faster the hit
-  const crashRumble = (impact) => {
-    audioSystem.onCollision(impact);
-    const player = controllerManager.getActiveEntity();
-    if (!player || (impact.a !== player && impact.b !== player) || !(impact.speed > 1.2)) return;
-    const hit = Math.min(1, (impact.speed - 1.2) / 14);
-    gamepadControls.rumble(0.35 + 0.65 * hit, 0.25 + 0.6 * hit, 120 + 260 * hit);
-  };
-  for (const system of [controllerManager, trafficSystem]) system.setCollisionListener?.(crashRumble);
 
   // Keyboard guide for each mode: [keys, action]
   const controlHints = {
@@ -331,26 +280,14 @@ async function initApp() {
   // Boosted top speeds in mph (controllers.js caps them at 8.2, 36, 19 & 52 m/s): full scale of the speed meter
   const topSpeedMph = { person: 18, car: 81, cyclist: 43, helicopter: 116 };
 
-  // Lamp: the same guide with the controller's buttons, shown while a controller is connected
-  const padHints = {
-    person: [[['LS'], 'Walk'], [['A'], 'Sprint'], [['X'], 'Jump'], [['Y'], 'Get in']],
-    car: [[['RT'], 'Gas'], [['LT'], 'Brake'], [['RB'], 'Handbrake'], [['A'], 'Boost'], [['L3'], 'Horn'], [['Y'], 'Get out']],
-    cyclist: [[['RT'], 'Pedal'], [['LT'], 'Brake'], [['A'], 'Sprint'], [['Y'], 'Get off']],
-    helicopter: [[['RT'], 'Up'], [['LT'], 'Down'], [['LB', 'RB'], 'Turn'], [['A'], 'Boost'], [['Y'], 'Get out']]
-  };
-  const padCommonHints = [[['◀', '▶'], 'Vehicle'], [['⧉'], 'Camera'], [['☰'], 'Map']];
-  let hintsForPad = false;
-
   function renderControlHints(mode) {
     if (!elControlsHint) return;
-    const list = hintsForPad ? [...(padHints[mode] || []), ...padCommonHints] : (controlHints[mode] || []);
-    const items = list.map(([keys, action]) => {
+    const items = (controlHints[mode] || []).map(([keys, action]) => {
       const item = document.createElement('span');
       item.className = 'hint';
       for (const key of keys) {
         const kbd = document.createElement('kbd');
         kbd.textContent = key;
-        if (hintsForPad) kbd.className = `pad-key pad-${{ A: 'a', B: 'b', X: 'x', Y: 'y' }[key] || 'other'}`;
         item.appendChild(kbd);
       }
       const label = document.createElement('span');
@@ -783,11 +720,6 @@ async function initApp() {
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
     gamepadControls.update(dt);
-    if (gamepadControls.connected !== hintsForPad) {
-      hintsForPad = gamepadControls.connected;
-      document.body.classList.toggle('pad', hintsForPad);
-      renderControlHints(controllerManager.activeMode);
-    }
     controllerManager.update(dt, elapsed);
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
@@ -842,6 +774,8 @@ async function initApp() {
         initTimings = null;
         if (loadingOverlay) loadingOverlay.classList.add('hidden');
         audioSystem.ready = true;
+        // Lamp: the Mac app lets the page play sound unasked, so the city is heard as it appears, not at the first key
+        audioSystem.unlock();
         setLoadingProgress(1);
       });
     }

@@ -1450,18 +1450,3 @@ body.touch-enabled .pop-item { min-height: 44px; }
     transition-duration: 0.01ms !important;
   }
 }
-
-/* Lamp: controller buttons in the hints, in the Xbox controller's colors; the keyboard keys on the HUD hide meanwhile */
-.hint kbd.pad-key {
-  min-width: 22px;
-  border-radius: 999px;
-  font-weight: 800;
-}
-.hint kbd.pad-a { background: #2f9e44; }
-.hint kbd.pad-b { background: #d6336c; }
-.hint kbd.pad-x { background: #1c7ed6; }
-.hint kbd.pad-y { background: #e8a90c; color: #111; }
-body.pad .mode-btn kbd,
-body.pad .tool-btn kbd,
-body.pad .radar-key,
-body.pad #hud-active-camera + kbd { display: none; }

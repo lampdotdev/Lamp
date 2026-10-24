@@ -1098,12 +1098,6 @@ class ThirdPersonControllerManager {
 
     c.steerAngle += (steerInput * 0.52 - c.steerAngle) * Math.min(1, dt * 10);
 
-    // Lamp: the controller's handbrake (RB) bleeds off speed and swings the tail out into tighter turns
-    if (this.handbrake) {
-      c.speed *= Math.exp(-dt * 1.4);
-      if (Math.abs(c.speed) > 3) c.angularVel += c.steerAngle * Math.sign(c.speed) * Math.min(1, Math.abs(c.speed) / 15) * 5.5 * dt;
-    }
-
     if (Math.abs(c.speed) > 0.2) {
       const dirSign = c.speed >= 0 ? 1 : -1;
       const speedFactor = Math.min(1.0, Math.abs(c.speed) / 8.0);

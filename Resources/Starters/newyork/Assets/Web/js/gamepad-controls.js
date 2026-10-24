@@ -37,8 +37,6 @@ class GamepadControls {
     this.syncButtons = true;
     this.revision = 0;
     this.focused = typeof document.hasFocus !== 'function' || document.hasFocus();
-    this.lastRumble = 0;
-    this.boostPulse = 0;
 
     window.addEventListener('blur', () => {
       this.focused = false;
@@ -82,22 +80,6 @@ class GamepadControls {
     }
   }
 
-  // Lamp: shakes the controller. strong is the big low motor, weak the small fast one, each 0-1, for ms milliseconds
-  rumble(strong, weak, ms, force = false) {
-    const now = performance.now();
-    if (!force && now - this.lastRumble < 90) return;
-    this.lastRumble = now;
-    const pad = this.readPad();
-    const actuator = pad?.vibrationActuator;
-    if (!actuator || typeof actuator.playEffect !== 'function') return;
-    actuator.playEffect('dual-rumble', {
-      startDelay: 0,
-      duration: Math.round(ms),
-      strongMagnitude: Math.max(0, Math.min(1, strong)),
-      weakMagnitude: Math.max(0, Math.min(1, weak))
-    }).catch(() => {});
-  }
-
   setEnabled(enabled) {
     enabled = Boolean(enabled);
     if (enabled === this.enabled) return;
@@ -128,15 +110,10 @@ class GamepadControls {
     for (let i = 0; i < BUTTON_COUNT; i++) if (!pressed[i]) this.suppressedButtons[i] = false;
     const edge = (i) => pressed[i] && !this.previousButtons[i] && !this.suppressedButtons[i];
     const held = (i) => pressed[i] && !this.suppressedButtons[i];
-    // Lamp: laid out like GTA V on the Xbox, for any controller paired with the Mac. Standard mapping: 0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT, 8 View,
-    // 9 Menu, 10 L3, 11 R3, 12-15 d-pad up, down, left, right.
     // Capture edges before callbacks: changing mode or opening the map may synchronously call reset().
-    const mode = this.controller.activeMode;
     const toggleMap = edge(9), closeMap = edge(1);
-    const enterExit = edge(3), cycleCamera = edge(8), recenter = edge(11);
-    const horn = mode === 'car' && edge(10);
-    const changeVehicle = Number(Boolean(edge(15))) - Number(Boolean(edge(14)));
-    const cycleTime = Number(Boolean(edge(12))) - Number(Boolean(edge(13)));
+    const cycleMode = Number(Boolean(edge(5))) - Number(Boolean(edge(4)));
+    const cycleCamera = edge(3), recenter = edge(11);
     this.previousButtons = pressed;
 
     const target = document.activeElement;
@@ -159,72 +136,30 @@ class GamepadControls {
       if (closeMap) this.callbacks.onCloseMap?.();
       return;
     }
-    if (enterExit) {
-      this.rumble(0.2, 0.3, 90, true);
-      this.callbacks.onEnterExit?.();
-    }
-    if (revision !== this.revision) return;
-    if (changeVehicle) {
-      this.rumble(0, 0.25, 60, true);
-      this.callbacks.onChangeVehicle?.(changeVehicle);
-    }
+    if (cycleMode) this.callbacks.onCycleMode?.(cycleMode);
     if (revision !== this.revision) return;
     if (cycleCamera) this.callbacks.onCycleCamera?.(1);
     if (revision !== this.revision) return;
     if (recenter) this.camera.resetOrbit();
-    if (horn) {
-      this.callbacks.onHorn?.();
-      this.rumble(0, 0.35, 120, true);
-    }
-    if (cycleTime) this.callbacks.onCycleTime?.(cycleTime);
-    if (revision !== this.revision) return;
 
     const movement = stick(pad, 0), look = stick(pad, 2);
-    const rt = buttonValue(pad, 7), lt = buttonValue(pad, 6);
-    let drive = 0, turn = movement.x, vertical = 0, boosting = false, jump = false, handbrake = false;
-    if (mode === 'person') {
-      // LS walks, A sprints, X jumps
-      drive = -movement.y;
-      boosting = held(0);
-      jump = held(2);
-    } else if (mode === 'car') {
-      // RT gas, LT brake / reverse, LS steers, RB handbrake, A boost, L3 horn
-      drive = rt - lt;
-      boosting = held(0);
-      handbrake = held(5);
-    } else if (mode === 'cyclist') {
-      // RT pedals, LT brakes, A pedals harder
-      drive = Math.max(rt, held(0) ? 1 : 0) - lt;
-      boosting = held(0);
+    const mode = this.controller.activeMode;
+    let drive = -movement.y;
+    let vertical = 0;
+    if (mode === 'car' || mode === 'cyclist') {
+      drive = Math.max(0, drive, buttonValue(pad, 7)) - Math.max(0, -drive, buttonValue(pad, 6));
     } else if (mode === 'helicopter') {
-      // RT climbs, LT descends, LS pitches and turns, LB / RB turn too, A boosts
-      drive = -movement.y;
-      vertical = rt - lt;
-      turn = Math.max(-1, Math.min(1, turn + (held(5) ? 1 : 0) - (held(4) ? 1 : 0)));
-      boosting = held(0);
+      vertical = buttonValue(pad, 7) - buttonValue(pad, 6);
     }
     this.controller.setGamepadInput('forward', Math.max(0, drive));
     this.controller.setGamepadInput('backward', Math.max(0, -drive));
-    this.controller.setGamepadInput('left', Math.max(0, -turn));
-    this.controller.setGamepadInput('right', Math.max(0, turn));
-    this.controller.setGamepadInput('up', mode === 'person' ? Number(jump) : Math.max(0, vertical));
+    this.controller.setGamepadInput('left', Math.max(0, -movement.x));
+    this.controller.setGamepadInput('right', Math.max(0, movement.x));
+    this.controller.setGamepadInput('up', mode === 'person' ? Number(Boolean(held(0))) : Math.max(0, vertical));
     this.controller.setGamepadInput('down', Math.max(0, -vertical));
-    this.controller.setGamepadInput('boost', Number(Boolean(boosting)));
-    this.controller.handbrake = handbrake;
-    // A light purr while boosting a vehicle that's moving, a rougher one while the handbrake slides the car
-    const moving = Math.abs(drive) > 0.2 || Math.abs(vertical) > 0.2;
-    const sliding = handbrake && Math.abs(this.controller.getActiveEntity()?.speed || 0) > 3;
-    if ((boosting && moving && mode !== 'person') || sliding) {
-      this.boostPulse -= Number.isFinite(dt) ? dt : 0;
-      if (this.boostPulse <= 0) {
-        this.boostPulse = 0.25;
-        if (sliding) this.rumble(0.35, 0.15, 260, true);
-        else this.rumble(0.12, 0.3, 260, true);
-      }
-    } else {
-      this.boostPulse = 0;
-    }
-    this.camera.applyGamepadInput(look.x, look.y, 0, Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0);
+    this.controller.setGamepadInput('boost', Number(Boolean(held(2))));
+    const zoom = Number(Boolean(held(13))) - Number(Boolean(held(12)));
+    this.camera.applyGamepadInput(look.x, look.y, zoom, Number.isFinite(dt) ? Math.max(0, Math.min(0.1, dt)) : 0);
   }
 }
 
