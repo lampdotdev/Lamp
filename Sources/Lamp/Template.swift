@@ -17787,13 +17787,14 @@ enum Template {
         my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
         # Lamp's list of the structs the app reads as bytes (`LiveSlots.noteByteStructs`), when it has made one.
         my $bytes = ($ARGV[0] // '') =~ /^-bytes=(.*)/ ? do { shift @ARGV; $1 } : '';
-        my (%names, %alias, %nospare, %equatable, %reflects, %bodies, @rawTexts, $raw, $mirrors);
+        my (%names, %alias, %nospare, %equatable, %reflects, %bodies, @appTexts, $raw, $mirrors);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal, an array's or a value's own bytes)
             # must stay the size it's written with, and the one read may be declared in another file: so no struct gets
             # a spare in such an app. Which of `withUnsafeBytes`'s receivers holds structs isn't in the text, so any counts.
-            if (!$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/) { $raw = 1; push @rawTexts, $s }
+            push @appTexts, $s if !$own{(split m#/#, $file)[-1]};
+            $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
             # Each struct's body, for which structs one read as bytes holds (below).
             while ($s =~ /\bstruct\s+(\w+)[^{;]*\{/g) {
@@ -17826,7 +17827,7 @@ enum Template {
         my $byteList;
         if ($raw && $bytes ne '' && open(my $list, '<', $bytes)) {
             my @read = split /\n/, <$list>; close($list);
-            if (@read && $read[0] eq 'md5 ' . md5_hex(join("\n", sort map { md5_hex($_) } @rawTexts)) && !grep { $_ eq '*' } @read) {
+            if (@read && $read[0] eq 'md5 ' . md5_hex(join("\n", sort map { md5_hex($_) } @appTexts)) && !grep { $_ eq '*' } @read) {
                 ($byteList, $raw) = (1, 0);
                 my (@todo, %seen) = @read[1 .. $#read];
                 while (defined(my $n = shift @todo)) {

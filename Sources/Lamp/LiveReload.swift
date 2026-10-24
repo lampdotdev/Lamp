@@ -2700,19 +2700,22 @@ enum LiveSlots {
     /// included, which made every new stored property of such an app reopen it, and code like that arriving mid-session
     /// take every struct's spare away from under the open app. Read off the compiler's printout of the plain sources:
     /// each raw call names the types it reads (`MemoryLayout<Vertex>`, `load(as: Packet.self)`, an array or a value
-    /// handed over as a pointer), and a struct one of those holds is read with it, which the copy step works out from
-    /// the text as it is at each build. A raw call through a generic parameter (`upload<T>(_ items: [T])`), or an
+    /// handed over as a pointer), and a struct one of those holds is read with it, by the compiler's resolved field types
+    /// (aliases followed, inferred types included). A raw call through a generic parameter (`upload<T>(_ items: [T])`), or an
     /// `@frozen` struct, can't be followed, and is written as `*`, which is the old rule. The list starts with a digest
-    /// of the files with raw-memory code (`rawDigest`, made the same way by the copy step), so it's worked out again only
-    /// when one of them changes and isn't used once it's stale.
+    /// of the app's files (`rawDigest`, made the same way by the copy step), so it's worked out again only when one of
+    /// them changes, and isn't used once it's stale.
     static let byteStructsFile = "byte-structs"
     static func noteByteStructs(_ project: LampProject) async {
         let sources = project.realDir.appendingPathComponent("Sources")
         let url = LiveReload.folder(project).appendingPathComponent(byteStructsFile)
         let files = LiveReload.swiftFiles(in: sources).filter { !LiveReload.ownFiles.contains(($0.key as NSString).lastPathComponent) }
-        let raw = files.values.compactMap { AppFile.read($0, in: project) }.filter(readsMemory)
+        let all = files.values.compactMap { AppFile.read($0, in: project) }
+        let raw = all.filter(readsMemory)
         guard !raw.isEmpty else { try? FileManager.default.removeItem(at: url); return }
-        let digest = rawDigest(raw)
+        // Over every file of the app's, not only those with raw-memory code: which types a raw call is handed (a
+        // helper's return type) and what a struct holds (a field's type, an alias) may be written anywhere.
+        let digest = rawDigest(all)
         if AppFile.text(url, in: project)?.split(separator: "\n").first.map(String.init) == "md5 " + digest { return }
         let names: [String]
         if raw.contains(where: { String(decoding: $0, as: UTF8.self).contains("@frozen") }) { names = ["*"] }
@@ -2731,7 +2734,7 @@ enum LiveSlots {
                                                     options: .regularExpression) != nil
     }
 
-    /// The digest the copy step checks the list by: each such file's bytes' MD5, sorted, joined by newlines, MD5'd.
+    /// The digest the copy step checks the list by: each of the app's files' bytes' MD5, sorted, joined by newlines, MD5'd.
     static func rawDigest(_ files: [Data]) -> String {
         func hex(_ data: Data) -> String { Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined() }
         return hex(Data(files.map(hex).sorted().joined(separator: "\n").utf8))
@@ -2740,17 +2743,21 @@ enum LiveSlots {
     /// The app's structs a printout reads as bytes (above), or `["*"]` when a raw call goes through a generic parameter.
     static func byteStructs(inDump dump: String) -> [String] {
         var structs = Set<String>(), generics: Set<String> = ["Self"], named = Set<String>()
-        let rawCall = #/\b(?:withUnsafe\w*|withContiguous\w*|MemoryLayout|unsafeBitCast|load(?:Unaligned)?\(|storeBytes|bindMemory|assumingMemoryBound|withMemoryRebound|initializeMemory)/#
+        // Not `\b`: Swift's regex takes Unicode's word rules, by which `extension.withUnsafeBytes` is one word.
+        let rawCall = #/(?:^|[^A-Za-z0-9_])(?:withUnsafe\w*|withContiguous\w*|MemoryLayout|unsafeBitCast|load(?:Unaligned)?\(|storeBytes|bindMemory|assumingMemoryBound|withMemoryRebound|initializeMemory)/#
         let pointee = #/(?:Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|MemoryLayout)<([^>]*)>/#
         func words(_ text: Substring) -> [String] { text.matches(of: #/[A-Za-z_]\w*/#).map { String($0.0) } }
         func attribute(_ name: String, in line: Substring) -> Substring? {
-            guard let start = line.range(of: name + "=\"") else { return nil }
+            guard let start = line.range(of: " " + name + "=\"") else { return nil }
             return line[start.upperBound...].prefix { $0 != "\"" }
         }
-        var conversion = false
+        var conversion = false, aliases: [String: [String]] = [:]
         for line in dump.split(separator: "\n") {
             let trimmed = line.drop { $0 == " " }
             if trimmed.hasPrefix("(struct_decl"), let name = trimmed.firstMatch(of: #/ "(\w+)"/#) { structs.insert(String(name.1)) }
+            if trimmed.hasPrefix("(typealias"), let name = trimmed.firstMatch(of: #/ "(\w+)"/#), let type = attribute("type", in: line) {
+                aliases[String(name.1), default: []] += words(type)
+            }
             // A generic declaration's parameters (`"<T, U>"`), which a raw call reading `[T]` can't be followed through.
             if let list = trimmed.firstMatch(of: #/ "<([\w, ]+)>"/#) { generics.formUnion(words(list.1)) }
             if conversion { named.formUnion(attribute("type", in: line).map(words) ?? []); conversion = false }
@@ -2763,7 +2770,21 @@ enum LiveSlots {
             if let type = attribute("type", in: line) { for match in type.matches(of: pointee) { named.formUnion(words(match.1)) } }
         }
         if !named.isDisjoint(with: generics) { return ["*"] }
-        return named.intersection(structs).sorted()
+        // And what each of those holds, by the compiler's resolved field types (an inferred one, an alias followed),
+        // through enums and tuples too: a struct inside one read as bytes is read with it.
+        var holds: [String: [String]] = [:]
+        for entry in LiveReload.members(inDump: dump) {
+            let parts = entry.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2, let owner = parts[0].split(separator: ".").last.map({ String($0.prefix { $0 != "@" }) }),
+                  let colon = parts[1].range(of: ": ") else { continue }
+            holds[owner, default: []] += words(parts[1][colon.upperBound...])
+        }
+        var read = Set<String>(), pending = Array(named)
+        while let name = pending.popLast() {
+            guard read.insert(name).inserted else { continue }
+            pending += (aliases[name] ?? []) + (holds[name] ?? [])
+        }
+        return read.intersection(structs).sorted()
     }
 
     /// The file the spares need beside them: every struct the copy step gave a spare has its memberwise initializer
@@ -4177,7 +4198,9 @@ enum LiveSlots {
         // A closure written out as a function's starting value (`{ _ in }`): code, which does the same whenever it's
         // read, and a function is never compared, so no value the open app holds can tell one read from another.
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if type.contains("->"), trimmed.hasPrefix("{"), trimmed.hasSuffix("}") { return true }
+        // Not one with a capture list (`{ [id = UUID()] in id }`), which makes what it captures again at every read.
+        if type.contains("->"), trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+           !trimmed.dropFirst().drop(while: { $0.isWhitespace }).hasPrefix("[") { return true }
         if literal || isLiteral(value) || value.range(of: #"^(?:\[[\w.<>, :?]+\]|(?:Set|Dictionary|Array|String)(?:<[\w.<>, :?\[\]]+>)?)\(\)$"#, options: .regularExpression) != nil { return true }
         let enumName = enumName(type)
         let parts = value.split(separator: ".", omittingEmptySubsequences: false)
