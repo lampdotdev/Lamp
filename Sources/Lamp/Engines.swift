@@ -274,6 +274,7 @@ extension Agent {
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
             + DeviceNote.brief(for: project, engine: Builder.engine, session: session)
+            + WishNote.brief(for: project, engine: Builder.engine, session: session)
             + Parts.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
             + Agent.newApp(project)

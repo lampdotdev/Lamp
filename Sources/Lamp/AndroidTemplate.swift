@@ -415,12 +415,12 @@ extension Agent {
 }
 
 extension Agent.Rules {
-    /// An Android app has none of Lamp's building blocks for reaching the wish's other apps: said plainly, so the agent
-    /// doesn't write to a library the app doesn't have.
-    static let androidPartTalk = """
-    - This app has no building block of Lamp's for talking to the wish's other apps (the Swift apps' `LampController` \
-    isn't in its kit): what it shares with them, it shares through its own network code or a service of their own, and \
-    only when the person asked for that. Otherwise build it as the wish's app for Android, complete on its own.
+    /// How an Android app reaches the wish's other apps: `LampWish` in LampSupport.kt (`wishTalk`), and nothing else of
+    /// Lamp's (a TV's game controls, `LampController`, are the Swift apps').
+    static let androidPartTalk = String(wishTalk.dropFirst()) + """
+    - `LampWish` is this app's only building block for the wish's other apps: it has no `LampController`, so a TV app's \
+    game controls (buttons, sticks, files to the TV) aren't its to send; say so plainly when that's asked, and build \
+    the rest.
     """
 
     static let androidHeader = """

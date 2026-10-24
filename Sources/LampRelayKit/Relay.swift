@@ -13,6 +13,12 @@ import Network
 /// in pieces with their own flow control (`ControllerWire`). The relay keeps nothing once it's passed on, holds every
 /// file to the size it was announced at and to a window ahead of what's been acknowledged, and lets go of anything
 /// that doesn't keep to that.
+///
+/// Beside the games, a **room** for each wish of more than one app (`configureRoom`): the wish's apps join it as peers,
+/// each with a credential naming which app it is (`ControllerToken.Kind.peer`, issued by Lamp to an app that showed its
+/// own token), hear who else is in it (`welcome`, `joined`, `left`) and send JSON messages to one peer or to all
+/// (`send` → `message`), under the same size and rate limits as a phone's. The relay tells whoever runs it who is in
+/// each room (`onRoomChanged`), so Lamp can say so to the builder. Files between peers aren't carried yet.
 public final class Relay: @unchecked Sendable {
     public struct Session: Equatable, Sendable {
         /// Lamp's generation of the app's session: credentials of an earlier one get nowhere.
@@ -50,15 +56,34 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
-    final class Player {
-        var peer: RelayPeer?
-        /// While a phone that dropped off may still come back with its credential, its place stays its own.
-        var heldUntil = Date.distantPast
+    /// How often one socket may send: about as often as a screen draws. Past that its messages are dropped, and one
+    /// that goes on past it for ten seconds is let go.
+    final class Rate {
         var tokens = ControllerWire.perSecond
         var refilled = Date()
         /// Since when it has gone on past its rate, with no more than a moment's pause, and when it last did.
         var over: Date?
         var lastDropped = Date.distantPast
+
+        func allowed(_ peer: RelayPeer?) -> Bool {
+            let now = Date()
+            tokens = min(ControllerWire.perSecond, tokens + now.timeIntervalSince(refilled) * ControllerWire.perSecond)
+            refilled = now
+            // A pause of a couple of seconds ends the stretch: a flood that lets one message through now and then still counts.
+            if now.timeIntervalSince(lastDropped) > 2 { over = nil }
+            if tokens >= 1 { tokens -= 1; return true }
+            lastDropped = now
+            if over == nil { over = now }
+            if let over, now.timeIntervalSince(over) > 10 { peer?.close(code: 4008) }
+            return false
+        }
+    }
+
+    final class Player {
+        var peer: RelayPeer?
+        /// While a phone that dropped off may still come back with its credential, its place stays its own.
+        var heldUntil = Date.distantPast
+        let rate = Rate()
         /// Files on their way from the phone to the host, and from the host to the phone, by the sender's id.
         var toHost: [UInt32: Transfer] = [:]
         var toPhone: [UInt32: Transfer] = [:]
@@ -74,12 +99,46 @@ public final class Relay: @unchecked Sendable {
         init(session: Session) { self.session = session }
     }
 
+    /// One of a wish's apps in its room, by the peer id its credential named.
+    final class Member {
+        let peer: RelayPeer
+        let kind: String
+        let name: String
+        let device: String
+        let since = Date()
+        let rate = Rate()
+        init(peer: RelayPeer, kind: String, name: String, device: String) {
+            self.peer = peer
+            self.kind = kind
+            self.name = name
+            self.device = device
+        }
+        var described: [String: Any] { ["kind": kind, "name": name, "device": device, "since": Int(since.timeIntervalSince1970 * 1000)] }
+    }
+
+    /// A wish's room: which apps it may have (from Lamp, by peer id: what each is called), and which are in it now.
+    final class Room {
+        var generation: Int
+        var apps: [String: (kind: String, name: String)]
+        var members: [String: Member] = [:]
+        /// Credentials already used, until they'd have run out anyway: each lets an app in once.
+        var used: [String: Date] = [:]
+        var renewed = Date()
+        init(generation: Int, apps: [String: (kind: String, name: String)]) {
+            self.generation = generation
+            self.apps = apps
+        }
+    }
+
     public let queue = DispatchQueue(label: "dev.lamp.relay")
     private let key: SymmetricKey
     private var listener: NWListener?
     /// The listener stopped after it was ready (the network went away under it): whoever runs the relay starts it again.
     public var onStopped: @Sendable () -> Void = {}
     private var games: [String: Game] = [:]
+    private var rooms: [String: Room] = [:]
+    /// Who is in a room, each time that changes: the room's key and its members (`peer`, `kind`, `name`, `device`, `since`).
+    public var onRoomChanged: @Sendable (_ room: String, _ members: [[String: Any]]) -> Void = { _, _ in }
     /// Sockets not yet past their hello: held here, since nothing else holds them until they're a player or a host.
     private var greeting: [ObjectIdentifier: (peer: RelayPeer, from: String)] = [:]
     /// How many sockets may wait to say hello at once, in all and from one address (an IPv6 one by its network, since a
@@ -88,6 +147,8 @@ public final class Relay: @unchecked Sendable {
     /// Text waiting to go to the host past which phones' messages to it are dropped, well before the host is let go
     /// for falling behind (`RelayPeer.textLimit`). Changed only by tests, which make a host count as behind.
     nonisolated(unsafe) static var hostBehind = 128
+    /// How often a room's members are given a fresh credential over their socket. Changed only by tests.
+    nonisolated(unsafe) public static var peerRenewal: TimeInterval = 60
     private var ticker: DispatchSourceTimer?
 
     public init(key: SymmetricKey) {
@@ -158,6 +219,7 @@ public final class Relay: @unchecked Sendable {
             self.listener?.cancel()
             self.listener = nil
             for app in Array(self.games.keys) { self.endGame(app) }
+            for room in Array(self.rooms.keys) { self.endRoom(room) }
             for waiting in self.greeting.values { waiting.peer.close(code: 1001) }
             self.greeting = [:]
             self.ticker?.cancel()
@@ -191,6 +253,41 @@ public final class Relay: @unchecked Sendable {
         guard let game = games.removeValue(forKey: app) else { return }
         for player in game.players.values { player.peer?.close(code: 4005) }
         game.host?.close(code: 4005)
+    }
+
+    /// Opens a wish's room, or brings it up to date (an app added or taken away). `apps`: each app the wish may have, by
+    /// its peer id, with its kind and name; a peer whose id isn't among them is turned away. A new generation ends the
+    /// old room first, letting its members go.
+    public func configureRoom(_ room: String, generation: Int, apps: [String: (kind: String, name: String)]) {
+        queue.async {
+            if let known = self.rooms[room], known.generation != generation { self.closeRoom(room) }
+            if let known = self.rooms[room] {
+                let changed = Set(known.apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
+                    != Set(apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
+                known.apps = apps
+                for (id, member) in known.members where apps[id] == nil { member.peer.close(code: 4005); known.members[id] = nil }
+                // An app added to the wish or taken from it, while the others are in the room: they hear the list again,
+                // so the one not open yet is known to them, and the one gone isn't.
+                if changed {
+                    let list = Self.json(["t": "apps", "apps": Self.roster(known)])
+                    for member in known.members.values { member.peer.send(list) }
+                }
+            } else {
+                self.rooms[room] = Room(generation: generation, apps: apps)
+                self.startTicking()
+            }
+        }
+    }
+
+    /// The wish is gone, or its room isn't wanted any more: its members are let go.
+    public func endRoom(_ room: String) {
+        queue.async { self.closeRoom(room) }
+    }
+
+    private func closeRoom(_ room: String) {
+        guard let known = rooms.removeValue(forKey: room) else { return }
+        for member in known.members.values { member.peer.close(code: 4005) }
+        if !known.members.isEmpty { onRoomChanged(room, []) }
     }
 
     // MARK: Sockets
@@ -228,13 +325,87 @@ public final class Relay: @unchecked Sendable {
     }
 
     private func hello(_ peer: RelayPeer, text: String) {
-        guard let hello = Self.parse(text), hello["t"] as? String == "hello", let app = hello["app"] as? String,
-              let game = games[app],
+        guard let hello = Self.parse(text), hello["t"] as? String == "hello", let app = hello["app"] as? String else { return peer.close(code: 4003) }
+        // A wish's room and a TV app's game are opened under different keys, so a credential says which it is for.
+        if let room = rooms[app] {
+            guard let claim = ControllerToken.check(hello["credential"] as? String, kinds: [.peer], app: app, generation: room.generation, key: key),
+                  let id = claim.peer, let named = room.apps[id], !claim.nonce.isEmpty else { return peer.close(code: 4003) }
+            // Good once: a hello seen on the network, sent again, finds its credential spent.
+            let now = Date()
+            room.used = room.used.filter { $0.value > now }
+            guard room.used[claim.nonce] == nil else { return peer.close(code: 4003) }
+            room.used[claim.nonce] = claim.expires
+            return joinRoom(peer, room: room, key: app, id: id, kind: named.kind, name: named.name, device: Self.short(hello["device"], 40))
+        }
+        guard let game = games[app],
               let claim = ControllerToken.check(hello["credential"] as? String, kinds: [.host, .join, .controller], app: app,
                                                 generation: game.session.generation, key: key)
         else { return peer.close(code: 4003) }
         if claim.kind == .host { return joinAsHost(peer, game: game, app: app, preview: claim.preview) }
         joinAsPlayer(peer, game: game, app: app, resuming: claim.kind == .controller ? claim.player : nil)
+    }
+
+    // MARK: A wish's room
+
+    private func joinRoom(_ peer: RelayPeer, room: Room, key: String, id: String, kind: String, name: String, device: String) {
+        // The same app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it.
+        if let old = room.members[id] {
+            old.peer.onClose = {}
+            old.peer.close(code: 4000)
+            room.members[id] = nil
+        }
+        let member = Member(peer: peer, kind: kind, name: name, device: device)
+        let others = room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
+        room.members[id] = member
+        peer.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": Self.roster(room), "now": Self.now,
+                             "credential": ControllerToken.issue(kind: .peer, app: key, generation: room.generation, peer: id, key: self.key)]))
+        let joined = Self.json(["t": "joined", "peer": Self.described(id, member)])
+        for (other, each) in room.members where other != id { each.peer.send(joined) }
+        peer.onText = { [weak self, weak room, weak member] text in
+            guard let self, let room, let member else { return }
+            self.fromMember(room, id: id, member: member, text: text)
+        }
+        peer.onBinary = { [weak peer] _ in peer?.close(code: 4003) }   // nothing binary goes between peers yet
+        peer.onClose = { [weak self, weak room, weak member] in
+            guard let self, let room, let member, room.members[id] === member else { return }
+            room.members[id] = nil
+            let left = Self.json(["t": "left", "peer": id])
+            for each in room.members.values { each.peer.send(left) }
+            self.onRoomChanged(key, self.membersDescribed(room))
+        }
+        onRoomChanged(key, membersDescribed(room))
+    }
+
+    private func fromMember(_ room: Room, id: String, member: Member, text: String) {
+        guard let message = Self.parse(text) else { return }
+        let kind = message["t"] as? String ?? ""
+        guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
+        let to = message["to"] as? String
+        let out = Self.json(["t": "message", "from": id, "data": data, "at": Self.now])
+        if let to {
+            // Told when the one it's for isn't there, or has stopped reading, so the sender's library can say so.
+            guard let target = room.members[to], target.peer.pendingText <= Self.hostBehind else {
+                return member.peer.send(Self.json(["t": "undelivered", "to": to, "reason": room.members[to] == nil ? "not in the room" : "busy"]))
+            }
+            target.peer.send(out)
+        } else {
+            for (other, each) in room.members where other != id && each.peer.pendingText <= Self.hostBehind { each.peer.send(out) }
+        }
+    }
+
+    /// Every app the room's wish has, as a member is told it: in its welcome, and again when the list changes.
+    private static func roster(_ room: Room) -> [[String: Any]] {
+        room.apps.sorted { $0.key < $1.key }.map { ["peer": $0.key, "kind": $0.value.kind, "name": $0.value.name] }
+    }
+
+    private static func described(_ id: String, _ member: Member) -> [String: Any] {
+        var described = member.described
+        described["peer"] = id
+        return described
+    }
+
+    private func membersDescribed(_ room: Room) -> [[String: Any]] {
+        room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
     }
 
     private func joinAsHost(_ peer: RelayPeer, game: Game, app: String, preview: Bool) {
@@ -473,20 +644,7 @@ public final class Relay: @unchecked Sendable {
         host.send(Self.json(["t": "link", "url": page + "#" + join]))
     }
 
-    // A phone may send about as often as its screen draws; past that its messages are dropped, and a phone that goes
-    // on past it for ten seconds is let go.
-    private func allowed(_ player: Player) -> Bool {
-        let now = Date()
-        player.tokens = min(ControllerWire.perSecond, player.tokens + now.timeIntervalSince(player.refilled) * ControllerWire.perSecond)
-        player.refilled = now
-        // A pause of a couple of seconds ends the stretch: a flood that lets one message through now and then still counts.
-        if now.timeIntervalSince(player.lastDropped) > 2 { player.over = nil }
-        if player.tokens >= 1 { player.tokens -= 1; return true }
-        player.lastDropped = now
-        if player.over == nil { player.over = now }
-        if let over = player.over, now.timeIntervalSince(over) > 10 { player.peer?.close(code: 4008) }
-        return false
-    }
+    private func allowed(_ player: Player) -> Bool { player.rate.allowed(player.peer) }
 
     // MARK: Beats
 
@@ -523,12 +681,28 @@ public final class Relay: @unchecked Sendable {
                 if now.timeIntervalSince(host.heard) > ControllerWire.silence { host.close(code: 4002) } else { host.send(beat) }
             }
         }
+        for (key, room) in rooms {
+            // A fresh credential for each member every so often, over its own socket: what lets it back in once its link
+            // drops, since the one it joined with is spent and runs out in minutes.
+            let renew = now.timeIntervalSince(room.renewed) >= Self.peerRenewal
+            if renew { room.renewed = now }
+            for (id, member) in room.members {
+                if now.timeIntervalSince(member.peer.heard) > ControllerWire.silence { member.peer.close(code: 4002); continue }
+                member.peer.send(beat)
+                if renew {
+                    member.peer.send(Self.json(["t": "credential", "credential": ControllerToken.issue(kind: .peer, app: key, generation: room.generation,
+                                                                                                     peer: id, key: self.key)]))
+                }
+            }
+        }
     }
 
     // MARK: For tests
 
     /// The app's session as the relay has it, read on its queue.
     public func hasSession(_ app: String) -> Bool { queue.sync { games[app] != nil } }
+    /// Who is in a room now, read on its queue.
+    public func members(of room: String) -> [String] { queue.sync { rooms[room]?.members.keys.sorted() ?? [] } }
 
     private static var now: Int { Int(Date().timeIntervalSince1970 * 1000) }
     private static func clamp(_ value: Any?) -> Double {

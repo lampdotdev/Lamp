@@ -22,7 +22,7 @@ enum TVTemplate {
     }
 
     static func writeOwnedFiles(for project: LampProject) throws {
-        try Template.write(lampJS, to: supportFile, for: project)
+        try Template.write(lampJS(for: project), to: supportFile, for: project)
     }
 
     static func fill(_ project: LampProject) throws {
@@ -152,7 +152,16 @@ enum TVTemplate {
     /// Lamp's building blocks in every TV app, written before every build: LampAI, LampStore and LampAssets
     /// (`DeviceSupport.webJS`, shared with the web apps integrations declare), then the remote. It runs on Samsung's and
     /// LG's TVs and in the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
-    static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS }
+    static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS + wishJS }
+
+    /// lamp.js as an app is given it: with `Lamp.wish` only for a TV app with others in its wish
+    /// (`Template.talksToOtherApps`), so a TV app on its own is written as it was before the block existed.
+    static func lampJS(for project: LampProject) -> String {
+        Template.talksToOtherApps(project) ? lampJS
+            : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
+    }
+
+    private static let wishLine = " * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below\n"
 
     static let remoteJS = """
         /* The remote, for a TV app. Written by Lamp before every build; don't edit. LampAI, LampStore and LampAssets
@@ -171,6 +180,7 @@ enum TVTemplate {
          *   with "#" + hash after it when given; null when the app has no Phone/index.html
          * Lamp.onPhonePage(fn)   fn() now when there is an address, and again whenever it changes: draw the QR code there
          * Lamp.controllers   phones on the same Wi-Fi as controllers: see its comment below
+         * Lamp.wish          the wish's other apps (an iPhone, Mac or Android app): who is open, messages; see its comment below
          *
          * The arrows move focus between what can take it (buttons, links, fields, and anything with data-focus),
          * to the nearest in that direction; OK clicks what has it.
@@ -789,6 +799,231 @@ extension TVTemplate {
 
         """#.replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
 
+    /// The wish's other apps (`WishRooms`): the TV page's half of `LampWish`, the same block the wish's Swift and Kotlin
+    /// apps have. The page asks Lamp for its room (`/app/wish`, through the preview's bridge or the gateway), opens its own
+    /// socket to the relay there and hears who else is in it; what the apps say to each other never passes through Lamp.
+    static let wishJS = #"""
+        /* The wish's other apps. Written by Lamp before every build; don't edit.
+         *
+         * The other apps of this app's wish (an iPhone app, a Mac app, an Android app): which are open now, and messages
+         * between them, through Lamp on the Mac over the home Wi-Fi, with nothing to pair, host or set up. Each app of the
+         * wish is a peer named by its folder in the wish: "tv" (this one), "iphone", "apple" (an app for iPhone and Mac),
+         * "mac", "android"; its kind is the device word the tools use for it.
+         *
+         * Lamp.wish.start()                  joins the wish's room; call it as the app opens (the other calls do it too)
+         * Lamp.wish.peers()                  the wish's other apps open now: [{ peer: 'iphone', kind, name, device, status }]
+         * Lamp.wish.apps()                   every other app of the wish, open or not
+         * Lamp.wish.peer('iphone')           that app, open or not ({ ..., open, status }); null when the wish has none
+         * Lamp.wish.peer('iphone').status    { state: 'connected' or 'notOpen', reason, lastSeen }: show reason as it is
+         *                                     ("The iPhone app isn't open."); lastSeen is ms since 1970, or null
+         * Lamp.wish.onPeers(fn(list))        fn now and whenever any app's status changes (the open ones)
+         * Lamp.wish.send(data, 'iphone')     JSON to one app; false (with why in the console) when it wasn't sent
+         * Lamp.wish.send(data)               to every other app of the wish
+         * Lamp.wish.onMessage(fn(from, data))   what another app sent: its peer name and its JSON
+         * Lamp.wish.state(), status()        this app's link: 'connecting', 'connected', 'alone' (the wish has no other
+         *                                     app), 'away' (Lamp isn't reachable), 'ended'; status() is { state, reason }
+         * Lamp.wish.onState(fn(state, status))   fn now and whenever this app's link changes
+         * Lamp.wish.me()                     this app's own peer name
+         * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; files aren't carried yet
+         * Lamp.wish.stop()
+         *
+         * More states may come: compare with the names above and treat any other as not connected. Show a reason as it
+         * is rather than words of your own, and keep the app usable while an app isn't open. A phone steering this app as
+         * a game controller is Lamp.controllers (above), not this.
+         */
+        (function () {
+          'use strict';
+          var MESSAGE = 16384;
+          var REASONS = { connecting: "Connecting to the wish's other apps…",
+                          away: "Can't reach Lamp. Open Lamp on your Mac and keep this device on its Wi‑Fi." };
+          var on = { peers: [], message: [], state: [] };
+          var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
+          var room = null, address = null, credential = null, mine = '', apps = [], state = 'connecting', retry = 0, away = false, undeliveredSaid = {};
+          var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
+          var device = bridge ? 'TV preview' : 'TV';
+
+          function emit(name, args) {
+            var list = on[name];
+            for (var i = 0; i < list.length; i++) { try { list[i].apply(null, args); } catch (e) { if (window.console) console.error(e); } }
+          }
+          function status() { return { state: state, reason: REASONS[state] || '' }; }
+          function setState(next) { if (state === next) return; state = next; emit('state', [state, status()]); }
+          function copy(p) { return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open,
+                                      status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } }; }
+          function openOnes() { var list = []; for (var i = 0; i < apps.length; i++) if (apps[i].open) list.push(copy(apps[i])); return list; }
+          function changed() { emit('peers', [openOnes()]); }
+          function find(id) { for (var i = 0; i < apps.length; i++) if (apps[i].peer === id) return apps[i]; return null; }
+          function notOpen(name) { return name.charAt(0).toUpperCase() + name.slice(1) + " isn't open."; }
+          function shut(p, when) { p.open = false; p.status = { state: 'notOpen', reason: notOpen(p.name), lastSeen: when }; }
+          function opened(p, info) {
+            p.open = true;
+            if (typeof info.device === 'string') p.device = info.device;
+            p.status = { state: 'connected', reason: '', lastSeen: typeof info.since === 'number' ? info.since : Date.now() };
+          }
+          function leftAll() { var now = Date.now(); for (var i = 0; i < apps.length; i++) if (apps[i].open) shut(apps[i], now); changed(); }
+          function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
+          function say(line) { if (window.console) console.error('Lamp.wish: ' + line); }
+
+          function hear(m) {
+            if (m.t === 'welcome') {
+              retry = 0; away = false; undeliveredSaid = {};
+              if (typeof m.peer === 'string') mine = m.peer;
+              if (typeof m.credential === 'string') credential = m.credential;
+              var present = {}, i, list = m.peers || [], roster = m.apps || [], next = [];
+              for (i = 0; i < list.length; i++) if (list[i] && typeof list[i].peer === 'string') present[list[i].peer] = list[i];
+              for (i = 0; i < roster.length; i++) {
+                var a = roster[i];
+                if (!a || typeof a.peer !== 'string' || a.peer === mine) continue;
+                var known = find(a.peer), name = typeof a.name === 'string' ? a.name : a.peer;
+                var p = { peer: a.peer, kind: a.kind || '', name: name, device: known ? known.device : '', open: false, status: null };
+                shut(p, known ? known.status.lastSeen : null);
+                if (present[a.peer]) opened(p, present[a.peer]);
+                next.push(p);
+              }
+              apps = next;
+              changed();
+              setState('connected');
+            } else if (m.t === 'joined' && m.peer && typeof m.peer.peer === 'string') {
+              var j = find(m.peer.peer);
+              if (!j) { j = { peer: m.peer.peer, kind: m.peer.kind || '', name: m.peer.name || m.peer.peer, device: '', open: false, status: null }; apps.push(j); }
+              opened(j, m.peer);
+              changed();
+            } else if (m.t === 'left') {
+              var l = find(m.peer);
+              if (l) { shut(l, Date.now()); changed(); }
+            } else if (m.t === 'credential' && typeof m.credential === 'string') {
+              credential = m.credential;
+            } else if (m.t === 'apps') {
+              // The wish gained an app or lost one: the others keep what's known of them.
+              var kept = [], given = m.apps || [];
+              for (var k = 0; k < given.length; k++) {
+                var g = given[k];
+                if (!g || typeof g.peer !== 'string' || g.peer === mine) continue;
+                var had = find(g.peer);
+                if (!had) { had = { peer: g.peer, kind: g.kind || '', name: typeof g.name === 'string' ? g.name : g.peer, device: '', open: false, status: null }; shut(had, null); }
+                kept.push(had);
+              }
+              apps = kept;
+              changed();
+            } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
+              emit('message', [m.from, m.data]);
+            } else if (m.t === 'undelivered' && typeof m.to === 'string') {
+              if (!undeliveredSaid[m.to]) { undeliveredSaid[m.to] = true; say('a message to "' + m.to + '" did not arrive: ' + (m.reason || 'it is not in the room') + '.'); }
+            }
+          }
+          function connect() {
+            if (!started || socket) return;
+            // Each credential lets this page in once: the next one comes over the socket.
+            var given = credential;
+            credential = null;
+            var s;
+            try { s = new WebSocket(address); } catch (e) { return lost(0); }
+            socket = s;
+            heard = Date.now();
+            s.onopen = function () { s.send(JSON.stringify({ t: 'hello', app: room, credential: given, device: device })); };
+            s.onmessage = function (event) {
+              heard = Date.now();
+              if (typeof event.data !== 'string') return;
+              var m; try { m = JSON.parse(event.data); } catch (e) { return; }
+              if (m && typeof m === 'object') hear(m);
+            };
+            s.onclose = function (event) { if (socket === s) lost(event.code); };
+          }
+          // Turned away, or the room ended: Lamp is asked for a fresh credential; dropped otherwise, the page comes back
+          // after a moment with the one the room last handed it, or asks Lamp when it has none.
+          function lost(code) {
+            socket = null;
+            leftAll();
+            if (!started) return;
+            if (state === 'connected') setState('connecting');
+            if (code === 4003 || code === 4005 || (state === 'connecting' && retry >= 3)) { credential = null; address = null; }
+            retry = Math.min(retry + 1, 6);
+            clearTimeout(again);
+            again = setTimeout(open, retry * 750);
+          }
+          function open() {
+            if (!started || socket) return;
+            if (credential && address) return connect();
+            clearTimeout(askTimer);
+            LampAI._post('/app/wish', { device: device }, 20000).then(function (answer) {
+              if (!started) return;
+              if (answer.alone) {
+                // The wish has no other app: nothing to join, until one is added.
+                apps = []; changed(); setState('alone');
+                if (answer.me && answer.me.peer) mine = answer.me.peer;
+                askTimer = setTimeout(open, (answer.renew || 300) * 1000);
+                return;
+              }
+              if (!answer.socket || !answer.room || !answer.credential) throw new Error(answer.error || 'Lamp did not say where the wish\'s apps meet.');
+              address = answer.socket; room = answer.room; credential = answer.credential; mine = answer.peer || mine;
+              if (state !== 'connected') setState('connecting');
+              connect();
+            }, function (error) {
+              if (!started) return;
+              if (state !== 'alone') setState('away');
+              say(error.message);
+              askTimer = setTimeout(open, 3000);
+            });
+          }
+          function beat() {
+            if (!socket || socket.readyState !== 1) return;
+            if (Date.now() - heard > 15000) { var s = socket; socket = null; s.close(); lost(0); return; }
+            socket.send('{"t":"beat"}');
+          }
+          function adder(name) {
+            return function (fn) {
+              on[name].push(fn);
+              api.start();
+              if (name === 'peers') fn(openOnes());
+              if (name === 'state') fn(state, status());
+              return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
+            };
+          }
+
+          var api = {
+            start: function () {
+              if (started) return;
+              started = true;
+              open();
+              beatTimer = setInterval(beat, 5000);
+            },
+            stop: function () {
+              started = false;
+              clearTimeout(askTimer); clearTimeout(again); clearInterval(beatTimer);
+              if (socket) { var s = socket; socket = null; s.close(); }
+              leftAll();
+              setState('ended');
+            },
+            peers: function () { api.start(); return openOnes(); },
+            apps: function () { api.start(); var list = []; for (var i = 0; i < apps.length; i++) list.push(copy(apps[i])); return list; },
+            peer: function (id) { api.start(); var p = find(id); return p ? copy(p) : null; },
+            me: function () { api.start(); return mine; },
+            state: function () { api.start(); return state; },
+            status: function () { api.start(); return status(); },
+            messageLimit: MESSAGE,
+            send: function (data, to) {
+              api.start();
+              var what = to ? 'a message to "' + to + '"' : 'a message to the wish\'s apps';
+              if (state !== 'connected' || !socket || socket.readyState !== 1) {
+                if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
+                return false;
+              }
+              if (to) { var p = find(to); if (!p || !p.open) { say(what + ' was not sent: that app is not open now.'); return false; } }
+              var frame = { t: 'send', data: data };
+              if (to) frame.to = to;
+              var text = JSON.stringify(frame);
+              if (data === undefined || text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
+              if (bytes(text) > MESSAGE) { say(what + ' of ' + bytes(text) + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
+              socket.send(text);
+              return true;
+            },
+            onMessage: adder('message'), onPeers: adder('peers'), onState: adder('state')
+          };
+          if (window.Lamp) window.Lamp.wish = api;
+        })();
+
+        """#
+
     /// Phones as controllers: the phone page's half, served by Lamp beside the app's Phone/ files as lamp-controller.js
     /// (`Store.phonePage`). Its socket goes to the controllers' relay, on this Mac by the name the page was reached at, at
     /// the port Lamp says before each try (`lamp-relay.json`), never to Lamp.
@@ -1053,12 +1288,13 @@ extension Agent.Rules {
     runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
     """
 
-    /// For a TV app with an iPhone or Mac app beside it in the same wish (`Parts`): how the two talk.
-    static let tvParts = """
-    - When the wish has an iPhone or Mac app beside the TV app, that app joins the TV app the way a phone's page \
-    does, as a player of `Lamp.controllers`: its buttons, sticks and messages arrive in onButton, onAxis and \
-    onMessage, the files it sends in onFile, and `Lamp.controllers.send` and `sendFile` reach it. Call \
-    `Lamp.controllers.start()` as the TV app opens; it needs no page in Phone/ for that.
+    /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone
+    /// or Mac app steers the TV app's game as a player of `Lamp.controllers`.
+    static let tvParts = String(wishTalk.dropFirst()) + """
+    - When the wish's iPhone or Mac app steers the TV app (a game's controller, a remote), it joins the TV app the way a \
+    phone's page does, as a player of `Lamp.controllers`, beside `Lamp.wish` for everything else: its buttons, sticks \
+    and messages arrive in onButton, onAxis and onMessage, the files it sends in onFile, and `Lamp.controllers.send` \
+    and `sendFile` reach it. Call `Lamp.controllers.start()` as the TV app opens; it needs no page in Phone/ for that.
     """
 
     /// Lamp's AI in a web app on a device (`DeviceSupport.webJS`): the TV kit's and a declared web kind's.

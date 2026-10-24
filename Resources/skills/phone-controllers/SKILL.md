@@ -52,6 +52,10 @@ The TV sends a phone a file the same way, with `Lamp.controllers.sendFile(player
 
 The page is plain http, and phones give their motion sensors only to https pages. So make buttons and sticks the controls. Offer tilt only where `LampController.canTilt()` says so, from a tap (a Start button), since the browser asks the person first: `LampController.tilt(pad).then(...).catch(...)` then sends the phone's tilt as axis `'tilt'` (x: left -1 to right 1, y: away -1 to toward 1). Where it can't, the game must still be playable with the buttons.
 
+## The wish's own apps
+
+A phone's page is not one of the wish's apps. When the wish has an iPhone, Mac or Android app beside the TV app, those apps and the TV page see each other and talk through `LampWish` (`Lamp.wish` in lamp.js, `LampWish` in LampSupport): who is open now, and messages between them. `Lamp.controllers` and `LampController` are for steering the TV (buttons, sticks, files to the TV); for anything else between the wish's apps, use `LampWish`, whose comment in lamp.js and LampSupport says how.
+
 ## A second screen
 
 For a page that shows something beside the TV rather than steering it (a hand of cards, a scoreboard, a buzzer that needs no game), the TV page draws a QR code of `Lamp.phonePage(hash)`, the page's address with `#hash` after it, inside `Lamp.onPhonePage(fn)`: it's called at once when there's an address and again whenever it moves, so redraw the code there. It's null when the app has no `Phone/index.html`. What the phone and the TV say to each other still goes through `Lamp.controllers` and `LampController` (`send` and `onMessage`, `sendFile` and `onFile`); nothing else carries messages between them.

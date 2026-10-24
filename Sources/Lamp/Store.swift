@@ -397,6 +397,8 @@ final class Store: ObservableObject {
     var wishes: [LampProject] { projects.filter { !$0.isPart } }
     /// A wish's other parts, as they are now.
     func parts(of wish: LampProject) -> [LampProject] { projects.filter { $0.partOf == wish.id } }
+    /// Every app of a wish, the one at its root first: the one place that knows where a wish's apps are.
+    func apps(of wish: LampProject) -> [LampProject] { [wish] + parts(of: wish) }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
     /// Who a line about where an app opens names: the wish, or for one of its several apps that app ("The iPhone app"),
@@ -3911,6 +3913,7 @@ final class Store: ObservableObject {
                     AIStatus.compacted(project)
                     Skills.compacted(project)
                     DeviceNote.compacted(project)
+                    WishNote.compacted(project)
                     Parts.compacted(project)
                 case .naming(let words):
                     turn.naming = words.nilIfEmpty
@@ -3972,6 +3975,7 @@ final class Store: ObservableObject {
                         AIStatus.delivered(to: project, session: id)
                         Skills.delivered(to: project, session: id)
                         DeviceNote.delivered(to: project, session: id)
+                        WishNote.delivered(to: project, session: id)
                         Parts.delivered(to: project, session: id)
                     }
                 }
@@ -4020,7 +4024,7 @@ final class Store: ObservableObject {
         turn.steering = nil
         turn.toolRunning = false
         takeBackHanded(project)
-        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project); Parts.delivered(to: project) }
+        if answered { Memory.delivered(to: project); AIStatus.delivered(to: project); Skills.delivered(to: project); DeviceNote.delivered(to: project); WishNote.delivered(to: project); Parts.delivered(to: project) }
         endApprovals(for: project)
         // A message cut short (the run was stopped, or failed) keeps what was written of it.
         showWritten(for: project)
@@ -4268,6 +4272,7 @@ final class Store: ObservableObject {
         AIStatus.compacted(project)
         Skills.compacted(project)
         DeviceNote.compacted(project)
+        WishNote.compacted(project)
         Parts.compacted(project)
     }
 
@@ -9072,6 +9077,7 @@ final class Store: ObservableObject {
             (($0.platform.hasIOS || $0.platform.hasAndroid || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
         })
         PhoneSites.sync(projects)
+        WishRooms.sync(wishes.map { ($0, apps(of: $0)) })
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
@@ -9146,7 +9152,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/poll", "/app/wish/send"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -9215,6 +9221,7 @@ final class Store: ObservableObject {
         if route == "/app/share" { return await appShare(request, for: project) }
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
+        if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
         guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
@@ -9265,6 +9272,26 @@ final class Store: ObservableObject {
         let direct = PhoneControllers.shared.directLinks(for: project.id, preview: request.fromPreview,
                                                          from: request.fromPreview ? nil : request.peerAddress)
         return (200, ["links": [relay] + direct, "renew": 15])
+    }
+
+    /// The wish's apps seeing each other and talking (`WishRooms`): any app of a wish, by its own token, is told its wish's
+    /// room at the relay and who is in it (`/app/wish`), or, for one that can't hold a socket, joined to it by Lamp and
+    /// fed by long-poll (`/app/wish/poll`, `/app/wish/send`: `WishProxies`). Only the app's own wish is ever answered for.
+    private func wishRoom(_ request: Gateway.Request, route: String, for project: LampProject) async -> (Int, [String: Any]) {
+        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        let device = String((body["device"] as? String ?? "").prefix(40))
+        let wish = wish(of: project)
+        let apps = apps(of: wish)
+        switch route {
+        case "/app/wish/poll":
+            return await WishProxies.poll(project, wish: wish, apps: apps, device: device, rejoin: body["rejoin"] as? Bool == true)
+        case "/app/wish/send":
+            return await WishProxies.send(project, body: body)
+        default:
+            // By the name or address the app reached Lamp at, at the relay's port, as a TV app's page is told its relay.
+            let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
+            return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host)
+        }
     }
 
     /// The TV app one of a wish's apps joins as a player (`controllerSession`): its wish's, at the root or in TV/ alike,

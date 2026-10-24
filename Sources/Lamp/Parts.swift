@@ -222,7 +222,7 @@ enum Parts {
         its rules with `read_skill` (once per conversation) and follow them for the files in its folder; the rules \
         above are for the app at the root. `look_at_app` and `use_app` reach another part with `part` (left out, \
         they're for the app at the root): look at each part you changed before finishing.
-        """ + Targets.all.filter { kind in ([wish] + parts).contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
+        """ + Agent.Rules.wishTalk + Targets.all.filter { kind in ([wish] + parts).contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
     }
 }
 
@@ -237,11 +237,13 @@ extension Agent.Rules {
         """
     }
 
-    /// How a Swift part reaches the wish's TV app: as a player of its `Lamp.controllers`, through `LampController`.
+    /// How a Swift part reaches the wish's other apps (`wishTalk`), and its TV app's game as a player of
+    /// `Lamp.controllers`, through `LampController`.
     static func partTalk(mac: Bool) -> String {
-        """
+        wishTalk + """
 
-        - When the wish has a TV app, this app talks to it with `LampController` from LampSupport.swift: \
+        - When the wish has a TV app and this app steers it (a game's controller, a remote), that goes with \
+        `LampController` from LampSupport.swift, beside `LampWish` for everything else: \
         `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
         Wi‑Fi, with nothing to pair or set up\(mac ? "" : ": the TV app connects straight to the phone, and Lamp on the Mac only introduces them"). \
         `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \
