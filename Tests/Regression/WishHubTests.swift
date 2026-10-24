@@ -41,14 +41,17 @@ final class WishHubTests: XCTestCase {
         XCTAssertEqual(alone["alone"] as? Bool, true)
         XCTAssertNil(alone["credential"])
 
-        // Peers are named by their folder in the wish, so an app for iPhone and Mac is "apple" while its kind stays the
-        // device word the tools use; an app at the wish's root is named by the folder its kind would have.
+        // Peers are named by their folder in the wish: an app for iPhone and Mac made in Apple/ is "apple", and one made
+        // for the Mac too in place keeps its iPhone/ folder and its name, while its kind stays the device word the tools
+        // use; an app at the wish's root is named by the folder its kind would have.
         let both = LampProject(id: "scoreboard.apple", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard/Apple"), platform: .universal, partOf: "scoreboard")
-        XCTAssertEqual(WishRooms.describe(both)["peer"] as? String, "apple")
-        XCTAssertEqual(WishRooms.describe(both)["kind"] as? String, "iphone")
-        XCTAssertEqual(WishRooms.describe(wish)["peer"] as? String, "tv")
+        XCTAssertEqual(WishRooms.describe(both, in: wish)["peer"] as? String, "apple")
+        XCTAssertEqual(WishRooms.describe(both, in: wish)["kind"] as? String, "iphone")
+        let grown = LampProject(id: "scoreboard.iphone", name: "Scoreboard", exe: "Scoreboard", dir: URL(fileURLWithPath: "/tmp/scoreboard/iPhone"), platform: .universal, partOf: "scoreboard")
+        XCTAssertEqual(WishRooms.describe(grown, in: wish)["peer"] as? String, "iphone", "a part changed in place keeps its folder and its name")
+        XCTAssertEqual(WishRooms.describe(wish, in: wish)["peer"] as? String, "tv")
         let mac = LampProject(id: "tally", name: "Tally", exe: "Tally", dir: URL(fileURLWithPath: "/tmp/tally"), platform: .mac)
-        XCTAssertEqual(WishRooms.describe(mac)["peer"] as? String, "mac")
+        XCTAssertEqual(WishRooms.describe(mac, in: mac)["peer"] as? String, "mac")
     }
 
     func testAnAppThatCantHoldASocketIsJoinedByLampAndTalksWithOneThatCan() async throws {

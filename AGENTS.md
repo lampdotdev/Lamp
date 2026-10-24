@@ -1197,8 +1197,9 @@ starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 The apps of a wish see each other and talk through a **room** for the wish at the controllers' relay (`WishRooms`,
 WishHub.swift; `Relay.configureRoom`): each app of the wish, by its own token, asks `/app/wish` and is told the relay's
 socket (by the name it reached Lamp at), its room (`wish:<id>`, never a TV app's game key), which peer it is (its folder
-in the wish, lowercased: "tv", "iphone", "apple", "mac", "android"; an app at the root is named by the folder its kind gets,
-so the name survives a move into one; `kind` stays the device word the tools use), a `peer` credential for that room naming that peer (`ControllerToken.Kind.peer`,
+in the wish, lowercased: "tv", "iphone", "apple", "mac", "android", kept when its kind changes in place; an app at the root
+is named by the folder its kind gets, so the name survives a move into one; `kind` stays the device word the tools use), a
+`peer` credential for that room naming that peer (`ControllerToken.Kind.peer`,
 an hour, signed with the controllers' key, worthless once the room ends), and who is in the room now. The relay lets a
 peer in only with such a credential for that room naming an app the wish has, tells every member who joins and leaves
 (`welcome`, `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as

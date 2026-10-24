@@ -18,17 +18,20 @@ enum WishRooms {
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }
 
-    /// Which of the wish's apps this one is: the folder an app of its kind has in the wish, lowercased ("tv", "iphone",
-    /// "apple", "mac", "android"). A wish has one folder of each, and an app at a wish's root is named by the folder an
-    /// app of its kind gets, so a peer's name never changes.
-    static func peer(_ app: LampProject) -> String { Parts.folder(for: app.platform).lowercased() }
+    /// Which of the wish's apps this one is: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
+    /// An app keeps its folder when its kind changes in place (an iPhone app made for the Mac too stays in iPhone/), so
+    /// its name holds; the app at a wish's root, which has no folder of its own yet, is named by the folder an app of its
+    /// kind gets, the one it will have once every app is in a folder.
+    static func peer(_ app: LampProject, in wish: LampProject) -> String {
+        (app.id == wish.id ? Parts.folder(for: app.platform) : app.dir.lastPathComponent).lowercased()
+    }
 
     /// Every app the wish has, as the relay and the libraries describe one.
-    static func described(_ apps: [LampProject]) -> [[String: Any]] { apps.map(describe) }
+    static func described(_ apps: [LampProject], in wish: LampProject) -> [[String: Any]] { apps.map { describe($0, in: wish) } }
 
     /// `kind` is the device word the tools use for the app ("iphone" for an app for iPhone and iPad, Mac too).
-    static func describe(_ app: LampProject) -> [String: Any] {
-        ["peer": peer(app), "kind": Parts.word(for: app.platform), "name": Parts.name(of: app.platform)]
+    static func describe(_ app: LampProject, in wish: LampProject) -> [String: Any] {
+        ["peer": peer(app, in: wish), "kind": Parts.word(for: app.platform), "name": Parts.name(of: app.platform)]
     }
 
     /// When each room was last asked for by one of its apps, by key.
@@ -41,17 +44,18 @@ enum WishRooms {
     /// room, which peer it is, a credential for the room, and who is in it now. An app whose wish has no other app is
     /// told it's alone, and asks again later in case one is added.
     static func answer(for project: LampProject, wish: LampProject, apps: [LampProject], host: String) async -> (Int, [String: Any]) {
-        let me = describe(project)
+        let me = describe(project, in: wish)
         // Alone: a wish of one app, whether it's at the wish's root or in a folder of its own.
         guard apps.count >= 2 else { return (200, ["alone": true, "renew": 300, "me": me]) }
         let key = key(for: wish)
+        let peer = peer(project, in: wish)
         asked[key] = Date()
-        ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(apps))
+        ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(apps, in: wish))
         startTimer()
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link between the wish's apps."]) }
-        return (200, ["socket": "ws://\(host):\(port)/", "room": key, "peer": peer(project),
-                      "credential": ControllerCredential.issue(kind: .peer, app: key, peer: peer(project)),
-                      "renew": 60, "peers": presence(of: wish), "apps": described(apps), "me": me])
+        return (200, ["socket": "ws://\(host):\(port)/", "room": key, "peer": peer,
+                      "credential": ControllerCredential.issue(kind: .peer, app: key, peer: peer),
+                      "renew": 60, "peers": presence(of: wish), "apps": described(apps, in: wish), "me": me])
     }
 
     /// Who is in the wish's room now, as the relay last said.
@@ -63,7 +67,7 @@ enum WishRooms {
         let byKey = Dictionary(wishes.map { (key(for: $0.wish), $0) }, uniquingKeysWith: { a, _ in a })
         for key in ControllerRelay.roomKeys {
             guard let entry = byKey[key], entry.apps.count >= 2 else { end(key); continue }
-            ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(entry.apps))
+            ControllerRelay.openRoom(key, generation: ControllerCredential.generation(key), apps: described(entry.apps, in: entry.wish))
         }
         expire()
     }
@@ -290,8 +294,9 @@ enum WishNote {
                                  uniquingKeysWith: { a, _ in a })
         return apps.map { app in
             let name = Parts.name(of: app.platform)
-            var line = "\(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(WishRooms.peer(app))\"): \(store.isOpen(app) ? "open" : "not open")"
-            if let member = present[WishRooms.peer(app)] {
+            let peer = WishRooms.peer(app, in: wish)
+            var line = "\(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(peer)\"): \(store.isOpen(app) ? "open" : "not open")"
+            if let member = present[peer] {
                 let since = (member["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened) } ?? "?"
                 line += ", in the wish's room as \"\(member["device"] as? String ?? "")\" since \(since)"
             } else {
