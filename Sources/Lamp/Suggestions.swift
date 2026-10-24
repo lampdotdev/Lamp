@@ -150,6 +150,8 @@ enum AppName {
         var integration: String?
         /// For a game, the places it's played from the start: the Mac, and any other device the wish names.
         var places: [Destination]?
+        /// For a game, what it's written for: three.js, or C++ on the kit when the wish needs an Xbox's whole power.
+        var engine: GameKit.Engine?
         /// For one of the person's devices Lamp can't make apps for yet (`seen`): nothing is made until the agent has
         /// set the device up and given the wish its kind.
         var forOtherDevice = false
@@ -178,6 +180,7 @@ enum AppName {
                           kinds: kinds, kindSaid: said,
                           integration: kinds == [.device] ? devices.first : nil,
                           places: kinds == [.game] ? GameKit.places(for: devices) : nil,
+                          engine: kinds == [.game] ? GameKit.engine(for: devices) : nil,
                           forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
                           undecided: said ? nil : candidates(object["candidates"]),
                           color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })

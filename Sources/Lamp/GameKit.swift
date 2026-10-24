@@ -21,6 +21,8 @@ import Foundation
 /// marks the folder as a game's; and `build/`.
 enum GameKit {
     static let kind = "native-game"
+    /// The size every game is drawn at, everywhere, scaled to the screen.
+    static let width = 1920, height = 1080
     static let folder = "Lamp"
     /// What marks a game's folder, kept with the code so a version restored brings the kind back with it.
     static let marker = ".lamp-game"
@@ -36,11 +38,30 @@ enum GameKit {
     /// Whether the app is a game.
     static func isGame(_ project: LampProject) -> Bool { project.platform == .game }
 
+    /// What a game is written for: a page drawn with three.js (`web`, the start for most games: the model writes it
+    /// best, and it runs in every place's web view), or C++ on the kit (`native`, for a heavy 3D game that needs an
+    /// Xbox's whole power). Its folder's mark says which, so a version restored brings the engine with it; a draft's is
+    /// its meta.json's; a game made before engines (the mark says nothing of one) is native, as every game was then.
+    enum Engine: String { case web, native }
+
+    static func engine(_ project: LampProject) -> Engine {
+        if let mark = AppFile.text(project.dir.appendingPathComponent(marker), in: project) {
+            return mark.contains("engine: web") ? .web : .native
+        }
+        return project.engine.flatMap(Engine.init(rawValue:)) ?? (DeviceApps.isScaffolded(project.dir) ? .native : .web)
+    }
+
+    /// The engine a list of devices asks for: "native" with the places for C++ on the kit, else three.js.
+    static func engine(for devices: Set<String>) -> Engine { devices.contains("native") || devices.contains(xboxKind) ? .native : .web }
+
+    /// The Xbox integration's kind a game goes there as: its web app's for three.js, its game kind's for C++.
+    static func xboxKind(for engine: Engine) -> String { engine == .web ? xbox : xboxKind }
+
     // MARK: Where it's played
 
     /// The words a game's places are given by, in the naming call's answer and `make_app_for`'s list: "game" itself,
     /// and the devices it's played on.
-    static let placeWords: [String: Destination?] = ["game": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
+    static let placeWords: [String: Destination?] = ["game": nil, "native": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
                                                      xbox: .device, xboxKind: .device, "xbox": .device]
 
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
@@ -110,13 +131,21 @@ enum GameKit {
 
     /// The Swift around the game on Apple's devices, and the C declarations it calls the host by, as written in the
     /// game's folder.
-    static let appleFiles: [(path: String, text: String)] = {
-        guard let apple = resources?.appendingPathComponent("apple") else { return [] }
-        return [("Sources/LampGame.swift", "LampGame.swift"), ("\(folder)/host/include/lamp_apple.h", "host/include/lamp_apple.h"),
-                ("\(folder)/host/lamp_bridge.c", "host/lamp_bridge.c")].compactMap { path, from in
-            (try? String(contentsOf: apple.appendingPathComponent(from), encoding: .utf8)).map { (path, $0) }
-        }
-    }()
+    static let appleFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampGame.swift"),
+                                                                   ("\(folder)/host/include/lamp_apple.h", "apple/host/include/lamp_apple.h"),
+                                                                   ("\(folder)/host/lamp_bridge.c", "apple/host/lamp_bridge.c")])
+
+    /// A three.js game's: the Swift around its page, and Lamp's runtime the page plays through.
+    static let webFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampWebGame.swift"),
+                                                                 ("\(webFolder)/lamp-game.js", "web/lamp-game.js")])
+
+    /// Where a three.js game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
+    static let webFolder = "Web"
+
+    private static func read(_ list: [(path: String, from: String)]) -> [(path: String, text: String)] {
+        guard let resources else { return [] }
+        return list.compactMap { path, from in (try? String(contentsOf: resources.appendingPathComponent(from), encoding: .utf8)).map { (path, $0) } }
+    }
 
     /// Names every file of the kit's by its contents, so the build compiles Lamp's code again only when it changed, and
     /// a game is built again when Lamp's part of it changed (`Target.Recipe.inputs`).
@@ -124,30 +153,51 @@ enum GameKit {
         var hasher = SHA256()
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
-        for file in appleFiles { hasher.update(data: Data((file.path + file.text).utf8)) }
-        hasher.update(data: Data((buildSh + packageSwift).utf8))
+        for file in appleFiles + webFiles { hasher.update(data: Data((file.path + file.text).utf8)) }
+        hasher.update(data: Data((buildSh + packageSwift + webBuildSh + webPackageSwift).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }()
 
     /// Every path Lamp owns in a game, as written in its folder.
-    static var paths: [String] {
-        files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path)
-            + ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
+    static func paths(for project: LampProject) -> [String] {
+        let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
+        guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path) + common }
+        return webFiles.map(\.path) + ["\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
     }
 
     /// Writes Lamp's files into the game where they differ from what's there (so their dates move only when the kit
     /// changed), and the stamp after them; then the Swift around it and what builds it on Apple's devices.
     static func write(for project: LampProject) throws {
+        let engine = engine(project)
+        try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
+        if engine == .web {
+            guard webFiles.count == 2, !DeviceSupport.threeFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
+            for file in webFiles { try Template.write(file.text, to: file.path, for: project) }
+            for file in DeviceSupport.threeFiles {
+                try Template.put(file.contents, at: project.dir.appendingPathComponent("\(webFolder)/three/\(file.name)"), for: project)
+            }
+            // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host); elsewhere
+            // the page loads nothing from it.
+            if project.integration == nil {
+                try Template.put("// Lamp's building blocks for the Xbox, written here when the game is played on one.\n",
+                                 at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
+            } else {
+                try DeviceSupport.writeDeclared(for: project)
+            }
+            try Template.write(webBuildSh, to: "build.sh", for: project, executable: true)
+            try Template.write(webPackageSwift, to: "Package.swift", for: project)
+            try Template.write("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n", to: marker, for: project)
+            return
+        }
         guard !files.isEmpty, appleFiles.count == 3 else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         for file in files {
             try Template.put(file.data, at: project.dir.appendingPathComponent("\(folder)/\(file.name)"), for: project)
         }
         try Template.put(stamp, at: project.dir.appendingPathComponent("\(folder)/kit.stamp"), for: project)
         for file in appleFiles { try Template.write(file.text, to: file.path, for: project) }
-        try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try Template.write(buildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
-        try Template.write("A game made with Lamp: C++ in Game/ against Lamp's game kit in Lamp/.\n", to: marker, for: project)
+        try Template.write("A game made with Lamp: C++ in Game/ against Lamp's game kit in Lamp/.\nengine: native\n", to: marker, for: project)
         // A game made before games were a kind of their own was marked as a device app's.
         if DeviceApps.isScaffolded(project.dir) { AppFolder.remove(project.dir.appendingPathComponent(DeviceApps.marker), in: project.dir) }
     }
@@ -155,30 +205,48 @@ enum GameKit {
     /// Takes Lamp's game files out of an app that's no longer a game, so its next kind builds without them; the
     /// game's own code in Game/ is the agent's to move and delete.
     static func remove(from project: LampProject) {
-        for path in [folder, "Sources/LampGame.swift", marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
+        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", "\(webFolder)/three", marker] {
+            AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir)
+        }
     }
 
     /// The scaffold: a game that already draws and moves, for the agent to make into the one asked for.
     static func fill(_ project: LampProject) throws {
         guard let resources else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
-        let scaffold = resources.appendingPathComponent("scaffold")
-        for path in ["Game/game.cpp", "Game/scene.glsl"] {
+        let web = engine(project) == .web
+        let scaffold = resources.appendingPathComponent(web ? "scaffold-web" : "scaffold")
+        for path in web ? ["\(webFolder)/index.html", "\(webFolder)/game.js"] : ["Game/game.cpp", "Game/scene.glsl"] {
             let text = try String(contentsOf: scaffold.appendingPathComponent(path), encoding: .utf8)
             try Template.write(text, to: path, for: project)
         }
-        try Template.write("Models, pictures and sounds the game reads with lamp_asset(\"name\") go in this folder.\n", to: "Assets/README.txt", for: project)
+        if !web {
+            try Template.write("Models, pictures and sounds the game reads with lamp_asset(\"name\") go in this folder.\n", to: "Assets/README.txt", for: project)
+        }
         try Template.write(".lamp/\n.build/\nbuild/\n", to: ".gitignore", for: project)
-        try Template.write(appMd, to: "APP.md", for: project)
+        try Template.write(web ? webAppMd : appMd, to: "APP.md", for: project)
         try write(for: project)
     }
 
     /// Whether the game is still the scaffold: its code is as Lamp wrote it.
     static func isScaffold(_ project: LampProject) -> Bool {
-        guard let scaffold = resources?.appendingPathComponent("scaffold/Game/game.cpp"),
+        let path = engine(project) == .web ? "\(webFolder)/game.js" : "Game/game.cpp"
+        guard let scaffold = resources?.appendingPathComponent((engine(project) == .web ? "scaffold-web/" : "scaffold/") + path),
               let written = try? String(contentsOf: scaffold, encoding: .utf8),
-              let now = AppFile.text(project.dir.appendingPathComponent("Game/game.cpp"), in: project) else { return false }
+              let now = AppFile.text(project.dir.appendingPathComponent(path), in: project) else { return false }
         return now == written.replacingOccurrences(of: "{{NAME}}", with: project.name)
     }
+
+    static let webAppMd = """
+    # {{NAME}}
+
+    A game built and changed with Lamp: a page in Web/ drawn with three.js and played through Lamp's game runtime
+    (Web/lamp-game.js), its models, pictures and sounds beside it. It's a Mac app played in its own window, and goes on
+    an iPhone, an iPad or an Xbox too once it's put there. Lamp plays it in a preview on the Mac to try it.
+
+    ## What it does
+    Nothing yet: fresh scaffold, a ball the left stick rolls on a lit floor.
+
+    """
 
     static let appMd = """
     # {{NAME}}
@@ -211,6 +279,45 @@ enum GameKit {
     )
 
     """
+
+    /// A three.js game's Package.swift: the Swift around its page, with no library of the game's.
+    static let webPackageSwift = """
+    // swift-tools-version:5.9
+    import PackageDescription
+
+    let package = Package(
+        name: "{{EXE}}",
+        platforms: [.macOS(.v14), .iOS(.v17)],
+        targets: [.executableTarget(name: "{{EXE}}", path: "Sources", sources: ["LampGame.swift", "LampSupport.swift"])]
+    )
+
+    """
+
+    /// A three.js game's build.sh: the C++ game's, with nothing compiled of the game's own and its page copied into the
+    /// app (Contents/Resources/Web on the Mac, Web/ at an iOS bundle's top), where the app's web view reads it.
+    static var webBuildSh: String {
+        func swap(_ script: String, _ old: String, _ new: String) -> String {
+            precondition(script.contains(old), "GameKit.buildSh changed: \(old)")
+            return script.replacingOccurrences(of: old, with: new)
+        }
+        var script = buildSh
+        script = swap(script, "  sh Lamp/build.sh ios-sim\n", "")
+        script = swap(script, "  sh Lamp/build.sh mac\n", "")
+        script = swap(script, " -Xlinker \"$PWD/build/ios-sim/libgame.a\")", ")")
+        script = swap(script, " -Xlinker \"$PWD/build/mac/libgame.a\")", ")")
+        script = swap(script, "LIB=\"build/$([[ \"$PLACE\" == \"ios\" ]] && echo ios-sim || echo mac)/libgame.a\"\n", "")
+        script = swap(script, "# SwiftPM links again only for its own inputs: the game's library is new, so the program is linked again.\nif [ -f \"$BIN\" ] && [ \"$LIB\" -nt \"$BIN\" ]; then rm -f \"$BIN\"; fi\n", "")
+        script = swap(script, "codesign --force -s - \"$APP\"\n", """
+            # The page, its files only: a link in it would bring what it leads to into the app.
+            if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
+            if [[ "$PLACE" == "ios" ]]; then WEB="$APP/Web"; else WEB="$APP/Contents/Resources/Web"; mkdir -p "$APP/Contents/Resources"; fi
+            rm -rf "$WEB"
+            cp -R Web "$WEB"
+            codesign --force -s - "$APP"
+
+            """)
+        return script
+    }
 
     /// build.sh: the game for the Mac (`./build.sh mac`, build/{{EXE}}.app) or the iPhone and iPad simulator
     /// (`./build.sh ios`, build/iOS/{{EXE}}.app). The game, the kit and its host are compiled into one library first
@@ -398,6 +505,63 @@ enum GameKit {
                       sound: sound.map { String($0.dropFirst("Lamp sound: ".count)) })
     }
 
+    // MARK: The three.js preview
+
+    /// Where a three.js game's page is copied for the preview: Lamp's own folder, never the app's, which the agent's
+    /// commands can change while the preview reads it.
+    static func stagingFolder(_ project: LampProject) -> URL {
+        Edition.supportFolder.appendingPathComponent("Game Builds").appendingPathComponent(project.id)
+    }
+
+    /// Copies the page out of the app's folder under the app's sandbox, as a TV app's is (`TVs.stage`), refusing one
+    /// that holds a link, which would bring what it leads to into the copy.
+    static func stageWeb(_ project: LampProject) async throws -> URL {
+        let fm = FileManager.default
+        let dir = stagingFolder(project), page = dir.appendingPathComponent("web")
+        try? fm.removeItem(at: page)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try write(for: project)
+        let copy = "cd \"$LAMP_FROM\" && /bin/cp -Rp \(Sandbox.quoted(webFolder)) \"$LAMP_TO\""
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's files.") }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": page.path], login: false) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the game's files.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        let linked = ([page] + (fm.enumerator(at: page, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        if linked {
+            try? fm.removeItem(at: page)
+            throw Failure(message: "Web/ holds a shortcut to another file. Put the file itself in its place.")
+        }
+        guard fm.fileExists(atPath: page.appendingPathComponent("index.html").path) else { throw Failure(message: "The game has no Web/index.html.") }
+        return page
+    }
+
+    /// Plays the script on a three.js game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
+    @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
+        let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
+        let page = stagingFolder(project).appendingPathComponent("web")
+        guard let (drawn, result) = await WebGamePreview.play(page, script: script) else {
+            throw Failure(message: "The game didn't start in the preview, or ran for more than a minute without finishing the play: "
+                + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
+        }
+        let logs = result["logs"] as? [String] ?? []
+        if let failed = result["failed"] as? String {
+            let said = Privacy.sharesLog && !logs.isEmpty ? " What it logged last:\n" + logs.suffix(20).joined(separator: "\n") : ""
+            throw Failure(message: "The game stopped in the preview: \(failed)." + said)
+        }
+        let folder = previewFolder(project)
+        AppFolder.remove(folder, in: project.dir)
+        var pictures: [URL] = []
+        for line in script where line.hasPrefix("shot ") {
+            let name = String(line.dropFirst(5))
+            guard let png = drawn[name] else { continue }
+            let url = folder.appendingPathComponent("pictures/\(name).png")
+            try AppFolder.write(png, to: url, in: project.dir)
+            pictures.append(url)
+        }
+        return Played(pictures: pictures, printed: logs, stats: result["stats"] as? String, sound: result["sound"] as? String)
+    }
+
     /// The script for `use_app`'s actions on the controller, or why one can't be played. Each action ends with a picture.
     static func script(for actions: [[String: Any]], startingAt shot: Int) -> (lines: [String], said: [String], problem: String?) {
         var lines: [String] = [], said: [String] = []
@@ -450,8 +614,10 @@ extension Agent {
     /// device line (`DeviceNote`, `Rules.gamePlaces`), since Claude Code and Codex keep the prompt a conversation began
     /// with, and a place may be given at any time.
     static func gamePrompt(for project: LampProject) -> String {
-        let rules = [Rules.gameEdit, Rules.ask, Rules.shell, Rules.gameKit, Rules.gameSound, Rules.gameBudget, Rules.icon, Rules.about,
-                     Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+        let web = GameKit.engine(project) == .web
+        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, web ? Rules.gameWebKit : Rules.gameKit,
+                     web ? Rules.gameWebSound : Rules.gameSound, Rules.gameBudget, Rules.icon, Rules.about,
+                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -461,8 +627,7 @@ extension Agent {
 
 extension Agent.Rules {
     static let gameHeader = """
-    You are Lamp's builder agent. The current directory is a game: C++ written against Lamp's game kit, which Lamp \
-    builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
+    You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
     or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller) and on the person's \
     Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
     sound. You try it in a preview on this Mac, the same code drawn out of sight. The request's device line says where \
@@ -470,7 +635,63 @@ extension Agent.Rules {
     """
 
     /// What `make_app_for` answers with when an app becomes a game.
-    static let gameChange = gameEdit + gameKit + gameSound + gameBudget + gameTry
+    static func gameChange(_ project: LampProject) -> String {
+        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + gameBudget + gameTry
+            : gameEdit + gameKit + gameSound + gameBudget + gameTry
+    }
+
+    static let gameWebEdit = """
+    - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
+    (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
+    Web/lamp-game.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/, \
+    build.sh and Package.swift (the app around the page): read lamp-game.js, never edit or delete any of them. Lamp \
+    builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
+    simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
+    it's played is the person's to ask for: when they want it on their iPhone, iPad or Xbox, call make_app_for with \
+    every place it's to be played (["mac", "iphone"], ["mac", "xbox-one"]…); it stays the same game.
+    """
+
+    static let gameWebKit = """
+    - Writing the game: read Web/lamp-game.js first, all of it; it's Lamp's runtime and the whole interface to the \
+    device. index.html loads lamp.js, then the import map for three.js (`three` and `three/addons/`, from Web/three: \
+    the WebGL build and its addons such as GLTFLoader; nothing else is there, so no Draco or KTX2 files), then \
+    game.js as a module: keep that. game.js makes a `THREE.WebGLRenderer({ antialias: true })` and calls \
+    `game({ renderer, init, frame, touch })` once: Lamp sizes the canvas to 1920x1080 and fits it to the window or \
+    screen, runs `init` once (it may be async, to load models with `GLTFLoader().loadAsync('ship.glb')` or sounds), \
+    then `frame(f)` about 60 times a second, which moves things by `f.dt` and ends with `renderer.render(scene, \
+    camera)`. Never call requestAnimationFrame, setTimeout or setInterval for the game, nor read the clock, \
+    Math.random or localStorage: use `f.dt`, `f.time`, `random()`, `save(name, value)` and `load(name)` from \
+    lamp-game.js, so Lamp's preview replays a play exactly. The controller is `f.pads[0]` (lx, ly, rx, ry -1 to 1 \
+    with up positive and the dead zone out; lt and rt 0 to 1; buttons as BUTTON.A… bits in down, pressed and \
+    released), the same wherever it's played: a controller connected to the device, the Mac's keyboard (WASD or the \
+    arrows the left stick, IJKL the right, Space or Enter A, Esc B, F X, R Y, Q and E the bumpers, Z and C the \
+    triggers, P Menu, Tab View) or the touch controls Lamp draws on an iPhone or iPad (a left stick, and the buttons \
+    `touch` names: BUTTON.A | BUTTON.B | BUTTON.MENU unless you say otherwise, BUTTON.RSTICK for a right stick; keep \
+    a game playable with those few on a phone). B is the game's, for back or cancel, and Menu for pause. Draw text \
+    and menus as HTML over the canvas (a fixed div, large type) or into the scene; the preview pictures both. Shake \
+    the controller with `rumble(0, low, high, seconds)`. Log events with `log()`, a line per event, never per \
+    frame. Plain modern JavaScript, nothing loaded from the network.
+    """
+
+    static let gameWebSound = """
+    - Sound: a game has it, through `sound` in lamp-game.js, never an <audio> tag or a library. Give each thing the \
+    player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. Make them in \
+    code with `sound.tone({ wave, from, to, attack, hold, release, volume })` (a square or triangle wave sliding up \
+    for a jump or a pickup, down for a fall or a loss, noise for a hit or an explosion, a few milliseconds of attack \
+    so nothing clicks) unless the person gave sound files, which go in Web/ and load with `await sound.load('hit.wav')`. \
+    Make or load every sound once in init, then `sound.play(s, { volume, pan, pitch })` as things happen, varying \
+    pitch a little (0.9 to 1.1, from random()) for one heard often; `{ loop: true }` for a sound that lasts, changed \
+    with `sound.set` and ended with `sound.stop`. Music is optional and quiet (`sound.music(s, 0.35)`) under effects \
+    at 0.5 to 0.8. The pause menu (Menu) turns sound and music on and off with `sound.volume(effects, music)`, kept \
+    with save(). The preview plays nothing aloud, and each look says what was played.
+    """
+
+    static let gameWebAssets = """
+    - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
+    or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there. Prefer shapes \
+    and colours made in code to files: a game of simple shapes, well lit and well coloured, looks better than one of \
+    mismatched models.
+    """
 
     static let gameEdit = """
     - Make the change the user asks for by editing the game's files: its C++ (.cpp and .h) and shaders (.glsl) in \
@@ -533,16 +754,21 @@ extension Agent.Rules {
     ("frames … ms on average, slowest … ms"): when frames are late, draw less.
     """
 
-    /// Where a game is played and what that allows, for the request's device line: the weakest place's budget.
+    /// Where a game is played and what that allows, for the request's device line: the weakest place's budget, in
+    /// what the preview counts (vertices for C++ on the kit, triangles for three.js).
     static func gamePlaces(_ project: LampProject) -> String {
-        let places = project.openPlaces
+        let places = project.openPlaces, web = GameKit.engine(project) == .web
         let budget: String
         if places.contains(.device) {
-            budget = "an Xbox One's, the slowest console the game may run on, which gives a game in Developer Mode only part of its GPU: under about 300 draws and 500,000 vertices a frame, textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"
+            budget = "an Xbox One's, the slowest console the game may run on, which gives a game in Developer Mode only part of its GPU: "
+                + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one THREE.InstancedMesh), MeshStandardMaterial or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
+                + ", textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"
         } else if places.contains(.ios) {
-            budget = "an iPhone's, which also has to stay cool on battery: under about 600 draws and 1,000,000 vertices a frame, textures at most 2048 px, one shadow map at most"
+            budget = "an iPhone's, which also has to stay cool on battery: under about 600 draws and "
+                + (web ? "500,000 triangles" : "1,000,000 vertices") + " a frame, textures at most 2048 px, one shadow map at most"
         } else {
-            budget = "this Mac's, which draws far more than a console: under about 2,000 draws and 4,000,000 vertices a frame, textures at most 4096 px; shadows and a post-process pass are fine"
+            budget = "this Mac's, which draws far more than a console: under about 2,000 draws and "
+                + (web ? "2,000,000 triangles" : "4,000,000 vertices") + " a frame, textures at most 4096 px; shadows and a post-process pass are fine"
         }
         return "It's played on \(GameKit.spoken(places).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the \(GameKit.placeName(project.destination)) now. "
             + "Its budget is \(budget)."

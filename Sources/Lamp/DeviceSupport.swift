@@ -73,7 +73,12 @@ enum DeviceSupport {
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
         if project.platform.hasTV { return [TVTemplate.supportFile] }
-        if GameKit.isGame(project) { return GameKit.paths }
+        // A game's are its kit's, and on the Xbox a three.js game's are the web app's as well.
+        if GameKit.isGame(project) { return GameKit.paths(for: project) + (GameKit.engine(project) == .web ? declaredPaths(for: project) : []) }
+        return declaredPaths(for: project)
+    }
+
+    private static func declaredPaths(for project: LampProject) -> [String] {
         return libraries(for: project).flatMap { entry in entry.library.files.map { $0.name.isEmpty ? entry.path : entry.path + "/" + $0.name } }
             + icons(for: project).map(\.path)
     }
@@ -119,6 +124,11 @@ enum DeviceSupport {
 
     static func write(for project: LampProject) throws {
         if GameKit.isGame(project) { try GameKit.write(for: project); return }
+        try writeDeclared(for: project)
+    }
+
+    /// What the device's integration asks for (`app.declared.support` and `icons`), for its app or a game played there.
+    static func writeDeclared(for project: LampProject) throws {
         for entry in libraries(for: project) {
             for file in entry.library.files {
                 let path = file.name.isEmpty ? entry.path : entry.path + "/" + file.name

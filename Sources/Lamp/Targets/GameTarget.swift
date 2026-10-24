@@ -20,13 +20,13 @@ extension Target {
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
                            tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, or your Xbox" },
                            place: { _ in .window }),
-        guidance: Guidance(prompt: Agent.gamePrompt(for:), changeRules: { _ in Agent.Rules.gameChange },
+        guidance: Guidance(prompt: Agent.gamePrompt(for:), changeRules: Agent.Rules.gameChange,
                            skills: { [] },
                            noAI: { _ in "- None: a game has none of Lamp's AI building blocks." },
                            elsewhere: { _ in nil }),
         recipe: Recipe(language: .cpp, fill: GameKit.fill, ownedFiles: GameKit.write(for:), support: GameKit.write(for:),
                        isMade: GameKit.isMade, scaffolded: { dir, _ in GameKit.isMade(dir) },
-                       sources: { _ in ["Game", "Assets", "icon.json", "capabilities.json"] },
+                       sources: { _ in ["Game", "Assets", GameKit.webFolder, "icon.json", "capabilities.json"] },
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again.
                        inputs: { _ in GameKit.stamp },
                        builtURL: { project in

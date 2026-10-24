@@ -56,7 +56,8 @@ enum DeviceApps {
 
     /// The folder a device app's kind previews on this Mac (`app.declared.preview`), checked; nil when it has none.
     static func previewFolder(for project: LampProject) -> String? {
-        guard project.platform.hasDevice, let folder = appKind(for: project)?.declared?.preview,
+        // A game is looked at in its own preview, which plays it from a script, whatever its engine.
+        guard project.platform.hasDevice, !GameKit.isGame(project), let folder = appKind(for: project)?.declared?.preview,
               IntegrationCheck.isAppPath(folder) else { return nil }
         return folder
     }
@@ -120,7 +121,7 @@ enum DeviceApps {
         guard let declared = integration(for: project)?.app?.declared else {
             throw Failure(message: "Lamp no longer has the integration this app is made for, so it can't make its package.")
         }
-        if GameKit.isGame(project) {
+        if GameKit.isGame(project), GameKit.engine(project) == .native {
             // The game's own build for the console, then the package Lamp makes of what it left.
             let zip = project.dir.appendingPathComponent("build/xbox.zip")
             AppFolder.remove(zip, in: project.dir)
