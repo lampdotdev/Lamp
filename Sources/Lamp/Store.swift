@@ -1759,7 +1759,7 @@ final class Store: ObservableObject {
     /// build that kind yet or the folder can't be made.
     /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
     /// and not tried again by itself.
-    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily = .iphone) async -> (part: LampProject?, problem: String?, setup: Bool) {
+    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
         if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
@@ -1770,16 +1770,19 @@ final class Store: ObservableObject {
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
             return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.", false)
         }
+        // Files a shared wish brought for this part while this Mac couldn't make it: they go in over the scaffold, with
+        // the family the file gave the part, unless the caller gives one.
+        let kept = Sharing.kept(in: wish.dir, for: kind).flatMap { $0.package.platform == kind ? $0 : nil }
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
             let part = LampProject(id: Parts.id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: dir,
-                                   instance: Parts.instance(wish: wish, folder: folder), platform: kind, family: family, partOf: wish.id)
+                                   instance: Parts.instance(wish: wish, folder: folder), platform: kind,
+                                   family: family ?? kept?.package.family ?? .iphone, partOf: wish.id)
             try Template.saveMeta(part)
             try Template.fill(part)
-            // Files a shared wish brought for this part while this Mac couldn't make it go in now, over the scaffold.
-            if let kept = Sharing.kept(in: wish.dir, part: folder), kept.package.platform == kind {
+            if let kept {
                 try Sharing.install(kept.package, into: part)
-                Sharing.forgetKept(in: wish.dir, part: folder)
+                Sharing.forgetKept(in: wish.dir, for: kind)
             }
         } catch {
             return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)", false)
@@ -2646,9 +2649,24 @@ final class Store: ObservableObject {
                     return
                 }
             }
+            // The wish's list of apps and the files kept for one it can't make yet are outside the versions too: set
+            // aside the same way, and put back with the rest.
+            let appsBefore = project.apps
+            let waiting = project.dir.appendingPathComponent(Sharing.waitingFolder)
+            let waitingBefore = package.folder.appendingPathComponent("waiting-before-update")
+            let hadWaiting = fm.fileExists(atPath: waiting.path)
+            if hadWaiting {
+                do { try fm.copyItem(at: waiting, to: waitingBefore) } catch {
+                    log(project, .error, Self.updateFailed)
+                    return
+                }
+            }
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+                _ = await setApps(project, appsBefore)
+                try? fm.removeItem(at: waiting)
+                if hadWaiting { try? fm.copyItem(at: waitingBefore, to: waiting) }
                 guard hadArt else {
                     try? fm.removeItem(at: art)
                     return true
@@ -2767,6 +2785,7 @@ final class Store: ObservableObject {
                 guard let made else {
                     do { try Sharing.keep(part, in: wish.dir) } catch {
                         log(wish, .error, "Lamp couldn't keep \(Parts.name(of: kind))'s files: \(error.localizedDescription)")
+                        allIn = false
                     }
                     recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, of: wish, setup: setup)
                     continue

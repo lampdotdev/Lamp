@@ -99,8 +99,9 @@ final class SharingWishTests: XCTestCase {
         let receiver = try Template.scaffold(name: "Remote 3", platform: .tv, in: root)
         let part = try XCTUnwrap(package.parts.first)
         try Sharing.keep(part, in: receiver.dir)
-        XCTAssertNil(Sharing.kept(in: receiver.dir, part: "Mac"))
-        let kept = try XCTUnwrap(Sharing.kept(in: receiver.dir, part: part.folder))
+        XCTAssertNil(Sharing.kept(in: receiver.dir, for: .android))
+        // Found by the part's family, whichever folder the file had it in: an app for both kept from a Mac/ is the Apple part.
+        let kept = try XCTUnwrap(Sharing.kept(in: receiver.dir, for: .universal))
         XCTAssertEqual(kept.package.platform, .iphone)
         XCTAssertEqual(kept.package.sources.map { kept.package.path(of: $0) }.sorted(), part.package.sources.map { part.package.path(of: $0) }.sorted())
 
@@ -109,10 +110,10 @@ final class SharingWishTests: XCTestCase {
         try FileManager.default.createDirectory(at: phone.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try Template.fill(phone)
         try Sharing.install(kept.package, into: phone)
-        Sharing.forgetKept(in: receiver.dir, part: part.folder)
+        Sharing.forgetKept(in: receiver.dir, for: .iphone)
         XCTAssertTrue(try String(contentsOf: phone.dir.appendingPathComponent("Sources/Pad.swift"), encoding: .utf8).contains("struct Pad"))
-        XCTAssertNil(Sharing.kept(in: receiver.dir, part: part.folder))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: Sharing.waitingFolder(in: receiver.dir, part: part.folder).path))
+        XCTAssertNil(Sharing.kept(in: receiver.dir, for: .iphone))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: Sharing.waitingFolder(in: receiver.dir, for: .iphone).path))
     }
 
     /// A part's notes go to the reviewer held to the root's limit, and count against what's sent.

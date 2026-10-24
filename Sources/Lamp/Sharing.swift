@@ -515,8 +515,11 @@ enum Sharing {
 
     /// Where a wish keeps the files of a part it can't make yet (this Mac lacks the kind's tools): under its own
     /// `.lamp`, which goes with the wish and isn't versioned, until the part is made and the files go in (`Store.addPart`).
-    static func waitingFolder(in wish: URL, part folder: String) -> URL {
-        wish.appendingPathComponent(".lamp/waiting").appendingPathComponent(folder)
+    /// Kept by the part's family (`Parts.group`), since the folder the file had it in may not be the one it's made in
+    /// here (an app for both exported from the Mac/ it was changed in place in is made in Apple/).
+    static let waitingFolder = ".lamp/waiting"
+    static func waitingFolder(in wish: URL, for kind: Platform) -> URL {
+        wish.appendingPathComponent(waitingFolder).appendingPathComponent(Parts.group(kind))
     }
 
     /// What a kept part was made for, beside its files.
@@ -525,10 +528,10 @@ enum Sharing {
         var family: DeviceFamily?
     }
 
-    /// Keeps a part's files, as unpacked, for a wish that can't make the part yet.
+    /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
     static func keep(_ part: Package.Part, in wish: URL) throws {
         let fm = FileManager.default
-        let folder = waitingFolder(in: wish, part: part.folder)
+        let folder = waitingFolder(in: wish, for: part.package.platform)
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
@@ -536,19 +539,19 @@ enum Sharing {
         try note.write(to: folder.appendingPathComponent("lamp-part.json"))
     }
 
-    /// The part a wish kept for this folder, read as a shared app is: nil when none is kept, or what's there can't be read
-    /// as an app of that kind. The folder stays until `forgetKept`.
-    static func kept(in wish: URL, part folder: String) -> Package.Part? {
-        let kept = waitingFolder(in: wish, part: folder)
+    /// The part a wish kept for this kind's family, read as a shared app is: nil when none is kept, or what's there can't
+    /// be read as an app of the kind it was kept as. The folder stays until `forgetKept`.
+    static func kept(in wish: URL, for kind: Platform) -> Package.Part? {
+        let kept = waitingFolder(in: wish, for: kind)
         guard let data = try? Data(contentsOf: kept.appendingPathComponent("lamp-part.json")),
               let note = try? JSONDecoder().decode(Waiting.self, from: data),
-              let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: folder,
+              let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
                                       identity: nil, description: nil, fileCount: 0) else { return nil }
-        return Package.Part(folder: folder, package: package)
+        return Package.Part(folder: Parts.folder(for: note.platform), package: package)
     }
 
-    static func forgetKept(in wish: URL, part folder: String) {
-        try? FileManager.default.removeItem(at: waitingFolder(in: wish, part: folder))
+    static func forgetKept(in wish: URL, for kind: Platform) {
+        try? FileManager.default.removeItem(at: waitingFolder(in: wish, for: kind))
     }
 
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
