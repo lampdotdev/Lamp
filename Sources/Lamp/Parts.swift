@@ -1,15 +1,17 @@
 import Foundation
 
-/// A wish made of more than one app: a TV app with an iPhone app that controls it, say. Its main part is the app at its
-/// root, as every wish has; each other part is an app of its own kind in a folder of the wish's (`iPhone/`, `Mac/`,
-/// `TV/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built, opened, looked at
-/// and used exactly as an app of that kind is. What a part doesn't have of its own is the wish's: the chat and its
-/// turns, the versions (one history for the whole folder), the icon and the name. Lamp keeps a part in
-/// `Store.projects` beside its wish (`LampProject.partOf`), never on the desk.
+/// A wish made of more than one app: a TV app with an iPhone app that controls it, say. No app of a wish leads: one is
+/// at the wish's root, where every wish made so far keeps its first app, and each other part is an app of its own kind
+/// in a folder of the wish's (`iPhone/`, `Mac/`, `TV/`), with its own `.lamp/meta.json`, build files, bundle id and
+/// runtime folder, so it's built, opened, looked at and used exactly as an app of that kind is. The root is one more
+/// place an app lives, not a role: the TV app of a wish is reached the same way from its root or from `TV/`. What a part
+/// doesn't have of its own is the wish's: the chat and its turns, the versions (one history for the whole folder), the
+/// icon and the name. Lamp keeps a part in `Store.projects` beside its wish (`LampProject.partOf`), never on the desk.
 ///
-/// What the agent knows follows the parts: the wish's prompt is its main kind's, with one rule naming the other parts,
-/// and each other part's rules are a skill of their own (`target-iphone`, …, `Parts.packs`), named with the request
-/// once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when its wish has one.
+/// What the agent knows follows the parts: the wish's prompt is the kind's of the app at its root, with one rule naming
+/// the other parts, and each other part's rules are a skill of their own (`target-iphone`, …, `Parts.packs`), named
+/// with the request once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when
+/// its wish has one.
 /// One of the apps a wish should have (`LampProject.apps`, kept in the wish's own meta.json beside what its folder
 /// holds): its kind and, while it isn't made yet, what stops it ("this Mac can't build the iPhone app yet…"), so a quit
 /// or a failure between asking for an app and making it loses neither.
@@ -86,13 +88,12 @@ enum Parts {
         }
     }
 
-    /// The kinds a wish for these devices is made of: one at the wish's root, and the others beside it as parts. The
-    /// devices of one part family are one kind between them (Apple's: `Platform(devices:)`); a TV app and an Android app
-    /// are each a kind of their own. No kind has to lead: the one that does when it's there (a TV app: what's on the TV
-    /// is what the wish is about and the rest reach it) goes to the root, else the first in Lamp's order. A device with
-    /// an integration that declares its apps still stands alone (`Target.Words.alone`). Nil for a list Lamp can't make.
-    static func kinds(for devices: Set<String>) -> (main: Platform, parts: [Platform])? {
-        if let one = Platform(devices: devices) { return (one, []) }
+    /// The kinds a wish for these devices is made of, in Lamp's order: the devices of one part family are one kind between
+    /// them (Apple's: `Platform(devices:)`); a TV app and an Android app are each a kind of their own. No kind leads:
+    /// which of them is at the wish's root is the wish's own affair (`root`), never the list's. A device with an
+    /// integration that declares its apps still stands alone (`Target.Words.alone`). Nil for a list Lamp can't make.
+    static func kinds(for devices: Set<String>) -> [Platform]? {
+        if let one = Platform(devices: devices) { return [one] }
         var byFamily: [String: Set<String>] = [:]
         for word in devices {
             guard let owner = Targets.owner(of: word) else { return nil }
@@ -101,10 +102,22 @@ enum Parts {
         let kinds = byFamily.values.map { Platform(devices: $0) }
         guard kinds.count > 1, !kinds.contains(nil) else { return nil }
         let all = Targets.all.map(\.platform).filter { kinds.contains($0) }
-        guard all.allSatisfy({ !$0.target.identity.devices.alone && $0.target.part != nil }),
-              let main = all.first(where: { $0.target.identity.devices.leads }) ?? all.first else { return nil }
-        return (main, all.filter { $0 != main })
+        guard all.allSatisfy({ !$0.target.identity.devices.alone && $0.target.part != nil }) else { return nil }
+        return all
     }
+
+    /// The kind the app at a wish's root is once the wish is for these kinds: the one of its own family (an iPhone app
+    /// that's to be for the Mac too is changed in place, keeping its code), or, while nothing is written for it yet (a
+    /// wish still to be told what it's for), the first in Lamp's order, where `Store.rootKind` prefers one this Mac
+    /// can build now. Nil when the list leaves its family out and its code is written: no app is ever written over
+    /// again as another kind, and a wish keeps the app it began with, so "tv" added to a Mac wish keeps the Mac app
+    /// and adds the TV app beside it.
+    static func root(among kinds: [Platform], for wish: LampProject) -> Platform? {
+        kinds.first { group($0) == group(wish.platform) } ?? (wish.scaffolded ? nil : kinds.first)
+    }
+
+    /// The kinds beside the one at the root: every other family's.
+    static func others(among kinds: [Platform], root: Platform) -> [Platform] { kinds.filter { group($0) != group(root) } }
 
     /// What a wish has one of: a part family, or for a kind that's no part the kind itself.
     static func group(_ kind: Platform) -> String { kind.target.part?.family ?? kind.rawValue }
@@ -188,7 +201,7 @@ enum Parts {
         for kind in partKinds {
             let skill = skill(for: kind)
             let folder = parts.first { $0.platform == kind }?.dir.lastPathComponent ?? folder(for: kind)
-            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside its main app, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
+            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside the app at its root, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
                                         body: pack(for: kind, in: folder))
         }
         return skills

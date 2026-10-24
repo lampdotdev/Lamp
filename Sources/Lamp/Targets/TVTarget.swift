@@ -12,8 +12,7 @@ extension Target {
                            devices: Words(words: [("tv", "\"tv\" for Samsung and LG TVs",
                                                      "\"tv\" (alone) for a Samsung or LG TV, [\"tv\"] when they mention their TV, a Frame TV, the living room screen or watching from the sofa")],
                                             hint: nil, claims: { $0 == ["tv"] }, alone: false,
-                                            // What's on the TV is what a wish with a TV app is about; the rest reach it.
-                                            leads: true, asked: ("tv", "for the TV", "for Samsung and LG TVs")),
+                                            asked: ("tv", "for the TV", "for Samsung and LG TVs")),
                            tryOnHelp: { _ in "Where it opens: the TV preview on this Mac, or one of your TVs" },
                            place: { _ in .elsewhere("TV", symbol: "tv") }),
         guidance: Guidance(prompt: { _ in Agent.tvPrompt() },
