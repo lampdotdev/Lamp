@@ -416,6 +416,13 @@ enum Runtime {
         return built != fingerprint(project)
     }
 
+    /// Whether the app's code is still to be built: changed since its last build, and not the code that went into the
+    /// open app with its whole build still running (`Store.reloadBeforeBuilding`). That build writes what it was built
+    /// from only when it's done, a minute later, and the app already runs this code meanwhile.
+    static func needsBuild(_ project: LampProject) -> Bool {
+        sourcesChanged(project) && LiveReload.buildingFrom(project) != fingerprint(project)
+    }
+
     // MARK: - Log
 
     /// The last lines of the latest launch's output.

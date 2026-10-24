@@ -39,7 +39,7 @@ final class UnfinishedBuildTests: XCTestCase {
         LiveReload.recoverUnfinishedBuild(project)
         XCTAssertTrue(knowsWhatItRuns(project), "a finished build was taken for one Lamp quit during")
 
-        LiveReload.startedBuilding(project)
+        LiveReload.startedBuilding(project, from: "fingerprint")
         LiveReload.recoverUnfinishedBuild(project)
         XCTAssertFalse(knowsWhatItRuns(project), "a build Lamp quit during went unnoticed")
     }
@@ -57,7 +57,7 @@ final class UnfinishedBuildTests: XCTestCase {
         XCTAssertTrue(knowsWhatItRuns(project), "the earlier build's copy was taken for an unfinished build")
         XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path))
 
-        LiveReload.startedBuilding(project)
+        LiveReload.startedBuilding(project, from: "fingerprint")
         LiveReload.recoverUnfinishedBuild(project)
         XCTAssertFalse(knowsWhatItRuns(project), "a build Lamp quit during went unnoticed")
     }

@@ -162,8 +162,15 @@ enum LiveReload {
     /// A whole build running after a change went in early (`Store.reloadBeforeBuilding`), kept on disk: if Lamp
     /// quits before it's done, nothing says the open app's change was ever built, so at the next launch what Lamp
     /// knows of the open app is dropped and the next change takes the usual build.
+    /// The marker holds the fingerprint of the sources being built (`buildingFrom`).
     private static func buildingURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("building") }
-    static func startedBuilding(_ project: LampProject) { try? AppFolder.write(Data(), to: buildingURL(project), in: project.dir) }
+    static func startedBuilding(_ project: LampProject, from fingerprint: String) {
+        try? AppFolder.write(fingerprint, to: buildingURL(project), in: project.dir)
+    }
+    /// What the whole build under way after an early change is building, while it runs.
+    static func buildingFrom(_ project: LampProject) -> String? {
+        AppFile.text(buildingURL(project), in: project).flatMap { $0.isEmpty ? nil : $0 }
+    }
     static func finishedBuilding(_ project: LampProject) { AppFolder.remove(buildingURL(project), in: project.dir) }
     /// At launch: a build that was still going when Lamp quit.
     /// A folder in the marker's place is no marker: an earlier build.sh kept the sources it compiled there, and left
