@@ -3512,7 +3512,7 @@ final class Store: ObservableObject {
                 guard built else { return TurnResult(end: owner.asked ? .replied : .failed, watched: isWatching(project.id)) }
                 project = current(project) ?? project
             }
-            guard Runtime.sourcesChanged(project) else { break }
+            guard Runtime.needsBuild(project) else { break }
             changed = true
             if owner.paused {
                 if let errors = await build(project) {
@@ -3526,10 +3526,11 @@ final class Store: ObservableObject {
                 }
                 project = current(project) ?? project
             }
-            guard parts(of: project).contains(where: Runtime.sourcesChanged) else { break }
+            guard parts(of: project).contains(where: Runtime.needsBuild) else { break }
         }
         // Fixes that went on changing each other's apps: nothing is saved or opened over code some app wasn't built from.
-        if Runtime.sourcesChanged(project) || parts(of: project).contains(where: Runtime.sourcesChanged) {
+        // Code that went into the open app counts as built: its whole build goes on after the turn.
+        if Runtime.needsBuild(project) || parts(of: project).contains(where: Runtime.needsBuild) {
             log(project, .error, ErrorMessages.buildFailed)
             return TurnResult(end: .failed, watched: isWatching(project.id))
         }
@@ -6425,7 +6426,7 @@ final class Store: ObservableObject {
         // then do these sources count as built, so a Lamp quit meanwhile builds them again (`recoverUnfinishedBuild`).
         LiveReload.installed(project)
         heldInstalls.installed(project.id)
-        LiveReload.startedBuilding(project)
+        LiveReload.startedBuilding(project, from: fingerprint)
         var full = env
         full["LAMP_LIVE"] = "1"
         liveBuildRuns[project.id] = (nil, fingerprint)

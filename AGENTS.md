@@ -1128,7 +1128,8 @@ its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by 
 person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
 its apps waits. No app of a wish comes first in what a turn and the wish's history do to it. At a turn's end each app the
 agent changed is built, its errors sent back to the agent with its name and folder, before the version is saved, then
-opened as the app at the root is (`Store.settle`); each keeps its own look and crash on launch in the turn
+opened as the app at the root is (`Store.settle`). An app whose change went into the open app counts as built there
+(`Runtime.needsBuild`): its whole build, which writes what it was built from, runs on after the turn. Each keeps its own look and crash on launch in the turn
 (`Turn.Look.installed`, `crashes`, `LaunchWatch.app`), and a crash is fixed as that app's (`Store.crashRequest`). A part
 is worked on under the wish's turn (`Store.asPartOf`, and a part's look through `underTurn`, each leaving the hold as it
 found it). Undo and every restore rebuild each part whose files changed, and a copy builds every app, each under a hold of
