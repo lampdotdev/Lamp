@@ -425,6 +425,9 @@ final class Store: ObservableObject {
     @Published private(set) var openOnMac: Set<String> = []
     @Published private(set) var openOnIOS: Set<String> = []
 
+    /// Whether any app of a wish is open, so its Play is a Stop: the TV app may be closed while its iPhone app runs.
+    func isWishOpen(_ wish: LampProject) -> Bool { isOpen(wish) || parts(of: wish).contains(where: isOpen) }
+
     /// Whether the app is open where it would open now: for an app for both, where Try On points.
     func isOpen(_ project: LampProject) -> Bool {
         guard project.platform.choosesPlace else { return openApps.contains(project.id) }
@@ -696,7 +699,7 @@ final class Store: ObservableObject {
         let read = undoOfferReads[project.id, default: 0] + 1
         undoOfferReads[project.id] = read
         Task {
-            let offer = busy.contains(project.id) ? nil : await UndoOffer.version(for: project, chat: logs[project.id] ?? [])
+            let offer = busy.contains(project.id) ? nil : await UndoOffer.version(for: project, chat: logs[project.id] ?? [], parts: parts(of: project))
             guard undoOfferReads[project.id] == read else { return }
             let shown = busy.contains(project.id) ? nil : offer
             if undoOffers[project.id] != shown { undoOffers[project.id] = shown }
@@ -4861,7 +4864,7 @@ final class Store: ObservableObject {
             case "name_version": (status, answer) = await versions("/name", arguments, of: project)
             case "restore_version": (status, answer) = await versions("/restore", arguments, of: project)
             case "read_notes", "save_notes": (status, answer) = notes(name, arguments, for: project)
-            case "read_skill": (status, answer) = Skills.read(arguments)
+            case "read_skill": (status, answer) = Skills.read(arguments, from: Skills.readable(parts: parts(of: project)))
             case "make_art": (status, answer) = await makeArt(arguments, for: project)
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
@@ -5202,6 +5205,9 @@ final class Store: ObservableObject {
                       "What applies now:\n" + rules.replacingOccurrences(of: "{{DEVICE}}", with: changed.family.name)])
     }
 
+    /// Whether one of a wish's apps goes on an iPhone, so what it does away from this Mac can be set up.
+    nonisolated static func hasPhoneApp(_ wish: LampProject, parts: [LampProject]) -> Bool { ([wish] + parts).contains { $0.platform.hasIOS } }
+
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
         guard let capability = (arguments["capability"] as? String).flatMap(Capability.init(rawValue:)) else {
@@ -5211,7 +5217,8 @@ final class Store: ObservableObject {
             return (400, ["error": "A sidebar in Chrome is only for a Mac app, while Apps in Chrome is on in Lamp's Settings → Experimental."])
         }
         let away = arguments["away"] as? Bool == true
-        guard !away || (project.platform.hasIOS && capability != .browser) else {
+        // Any app of the wish may be the one on the phone: a TV app's iPhone app is a part, not the app at its root.
+        guard !away || (Self.hasPhoneApp(project, parts: parts(of: project)) && capability != .browser) else {
             return (400, ["error": "`away` is only for iPhone apps."])
         }
         let why = (arguments["why"] as? String)?.trimmed ?? ""
@@ -9164,7 +9171,8 @@ final class Store: ObservableObject {
             return notes(body["tool"] as? String ?? "", body["arguments"] as? [String: Any] ?? [:], for: project)
         }
         if route == "/agent/skill" {
-            return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:])
+            return Skills.read((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:],
+                               from: Skills.readable(parts: parts(of: project)))
         }
         if route == "/agent/art" {
             return Self.withPictureData(await makeArt((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project), in: project)

@@ -134,4 +134,27 @@ final class WishPartsKeptTests: XCTestCase {
         let wish = try XCTUnwrap(Store.readWish(at: try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv"}"#)))
         XCTAssertTrue(Store.takesPlayers(wish))
     }
+
+    /// "Make it work on my Mac too" changes a TV wish's iPhone app in place, so the app for both is still in iPhone/;
+    /// the rules Lamp names for it said every path was in Apple/, where nothing is.
+    func testTheRulesOfAnIPhoneAppMadeForTheMacTooAreForItsOwnFolder() throws {
+        let wish = try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv"}"#)
+        try #"let package = Package(name: "Remote", platforms: [.macOS(.v14), .iOS(.v17)])"#
+            .write(to: wish.appendingPathComponent("iPhone/Package.swift"), atomically: true, encoding: .utf8)
+        let parts = Parts.load(try XCTUnwrap(Store.readWish(at: wish)))
+        XCTAssertEqual(parts.map(\.platform), [.universal])
+        let (status, answer) = Skills.read(["name": Parts.skill(for: .universal)], from: Skills.readable(parts: parts))
+        XCTAssertEqual(status, 200)
+        let rules = try XCTUnwrap(answer["text"] as? String)
+        XCTAssertTrue(rules.contains("the part of the wish in iPhone/"), rules.prefix(400) + "…")
+        XCTAssertFalse(rules.contains("Apple/"))
+    }
+
+    /// A TV wish's iPhone app is a part, not the app at its root: the agent asking to set up its AI away from home was
+    /// told "`away` is only for iPhone apps".
+    func testATVWishWithAnIPhoneAppCanBeOfferedSetupAwayFromHome() throws {
+        let wish = try XCTUnwrap(Store.readWish(at: try remote(meta: #"{"name":"Remote","exe":"Remote","platform":"tv"}"#)))
+        XCTAssertTrue(Store.hasPhoneApp(wish, parts: Parts.load(wish)))
+        XCTAssertFalse(Store.hasPhoneApp(LampProject(id: "slides", name: "Slides", exe: "Slides", dir: root.appendingPathComponent("slides"), platform: .tv), parts: []))
+    }
 }
