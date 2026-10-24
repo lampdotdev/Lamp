@@ -399,12 +399,12 @@ final class Store: ObservableObject {
     func parts(of wish: LampProject) -> [LampProject] { projects.filter { $0.partOf == wish.id } }
     /// Every app of a wish, the one at its root first: the one place that knows where a wish's apps are.
     func apps(of wish: LampProject) -> [LampProject] { [wish] + parts(of: wish) }
-    /// The key an app of a wish of several apps is given as it's put on its device (`WishKeys`); nil for an app on its
-    /// own, which gets nothing of the wish's apps' link.
+    /// The key an app of a wish of several apps is given as it's put on its device (`WishKeys`), from its first build,
+    /// while the others it asks for are still to be made; nil for an app on its own, which gets nothing of the wish's
+    /// apps' link.
     func wishKey(for project: LampProject) -> Data? {
-        let wish = wish(of: project)
-        guard Template.talksToOtherApps(project), apps(of: wish).count >= 2 else { return nil }
-        return WishKeys.key(for: wish)
+        guard Template.talksToOtherApps(project) else { return nil }
+        return WishKeys.key(for: wish(of: project))
     }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
