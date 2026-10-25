@@ -628,9 +628,9 @@ extension View {
 }
 
 /// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and its
-/// buttons (for a wish that isn't a Mac app beside the chat, Play or Stop and Try On's device button first). Where the title and every button fit, they're all there; where they don't, Undo stays and a button for the
-/// rest takes their place, which pressed stays lit and puts them in the title's place: Wish Info, Share, Agent Details,
-/// Delete and Versions. Each does what its button in Lamp's window does: the sidebar only passes the click on. Closing
+/// buttons (for a wish that isn't a Mac app beside the chat, Play or Stop and Try On's device button first), the same at
+/// every width: Undo, and a button for the rest, which pressed stays lit and puts them in the title's place: Wish Info,
+/// Share, Agent Details, Delete and Versions. Each does what its button in Lamp's window does: the sidebar only passes the click on. Closing
 /// and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel is its window.
 struct ChatBar: View {
     @EnvironmentObject private var link: ChatLink
@@ -645,38 +645,30 @@ struct ChatBar: View {
     var body: some View {
         Group {
             if let state, let toolbar = state.toolbar {
-                ViewThatFits(in: .horizontal) {
-                    // Wide enough for the whole title and every button.
-                    HStack(spacing: 8) {
-                        CloseLight { link.closeChat() }
-                        title(state).fixedSize()
+                // One layout at every width, beside an app or on its own: the title, then the buttons used most, and the
+                // button for the rest, which puts them in the title's place.
+                HStack(spacing: 8) {
+                    CloseLight { link.closeChat() }
+                    if more {
                         Spacer(minLength: 0)
                         ToolGroup { rest(state, toolbar) }
-                        ToolGroup { play(toolbar); tryOn(state); undo(toolbar); versions(state, toolbar) }
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    } else {
+                        title(state).frame(maxWidth: .infinity)
                     }
-                    HStack(spacing: 8) {
-                        CloseLight { link.closeChat() }
-                        if more {
-                            Spacer(minLength: 0)
-                            ToolGroup { rest(state, toolbar) }
-                                .transition(.opacity.combined(with: .move(edge: .trailing)))
-                        } else {
-                            title(state).frame(maxWidth: .infinity)
+                    ToolGroup {
+                        play(toolbar)
+                        tryOn(state)
+                        undo(toolbar)
+                        if more { versions(state, toolbar) }
+                        // Its own symbol says it's on (filled), so it has no lit circle behind it.
+                        ToolButton(more ? "ellipsis.rectangle.fill" : "ellipsis.rectangle", more ? "Fewer Buttons" : "More Buttons",
+                                   on: more, plain: true) {
+                            withAnimation(.snappy(duration: 0.2)) { more.toggle() }
                         }
-                        ToolGroup {
-                            play(toolbar)
-                            tryOn(state)
-                            undo(toolbar)
-                            if more { versions(state, toolbar) }
-                            // Its own symbol says it's on (filled), so it has no lit circle behind it.
-                            ToolButton(more ? "ellipsis.rectangle.fill" : "ellipsis.rectangle", more ? "Fewer Buttons" : "More Buttons",
-                                       on: more, plain: true) {
-                                withAnimation(.snappy(duration: 0.2)) { more.toggle() }
-                            }
-                            .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
-                            // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
-                            .transaction { $0.animation = nil }
-                        }
+                        .help(more ? "Show the title again" : "Wish info, sharing, agent details, delete and versions")
+                        // Changed where it stands, the symbol simply filled: not faded or slid in as a new button.
+                        .transaction { $0.animation = nil }
                     }
                 }
             } else {
