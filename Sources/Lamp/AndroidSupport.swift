@@ -1229,6 +1229,7 @@ extension Template {
                 JSONArray(JSONArray().put(LampAI.jsonValue(value)).toString()).opt(0)?.takeIf { it != JSONObject.NULL }
             } catch (e: Exception) { Log.e("LampWish", "$what wasn't set: ${e.message}"); return false }
             val entry = valuesLock.withLock {
+                dropExpired()
                 if (kept != null) {
                     val size = sizeOf(kept)
                     if (size > valueLimit) { Log.e("LampWish", "$what of $size bytes wasn't set: a value is at most $valueLimit bytes as JSON."); return false }
@@ -1433,6 +1434,7 @@ extension Template {
                     val n = Entry.whole(c.opt(1), Entry.counts)
                     if (ms != null && n != null && (ms > clock.first || (ms == clock.first && n > clock.second))) clock = ms to n.toInt()
                 }
+                dropExpired()
                 publishValues()
             }
         }
@@ -1470,6 +1472,7 @@ extension Template {
             // they still agree, and an app gone wrong or hostile that floods the others gets no further.
             val most = valuesLimit * 2 * maxOf(2, roster.size)
             valuesLock.withLock {
+                dropExpired()
                 var held = entries.entries.sumOf { (k, e) -> heldBy(k, e) }
                 // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes
                 // an older copy of what it removed, and the oldest matter least.
@@ -1561,14 +1564,20 @@ extension Template {
 
         private val valuesFile: File? get() = keptFile?.let { File(it.parentFile, it.nameWithoutExtension + "-values.json") }
 
+        /** A removal is kept for a month, then let go: before anything is weighed against a limit, on restore, and before
+         *  what's kept is written, so an app whose removals filled it can set values again once the month is over.
+         *  Under `valuesLock`. */
+        private fun dropExpired() {
+            val old = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
+            entries.entries.removeAll { it.value.value == null && it.value.ms <= old }
+        }
+
         /** Written whole under the lock, to a file beside it that then takes its place, so a later copy is never
          *  overwritten by an earlier one and a write cut short leaves the last one whole. */
         private fun keepValues() {
             val file = valuesFile ?: return
             valuesLock.withLock {
-                // A removal is kept for a month, then let go.
-                val old = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
-                entries.entries.removeAll { it.value.value == null && it.value.ms <= old }
+                dropExpired()
                 val kept = JSONObject().put("values", JSONObject().apply { for ((k, e) in entries) put(k, e.json()) })
                     .put("clock", JSONArray().put(clock.first).put(clock.second)).toString()
                 try {

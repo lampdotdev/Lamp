@@ -1374,6 +1374,7 @@ extension TVTemplate {
             // What the store holds may grow, from other apps, to what every app of the wish could have set between them
             // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits, so
             // they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            dropExpired();
             var most = VALUES * 2 * Math.max(2, roster.length), held = 0, removals = null, next = 0;
             for (var h in entries) held += heldBy(h, entries[h].v);
             // The oldest removal kept, other than this name's: let go first when something needs room, since a removal
@@ -1441,13 +1442,18 @@ extension TVTemplate {
             }
             flush(true);
           }
+          // A removal is kept for a month, then let go: before anything is weighed against a limit, and before what's
+          // kept is written, so an app whose removals filled it can set values again once the month is over.
+          function dropExpired() {
+            var old = Date.now() - REMOVALS_KEPT;
+            for (var k in entries) if (entries[k].v === undefined && entries[k].c[0] <= old) delete entries[k];
+          }
           function keepValues() {
+            dropExpired();
             var n = keptName();
             if (!n) return;
-            // A removal is kept for a month, then let go.
-            var old = Date.now() - REMOVALS_KEPT, kept = {};
+            var kept = {};
             for (var k in entries) {
-              if (entries[k].v === undefined && entries[k].c[0] <= old) { delete entries[k]; continue; }
               kept[k] = { c: entries[k].c };
               if (entries[k].v !== undefined) kept[k].v = entries[k].v;
             }
@@ -1939,6 +1945,7 @@ extension TVTemplate {
               api.start();
               var what = 'the value "' + key + '"', text = null;
               if (!nameOk(key)) { say(what + ' was not set: a value\'s name is 1 to 64 bytes, and not __proto__.'); return false; }
+              dropExpired();
               if (value !== null && value !== undefined) {
                 try { text = JSON.stringify(value); } catch (e) { text = undefined; }
                 if (text === undefined) { say(what + ' was not set: it holds nothing JSON can.'); return false; }

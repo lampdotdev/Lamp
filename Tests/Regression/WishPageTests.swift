@@ -540,6 +540,22 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 0, "nothing removed came back")
     }
 
+    /// Removals kept a month are let go when the month is over, before anything is weighed against the limit, so an app
+    /// whose removals filled it can set values again then, even if nothing else happened meanwhile.
+    func testExpiredRemovalsMakeRoomEvenInAnIdleApp() throws {
+        let context = try page(before: { $0.evaluateScript("var clock = Date.now(); Date.now = function () { return clock; };") })
+        context.evaluateScript("""
+            var made = [];
+            for (var i = 0; i < 20000; i++) { var k = 'k' + ('0000' + i.toString(36)).slice(-4); if (!Lamp.wish.set(k, 1)) break; made.push(k); }
+            made.forEach(function (k) { Lamp.wish.set(k, null); });
+            var full = Lamp.wish.set('fresh', 'x');
+            clock += 31 * 24 * 3600 * 1000;
+            var later = Lamp.wish.set('fresh', 'x');
+            """)
+        XCTAssertEqual(context.evaluateScript("full")?.toBool(), false, "the removals fill the limit while they're kept")
+        XCTAssertEqual(context.evaluateScript("later")?.toBool(), true, "a month on, they're let go and the value is set")
+    }
+
     /// An open app built by another Lamp is shown as out of date, still open, with what to do in words to show: an
     /// older one (saying nothing of what it speaks) is to be opened from Lamp, a newer one means this one is. An older
     /// one is sent no values; the status view shows the line.

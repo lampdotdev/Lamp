@@ -13890,6 +13890,7 @@ enum Template {
                 fputs("LampWish: \(what) wasn't set: a value's name is 1 to 64 bytes, and not __proto__.\n", stderr)
                 return false
             }
+            dropExpired()
             var kept: Any?
             if let value, !(value is NSNull) {
                 guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
@@ -14125,6 +14126,7 @@ enum Template {
             // What the store holds may grow, from other apps, to what every app of the wish could have set between them
             // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
             // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            dropExpired()
             let most = Self.valuesLimit * 2 * max(2, roster.count)
             var held = entries.reduce(0) { $0 + Self.held($1.key, $1.value) }
             // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes an
@@ -14202,11 +14204,16 @@ enum Template {
 
         private var valuesKey: String? { Self.keptKey.map { $0 + ".values" } }
 
-        private func keepValues() {
-            guard let valuesKey else { return }
-            // A removal is kept for a month, then let go.
+        /// A removal is kept for a month, then let go: before anything is weighed against a limit, on restore, and before
+        /// what's kept is written, so an app whose removals filled it can set values again once the month is over.
+        private func dropExpired() {
             let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
             entries = entries.filter { $0.value.value != nil || $0.value.ms > old }
+        }
+
+        private func keepValues() {
+            dropExpired()
+            guard let valuesKey else { return }
             let kept: [String: Any] = ["values": entries.mapValues(\.json), "clock": [clock.ms, clock.n]]
             UserDefaults.standard.set(Self.json(kept), forKey: valuesKey)
         }
@@ -14218,6 +14225,7 @@ enum Template {
             if let c = kept["clock"] as? [Any], c.count == 2, let ms = Self.whole(c[0]), let n = Self.whole(c[1]), ms <= Self.latest, n <= Self.counts {
                 clock = (ms, n)
             }
+            dropExpired()
             values = entries.compactMapValues(\.value)
         }
 
