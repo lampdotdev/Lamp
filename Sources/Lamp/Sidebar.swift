@@ -924,7 +924,7 @@ final class SidebarServer {
             }
             scheduleUpdate()
         case .tryOn(let id):
-            store.tryOn(project, id)
+            store.tryOn(project, id, open: true)
             scheduleUpdate()
         case .hello:
             break   // answered by the connection

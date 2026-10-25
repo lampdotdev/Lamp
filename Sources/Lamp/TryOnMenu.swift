@@ -97,8 +97,9 @@ struct TryOnMenu: Equatable {
 }
 
 extension Store {
-    /// Does what a Try On choice says (`TryOnMenu.Item.id`), from Lamp's window or the chat beside the app.
-    func tryOn(_ project: LampProject, _ id: String) {
+    /// Does what a Try On choice says (`TryOnMenu.Item.id`), from Lamp's window or the chat beside the app. From the
+    /// chat (`open`), a place chosen or given is also where the wish opens at once: the chat has no Play of its own.
+    func tryOn(_ project: LampProject, _ id: String, open: Bool = false) {
         guard let project = current(project) else { return }
         let (what, value) = id.firstIndex(of: ":").map { (String(id[..<$0]), String(id[id.index(after: $0)...])) } ?? (id, "")
         switch what {
@@ -118,9 +119,27 @@ extension Store {
             NSApp.activate()
             UserDefaults.standard.set("building", forKey: "settingsTab")
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        default:
+            return
+        case "look":
             refreshDevices()
             refreshSimulators()
+            return
+        default: return
+        }
+        // Pairing puts a question on the phone; the person chooses the phone once it's done.
+        if open, what != "pair" { openOnceSettled(project) }
+    }
+
+    /// Opens the wish where it now points, once the change of place has gone through (it holds the wish for a moment,
+    /// and a new place is saved after a check): what Play would do, unless it's open there already.
+    private func openOnceSettled(_ project: LampProject) {
+        Task { @MainActor in
+            for _ in 0..<100 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if !busy.contains(project.id) { break }
+            }
+            guard let now = current(project), !isWishOpen(now) else { return }
+            openWish(now)
         }
     }
 }
