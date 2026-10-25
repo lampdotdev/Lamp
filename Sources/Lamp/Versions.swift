@@ -559,8 +559,12 @@ enum VersionTitles {
         var files: [String] = []
         _ = await Versions.git("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
+        // A version with no files changed is a request that changed only the wish's list of apps (an app asked for that
+        // this Mac can't make yet): the request says what it was, and a model shown no change could only say "nothing".
+        // It's given as the title, so the versions before it still get theirs (titling stops at the first without one).
+        guard !files.isEmpty else { return version.message }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
-        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.sceneSupportPath || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
+        if files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.sceneSupportPath || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
                                               || $0 == Template.shareFolder + "/" + Template.shareSupportFile
                                               || Template.watchSupportPaths.contains($0) || Template.isAndroidSupport($0)
                                               || DeviceSupport.isSupport($0, in: project) }) { return "Lamp update" }
