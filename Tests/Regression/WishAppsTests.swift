@@ -62,6 +62,29 @@ final class WishAppsRootTests: XCTestCase {
         XCTAssertEqual(Parts.plan(try XCTUnwrap(Parts.kinds(for: ["tv"])), for: [wish, tv]), Parts.Plan(keep: [tv.id: .tv], add: [], remove: [wish.id]))
     }
 
+    /// "Just the TV" for a wish of a Mac app, a TV app and an Android app: the Mac app and the Android app both go, since
+    /// the TV app stays. Only when nothing stays or is added does one app the request leaves out stay, so the wish keeps one.
+    func testEveryAppLeftOutGoesWhileAnotherStays() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        let tv = LampProject(id: "tally.tv", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("TV"), platform: .tv, partOf: wish.id)
+        let android = LampProject(id: "tally.android", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("Android"), platform: .android, partOf: wish.id)
+        let apps = [wish, tv, android]
+        let plan = Parts.plan(try XCTUnwrap(Parts.kinds(for: ["tv"])), for: apps)
+        XCTAssertEqual(plan.remove, [wish.id, android.id])
+        XCTAssertEqual(Parts.staying(of: plan.remove, survivors: apps.count - plan.remove.count), [])
+        // "Android only" on a Mac wish this Mac can't build Android apps for yet: the Mac app stays until it can.
+        XCTAssertEqual(Parts.staying(of: [wish.id], survivors: 0), [wish.id])
+        XCTAssertEqual(Parts.staying(of: [wish.id, tv.id], survivors: 0), [wish.id])
+    }
+
+    /// An iPhone app asked for "iphone" and "watch": its kind is already right, but the answer says to add the watch
+    /// app, so it isn't dropped as saying nothing new. Nor is one saying to take the watch app away.
+    func testAWatchToAddOrTakeAwayIsNeverDropped() {
+        XCTAssertTrue(Parts.saysNothingNew("It's already made for iPhone and iPad."))
+        XCTAssertFalse(Parts.saysNothingNew("It's already made for iPhone and iPad.\n\nThen add its Apple Watch app in Watch/: open the apple-watch skill with `read_skill` first, and follow it."))
+        XCTAssertFalse(Parts.saysNothingNew("It's already made for iPhone and iPad.\n\nThen take its Apple Watch app away: delete the files in Watch/ with delete_file."))
+    }
+
     /// A TV app in TV/, beside the Mac app in the wish's own folder, takes players as a TV app with other apps does: its
     /// game is open for the wish's other apps wherever it is. A TV app on its own without a phone page takes none.
     func testATVAppInItsFolderTakesTheWishsOtherAppsAsPlayers() {

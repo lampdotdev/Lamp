@@ -121,6 +121,16 @@ enum Parts {
         var remove: [String] = []
     }
 
+    /// Of the apps a plan takes away (`remove`, in order), those that stay for now: none while another app survives
+    /// the request (`survivors`: those kept and those just added), else the first, so a wish always has an app.
+    static func staying(of remove: [String], survivors: Int) -> [String] {
+        survivors > 0 ? [] : Array(remove.prefix(1))
+    }
+
+    /// Whether `make_app_for`'s answer for an app that stays says nothing the agent needs: its kind was already right,
+    /// with no more to do. One that goes on to say what to do about a watch app (`Store.changeKind`) says something.
+    static func saysNothingNew(_ text: String) -> Bool { text.hasPrefix("It's already made for") && !text.contains("\n\n") }
+
     static func plan(_ kinds: [Platform], for apps: [LampProject]) -> Plan {
         var plan = Plan()
         for app in apps {

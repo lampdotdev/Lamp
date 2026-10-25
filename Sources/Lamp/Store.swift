@@ -5545,7 +5545,7 @@ final class Store: ObservableObject {
             guard let kind = plan.keep[app.id] else { continue }
             let (status, answer) = await changeKind(arguments, devices: devices, kind: kind, for: app)
             let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
-            if status == 200, text.hasPrefix("It's already made for") { continue }
+            if status == 200, Parts.saysNothingNew(text) { continue }
             said.append(app.isPart || !parts(of: wish).isEmpty || !plan.add.isEmpty ? "For \(Parts.name(of: app.platform)) in \(folderWords(app)): " + text : text)
         }
         // Each family the wish has no app of yet is added in its own folder.
@@ -5566,21 +5566,18 @@ final class Store: ObservableObject {
                         "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n" + Parts.pack(for: kind))
         }
         // Each app left out goes, once the wish has another: one left with nothing beside it stays until what replaces it is made.
-        var left = apps.count - plan.remove.count + added
+        let stays = Parts.staying(of: apps.map(\.id).filter(plan.remove.contains), survivors: apps.count - plan.remove.count + added)
         for app in apps where plan.remove.contains(app.id) {
             guard let app = current(app) else { continue }
             let name = Parts.name(of: app.platform)
-            guard left > 0 else {
+            guard !stays.contains(app.id) else {
                 setApps(wish, Parts.setting(WishApp(kind: app.platform), in: current(wish)?.apps ?? []))
                 said.append("\(name.prefix(1).uppercased() + name.dropFirst()) stays for now: it's the only app the wish has until the rest can be made, " +
                             "and Lamp takes it away then if you ask again with make_app_for. Tell the person in a sentence.")
                 continue
             }
             let gone = app.isPart ? await removePart(app) : await removeOwnApp(of: app)
-            if gone {
-                left -= 1
-                log(wish, .status, "\(wish.name) no longer has \(name).")
-            }
+            if gone { log(wish, .status, "\(wish.name) no longer has \(name).") }
             // The rules this conversation began with were that app's, when it was the one in the wish's own folder.
             let rules = app.isPart ? "" : " What your instructions said about it no longer applies: every app of the wish is in a folder of its own now, with its own rules."
             said.append(gone ? "Lamp took \(name) away, as asked; the wish's versions still have it." + rules
