@@ -2446,15 +2446,19 @@ extension Agent.Rules {
     """
 
     static let tvPhone = """
-    - A page for phones (controllers, a buzzer, a second screen) goes in Phone/, which Lamp serves while the app \
-    runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
+    - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
+    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
+    the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
+    first for one. Apps of the wish's own on the iPhone or Android (`make_app_for`) suit what a page does poorly, such as the \
+    phone's hardware or data the phone keeps.
     """
 
     /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone
     /// or Mac app steers the TV app's game as a player of `Lamp.controllers`.
     static let tvParts = String(wishTalk.dropFirst()) + """
-    - When the wish's iPhone or Mac app steers the TV app (a game's controller, a remote), it joins the TV app the way a \
-    phone's page does, as a player of `Lamp.controllers`, beside `Lamp.wish` for everything else: its buttons, sticks \
+    - When the wish's iPhone or Mac app steers the TV app as a player (`LampController`, one way to, suited to a \
+    game's controls), it joins the TV app the way a phone's page does, as a player of `Lamp.controllers`, beside \
+    `Lamp.wish` for everything else: its buttons, sticks \
     and messages arrive in onButton, onAxis and onMessage, the files it sends in onFile, and `Lamp.controllers.send` \
     and `sendFile` reach it. Call `Lamp.controllers.start()` as the TV app opens; it needs no page in Phone/ for that.
     """

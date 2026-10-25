@@ -272,7 +272,7 @@ extension Agent {
         return """
         You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Lamp makes apps \
         \(Targets.lampMakes), and one wish can be more than \
-        one of them, made to work together: a TV app with an iPhone app that controls it, a Mac app with its TV app. \
+        one of them, made to work together: a TV app with an iPhone app, a Mac app with its TV app. \
         This wish could be \(named.isEmpty ? "for more than one of them" : named), and it didn't say which, so nothing \
         is written until it's known.
 

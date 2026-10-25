@@ -5475,8 +5475,9 @@ final class Store: ObservableObject {
             let (part, problem, setup) = await addPart(wanted, to: wish)
             guard let part else {
                 recordNeeds(problem ?? "Lamp couldn't make it.", for: wanted, of: wish, setup: setup)
-                said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it.") Tell the person in a sentence; " +
-                            "build the rest. Lamp keeps it on the wish's list and makes it once that's done.")
+                said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it.") Lamp keeps it on the wish's list and makes it " +
+                            "once that's done. Build the rest; what it was to do may go another way meanwhile if one works now, your choice. " +
+                            "Tell the person in a sentence.")
                 continue
             }
             log(wish, .status, "\(wish.name) has \(Parts.name(of: wanted)) to go with it now.")
@@ -5558,7 +5559,9 @@ final class Store: ObservableObject {
         guard kind != current.platform || (kind.reaches(.device) && integration != current.integration) || current.undecided != nil
         else { return (200, ["text": "It's already made for \(words)."]) }
         if let problem = await kind.target.setup.notReady(integration, nil) {
-            return (200, ["text": "Not yet: \(problem) Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
+            return (200, ["text": "Not yet: \(problem) Nothing changed. If what the person wants can be made well another way that needs none of it " +
+                          "(other devices with make_app_for, or another way of doing the same thing), you may choose that now and tell them in a sentence " +
+                          "what you made and what the setup would add; otherwise tell them in a sentence, and that you'll make the change when they ask again once it's done."])
         }
         // Every copy closes first, the turn's own answer included: one kept open (the person kept unsaved work)
         // would go on as an app Lamp no longer knows by its id.
