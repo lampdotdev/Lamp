@@ -18736,7 +18736,7 @@ enum Template {
     /// final that something subclasses after all fails the build in the compiler's words, which `LiveSlots.brokeFinal`
     /// reads, and the copy is made without that step from then on (`no-final`), as spares are (`no-spares`).
     static let livePerl = ##"""
-    use strict; use warnings;
+    use strict; use warnings; use Digest::MD5 qw(md5_hex);
     local $/;
     my $modifier = qr/(?:func|var|let|subscript|override|class|final|open|public|internal|private|fileprivate|package|static|dynamic|required|convenience|nonisolated|lazy|weak|unowned|optional|indirect|init|deinit)\b/;
     if (($ARGV[0] // '') eq 'scan') {
@@ -18744,14 +18744,23 @@ enum Template {
         # Lamp's own files (`-own=LampSupport.swift,…`) are scanned for names like the rest, but what they do with
         # raw memory is their own business, never a reason to keep the app's structs from their spares.
         my %own = map { $_ => 1 } split /,/, (($ARGV[0] // '') =~ /^-own=(.*)/ ? do { shift @ARGV; $1 } : '');
-        my (%names, %alias, %nospare, %equatable, %reflects, $raw, $mirrors);
+        # Lamp's list of the structs the app reads as bytes (`LiveSlots.noteByteStructs`), when it has made one.
+        my $bytes = ($ARGV[0] // '') =~ /^-bytes=(.*)/ ? do { shift @ARGV; $1 } : '';
+        my (%names, %alias, %nospare, %equatable, %reflects, %bodies, @appTexts, $raw, $mirrors);
         for my $file (@ARGV) {
             open(my $in, '<', $file) or next; my $s = <$in>; close($in);
             # A struct read as bytes anywhere (MemoryLayout, a buffer handed to Metal, an array's or a value's own bytes)
             # must stay the size it's written with, and the one read may be declared in another file: so no struct gets
             # a spare in such an app. Which of `withUnsafeBytes`'s receivers holds structs isn't in the text, so any counts.
+            push @appTexts, $s if !$own{(split m#/#, $file)[-1]};
             $raw = 1 if !$own{(split m#/#, $file)[-1]} && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
             $s =~ s#/\*[\s\S]*?\*/# #g; $s =~ s#//[^\n]*##g;
+            # Each struct's body, for which structs one read as bytes holds (below).
+            while ($s =~ /\bstruct\s+(\w+)[^{;]*\{/g) {
+                my ($name, $at, $depth) = ($1, pos($s), 1); my $i = $at;
+                while ($i < length($s) && $depth) { my $c = substr($s, $i++, 1); $depth++ if $c eq '{'; $depth-- if $c eq '}' }
+                $bodies{$name} .= substr($s, $at, $i - $at);
+            }
             # A struct made an OptionSet or RawRepresentable in an extension: its memberwise initializer is the
             # protocol's `init(rawValue:)`, which a spare's parameter would unfit. One made BitwiseCopyable can hold
             # nothing a spare is.
@@ -18772,14 +18781,31 @@ enum Template {
             while ($s =~ /\bwhere\b(?!\s*:)([^{]*)/g) { my $w = $1; while ($w =~ /:\s*([\w.]+)/g) { $names{$1} = 1 } }
         }
         for my $name (keys %names) { my $n = $name; for (1 .. 4) { last unless exists $alias{(split /\./, $n)[-1]}; $n = $alias{(split /\./, $n)[-1]}; $names{$n} = 1 } }
+        # With Lamp's list for these very files, only the structs read as bytes, and those they hold, go without a spare;
+        # without it (none made, a stale one, or `*`), none get one in such an app.
+        my $byteList;
+        if ($raw && $bytes ne '' && open(my $list, '<', $bytes)) {
+            my @read = split /\n/, <$list>; close($list);
+            if (@read && $read[0] eq 'md5 ' . md5_hex(join("\n", sort map { md5_hex($_) } @appTexts)) && !grep { $_ eq '*' } @read) {
+                ($byteList, $raw) = (1, 0);
+                my (@todo, %seen) = @read[1 .. $#read];
+                while (defined(my $n = shift @todo)) {
+                    next if $seen{$n}++;
+                    $nospare{$n} = 1;
+                    my $body = $bodies{$n} // next;
+                    push @todo, grep { !$seen{$_} && $body =~ /\b\Q$_\E\b/ } keys %bodies;
+                }
+            }
+        }
         # The names, then what the spares step is told: `-raw`, and `-nospare:Name` for each.
-        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), ($mirrors ? '-nomirror' : ()), (map { "-nospare:$_" } sort keys %nospare),
+        print join(' ', sort(keys %names), ($raw ? '-raw' : ()), ($byteList ? '-bytes' : ()), ($mirrors ? '-nomirror' : ()), (map { "-nospare:$_" } sort keys %nospare),
             (map { "-equatable:$_" } sort keys %equatable), map { "-reflects:$_" } sort keys %reflects), "\n";
         exit 0;
     }
     my ($count, $subclassed, $flags, @files) = @ARGV;
     my %subclassed = map { (split /\./)[-1] => 1 } grep { !/^-/ } split ' ', $subclassed;
     my $rawAll = $subclassed =~ /(?:^|\s)-raw(?:\s|$)/;
+    my $bytesKnown = $subclassed =~ /(?:^|\s)-bytes(?:\s|$)/;
     my %nospare = map { substr($_, 9) => 1 } grep { /^-nospare:/ } split ' ', $subclassed;
     my %equatable = map { substr($_, 11) => 1 } grep { /^-equatable:/ } split ' ', $subclassed;
     my %reflects = map { substr($_, 10) => 1 } grep { /^-reflects:/ } split ' ', $subclassed;
@@ -18831,7 +18857,7 @@ enum Template {
     }
     for my $file (@files) {
         open(my $in, '<', $file) or die "$file: $!"; my $s = <$in>; close($in);
-        my $raw = $rawAll || $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
+        my $raw = $rawAll || !$bytesKnown && $s =~ /MemoryLayout|withUnsafe|unsafeBitCast|makeBuffer|withContiguous(?:Mutable)?StorageIfAvailable|Unsafe(?:Mutable)?(?:Raw)?(?:Buffer)?Pointer|LowLevelMesh|MTLBuffer|\@frozen/;
         @skip = spans($s);
         $s =~ s{var\s+body\s*:\s*some\s+(?:SwiftUI\.)?View\s*\{}~ inside($-[0]) ? $& : "var body: AnyView { _ = LampLive.generation; return AnyView(__lampBody) }\n    \@ViewBuilder var __lampBody: some View {" ~ge;
         @skip = spans($s);
@@ -18890,7 +18916,7 @@ enum Template {
     \(livePerl)
     LAMPLIVE
       # The names something may subclass, so every other class can be final.
-      SUBCLASSED=$(perl "$LIVE/live.pl" scan -own=LampSupport.swift,\(sceneSupportFile) Sources/**/*.swift(N) 2>/dev/null || true)
+      SUBCLASSED=$(perl "$LIVE/live.pl" scan -own=LampSupport.swift,\(sceneSupportFile) -bytes="$LIVE/\(LiveSlots.byteStructsFile)" Sources/**/*.swift(N) 2>/dev/null || true)
       # The pass is kept for each file with what it was made from, and taken again only when any of that changed:
       # over LampSupport.swift, which hardly ever does, it takes a second or more, and every change waited for it.
       KEY="\(LiveSlots.count)|$(cksum < "$LIVE/live.pl")|$SUBCLASSED"

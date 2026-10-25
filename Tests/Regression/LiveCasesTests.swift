@@ -247,7 +247,9 @@ final class LiveCasesTests: XCTestCase {
         try fm.createDirectory(at: live, withIntermediateDirectories: true)
         let perl = LiveReload.folder(project).appendingPathComponent("live.pl").path
         let files = swiftFiles(in: sources)
-        let names = try await shell("/usr/bin/perl", [perl, "scan", "-own=LampSupport.swift,LampScene.swift"] + files.map { sources.appendingPathComponent($0).path })
+        await LiveSlots.noteByteStructs(project)
+        let bytes = "-bytes=" + LiveReload.folder(project).appendingPathComponent(LiveSlots.byteStructsFile).path
+        let names = try await shell("/usr/bin/perl", [perl, "scan", "-own=LampSupport.swift,LampScene.swift", bytes] + files.map { sources.appendingPathComponent($0).path })
             .trimmingCharacters(in: .whitespacesAndNewlines)
         for file in files {
             let to = live.appendingPathComponent(file)
