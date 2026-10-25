@@ -396,7 +396,14 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     document.body.append(renderer.domElement);
     fit();
     window.addEventListener('resize', fit);
-    if (init) await init({ width: WIDTH, height: HEIGHT });
+    // In the preview a start-up that fails ends the play with what it said, rather than leaving Lamp waiting for frames.
+    if (init) {
+        try { await init({ width: WIDTH, height: HEIGHT }); } catch (e) {
+            log(`Error: ${e && e.message || e}`);
+            if (preview) { window.webkit.messageHandlers.lampPreview.postMessage({ done: true, failed: String(e && e.message || e), logs }); return; }
+            throw e;
+        }
+    }
     if (preview) return runPreview();
     let last = 0;
     const loop = now => {

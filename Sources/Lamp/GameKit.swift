@@ -61,7 +61,10 @@ enum GameKit {
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
-        (devices.contains("game") || devices.contains(xboxKind)) && !devices.contains("screen") && devices.allSatisfy { placeWords.keys.contains($0) }
+        // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new.
+        devices.contains("game") && devices.allSatisfy { word in
+            word == "game" || (placeWords[word] ?? nil).map(Platform.game.reaches) == true
+        }
     }
 
     /// The places a list of devices gives a kind that takes places one at a time (a game, a screen): always the Mac, its
@@ -530,7 +533,7 @@ enum GameKit {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
         guard let (drawn, result) = await WebGamePreview.play(page, script: script) else {
-            throw Failure(message: "The game didn't start in the preview, or ran for more than a minute without finishing the play: "
+            throw Failure(message: "The game didn't start in the preview, or ran for more than two minutes without finishing the play: "
                 + "check that Web/index.html loads it and that game() is called once, and look for an error in what it logged.")
         }
         let logs = result["logs"] as? [String] ?? []
