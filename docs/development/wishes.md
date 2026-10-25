@@ -16,7 +16,10 @@ files for it (`Template.writeOwnedFiles`, `fill`, `writeSupport`, `Runtime.sourc
 `quit`, `macCopies`, `run`), so nothing puts an app back in its folder; Play, Open and Use open its apps (`openWish`),
 the desk captions it with where they are (`WishPlace.of`), and `Store.everyApp` is every app without it. Moving existing
 first apps into folders of their own, and a shared file's layout for such a wish, are a later change: until then a file
-carries its first app in the file's root (`Sharing.export`), and opening it makes a new wish rather than an update. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
+carries one app in the file's root (`Sharing.export`), and opening it makes a new wish rather than an update. A Lamp from
+before such wishes would read one as an empty draft and write a new app into it, so its meta.json says `layout` 2 while
+its own folder holds no app (`Template.layout`, written with every save of it and set right whenever it's read), which
+such a Lamp leaves alone and shows as made by a newer Lamp (`NewerWish`); once an app is back in its folder it says none. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
 wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat or versions of its own: what's logged
 for it goes to its wish's chat (`Store.log`), and the wish's history keeps its folder. No app of a wish comes first
 beyond that: each carries the wish's icon. Its design and artwork are the wish's (`Icons.home`), drawn into each app's
@@ -61,13 +64,17 @@ The TV app of a wish takes the wish's other apps as players from the wish's own 
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
 stands alone.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
-and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, the first of them)
-as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
+and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, one whose folder is
+the one its kind gets, since the app at a file's root comes out named by its kind, `WishRooms.peer`, and every app of a
+wish is of its own family, so only a wish's one app can lack one) as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
 `Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
-opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
+opens it makes each part as `make_app_for` does, in the folder the file had it in when that's one for its family, as it's
+its name among the wish's apps (`Store.installParts`, `addPart`'s `folder`, `Parts.folder(_:canHold:)`, with the file's
+family for an iPhone part); one it
 can't build yet is kept on the wish's list with its files beside the wish (`Sharing.keep`, `.lamp/waiting/<family>`,
 by the part's family since the file's folder for it may not be this Mac's, unversioned, gone with the wish), which go in
-over the scaffold, with the family the file gave them, once the part is made (`addPart`, `Sharing.kept`). An update from a
+over the scaffold, with the family and folder the file gave them, once the part is made (`addPart`, `Sharing.kept`); while
+it waits, the others know it by that folder too (`Parts.folder(waiting:in:)`). An update from a
 file replaces each part the file carries, changes one of another kind of the same family in place (`convert`, so it
 keeps its folder and data), adds the ones the wish doesn't have, and leaves a part the file lacks as it is; a part whose
 files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
@@ -75,7 +82,13 @@ with a part says 10.
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
-asking for an app and making it loses nothing. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
+asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp
+saves of a wish carries its kinds (`Lamp-Apps`, `Versions.appsTrailer`), its first one too (`Store.initRepo`: a new wish, an
+import, a copy), a request that changed only the list is a
+version of its own (an empty one, titled by the request), and Undo or going back to a version gives back the list it had
+(`Versions.apps(at:in:)`, in `restoreFiles` before any app's own files are written), each app its files have on it and
+one still waiting keeping what stops it, and forgetting a part the version doesn't have leaves that list as it is
+(only taking an app away takes it off, `removePart`); a version from before carries none, and the list is what its files make. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
 which take the app in the wish's own folder and each other found as made whatever the list says, `Parts.made`). The apps a wish waits for are made at
 the start of its next turn (`Store.makeWaitingParts`), each tried once rather than at every turn, since the kind's check
 opens its setup window: one this Mac can't build yet keeps what stops it and gets the chat's setup line

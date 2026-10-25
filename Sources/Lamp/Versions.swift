@@ -20,6 +20,9 @@ struct AppVersion: Identifiable, Hashable {
     /// versions that change it carry it, and going back to a version brings back the name it had (`name(at:in:)`).
     var renamedTo: String? = nil
     var renamedFrom: String? = nil
+    /// The kinds of app the wish asked for when this version was saved (`LampProject.apps`), kept in Lamp's own folder
+    /// as the name is, and so carried by each version Lamp saves (`appsTrailer`). Nil for a version saved without it.
+    var apps: [Platform]? = nil
 
     var label: String { name ?? title ?? message }
 
@@ -175,17 +178,18 @@ enum Versions {
         }
         let titles = VersionTitles.saved(in: project)
         var versions: [AppVersion] = []
-        _ = await git("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Name,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Renamed-From,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
+        _ = await git("git log --first-parent --format='%H%x1f%P%x1f%ct%x1f%(trailers:key=Lamp-Undid,valueonly,separator=%x2C)%(trailers:key=Forge-Undid,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Name,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Renamed-From,valueonly,separator=%x2C)%x1f%(trailers:key=Lamp-Apps,valueonly,separator=%x2C)%x1f%s'",   // Undos from before the rename keep the old trailer
                             cwd: project.dir) { line in
-            let parts = line.split(separator: "\u{1f}", maxSplits: 6, omittingEmptySubsequences: false).map(String.init)
-            guard parts.count == 7, let seconds = TimeInterval(parts[2]) else { return }
-            let message = parts[6]
+            let parts = line.split(separator: "\u{1f}", maxSplits: 7, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 8, let seconds = TimeInterval(parts[2]) else { return }
+            let message = parts[7]
             // A rename saved before versions carried the name says the new one in its message, and not the old.
             let older = message.hasPrefix("Rename to ") && message != "Rename to Lamp" ? String(message.dropFirst("Rename to ".count)) : nil
             versions.append(AppVersion(id: parts[0], parent: parts[1].split(separator: " ").first.map(String.init),
                                        date: Date(timeIntervalSince1970: seconds), message: message,
                                        name: names[parts[0]], title: titles[parts[0]], undid: parts[3].nilIfEmpty,
-                                       renamedTo: parts[4].trimmed.nilIfEmpty ?? older, renamedFrom: parts[5].trimmed.nilIfEmpty))
+                                       renamedTo: parts[4].trimmed.nilIfEmpty ?? older, renamedFrom: parts[5].trimmed.nilIfEmpty,
+                                       apps: apps(from: parts[6])))
         }
         return versions
     }
@@ -232,6 +236,57 @@ enum Versions {
         return versions[..<index].last { $0.renamedTo != nil }?.renamedFrom
     }
 
+    /// The kinds of app a wish asked for in `version`: those the latest version at or before it that says them gave
+    /// (`appsTrailer`). Nil when none does (versions saved before versions carried them), and the list is then what the
+    /// version's files make.
+    static func apps(at version: AppVersion, in versions: [AppVersion]) -> [Platform]? {
+        let byID = Dictionary(versions.map { ($0.id, $0) }) { first, _ in first }
+        var walked: AppVersion? = version
+        while let at = walked {
+            if let apps = at.apps { return apps }
+            walked = at.parent.flatMap { byID[$0] }
+        }
+        return nil
+    }
+
+    /// The `Lamp-Apps` trailer as a version carries it: the kinds, by name, between spaces. One the version names that
+    /// this Lamp doesn't know is passed over.
+    static func apps(from trailer: String) -> [Platform]? {
+        guard let said = trailer.split(separator: ",").first.map({ String($0).trimmed }), !said.isEmpty else { return nil }
+        return said.split(separator: " ").compactMap { Platform(rawValue: String($0)) }
+    }
+
+    /// What every version Lamp saves of a wish carries: the kinds of app it asks for then, whether made or waiting
+    /// (`Parts.wanted`), since the list is kept in meta.json, which no version holds. Going back to a version brings
+    /// its list back with its files (`restoreFiles`), so an Undo of an app asked for and still waiting takes it off the
+    /// list too, rather than leaving it to be made at the next turn. Nil for a folder that isn't a wish's.
+    nonisolated static func appsTrailer(in dir: URL) -> String? {
+        guard let kinds = listedKinds(in: dir), !kinds.isEmpty else { return nil }
+        return "Lamp-Apps: " + kinds.map(\.rawValue).joined(separator: " ")
+    }
+
+    /// The kinds of app the wish in this folder asks for now, made or waiting.
+    private nonisolated static func listedKinds(in dir: URL) -> [Platform]? {
+        guard var wish = Store.readWish(at: dir) else { return nil }
+        wish.partFolders = Parts.folders(in: dir)
+        return Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind)
+    }
+
+    /// Whether going back to the latest version would give the wish another list of apps than it has, its files being
+    /// the same: the list changed and nothing else did (an app asked for that this Mac can't make yet). Read as a restore
+    /// reads it: the nearest version that says one, with what the files make.
+    private static func listDiffersFromLatest(in dir: URL) async -> Bool {
+        guard var wish = Store.readWish(at: dir), let now = listedKinds(in: dir) else { return false }
+        var said = ""
+        _ = await git("git log --first-parent --format='%(trailers:key=Lamp-Apps,valueonly,separator=%x2C)'", cwd: dir) { line in
+            if said.isEmpty { said = line.trimmed }
+        }
+        wish.partFolders = Parts.folders(in: dir)
+        wish.apps = (apps(from: said) ?? []).map { WishApp(kind: $0) }
+        let latest = Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind)
+        return Set(latest) != Set(now)
+    }
+
     /// What a version that changes the app's name carries, for `name(at:in:)`.
     static func nameTrailers(from old: String, to new: String) -> String {
         "Lamp-Name: \(new)\nLamp-Renamed-From: \(old)"
@@ -264,18 +319,34 @@ enum Versions {
             // A version from before the app was made for other devices brings back its kind with its code, so
             // Lamp's own files and its next build are for what that code was written for (Store.followRestoredKind).
             var project = name.map { project.named($0) } ?? project
+            var changed = false
             if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
                 project.platform = kind
                 if !kind.reaches(.ios) { project.device = nil }
                 project.integration = kind.target.recipe.integration(project.dir)
-                try? Template.saveMeta(project)
+                changed = true
             }
+            if !project.isPart {
+                // The wish's list of apps is the version's, as its name is: what each app's building blocks are written
+                // from below, and what the next turn makes. Each app the version's files have is on it, and one it asked
+                // for and didn't have keeps what stops it here, so it isn't tried again at every turn.
+                project.partFolders = Parts.folders(in: project.dir)
+                let parts = Parts.load(project)
+                let asked = await apps(at: version, in: list(project)) ?? []
+                var listed = project
+                listed.apps = asked.map { kind in WishApp(kind: kind, needs: project.apps.first { $0.kind == kind }?.needs) }
+                let apps = Parts.wanted(in: listed, parts: parts)
+                if apps != project.apps { project.apps = apps; changed = true }
+                // A Lamp from before reads the wish by its meta.json's layout, which follows whether its folder holds an app.
+                if NewerWish.savedLayout(at: project.dir) != Template.layout(of: project) { changed = true }
+            }
+            // Before any app's own files are written: a part reads its wish's list from there (`talksToOtherApps`).
+            if changed { try? Template.saveMeta(project) }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
             // Every other app of the wish too, as the restore left them: they carry the wish's name and what the wish's
             // list makes of their building blocks, and no app of it comes first. Left to their next build, they'd leave
             // the restore unsaved, and the next Undo would only discard that.
             if !project.isPart {
-                project.partFolders = Parts.folders(in: project.dir)
                 for part in Parts.load(project) { try? Template.writeOwnedFiles(for: part) }
             }
         }
@@ -320,11 +391,22 @@ enum Versions {
     /// by something else at work in the folder (the agent's own git, say, which is free to use it), so one
     /// that fails with changes still unsaved is tried again before it's given up on.
     static func commitAll(_ arguments: String, in dir: URL, env: [String: String] = [:]) async -> Saved {
+        // The wish's list of apps goes with each new version (`appsTrailer`); a version amended keeps the one it has.
+        var arguments = arguments, env = env
+        if !arguments.contains("--amend"), let apps = appsTrailer(in: dir) {
+            arguments += " --trailer \"$LAMP_APPS\""
+            env["LAMP_APPS"] = apps
+        }
         for attempt in 0...savePauses.count {
             if await git("git add -A && \(commit) \(arguments)", cwd: dir, env: env) == 0 { return .saved }
             var unsaved = ""
             let looked = await git("git status --porcelain", cwd: dir) { unsaved += $0 }
-            if looked == 0, unsaved.trimmed.isEmpty { return .nothingToSave }
+            if looked == 0, unsaved.trimmed.isEmpty {
+                // Only the wish's list changed: that's a version too, so Undo takes the request that changed it back.
+                guard env["LAMP_APPS"] != nil, await listDiffersFromLatest(in: dir),
+                      await git("\(commit) --allow-empty \(arguments)", cwd: dir, env: env) == 0 else { return .nothingToSave }
+                return .saved
+            }
             if attempt < savePauses.count { try? await Task.sleep(for: savePauses[attempt]) }
         }
         return .failed
@@ -477,8 +559,12 @@ enum VersionTitles {
         var files: [String] = []
         _ = await Versions.git("git show --format= --name-only \"$LAMP_VERSION\"", cwd: project.dir,
                             env: ["LAMP_VERSION": version.id]) { if !$0.trimmed.isEmpty { files.append($0.trimmed) } }
+        // A version with no files changed is a request that changed only the wish's list of apps (an app asked for that
+        // this Mac can't make yet): the request says what it was, and a model shown no change could only say "nothing".
+        // It's given as the title, so the versions before it still get theirs (titling stops at the first without one).
+        guard !files.isEmpty else { return version.message }
         // Lamp refreshing the support code it puts in every app isn't a change the user made.
-        if !files.isEmpty, files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.sceneSupportPath || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
+        if files.allSatisfy({ $0 == "Sources/LampSupport.swift" || $0 == Template.sceneSupportPath || $0 == Template.widgetFolder + "/" + Template.widgetSupportFile
                                               || $0 == Template.shareFolder + "/" + Template.shareSupportFile
                                               || Template.watchSupportPaths.contains($0) || Template.isAndroidSupport($0)
                                               || DeviceSupport.isSupport($0, in: project) }) { return "Lamp update" }

@@ -5,8 +5,9 @@ import SwiftUI
 /// alone: never listed among the wishes, built, saved, migrated or written to, only shown on the desk as made by a newer
 /// Lamp until this one is updated.
 struct NewerWish: Identifiable, Hashable {
-    /// How wish folders are laid out in this Lamp. A wish from before meta.json said so is this layout.
-    static let layout = 1
+    /// How wish folders are laid out in this Lamp. A wish from before meta.json said so is layout 1, as is every wish
+    /// whose own folder still holds an app; 2 is a wish whose apps are all in folders of their own (`Template.layout`).
+    static let layout = 2
 
     let id: String
     let name: String
@@ -20,10 +21,15 @@ struct NewerWish: Identifiable, Hashable {
     /// The wish in this folder, if a newer Lamp laid it out. Read on its own, before anything else of meta.json, since
     /// a newer layout may leave out what this Lamp's reading requires.
     nonisolated static func read(at dir: URL) -> NewerWish? {
-        guard let data = try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json")),
-              let meta = try? JSONDecoder().decode(Meta.self, from: data),
-              let layout = meta.layout, layout > Self.layout else { return nil }
+        guard let meta = meta(at: dir), let layout = meta.layout, layout > Self.layout else { return nil }
         return NewerWish(id: dir.lastPathComponent, name: meta.name ?? dir.lastPathComponent, dir: dir)
+    }
+
+    /// The layout the wish's meta.json says now, nil when it says none.
+    nonisolated static func savedLayout(at dir: URL) -> Int? { meta(at: dir)?.layout }
+
+    private nonisolated static func meta(at dir: URL) -> Meta? {
+        (try? Data(contentsOf: dir.appendingPathComponent(".lamp/meta.json"))).flatMap { try? JSONDecoder().decode(Meta.self, from: $0) }
     }
 
     /// Its icon as Lamp last drew it, at the wish's root or in one of its app folders: only read, never drawn again.
