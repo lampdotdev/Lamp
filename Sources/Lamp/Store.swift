@@ -2068,7 +2068,7 @@ final class Store: ObservableObject {
     /// Whether an app can open on a simulator of this family: Apple TV and Vision Pro take an app's own SwiftUI code built
     /// for them, never a game's or a screen's host, which is iOS's.
     static func opens(_ project: LampProject, on family: DeviceFamily) -> Bool {
-        !family.isOtherOS || project.platform == .iphone || project.platform == .universal
+        !family.isOtherOS || project.platform.target.otherSystems
     }
 
     /// Every simulator Try On can offer, looked up when the menu opens.
@@ -5628,7 +5628,7 @@ final class Store: ObservableObject {
         }
         return (200, ["text": "Done: \(changed.name) is made for \(words) from now on, and that replaces what your instructions said " +
                       "about what it runs on. Adapt its code now, in this request, and build it before you finish. " + rewrite +
-                      (kind.choosesPlace ? "Put what only one platform has under `#if os(macOS)` or `#if os(iOS)`. " : "") +
+                      (kind.reaches(.mac) && kind.reaches(.ios) && !kind.target.hostedByLamp ? "Put what only one platform has under `#if os(macOS)` or `#if os(iOS)`. " : "") +
                       "What applies now:\n" + rules.replacingOccurrences(of: "{{DEVICE}}", with: changed.family.name)])
     }
 

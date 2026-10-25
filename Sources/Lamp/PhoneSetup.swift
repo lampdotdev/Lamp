@@ -474,9 +474,8 @@ extension PhoneSetup.Context {
     /// by an app for both, and a paid one by nothing.
     init(for project: LampProject, phone: String?, building: Bool = false) {
         self.init(family: project.family, phone: phone, requiresPhoneTools: project.hasIOS,
-                  // Only an app for both has a Mac half Xcode signs for the team; a game's or a screen's Mac copy is Lamp's.
-                  requiresTeam: project.platform == .universal,
-                  requiresPaidTeam: building && (phone != nil || (project.platform == .universal && !project.onIOS)) && Self.usesICloud(project))
+                  requiresTeam: project.platform.target.macSignedForTeam,
+                  requiresPaidTeam: building && (phone != nil || (project.platform.target.macSignedForTeam && !project.onIOS)) && Self.usesICloud(project))
     }
 
     static func usesICloud(_ project: LampProject) -> Bool {

@@ -40,5 +40,5 @@ extension Target {
                        shareRefusal: "Lamp doesn't share screens yet."),
         part: nil,
         setup: .none,
-        startsAt: [.mac])
+        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true })
 }

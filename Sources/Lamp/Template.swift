@@ -1990,7 +1990,7 @@ enum Template {
 
     /// Whether the app is a page in a web view of its own (a three.js game, a screen), whose Web/ goes into the app.
     static func showsPage(_ project: LampProject) -> Bool {
-        (GameKit.isGame(project) && GameKit.engine(project) == .web) || ScreenKit.isScreen(project)
+        project.platform.target.showsPage(project)
     }
 
     /// The app's Web/ as a folder in the app beside Assets, where the page's host reads it (`Bundle.main…/Web`).

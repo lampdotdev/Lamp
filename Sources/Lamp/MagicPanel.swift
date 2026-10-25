@@ -82,9 +82,9 @@ final class MagicPanel {
     /// which may be older than the one installed since. The request's name alone, without Lamp's prefix: an app reads
     /// the prefix from its Info.plist (`LampInstall.note`), so its program holds only the name.
     static func runningCopiesTakeTheChat(_ project: LampProject) -> Bool {
-        // A game's app is Lamp's own, built from this Lamp's kit whenever the kit changes, and in release: Swift keeps a
-        // string this short inside the code there, so the name isn't in the program to find.
-        if project.platform.addsPlaces { return true }
+        // An app of Lamp's own around a page is built from this Lamp's files whenever they change, and in release: Swift
+        // keeps a string this short inside the code there, so the name isn't in the program to find.
+        if project.platform.target.hostedByLamp { return true }
         return Store.shared.macCopies(of: project).allSatisfy { app in
             guard let program = app.executableURL, let data = try? Data(contentsOf: program, options: .alwaysMapped) else { return false }
             return data.range(of: Data("openSidebar".utf8)) != nil

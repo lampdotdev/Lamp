@@ -67,6 +67,15 @@ struct Target {
     /// Where a new app of the kind opens, of its `places`, when the kind's places are given one at a time (a game, at
     /// home on the Mac until it's put somewhere else too: `LampProject.places`). Nil for all of them from the start.
     var startsAt: [Destination]? = nil
+    /// Its app on the Mac and iOS is Lamp's own around the agent's page (a game's, a screen's), built from Lamp's files in
+    /// release whenever they change: a change reopens it rather than going in live, and its copies always take the chat.
+    var hostedByLamp = false
+    /// A page in a web view of its own, whose Web/ goes into the app wherever it's built (the phone's Xcode project too).
+    var showsPage: (LampProject) -> Bool = { _ in false }
+    /// Its own SwiftUI builds for tvOS and visionOS too, so Try On offers the Apple TV and Vision Pro simulators.
+    var otherSystems = false
+    /// Its Mac half is built by Xcode for the person's Apple team, so it can't be built without one.
+    var macSignedForTeam = false
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {

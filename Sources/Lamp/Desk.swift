@@ -1684,7 +1684,7 @@ extension Store {
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             // A game played on this Mac opens in its window with its chat beside it, as a Mac app does.
-            guard place == .window, project.platform == .mac || (project.platform.addsPlaces && project.destination == .mac) else { return use(project) }
+            guard place == .window, project.platform == .mac || (project.platform.target.hostedByLamp && project.destination == .mac) else { return use(project) }
             change(project)
         }
     }
