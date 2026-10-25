@@ -166,27 +166,22 @@ A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, 
 call gives "game" for a 3D game or one played with a controller or on an Xbox (a 2D game played with the mouse or by
 tapping stays a Mac or iPhone app), with the devices it's played on beside it. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
-`LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator for
-now: Lamp doesn't put a game on the person's own phone yet) and Android (`.android`: Lamp's Android app in the game's `Lamp/Android` (never `Android/`, which `Parts.folders` reads as
-a wish's Android app), `GameAndroid`, built and installed like any Android app of Lamp's. For three.js it's a WebView
-serving `Web/` from the app's assets, the controllers read natively and handed to the page's `lampNativePad`; for C++
-it's a SurfaceView drawn by the kit's Android host (`lamp_android.cpp`: EGL and OpenGL ES 3 at 1920x1080, AAudio,
-assets and saves through Android's own calls), built with Google's NDK into `libgame.so` for arm64 and x86_64, with
-the touch controls drawn natively and each controller its own pad; the NDK, about 1 GB, is fetched by Google's package
-manager the first time a C++ game goes on Android, `AndroidTools.installNDK`) and the Xbox (`.device`, with `LampProject.integration`
-"xbox-one:game", the Xbox integration's `kinds.game`, which is only the package a game goes there as). `make_app_for` on
+`LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator or
+the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp's Android app in the game's
+`Lamp/Android` (never `Android/`, which `Parts.folders` reads as a wish's Android app), `GameAndroid`, built and installed
+like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
+to the page's `lampNativePad`) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
+app, installed as a game). `make_app_for` on
 a game sets its places (`Store.gamePlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind;
 Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
 first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox
 One's, else an iPhone's, else this Mac's) ride with the request in the device line (`DeviceNote`, `Rules.gamePlaces`),
-not in the prompt, since a place may be given at any time. Places on the project are general: only games take them now,
+not in the prompt, since a place may be given at any time. Places on the project are general: games and screens take them,
 and an app kind that takes places one at a time (an Apple TV or a TV beside a SwiftUI app) is a `startsAt` away.
 
-A game has one of two engines (`GameKit.Engine`, written in its `.lamp-game` mark so a restored version keeps it, and in
-meta.json for a draft): three.js (`web`, the start for every game, since the model writes it best and every place has a
-web view) or C++ on the kit (`native`, which the naming call gives with "native" only for a heavy 3D game that needs an
-Xbox's whole power). A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
+A game is drawn with three.js (`GameKit.Engine.web`, written in its `.lamp-game` mark): the model writes it best and every
+place has a web view, and on the Xbox a game installed as a game gets enough of the console. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen) and three.js in `Web/three` beside it. On the Mac and iOS the Swift around it is
@@ -194,27 +189,24 @@ controls on a touch screen) and three.js in `Web/three` beside it. On the Mac an
 no tap first), built by `GameKit.webBuildSh`; on the Xbox it goes as the integration's web app ("xbox-one", the package
 its declared step makes, `Web/lamp.js` written then), installed as a game. The agent's preview of it is
 `WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
-script as the C++ preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
+script as the C++ kit's preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
 clock and random numbers fixed, pausing at each `shot` while Lamp pictures the whole page, HTML over the canvas
 included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`).
 
-A game made before games were a kind of their own (a device app of "xbox-one:game") reads as a game with the Mac and
-the Xbox as its places, still pointed at the Xbox, and is kept so (`GameKit.migrated`, in `Store.readWish`); its folder's
-old `.lamp-device` marker still reads as a game's (`GameKit.isMade`, the kind `refines` the device kind) until its next
-build writes `.lamp-game`.
+A game made before three.js games is C++ on Lamp's kit (a device app of "xbox-one:game" then). It reads as a game whose
+engine is `native` and whose one place is the Xbox (`GameKit.migrated`, in `Store.readWish`; its folder's old
+`.lamp-device` marker still reads as a game's, `GameKit.isMade`, the kind `refines` the device kind, until its next build
+writes `.lamp-game`), and is built and played as it was: for the Xbox, and in the kit's preview on the Mac. It can't be
+given another place (`setPlaces`, `Store.placesToAdd`), and no new game is made in C++ (the naming call has no word for
+it, and `make_app_for` takes no C++ kind).
 
-On the Mac and on iOS a game is an app like any other Lamp makes: a Swift package of Lamp's own (`GameKit.packageSwift`,
-`GameKit.buildSh`, `Sources/LampGame.swift` and LampSupport.swift, none the agent's), so its Mac copy is installed,
-opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and the chat beside
-it. The game's C++, the kit and the Apple host (`lamp_apple.mm`) are compiled by `Lamp/build.sh mac|ios-sim|ios` into
-`build/<place>/libgame.a`, which the package links (Swift reads the host through `Lamp/host`, a C module of its own). The
-host draws into the window's CAMetalLayer at 1920x1080 scaled to fit, plays the kit's mix through AVAudioEngine, reads the
-controllers with GameController, the Mac's keyboard as the first pad, and on iPhone and iPad touch controls drawn in
-SwiftUI (a left stick and the buttons `lamp_touch_buttons` names) while no controller is connected or once the screen is
-touched. A change to a game never goes into the open app (`LiveReload.eligible`): it reopens, held for Reload while the
-person has it open.
+On the Mac and on iOS a three.js game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
+`GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
+is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and
+the chat beside it. A change to a game never goes into the open app (`LiveReload.eligible`, `Target.hostedByLamp`): it
+reopens, held for Reload while the person has it open.
 
-A game is C++ against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
+A C++ game is written against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
 controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`, and sound: `lamp_sound_load`,
 `lamp_sound_tone`, `lamp_play`, `lamp_music`, `lamp_volume`), drawn with sokol_gfx, with sokol's shapes, text and GL,
 HandmadeMath, cgltf and stb_image, all compiled in `lamp_kit.cpp`. Sound is the kit's own mix (`lamp_sound.cpp`: effects
@@ -224,7 +216,7 @@ game's timing never depends on it: the preview reports what played and how loud 
 "Lamp sound:" line), and a fifth argument writes the mix as a WAV file to listen to. Lamp
 writes the kit flat into the game's `Lamp/` before every turn and build (`GameKit.write`, only what changed, and
 `kit.stamp` so the build compiles Lamp's code again only then); the agent writes `Game/` (.cpp and .glsl) and `Assets/`.
-The kit has three hosts, Lamp's too: `lamp_apple.mm` (above), `lamp_xbox.cpp`, a CoreWindow app with a Direct3D 11 swap chain at 1920x1080,
+The kit has two hosts, Lamp's too: `lamp_xbox.cpp`, a CoreWindow app with a Direct3D 11 swap chain at 1920x1080,
 Windows.Gaming.Input, the log and saves in the app's LocalState, B kept from leaving the game, and Present with vsync
 (without it the console ends the app after one frame), which logs its frame times every ten seconds; and
 `lamp_preview.mm`, the same game drawn with Metal out of sight at 60 frames of game time a second, from a script of
@@ -232,7 +224,7 @@ the controller's moves (`hold <frames> <sticks> <triggers> <buttons>`, `shot <na
 sokol's draws and vertices counted. `build.sh xbox` compiles with clang-cl for x86_64-pc-windows-msvc against the
 Windows SDK and links with lld-link as an app-container exe with a static C++ runtime (so the console needs no package
 of Microsoft's beside it), and zips App.exe with Assets/; `build.sh preview` compiles with the Mac's clang. Shaders are
-annotated GLSL compiled by sokol-shdc into one header with HLSL, Metal and GLSL ES; the console compiles the HLSL at launch with
+annotated GLSL compiled by sokol-shdc into one header with HLSL and Metal; the console compiles the HLSL at launch with
 its own d3dcompiler. Both builds, and every play of the preview, run in the app's sandbox (`Sandbox.run`).
 
 `look_at_app` on a game builds the preview and plays two seconds from the start (`Store.lookAtGame`); `use_app` takes
