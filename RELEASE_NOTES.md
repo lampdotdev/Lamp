@@ -5,6 +5,24 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.20.0
+
+- A wish's chat is always beside whatever shows it: beside the app on your Mac, beside the simulator for an iPhone app,
+  or in a window of its own when nothing on this Mac shows it, such as an app on your TV or Xbox. Lamp's window is now
+  just your wishes.
+- Games are a kind of wish of their own, at home on your Mac, and the same game can go on your iPhone, iPad, Android
+  phone or Xbox when you ask. A screen, a page shown full screen, goes on your TV, iPad or Xbox the same way, and apps
+  for Apple TV and Vision Pro open there.
+- Any app of a wish can be added, replaced or taken away, the first one included, and the wish keeps its name, chat
+  and history.
+- A wish's apps talk straight to each other on your home network, so they keep working with Lamp closed. They share
+  values and files, say why another app isn't there, and everything they send each other is sealed.
+- iPhone apps made by an older Lamp are updated when you open them from Lamp.
+- More changes go into an open app without a reload.
+- Xbox web games install as games, which gives them more of the console.
+- New York's Manhattan sits on its real hills, and keys no longer beep in it.
+- Sharing from the chat beside an app no longer deletes a file another share is still sending.
+
 ## 0.19.0
 
 - One wish can now be several apps that work together, with one chat: a TV app with the iPhone app that controls it,
