@@ -105,7 +105,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             return
         }
         // An app for both needs Xcode wherever it opens: its Mac build is Xcode's too (Template.universalBuildSh).
-        guard current.platform.hasIOS else { then(current); return }
+        guard current.hasIOS else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
             return Context(for: current, phone: current.onIOS ? current.device : nil, building: building)
@@ -473,9 +473,9 @@ extension PhoneSetup.Context {
     /// build that is signed for the team; the simulator's copy isn't, so there an account is asked for only
     /// by an app for both, and a paid one by nothing.
     init(for project: LampProject, phone: String?, building: Bool = false) {
-        self.init(family: project.family, phone: phone, requiresPhoneTools: project.platform.hasIOS,
-                  requiresTeam: project.platform.choosesPlace,
-                  requiresPaidTeam: building && (phone != nil || (project.platform.choosesPlace && !project.onIOS)) && Self.usesICloud(project))
+        self.init(family: project.family, phone: phone, requiresPhoneTools: project.hasIOS,
+                  requiresTeam: project.platform.target.macSignedForTeam,
+                  requiresPaidTeam: building && (phone != nil || (project.platform.target.macSignedForTeam && !project.onIOS)) && Self.usesICloud(project))
     }
 
     static func usesICloud(_ project: LampProject) -> Bool {

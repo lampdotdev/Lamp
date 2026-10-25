@@ -137,6 +137,17 @@ what the gateway would with the provider directly (chat completions with the JSO
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
+**On Apple TV and Vision Pro**: an iPhone app, and the iPhone half of an app for both, can open on the Apple TV or Vision
+Pro simulator, chosen under Try On as the iPad is (`DeviceFamily.appletv`, `.vision`; not for a game, whose kit is
+iOS's). It's the same code built for tvOS or visionOS: the build passes `LAMP_FAMILY`, and the iPhone build.sh picks
+that system's SDK, target and Info.plist from it (`iPhoneBuildSh`), leaving out widgets, the share extension and the
+watch app (`Template.onlyForIOS`); the family is part of `Runtime.fingerprint`, so moving there rebuilds it. Package.swift
+names both systems. LampSupport.swift type-checks for both too: on tvOS it leaves out what tvOS lacks (Health, calendar,
+reminders, contacts, Spotlight, notifications), so type-check it for `appletvsimulator` and `xrsimulator` as well after
+editing. The agent is told in the request's device line (`DeviceNote`, `Rules.otherOS`) that the app is built for that
+system and to put what only the iPhone has under `#if !os(tvOS)` or `#if !os(visionOS)`. The simulator's system is a
+download of Xcode's; the setup check asks for it by family (`PhoneTools`). Neither is offered on the person's own device yet.
+
 ## Apps for both the Mac and the iPhone
 
 An app can be made for both (`Platform.universal`: the devices `mac` and `iphone` together, from the naming call or `make_app_for`), as

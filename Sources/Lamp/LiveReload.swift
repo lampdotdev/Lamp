@@ -11,7 +11,8 @@ import CryptoKit
 enum LiveReload {
     /// Whether the app is built live: a Mac app, or the Mac half of an app for both while Try On points at this Mac.
     @MainActor static func eligible(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS
+        // An app of Lamp's own around a page (a game, a screen) is opened again: the page is the agent's, the app Lamp's.
+        project.hasMac && !project.onIOS && !project.platform.target.hostedByLamp
     }
 
     static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/live") }

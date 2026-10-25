@@ -851,6 +851,17 @@ enum Agent {
         checklist). Open the apple-watch skill before writing or changing it, and follow it.
         """
 
+        /// What the agent is told while Try On points at an Apple TV or a Vision Pro (the request's device line): the same
+        /// code is built for tvOS or visionOS, so what that system lacks has to be kept out of its build.
+        static func otherOS(_ family: DeviceFamily) -> String {
+            let condition = family == .appletv ? "os(tvOS)" : "os(visionOS)"
+            let lacks = family == .appletv
+                ? "tvOS has no touch screen (the Siri Remote moves focus: make every control focusable and big), no Health, calendar, reminders, contacts, Spotlight, notifications, widgets, share extension or watch app, and LampSupport leaves those blocks out there"
+                : "visionOS shows the app as a window in the room, looked at and pinched, with no widgets, share extension or watch app"
+            return "The app is built for \(family.os) from the same code: \(lacks). Put what only iPhone and iPad have under #if !\(condition), "
+                + "and what this place shows differently under #if \(condition); never take it from the iPhone build."
+        }
+
         static let iPhoneHardware = """
         - The phone itself is the app's best material: use what it has, without being asked, whenever it fits what \
         the user wants: motion, the camera and scanning, location, haptics, Face ID, Bluetooth and nearby phones, \

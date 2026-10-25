@@ -26,7 +26,7 @@ enum Sidebar {
 
     /// Whether this app gets the chat: a Mac app with windows (one that is only its widget has none).
     static func applies(to project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
+        project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
     }
 
     /// Puts the extension into a built app, before it's signed. Its program is the same for every app; what
@@ -283,6 +283,13 @@ final class SidebarServer {
         let history = history(for: project, busy: busy, lines: log.count)
         state.toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && (history?.made ?? false),
                                        hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
+        state.tryOn = TryOnMenu.make(for: project, store: store).map { menu in
+            SidebarTryOn(sections: menu.sections.map { section in
+                SidebarTryOn.Section(title: section.title, items: section.items.map {
+                    SidebarTryOn.Item(id: $0.id, title: $0.title, symbol: $0.symbol, checked: $0.checked, disabled: $0.disabled)
+                }, submenu: section.submenu ? true : nil)
+            }, symbol: menu.symbol, current: menu.sections.flatMap(\.items).first(where: \.checked)?.title)
+        }
         state.panel = panels[project.id]
         switch state.panel {
         case .versions:
@@ -545,7 +552,7 @@ final class SidebarServer {
                     let placed = Store.shared.placedWidgets.contains(project.id)
                     var card = SidebarLine(id: line.id, kind: .offer, text: WidgetCard.title(project.name), gap: gap)
                     card.symbol = "widget.small"
-                    card.status = project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
+                    card.status = project.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed)
                     card.done = placed
                     out.append(card)
                 case .reload:
@@ -915,6 +922,9 @@ final class SidebarServer {
                 NSApp.activate(ignoringOtherApps: true)
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
+            scheduleUpdate()
+        case .tryOn(let id):
+            store.tryOn(project, id, open: true)
             scheduleUpdate()
         case .hello:
             break   // answered by the connection

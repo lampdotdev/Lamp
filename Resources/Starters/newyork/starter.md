@@ -1,5 +1,6 @@
 ---
 name: New York
+kind: game
 offer: Make New York yours
 tweaks:
   - snowflake: Make it a snowy winter night

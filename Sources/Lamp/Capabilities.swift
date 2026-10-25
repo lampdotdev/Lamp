@@ -99,7 +99,7 @@ extension AppAI {
     /// amount to, so nothing else has to work that out again.
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
         if capability == .browser {
-            let available = BrowserBridge.enabled && project?.platform.hasMac != false && context == .mac
+            let available = BrowserBridge.enabled && project?.hasMac != false && context == .mac
             let connected = available && BrowserSetup.shared.connected
             return Resolution(capability: .browser, tier: connected ? .best : .none,
                               answer: connected ? "Lamp in Chrome" : nil, provider: connected ? "browser" : nil,
@@ -333,7 +333,7 @@ enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
         // A device app whose integration takes none of Lamp's building blocks has no AI of Lamp's.
         if let none = project.platform.target.guidance.noAI(project) { return none }
-        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
+        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }
