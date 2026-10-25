@@ -71,10 +71,13 @@ its list, so a missing tool holds back only the app that needs it.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
 stands alone. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
-its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). Each word means one
-thing (`Parts.asked`): `make_app_for`'s `devices`, and the naming call's, are the wish's apps and nothing else ("mac"
-beside "game" is a Mac app), and where the game is played or the screen shown beside the Mac is `places`, apart. A list
-without "game" leaves the game out, so it's taken away like any other app. A game's own wish told its conversations to
+its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). `make_app_for` sets the
+wish's apps as the list keeps them (`Parts.asked(apps:)`, `AppAsked`): one entry per app, its `kind` (what it is) and its
+`places` (where it runs beyond its kind's own device: a Mac app's "iphone" makes it the app for both, an iPhone app's
+"watch" gives it a watch app, a game's or a screen's are where it's played or shown beside the Mac), so a word is never at
+once an app and a place, and a game and a screen of one wish each have their own. An entry is an object so it can say
+more of its app later. An app left out is taken away like any other. The naming call answers with its `devices` (the
+apps) and `places` apart (`Parts.asked`). A game's own wish told its conversations to
 list places among the devices before, so its prompt is recorded as "app places" (`followPromptShape`), and one begun
 before is started again. `look_at_app` and `use_app` find an app by its own word or folder before reading "mac" or
 "iphone" as wherever an app opens (`Parts.pick`), so beside a game "mac" is the Mac app. The request's device line says

@@ -4530,8 +4530,8 @@ final class Store: ObservableObject {
         guard !project.isPart, !project.makesNoApp else { return }
         let file = project.dir.appendingPathComponent(".lamp/prompt-for")
         let parts = parts(of: project)
-        // A game's or a screen's own prompt once told it to list its places among `devices`; they're `places` now, so a
-        // conversation that began before that starts again with the rules that say so.
+        // A game's or a screen's own prompt once told it to list its places among make_app_for's devices; they're its own
+        // entry's places in `apps` now, so a conversation that began before that starts again with the rules that say so.
         let now = project.holdsApp ? (project.platform.addsPlaces ? "app places" : "app")
             : parts.count == 1 ? "wish " + parts[0].platform.rawValue : "wish"
         guard (AppFile.text(file, in: project)?.trimmed ?? "app") != now else { return }
@@ -5560,29 +5560,27 @@ final class Store: ObservableObject {
     /// this Mac can't build yet holds back only that app: the rest are made, and it waits on the wish's list with its
     /// setup. An app is never taken away while nothing would be left: it stays until what replaces it is made.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
-        let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
-        let places = Set((arguments["places"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         guard var wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
-        // `devices` are the wish's apps, every one; a game's or a screen's places are given apart, in `places`.
-        guard let asked = Parts.asked(devices, places: places) else {
-            if Parts.asked(devices) != nil {
-                return (400, ["error": "`places` is where the wish's game is played (\"iphone\" or \"ipad\", \"android\", \"xbox-one\") or its screen is " +
-                              "shown (\"iphone\" or \"ipad\", \"tv\", \"xbox-one\"), beside the Mac, and only with \"game\" or \"screen\" in `devices`."])
-            }
-            let others = DeviceApps.kinds().map(\.id)
-            return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
-                          + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
+        // The wish's apps, one entry each: a kind, and where it runs beyond its kind's home.
+        let given = (arguments["apps"] as? [Any] ?? []).compactMap(Parts.AppAsked.init)
+        guard !given.isEmpty else {
+            return (400, ["error": "`apps` lists the wish's apps from now on, each as {\"kind\": …, \"places\": […]}: `kind` one of \(Targets.toolWords)."])
+        }
+        let asked: Parts.Asked
+        switch Parts.asked(apps: given) {
+        case .apps(let apps): asked = apps
+        case .wrong(let why): return (400, ["error": why])
         }
         let kinds = asked.kinds
-        // The words each app is made from: for a game or a screen its places, for every other app the list.
-        let words = { (kind: Platform) in kind.addsPlaces ? (asked.places[kind] ?? []).union([kind.rawValue]) : devices }
+        // The words each app is made from: its kind's and its places'.
+        let words = { (kind: Platform) in asked.words[kind] ?? [kind.rawValue] }
         let placesOf = { (kind: Platform) in kind.addsPlaces ? GameKit.places(for: words(kind), of: kind) : nil }
         var said: [String] = []
         // A wish with nothing made yet (still to be told what it's for, or held for its device) is made as a new wish
         // is: its first app in its own folder, the first of its kinds this Mac can build now, so answered "TV and iPhone"
         // on a Mac without Xcode it's made as the TV app and the iPhone app waits with its setup.
         if !wish.scaffolded {
-            guard let first = await firstKind(among: kinds, integration: devices.first) else { return (400, ["error": "`devices` lists nothing Lamp can make."]) }
+            guard let first = await firstKind(among: kinds, integration: asked.words[.device]?.first) else { return (400, ["error": "`apps` lists nothing Lamp can make."]) }
             let (status, answer) = await changeKind(arguments, devices: words(first), kind: first, for: wish)
             guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
                   let made = current(wish) else { return (status, answer) }

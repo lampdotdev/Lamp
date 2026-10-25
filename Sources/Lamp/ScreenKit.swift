@@ -138,8 +138,8 @@ extension Agent.Rules {
     at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, a TV or the \
     Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Lay the page out for a fixed \
     1920x1080, as for a TV: Lamp scales it to every screen. Where else it's shown is the person's to ask for: when they \
-    want it on their iPad, TV or Xbox, call make_app_for with "screen" in `devices` and every place beside the Mac it's \
-    to be on in `places` (["ipad"], ["tv"]…), with the wish's other apps in `devices` too if it has any; it stays the \
+    want it on their iPad, TV or Xbox, call make_app_for with the screen as {"kind": "screen", "places": [every place \
+    beside the Mac it's to be on: "ipad", "tv"…]} and every other app the wish keeps beside it in `apps`; it stays the \
     same screen.
     """
 

@@ -65,6 +65,27 @@ final class WishGameAppsTests: XCTestCase {
         XCTAssertNil(Parts.asked(["game"], places: ["tv"]))
     }
 
+    /// `make_app_for`'s `apps`, one entry per app, each with its own places: a wish of a game and a screen says where
+    /// each goes, which one list of places for the wish couldn't; a Mac app given the iPhone is one app for both.
+    func testEachAppOfMakeAppForHasItsOwnPlaces() throws {
+        let app = { (kind: String, places: Set<String>) in Parts.AppAsked(kind: kind, places: places) }
+        XCTAssertEqual(Parts.asked(apps: [app("game", ["iphone"]), app("screen", ["tv"])]),
+                       .apps(Parts.Asked(kinds: [.game, .screen], places: [.game: ["iphone"], .screen: ["tv"]],
+                                         words: [.game: ["game", "iphone"], .screen: ["screen", "tv"]])))
+        guard case .apps(let both) = Parts.asked(apps: [app("mac", []), app("game", ["mac", "iphone"])]) else { return XCTFail() }
+        XCTAssertEqual(both.kinds, [.mac, .game])
+        XCTAssertEqual(both.places, [.game: ["iphone"]])
+        guard case .apps(let apple) = Parts.asked(apps: [app("mac", ["iphone"])]) else { return XCTFail() }
+        XCTAssertEqual(apple.kinds, [.universal])
+        guard case .apps(let watch) = Parts.asked(apps: [app("iphone", ["watch"]), app("tv", [])]) else { return XCTFail() }
+        XCTAssertEqual(watch.kinds, [.iphone, .tv])
+        XCTAssertEqual(watch.words[.iphone], ["iphone", "watch"])
+        // What can't be: a game on a TV, two Mac apps, a Mac app on an Xbox.
+        for wrong in [[app("game", ["tv"])], [app("mac", []), app("mac", ["iphone"])], [app("mac", ["xbox-one"])]] {
+            guard case .wrong = Parts.asked(apps: wrong) else { return XCTFail("\(wrong) was taken") }
+        }
+    }
+
     /// With a game and a Mac app, "mac" for `look_at_app` and `use_app` is the Mac app, though the game runs on the
     /// Mac too and comes first; "game" is the game.
     func testAPartIsNamedByItsOwnWordFirst() throws {
