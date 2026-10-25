@@ -153,11 +153,40 @@ enum GameKit {
     /// Writes the page's bridge, and the app's `Native` when it has none.
     static func writePage(for project: LampProject) throws {
         guard let page, let native else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
-        try Template.write(page.text, to: page.path, for: project)
+        try Template.write(pageText(page.text, for: project), to: page.path, for: project)
         if !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(native.path).path) {
             try Template.write(native.text, to: native.path, for: project)
         }
     }
+
+    /// lamp.js as a game is given it: Lamp's web building blocks, and `Lamp.wish`, the TV app's block for the wish's
+    /// other apps, only for a game with others in its wish (`Template.talksToOtherApps`).
+    static func lampJS(for project: LampProject) -> String {
+        Template.talksToOtherApps(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
+    }
+
+    /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the block makes one to hang from.
+    static let wishJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.wishJS
+
+    /// The page's bridge as an app is given it: with the page's way to `LampWish` only for an app with others in its
+    /// wish (`Template.talksToOtherApps`), since only such an app's LampSupport.swift has `LampWish`.
+    static func pageText(_ text: String, for project: LampProject) -> String {
+        Template.talksToOtherApps(project) ? text : withoutWish(page: text)
+    }
+
+    static func withoutWish(page text: String) -> String {
+        var text = text.replacingOccurrences(of: pageWishLine, with: "")
+        if let start = text.range(of: "// MARK: - The wish's other apps\n"),
+           let end = text.range(of: "// MARK: - The page's log\n", range: start.upperBound..<text.endIndex) {
+            text.removeSubrange(start.lowerBound..<end.lowerBound)
+        }
+        return text
+    }
+
+    private static let pageWishLine = """
+            configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
+
+    """
 
     /// Takes the page's bridge away, with the app's `Native` while it's still the one Lamp wrote: an app that's no
     /// longer a page has no use for either, and its code no longer has what they name.
@@ -212,9 +241,14 @@ enum GameKit {
             // the page loads nothing from it.
             // Elsewhere the same blocks, LampAI and LampStore reaching Lamp through the app around the page.
             if project.integration == nil {
-                try Template.put(DeviceSupport.webJS, at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
+                try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
             } else {
                 try DeviceSupport.writeDeclared(for: project)
+                // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where it says it can't
+                // reach the others yet.
+                if Template.talksToOtherApps(project) {
+                    try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
+                }
             }
             // On Android too: Lamp's Android app around the page.
             if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
@@ -619,7 +653,7 @@ extension Agent {
     /// without those about the wish as a whole. A game made beside other apps is three.js, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
-                     Rules.gameTry, alone ? "" : Rules.gameAmongApps]
+                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk]
         return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -640,12 +674,24 @@ extension Agent.Rules {
         """
     }
 
-    /// For a wish with a game beside other apps: how its places are given, and what its other apps can't do with it.
+    /// For a wish with a game beside other apps: how its places are given, and how it reaches the others.
     static let gameAmongApps = placesAmongApps("game", verb: "played") + """
 
-    - The wish's game doesn't send or get messages from its other apps yet: it has no `Lamp.wish` and no \
-    `Lamp.controllers`, and its players use a controller, the keyboard or the touch controls Lamp draws. Don't write \
-    another app of the wish to steer it or share data with it; say so if the person asks for that.
+    - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
+    messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
+    its score. That works where it's played on the Mac, an iPhone or an iPad; played on Android or the Xbox, and in \
+    Lamp's preview of it, `Lamp.wish` is 'away' with a reason saying it can't reach them there yet, so the game stays \
+    whole without them. Its players still play with a controller, the keyboard or the touch controls Lamp draws: it \
+    has no `Lamp.controllers`, so the wish's other apps send it messages rather than joining as players.
+    """
+
+    /// For a wish with a screen beside other apps: how its places are given, and how it reaches the others.
+    static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
+
+    - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
+    values and files, wherever it's shown but the Xbox, where `Lamp.wish` is 'away' with a reason saying it can't reach \
+    them there yet. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
+    another app sends shows where the screen is shown.
     """
 
     static let gameHeader = """

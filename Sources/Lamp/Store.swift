@@ -9710,6 +9710,11 @@ final class Store: ObservableObject {
         default:
             // By the name or address the app reached Lamp at, at the relay's port, as a TV app's page is told its relay.
             let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
+            // A screen is looked at in the TV preview wherever it's shown: only when it's shown there is the preview the
+            // screen among the wish's apps, so it never takes the place of the screen's own window or TV.
+            if request.fromPreview, project.platform == .screen, !(project.onTV && project.device == nil) {
+                return (409, ["error": "This is Lamp's preview of the screen: the screen where it's shown is the one the wish's other apps reach."])
+            }
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
     }

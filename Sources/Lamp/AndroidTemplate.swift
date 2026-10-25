@@ -415,12 +415,14 @@ extension Agent {
 }
 
 extension Agent.Rules {
-    /// How an Android app reaches the wish's other apps: `LampWish` in LampSupport.kt (`wishTalk`), and nothing else of
-    /// Lamp's (a TV's game controls, `LampController`, are the Swift apps').
+    /// How an Android app reaches the wish's other apps: `LampWish` in LampSupport.kt (`wishTalk`), messages, values and
+    /// files alike; it has no `LampController`, a TV app's game controls, which are the Swift apps'.
     static let androidPartTalk = String(wishTalk.dropFirst()) + """
-    - `LampWish` is this app's only building block for the wish's other apps: it has no `LampController`, so a TV app's \
-    game controls (buttons, sticks, files to the TV) aren't its to send; say so plainly when that's asked, and build \
-    the rest.
+    - `LampWish` is this app's building block for the wish's other apps, the TV app's included: messages, shared \
+    values and files (`LampWish.sendFile`, which the TV app gets in `Lamp.wish.onFile`). It has no `LampController`, \
+    so it can't join a TV app's game as a player (`Lamp.controllers`, buttons and sticks held and let go); for a few \
+    commands plain messages do, and when the person wants game controls from the phone, say plainly that only an \
+    iPhone app, or a phone's page in its browser, joins that way.
     """
 
     static let androidHeader = """

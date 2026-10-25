@@ -1092,10 +1092,11 @@ extension TVTemplate {
     private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
          *
-         * The other apps of this app's wish (an iPhone app, a Mac app, an Android app): which are open now, and messages
-         * between them over the home Wi-Fi, through Lamp on the Mac and straight to the apps that listen, so they go on
-         * with Lamp closed, with nothing to pair, host or set up. What they say is sealed with a key only the wish's apps have. Each app of the wish is a peer named by its folder in the wish: "tv"
-         * (this one), "iphone", "apple" (an app for iPhone and Mac), "mac", "android"; its kind is the device word the tools
+         * The other apps of this app's wish (an iPhone app, a Mac app, an Android app, a TV app, a game, a screen): which
+         * are open now, and messages between them over the home Wi-Fi, through Lamp on the Mac and straight to the apps that
+         * listen, so they go on with Lamp closed, with nothing to pair, host or set up. What they say is sealed with a key
+         * only the wish's apps have. Each app of the wish is a peer named by its folder in the wish: "tv", "iphone",
+         * "apple" (an app for iPhone and Mac), "mac", "android", "game", "screen"; its kind is the device word the tools
          * use for it.
          *
          * Lamp.wish.start()                  joins the wish's room; call it as the app opens (the other calls do it too)
@@ -1163,6 +1164,15 @@ extension TVTemplate {
           // there (`claim`), and keeps it.
           var installed = /*LAMP_INSTALL*/null;
           var key = null, claiming = null, claims = 0, claimPair = null;
+          // In the app of Lamp's own around a game's or a screen's page on the Mac, an iPhone or an iPad, that app is the
+          // wish's peer, with the same LampWish as the wish's Swift apps (it listens, is found, keeps the values on the
+          // device), and this page mirrors it (`hosted`, below). A page served over https anywhere else (the Xbox, a game
+          // on Android) can't open the plain links the wish's apps speak, nor ask Lamp itself, and a game's page in
+          // Lamp's own preview has no way to Lamp at all, so each says so.
+          var host = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampWish;
+          var where = window.location ? window.location.protocol : '';
+          var stranded = !host && !bridge && (where === 'https:' || where === 'lamp-game:');
+          var STRANDED = "Can't reach the wish's other apps on this device yet.";
           // Two ways to the others, used together: Lamp's room while Lamp is open on the Mac, and a link straight to each
           // app of the wish that listens (a TV page can't listen itself), at the address it was last reached at or said it
           // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the
@@ -1602,7 +1612,7 @@ extension TVTemplate {
           }
           // On a TV, opened by Lamp's install, the page asks for the key at once, while the claim is open; one kept from
           // before is used meanwhile, and the new one replaces it.
-          if (installed && !bridge) {
+          if (installed && !bridge && !stranded) {
             key = kept();
             claim().then(function (fresh) { key = fresh; }, function () {});
           }
@@ -2180,8 +2190,143 @@ extension TVTemplate {
             onMessage: adder('message'), onPeers: adder('peers'), onApps: adder('apps'), onState: adder('state'), onChange: adder('change'),
             onFile: adder('file')
           };
+
+          // The app around the page is the peer: what it says of the wish comes to `window.__lampWish`, and what the page
+          // does goes to it. Kept here as the page's own state is everywhere else, so everything that reads it (peers,
+          // apps, values, the status views) is the same code.
+          function hosted() {
+            var transfers = {}, nextTransfer = 0, filesAsked = false;
+            function post(m) { try { host.postMessage(m); } catch (e) { say(String(e)); } }
+            function toBase64(b) {
+              var s = '';
+              for (var i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+              return btoa(s);
+            }
+            function fromBase64(t) {
+              var s = atob(t), b = new Uint8Array(s.length);
+              for (var i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+              return b;
+            }
+            function bytesOf(data) {
+              if (typeof data === 'string') return Promise.resolve(new TextEncoder().encode(data));
+              if (data instanceof ArrayBuffer) return Promise.resolve(new Uint8Array(data));
+              if (ArrayBuffer.isView(data)) return Promise.resolve(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+              if (typeof Blob !== 'undefined' && data instanceof Blob) return data.arrayBuffer().then(function (a) { return new Uint8Array(a); });
+              return Promise.reject(new Error('a file is a File, a Blob, an ArrayBuffer, bytes or text.'));
+            }
+            window.__lampWish = function (m) {
+              if (!m || typeof m !== 'object') return;
+              if (m.t === 'state') {
+                if (typeof m.me === 'string') mine = m.me;
+                apps = m.apps instanceof Array ? m.apps : [];
+                if (m.status && (m.status.state !== state || m.status.reason !== reason)) setState(m.status.state, m.status.reason);
+                var said = JSON.stringify(openOnes());
+                if (said !== lastOpen) { lastOpen = said; emit('peers', [openOnes()]); }
+                var every = JSON.stringify(apps);
+                if (every !== lastApps) { lastApps = every; emit('apps', [allOnes()]); }
+                draw();
+              } else if (m.t === 'values') {
+                // Every value the app has that differs from the page's copy is said to onChange: those it kept on the
+                // device come in its first snapshot, and a page opened again finds them there, as values kept on a TV
+                // are said once the page knows its wish. A change the page made is said as it's made, so it differs
+                // from nothing when the app's copy of it comes back.
+                var given = m.values && typeof m.values === 'object' ? m.values : {}, by = {}, said = [], k;
+                var changed = m.changed instanceof Array ? m.changed : [];
+                for (var i = 0; i < changed.length; i++) if (changed[i] && typeof changed[i].key === 'string') by[changed[i].key] = changed[i].from;
+                for (k in entries) if (!own(given, k)) { if (entries[k].v !== undefined) said.push([k, undefined]); delete entries[k]; }
+                for (k in given) if (own(given, k) && !(entries[k] && JSON.stringify(entries[k].v) === JSON.stringify(given[k]))) {
+                  entries[k] = { v: given[k], c: [0, 0, ''] };
+                  said.push([k, given[k]]);
+                }
+                for (var j = 0; j < said.length; j++) emit('change', [said[j][0], copyOf(said[j][1]), own(by, said[j][0]) ? by[said[j][0]] : mine]);
+              } else if (m.t === 'message') {
+                emit('message', [m.from, m.data]);
+              } else if (m.t === 'file') {
+                var data = fromBase64(m.data || ''), size = data.length;
+                var file = { name: m.name, type: m.type, size: size, onProgress: function (fn) { try { fn(size, size); } catch (e) {} },
+                             cancel: function () {}, done: Promise.resolve(data.buffer) };
+                emit('file', [m.from, file]);
+              } else if (m.t === 'transfer' && transfers[m.id]) {
+                var t = transfers[m.id];
+                t.sent = m.sent;
+                for (var j = 0; j < t.watchers.length; j++) { try { t.watchers[j](t.sent, t.size); } catch (e) {} }
+                if (m.state === 'done') { delete transfers[m.id]; t.resolve(); }
+                else if (m.state === 'failed') { delete transfers[m.id]; t.reject(new Error(m.error || 'The file did not get there.')); }
+              }
+            };
+            api.start = function () {
+              if (started) return;
+              started = true;
+              post({ op: 'start' });
+            };
+            api.stop = function () {
+              if (!started) return;
+              started = false;
+              post({ op: 'stop' });
+            };
+            var plainSet = api.set;
+            api.set = function (key, value) {
+              // Weighed and kept here as everywhere, so values() reads it back at once, then set in the app.
+              if (!plainSet(key, value)) return false;
+              post({ op: 'set', key: key, value: JSON.stringify(entries[key].v === undefined ? null : entries[key].v) });
+              return true;
+            };
+            api.send = function (data, to) {
+              api.start();
+              var what = to ? 'a message to "' + to + '"' : 'a message to the wish\'s apps';
+              if (state !== 'connected') {
+                if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
+                return false;
+              }
+              if (to) { var p = find(to); if (!p || !p.open) { say(what + ' was not sent: that app is not open now.'); return false; } }
+              var text = data === undefined ? undefined : JSON.stringify(data);
+              if (text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
+              var measured = bytes(JSON.stringify({ t: 'send', data: data, to: to || '' })) + 32;
+              if (measured > MESSAGE) { say(what + ' of ' + measured + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
+              post({ op: 'send', data: text, to: to || null });
+              return true;
+            };
+            api.sendFile = function (data, to, info) {
+              api.start();
+              var id = ++nextTransfer, name = String((info && info.name) || (data && data.name) || 'file');
+              var type = String((info && info.type) || (data && data.type) || 'application/octet-stream');
+              var t = { watchers: [], sent: 0, size: 0, posted: false, over: false };
+              // Cancelled while its bytes are still being read, it never starts; once it has, the app cancels it.
+              var transfer = { name: name, size: 0, sent: 0, onProgress: function (fn) { t.watchers.push(fn); },
+                               cancel: function () {
+                                 if (t.over) return;
+                                 if (t.posted) return post({ op: 'cancel', id: id });
+                                 t.over = true;
+                                 t.reject(new Error('The file was cancelled.'));
+                               } };
+              transfer.done = new Promise(function (resolve, reject) { t.resolve = resolve; t.reject = reject; });
+              transfer.done.catch(function () {});
+              transfer.done.then(function () { t.over = true; }, function () { t.over = true; });
+              t.watchers.push(function (sent) { transfer.sent = sent; });
+              bytesOf(data).then(function (b) {
+                if (t.over) return;
+                t.posted = true;
+                t.size = transfer.size = b.length;
+                transfers[id] = t;
+                post({ op: 'sendFile', id: id, to: to, name: name, type: type, data: toBase64(b) });
+              }, function (error) { say('a file was not sent: ' + error.message); t.reject(error); });
+              return transfer;
+            };
+            var plainOnFile = api.onFile;
+            api.onFile = function (fn) {
+              // Files come once the page listens for them, as an app with no onFile turns them down.
+              if (!filesAsked) { filesAsked = true; post({ op: 'files' }); }
+              return plainOnFile(fn);
+            };
+          }
+          if (host) hosted();
+          else if (stranded) {
+            var standStill = function () { started = true; setState('away', STRANDED); };
+            api.start = function () { if (!started) standStill(); };
+            api.stop = function () { started = false; setState('ended'); };
+          }
           if (window.Lamp) window.Lamp.wish = api;
-          if (window.Lamp && window.Lamp.controllers && window.Lamp.controllers._attach) window.Lamp.controllers._attach(padSource);
+          if (!host && window.Lamp && window.Lamp.controllers && window.Lamp.controllers._attach) window.Lamp.controllers._attach(padSource);
         })();
 
         """#

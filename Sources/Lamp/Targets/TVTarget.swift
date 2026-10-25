@@ -18,8 +18,9 @@ extension Target {
         guidance: Guidance(prompt: { _ in Agent.tvPrompt() },
                            changeRules: { _ in Agent.Rules.tvEdit + Agent.Rules.tvFrameworks + Agent.Rules.tvDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
                            skills: { ["phone-controllers"] },
-                           // It reaches AI only through this Mac, over the same Wi‑Fi; the preview is on the Mac.
-                           elsewhere: { _ in "- On the person's TV: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, or with Lamp closed, no AI and no Lamp.wish link to the wish's other apps" }),
+                           // It reaches AI only through this Mac, over the same Wi‑Fi; the preview is on the Mac. Its link to
+                           // the wish's other apps goes straight to them on the same network, with Lamp closed too.
+                           elsewhere: { _ in "- On the person's TV: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, or with Lamp closed, no AI. Lamp.wish still reaches the wish's other apps on the same Wi‑Fi with Lamp closed, once Lamp has put the app on the TV" }),
         // Its own files are its web code; Lamp's is its script, which marks the folder as a TV app.
         recipe: Recipe(language: .web, fill: TVTemplate.fill, ownedFiles: TVTemplate.writeOwnedFiles, support: TVTemplate.writeOwnedFiles,
                        isMade: TVTemplate.isTV, scaffolded: { dir, _ in TVTemplate.isTV(dir) },

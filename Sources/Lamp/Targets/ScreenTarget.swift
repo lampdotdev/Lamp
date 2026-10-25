@@ -40,8 +40,8 @@ extension Target {
                        refines: .tv,
                        shareRefusal: "Lamp doesn't share screens yet."),
         part: Part(folder: "Screen", family: "screen", word: "screen", menu: ("Screen", "tv.inset.filled"), rules: { Agent.screenPrompt(part: $0, alone: $1) },
-                   // How its places are given beside the wish's other apps.
-                   wishRule: Agent.Rules.placesAmongApps("screen", verb: "shown")) { dir, wish in
+                   // How its places are given beside the wish's other apps, and how it reaches them.
+                   wishRule: Agent.Rules.screenAmongApps) { dir, wish in
             AppFile.read(dir.appendingPathComponent(ScreenKit.marker), inFolder: wish, last: 1) != nil
         },
         setup: .none,
