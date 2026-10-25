@@ -167,8 +167,9 @@ pixels are clear, and a clear window lets clicks on clear pixels through. The pa
 without becoming the main window. The chat's bar is one row drawn by the extension (`ChatBar`): a red close button like a
 window's, which asks the app to close the chat (`closeChat`), "Customize" and the app's name, then the buttons: Wish Info,
 Share (the file is made by Lamp and handed over whole, `SidebarState.sharing`, since the extension can't read it; sent
-once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file in its own caches folder that each share
-replaces in one step, `SharedCopy`, as Lamp's own Share… does), Agent Details and Delete, then Undo Last Change and Versions.
+once, so the extension keeps it as it's read, `Link.sharing`, as one lasting file per wish in a folder of its own under
+its caches folder, since Lamp's process draws every wish's chat and one wish's share mustn't remove another's; each share
+replaces it in one step, `SharedCopy`, as Lamp's own Share… does), Agent Details and Delete, then Undo Last Change and Versions.
 A wish that opens anywhere but this Mac alone (a game, a screen, an app for both) has Try On's device button before
 Undo, which stays with it: where it opens, a tick on where Play puts it, and for a game or a screen "… Too" for each
 place it hasn't got. Its choices are one list, `TryOnMenu`, which the desk's menu draws as well (`SidebarState.tryOn`, a

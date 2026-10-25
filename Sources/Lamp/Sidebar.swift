@@ -544,7 +544,7 @@ final class SidebarServer {
                     defer { try? FileManager.default.removeItem(at: url) }
                     return SidebarFile(name: url.lastPathComponent, data: try Data(contentsOf: url))
                 }.value
-                self?.sharing[project.id] = SidebarSharing(id: UUID(), file: file)
+                self?.sharing[project.id] = SidebarSharing(id: UUID(), file: file, wish: project.id)
                 self?.scheduleUpdate()
             } catch {
                 Store.shared.log(project, .error, error.localizedDescription)
