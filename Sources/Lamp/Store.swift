@@ -5863,7 +5863,7 @@ final class Store: ObservableObject {
     /// written, and then nothing of it is left.
     func add(starter: Starters.Starter) -> LampProject? {
         do {
-            let project = try Template.draft(name: uniqueName(starter.name), in: root)
+            let project = try Template.draft(name: uniqueName(starter.name), platform: starter.kind, in: root)
             do {
                 try Template.fill(project)
                 try Starters.copy(starter, into: project)

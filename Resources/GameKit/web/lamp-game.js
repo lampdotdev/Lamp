@@ -243,6 +243,8 @@ export function rumble(pad, low, high, seconds = 0.2) {
 // MARK: Touch controls, on a touch screen while no controller is connected, or once the screen is touched
 
 let touchButtons = BUTTON.A | BUTTON.B | BUTTON.MENU;
+// A page with touch controls of its own, or one that reads the keyboard itself, turns Lamp's off (`game`).
+let drawsTouch = true, readsKeyboard = true;
 const touch = { lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };
 // A tap shorter than a frame still reaches the game: held for the next frame it reads.
 let tapped = 0;
@@ -315,7 +317,7 @@ function buildTouch() {
     document.body.append(touchLayer);
 }
 if (touchScreen) window.addEventListener('pointerdown', () => { if (!touchShown) { touchShown = true; showTouch(); } }, { capture: true });
-function showTouch() { if (!touchLayer) buildTouch(); touchLayer.style.display = 'block'; touchShown = true; }
+function showTouch() { if (!drawsTouch) return; if (!touchLayer) buildTouch(); touchLayer.style.display = 'block'; touchShown = true; }
 function hideTouch() { if (touchLayer) touchLayer.style.display = 'none'; touchShown = false; }
 
 // MARK: The frame
@@ -343,7 +345,7 @@ function readPads() {
             if (scripted) pad = Object.assign({}, scripted);
             else {
                 if (nativePad) merge(pad, nativePad);
-                merge(pad, keyboardPad());
+                if (readsKeyboard) merge(pad, keyboardPad());
                 merge(pad, Object.assign({}, touch, { down: touch.down | tapped }));
                 tapped = 0;
             }
@@ -372,11 +374,16 @@ function fit() {
 // The game: `renderer` a three.js WebGLRenderer the runtime sizes and places, `init` run once (and waited for, so it may
 // load files), `frame(f)` each frame with f.dt, f.time, f.number and f.pads (pads[0] the first controller: lx, ly, rx,
 // ry -1 to 1 with up positive, lt and rt 0 to 1, buttons as BUTTON bits in down, pressed and released). `touch` names
-// the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick).
-export async function game({ renderer: given, init, frame, touch: buttons }) {
+// the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
+// or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
+// the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
+// The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialised before game() is called).
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true }) {
     renderer = given;
     frameFunction = frame;
-    if (buttons != null) touchButtons = buttons;
+    if (buttons === false) drawsTouch = false;
+    else if (buttons != null) touchButtons = buttons;
+    readsKeyboard = keyboard !== false;
     renderer.setPixelRatio(1);
     renderer.setSize(WIDTH, HEIGHT, false);
     document.documentElement.style.background = document.body.style.background = '#000';

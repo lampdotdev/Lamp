@@ -222,7 +222,11 @@ class Octree {
 					box.min.copy( this.box.min ).add( v.multiply( halfsize ) );
 					box.max.copy( box.min ).add( halfsize );
 
-					subTrees.push( new Octree( box ) );
+					const subTree = new Octree( box );
+					subTree.trianglesPerLeaf = this.trianglesPerLeaf;
+					subTree.maxLevel = this.maxLevel;
+
+					subTrees.push( subTree );
 
 				}
 
@@ -424,7 +428,7 @@ class Octree {
 		};
 
 		// project the point onto the triangle surface
-		intersection.point.addScaledVector( intersection.normal, distance );
+		intersection.point.addScaledVector( intersection.normal, - distance );
 
 		return intersection;
 
@@ -444,8 +448,7 @@ class Octree {
 
 		if ( ! sphere.intersectsPlane( _plane ) ) return false;
 
-		const depth = Math.abs( _plane.distanceToSphere( sphere ) );
-		const r2 = sphere.radius * sphere.radius - depth * depth;
+		const r2 = sphere.radius * sphere.radius;
 
 		const plainPoint = _plane.projectPoint( sphere.center, _v1 );
 

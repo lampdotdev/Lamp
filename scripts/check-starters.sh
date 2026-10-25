@@ -15,7 +15,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # A raw string of Template.swift, from its `static let <name> = #"""` line to the `"""#` that ends it, with its
-# placeholders filled by stand-ins (only their types matter here). Of the services Connectors.fill writes into
+# placeholders filled by stand-ins (only their types matter here), and the code Lamp puts in for a wish's apps left out. Of the services Connectors.fill writes into
 # LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
 services() {
   local type=$1
@@ -31,7 +31,7 @@ extract() {
     on && /^ *"""#( \+ [A-Za-z]+)?$/ { exit }
     on { print }' "${2:-$template}" |
     perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
-    sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
+    sed -E 's/\{\{WISH_LEAVES_LAMP_CLOSED\}\}//g; s/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
 # Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
 { extract lampSupportTemplate; print "#if os(macOS)"; extract lampGlyphSwift; print "#endif" } > "$work/LampSupport.swift"

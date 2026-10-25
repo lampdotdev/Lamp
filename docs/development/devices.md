@@ -122,8 +122,10 @@ Lamp ships the Xbox's integration (`Resources/Devices/xbox-one.json`): Developer
 controller-driven web app (arrow focus) wrapped as MSIX and shown in Lamp's own WebView2 host (`"host": "webview2"`, below). Its identity is
 read from wherever the console's SSDP answer points (`Read.description`), since that moves between retail and
 Developer Mode, and `contains: "Xbox"` keeps a Windows PC sharing media out. Its apps may be 3D games: three.js ships
-with Lamp (`Resources/WebLibraries/three`, MIT: its WebGL build and the light addons, put there by
-`scripts/update-three.sh` from npm's package, checked) as a library a kind asks for like the building blocks
+with Lamp (`Resources/WebLibraries/three`, MIT: its WebGL build, its WebGPU renderer with node materials (`three/webgpu`,
+`three/tsl`, drawing with WebGL 2 where there's no WebGPU) and the light addons, put there by `scripts/update-three.sh`
+from one commit of three.js's repository, each file checked against the git hash the commit lists; a commit rather
+than a release while the New York starter needs a fix made since the last one) as a library a kind asks for like the building blocks
 (`DeviceSupport.Library.three`, `"three": "Web/three"`, a folder the page loads through an import map), so nothing loads
 from the network. It replaced Babylon.js, which was chosen for EdgeHTML; under WebView2 the agent writes three.js more
 reliably, its efficient path (`InstancedMesh`) is the obvious one, and it's about half the size. The rules

@@ -16,7 +16,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
     private var finished: CheckedContinuation<[String: Any]?, Never>?
 
     /// Plays the script and hands back what it drew and said, or nil when the page never got to the end of it (it
-    /// didn't start, or ran for more than a minute).
+    /// didn't start, or ran for more than two minutes: a whole city takes about half a minute to build out of sight).
     static func play(_ staged: URL, script: [String]) async -> (pictures: [String: Data], result: [String: Any])? {
         let preview = WebGamePreview()
         guard let result = await preview.run(staged, script: script) else { return nil }
@@ -27,6 +27,8 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
         files.folder = staged
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        // In no window, a page is one WebKit soon suspends, and a big one (a whole city) takes longer to build than that.
+        configuration.preferences.inactiveSchedulingPolicy = .none
         configuration.setURLSchemeHandler(files, forURLScheme: "lamp-game")
         configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "lampPreview")
         let json = (try? JSONSerialization.data(withJSONObject: ["script": script])).map { String(decoding: $0, as: UTF8.self) } ?? "{\"script\":[]}"
@@ -35,7 +37,7 @@ final class WebGamePreview: NSObject, WKScriptMessageHandlerWithReply {
         webView = view
         view.load(URLRequest(url: URL(string: "lamp-game://app/index.html")!))
         let timeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: .seconds(120))
             self?.end(nil)
         }
         let result = await withCheckedContinuation { finished = $0 }

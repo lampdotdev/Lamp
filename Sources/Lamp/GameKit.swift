@@ -727,7 +727,8 @@ extension Agent.Rules {
     static let gameWebKit = """
     - Writing the game: read Web/lamp-game.js first, all of it; it's Lamp's runtime and the whole interface to the \
     device. index.html loads lamp.js, then the import map for three.js (`three` and `three/addons/`, from Web/three: \
-    the WebGL build and its addons such as GLTFLoader; nothing else is there, so no Draco or KTX2 files), then \
+    the WebGL build and its addons such as GLTFLoader, and `three/webgpu` and `three/tsl` for node materials, \
+    which draw with WebGL 2 here; nothing else is there, so no Draco or KTX2 files), then \
     game.js as a module: keep that. game.js makes a `THREE.WebGLRenderer({ antialias: true })` and calls \
     `game({ renderer, init, frame, touch })` once: Lamp sizes the canvas to 1920x1080 and fits it to the window or \
     screen, runs `init` once (it may be async, to load models with `GLTFLoader().loadAsync('ship.glb')` or sounds), \
