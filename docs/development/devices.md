@@ -165,7 +165,7 @@ console before installs over the earlier EdgeHTML one (same family, newer versio
 
 A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, `GameKit`), never a device's: the naming
 call gives "game" for a 3D game or one played with a controller or on an Xbox (a 2D game played with the mouse or by
-tapping stays a Mac or iPhone app), with the devices it's played on beside it. Its home is the Mac, and the places it's
+tapping stays a Mac or iPhone app), with the devices it's played on beside the Mac in its `places`. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
 `LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator or
 the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp's Android app in the game's
@@ -173,7 +173,9 @@ the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp
 like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
 to the page's `lampNativePad`) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
 app, installed as a game). `make_app_for` on
-a game sets its places (`Store.gamePlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind;
+a game sets its places (`Store.kindPlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
+given as its entry's `places` in `make_app_for`'s `apps`, and a list without the game takes it away like any app of a wish (the "Wishes" guide; a game
+can also be added beside a wish's other apps, in Game/);
 Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
 first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox
@@ -278,7 +280,7 @@ TV it's staged and looked at as a TV app is. `make_app_for` with the places it's
 and the request's device line says where it's shown (`Rules.screenPlaces`).
 
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
-`hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team.
+`hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team. A game's or a screen's Mac copy is installed in Games/ or Screens/ of the apps folder (`Target.installFolder`), apart from a Mac app of its wish, which has the wish's name.
 
 **What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the

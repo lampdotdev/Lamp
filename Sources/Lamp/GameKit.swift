@@ -53,18 +53,17 @@ enum GameKit {
 
     // MARK: Where it's played
 
-    /// The words a game's places are given by, in the naming call's answer and `make_app_for`'s list: "game" itself,
-    /// and the devices it's played on.
+    /// The words a game's or a screen's places are given by, in the naming call's `places` and in its entry of
+    /// `make_app_for`'s `apps`, and the place each is.
     static let placeWords: [String: Destination?] = ["game": nil, "screen": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
                                                      "android": .android, "tv": .tv, xbox: .device, xboxKind: .device, "xbox": .device]
 
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
-        // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new.
-        devices.contains("game") && devices.allSatisfy { word in
-            word == "game" || (placeWords[word] ?? nil).map(Platform.game.reaches) == true
-        }
+        // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
+        // given apart (`Parts.asked`'s places): "mac" beside "game" is a Mac app.
+        devices == ["game"]
     }
 
     /// The places a list of devices gives a kind that takes places one at a time (a game, a screen): always the Mac, its
@@ -615,9 +614,40 @@ extension Agent {
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
     }
+
+    /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
+    /// without those about the wish as a whole. A game made beside other apps is three.js, as every new game is.
+    static func gamePrompt(part folder: String, alone: Bool = false) -> String {
+        let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
+                     Rules.gameTry, alone ? "" : Rules.gameAmongApps]
+        return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
+                + "\n\nRules:\n" + rules.joined())
+            .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
+    }
 }
 
 extension Agent.Rules {
+    /// How a game's or a screen's places are given while the wish has other apps too: its own word with them, and the
+    /// other apps the person keeps, named apart where they're for a device it's also on.
+    static func placesAmongApps(_ word: String, verb: String) -> String {
+        """
+
+        - This wish has other apps beside the \(word). make_app_for's `apps` are all of them, the \(word) and every \
+        other app the person keeps: one left out is taken away. Where the \(word) is \(verb) is its own entry's \
+        `places`.
+        """
+    }
+
+    /// For a wish with a game beside other apps: how its places are given, and what its other apps can't do with it.
+    static let gameAmongApps = placesAmongApps("game", verb: "played") + """
+
+    - The wish's game doesn't send or get messages from its other apps yet: it has no `Lamp.wish` and no \
+    `Lamp.controllers`, and its players use a controller, the keyboard or the touch controls Lamp draws. Don't write \
+    another app of the wish to steer it or share data with it; say so if the person asks for that.
+    """
+
     static let gameHeader = """
     You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
     or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone or \
@@ -640,8 +670,9 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
     it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
-    make_app_for with every place it's to be played (["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…); it \
-    stays the same game.
+    make_app_for with the game as {"kind": "game", "places": [every place it's to be played beside the Mac: \
+    "iphone", "android", "xbox-one"…]} and every other app the wish keeps beside it in `apps`; it stays the same \
+    game.
     """
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

@@ -334,7 +334,10 @@ enum Versions {
                 let parts = Parts.load(project)
                 let asked = await apps(at: version, in: list(project)) ?? []
                 var listed = project
-                listed.apps = asked.map { kind in WishApp(kind: kind, needs: project.apps.first { $0.kind == kind }?.needs) }
+                listed.apps = asked.map { kind in
+                    let now = project.apps.first { $0.kind == kind }
+                    return WishApp(kind: kind, needs: now?.needs, places: now?.places)
+                }
                 let apps = Parts.wanted(in: listed, parts: parts)
                 if apps != project.apps { project.apps = apps; changed = true }
                 // A Lamp from before reads the wish by its meta.json's layout, which follows whether its folder holds an app.

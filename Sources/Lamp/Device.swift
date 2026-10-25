@@ -403,11 +403,19 @@ enum DeviceNote {
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
         // A wish whose apps are all in folders of their own is on no device itself: where each opens is the wish's note.
-        guard project.holdsApp else { return "" }
-        let now = line(for: project, store: .shared)
+        // A game or a screen in a folder of its own still has its places and budget said here, as one in the wish's own
+        // folder has: they change with its places and with Try On, which no note of the wish's says.
+        let own = project.holdsApp ? [line(for: project, store: .shared)] : []
+        let placed = project.isPart ? [] : Store.shared.parts(of: project).filter(\.platform.addsPlaces).map { part in
+            "\(Parts.name(of: part.platform).prefix(1).uppercased() + Parts.name(of: part.platform).dropFirst()) in \(part.dir.lastPathComponent)/: "
+                + line(for: part, store: .shared)
+        }
+        guard !own.isEmpty || !placed.isEmpty else { return "" }
+        let now = (own + placed).joined(separator: "\n")
+        let what = placed.isEmpty ? "The device this app is for" : own.isEmpty ? "Where the wish's game or screen is" : "The devices this wish's apps are for"
         switch note.telling(now, for: project, engine: engine, session: session) {
-        case .fresh: return "\n\n---\nThe device this app is for (from Lamp, not part of the request above): \(now)"
-        case .changed: return "\n\n---\nThe device this app is for has changed (from Lamp, not part of the request above): \(now)"
+        case .fresh: return "\n\n---\n\(what) (from Lamp, not part of the request above): \(now)"
+        case .changed: return "\n\n---\n\(what), changed (from Lamp, not part of the request above): \(now)"
         case .nothing: return ""
         }
     }

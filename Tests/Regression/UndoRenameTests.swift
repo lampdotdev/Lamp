@@ -64,6 +64,43 @@ final class UndoRenameTests: XCTestCase {
         XCTAssertFalse(unsaved, "the build after Undo finds Lamp's files as the Undo saved them")
     }
 
+    /// "TV instead" for a Mac wish, then Undo: the restore wrote the Mac app's own files while the wish's list still had
+    /// the TV app, so with the link code for it. The TV app was then forgotten, the next build wrote them without that
+    /// code, and every Undo after only discarded the difference, which the build made again.
+    func testUndoPastAReplacedFirstAppLeavesNothingUnsaved() async throws {
+        let app = try escape.app()
+        var wish = app.project
+        try FileManager.default.createDirectory(at: wish.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Template.saveMeta(wish)
+        try Template.fill(wish)
+        let made = await Versions.save(wish, message: "Make it")
+        XCTAssertTrue(made)
+        // The Mac app replaced by a TV app in TV/, as `make_app_for` leaves it.
+        let tv = LampProject(id: Parts.id(wish: wish.id, folder: "TV"), name: wish.name, exe: wish.exe, dir: wish.dir.appendingPathComponent("TV"),
+                             platform: .tv, partOf: wish.id)
+        try FileManager.default.createDirectory(at: tv.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Template.saveMeta(tv)
+        try Template.fill(tv)
+        for name in ["Sources", "Package.swift", "build.sh", "APP.md", "Assets"] { try? FileManager.default.removeItem(at: wish.dir.appendingPathComponent(name)) }
+        wish.apps = [WishApp(kind: .tv)]
+        try Template.saveMeta(wish)
+        wish = try XCTUnwrap(Store.readWish(at: wish.dir))
+        let replaced = await Versions.save(wish, message: "TV instead")
+        XCTAssertTrue(replaced)
+
+        let versions = await Versions.list(wish)
+        let (undoing, target) = try XCTUnwrap(Versions.undoTarget(in: versions))
+        let undone = await Versions.restore(wish, to: target, message: "Undid “\(undoing.label)”", trailer: "Lamp-Undid: \(undoing.id)")
+        XCTAssertTrue(undone)
+        // The TV app is forgotten (off the list, `Store.forget`), and the Mac app's next build writes Lamp's files.
+        var after = try XCTUnwrap(Store.readWish(at: wish.dir))
+        after.apps = after.apps.filter { $0.kind != .tv }
+        try Template.saveMeta(after)
+        try Template.writeOwnedFiles(for: after)
+        let unsaved = await Versions.hasUnsavedChanges(after)
+        XCTAssertFalse(unsaved, "the build after Undo finds Lamp's files as the Undo saved them")
+    }
+
     /// A name may hold what a shell reads inside quotes; it's saved as it is.
     func testANameIsSavedAsWritten() async throws {
         let app = try escape.app()

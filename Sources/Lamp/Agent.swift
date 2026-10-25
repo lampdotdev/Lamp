@@ -386,8 +386,9 @@ enum Agent {
             .joined()
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds each app you changed and opens it")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
+        // One app on its own is told nothing of reaching others, as an app in its wish's own folder isn't.
         let each = parts.count == 1
-            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent) }.joined()
+            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true) }.joined()
                 + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
             : Parts.rule(for: wish, parts: parts)
         return header + "\n\nRules:\n" + rules + each
@@ -405,7 +406,7 @@ enum Agent {
 
     /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
     /// share one code: so a block or a design given to one kind is given to the pair in the same place.
-    static func universalPrompt(for family: DeviceFamily, part: String? = nil) -> String {
+    static func universalPrompt(for family: DeviceFamily, part: String? = nil, alone: Bool = false) -> String {
         func half(_ place: String, _ rule: String) -> String {
             let lines = rule.split(separator: "\n", omittingEmptySubsequences: false)
             guard let first = lines.firstIndex(where: { $0.hasPrefix("- ") }) else { return rule }
@@ -423,7 +424,7 @@ enum Agent {
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.ai]
         rules += (wishRules ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs, Rules.universalTry]
-        rules += wishRules ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : [Rules.partTalk(mac: true)]
+        rules += wishRules ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : alone ? [] : [Rules.partTalk(mac: true)]
         let header = part.map { Rules.partHeader("an app for the Mac and for iPhone and iPad, one SwiftUI code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+)", folder: $0) }
             ?? Rules.universalHeader
         return (header + "\n\nRules:\n" + rules.joined())
@@ -434,7 +435,8 @@ enum Agent {
 
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the rules of its kind alone, without the
     /// ones about the wish as a whole (asking, the shell, the icon, how to talk and finish), which the wish's own prompt has.
-    static func prompt(platform: Platform, device: String, sidebar: Bool, part: String? = nil) -> String {
+    /// `alone`: it's the wish's only app, so nothing about reaching the others.
+    static func prompt(platform: Platform, device: String, sidebar: Bool, part: String? = nil, alone: Bool = false) -> String {
         let mac = platform == .mac
         var rules = [Rules.edit] + (part == nil ? [Rules.ask, Rules.shell] : []) + [
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
@@ -447,7 +449,7 @@ enum Agent {
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated, Rules.ai]
             + (part == nil ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
-        if let part { rules.append(Rules.partTalk(mac: mac)) }
+        if part != nil, !alone { rules.append(Rules.partTalk(mac: mac)) }
         rules += part == nil ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : []
         let header = part.map { Rules.partHeader(mac ? "a Mac app (a standalone macOS SwiftUI app, a Swift Package, Swift 5.9 language mode, macOS 14+)"
                                                      : "an iPhone and iPad app (a SwiftUI app, a Swift Package built for the iOS Simulator, Swift 5.9 language mode, iOS 17+)", folder: $0) }

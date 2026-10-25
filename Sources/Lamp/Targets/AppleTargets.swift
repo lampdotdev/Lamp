@@ -28,7 +28,7 @@ extension Target {
             try Template.write(Template.withScene(Template.packageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
         },
         part: .swift(.mac, folder: "Mac", word: "mac", menu: ("Mac App", "laptopcomputer")) {
-            Agent.prompt(platform: .mac, device: "Mac", sidebar: false, part: $0)
+            Agent.prompt(platform: .mac, device: "Mac", sidebar: false, part: $0, alone: $1)
         },
         setup: .none)
 
@@ -51,7 +51,7 @@ extension Target {
             try Template.write(Template.withWatch(Template.iPhonePackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
         },
         part: .swift(.iphone, folder: "iPhone", word: "iphone", menu: ("iPhone App", "iphone")) {
-            Agent.prompt(platform: .iphone, device: DeviceFamily.iphone.name, sidebar: false, part: $0)
+            Agent.prompt(platform: .iphone, device: DeviceFamily.iphone.name, sidebar: false, part: $0, alone: $1)
         },
         setup: .phone(both: false, made: "iPhone and iPad"), otherSystems: true)
 
@@ -74,7 +74,7 @@ extension Target {
             // team: that lets the app use what Apple ties to a team, which Lamp's own signing can't give it.
             try Template.writeDeviceProject(for: project, team: Devices.team)
         },
-        part: .swift(.universal, folder: "Apple", word: "iphone", menu: ("iPhone App", "iphone")) { Agent.universalPrompt(for: .iphone, part: $0) },
+        part: .swift(.universal, folder: "Apple", word: "iphone", menu: ("iPhone App", "iphone")) { Agent.universalPrompt(for: .iphone, part: $0, alone: $1) },
         setup: .phone(both: true, made: "the Mac, iPhone and iPad"), otherSystems: true, macSignedForTeam: true)
 }
 
@@ -104,7 +104,7 @@ extension Target.Part {
     /// A Swift kind as a wish's part: its folder holds a Package.swift of that kind, of which at most the last 64 KB is
     /// read (Lamp's own is far smaller; one the agent made huge is never read whole).
     static func swift(_ kind: Platform, folder: String, word: String, menu: (name: String, symbol: String),
-                      rules: @escaping (String) -> String) -> Self {
+                      rules: @escaping (String, Bool) -> String) -> Self {
         Self(folder: folder, family: "apple", word: word, menu: menu, rules: rules) { dir, wish in
             AppFile.read(dir.appendingPathComponent("Package.swift"), inFolder: wish, last: 64 * 1024)
                 .flatMap { Target.Recipe.swiftKind(String(decoding: $0, as: UTF8.self)) } == kind

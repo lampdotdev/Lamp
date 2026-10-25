@@ -426,22 +426,40 @@
   {
     "name": "make_app_for",
     "label": "Change devices",
-    "description": "Changes which devices this wish is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"), or answers which devices a new wish is for. List every device it should run on from now on: {{DEVICES}}. For a game, list the places it's played (\"mac\", \"iphone\" or \"ipad\", \"android\", \"xbox-one\"): it stays the same game. For a screen, a page shown full screen, list \"screen\" and the places it's shown (\"mac\", \"iphone\" or \"ipad\", \"tv\", \"xbox-one\"): it stays the same page. Apple's devices share one code; a TV app and an Android app are each an app of their own, so \"tv\" or \"android\" with other devices makes the wish several apps made to work together (\"tv\" and \"iphone\": a TV app and an iPhone app; \"mac\" and \"android\": a Mac app and an Android app), each in its own folder. Phones that steer a TV app (controllers, a remote, a buzzer) can do it through a page the TV app serves, which any phone opens with nothing to install, or as apps of the wish's own, or both: choose what fits the wish and what this Mac can build. An app the wish already has stays as it is, its code kept (\"tv\" added to a Mac wish keeps the Mac app and adds the TV app beside it); one left out of the list is taken away, whichever it is, the first app included (\"tv\" alone for a Mac wish replaces the Mac app with a TV app), so list what the person keeps and leave out only what they asked to drop. The wish keeps its name, chat and history either way. Lamp checks this Mac can build each, writes their build files and keeps the data; the reply says how to adapt the code and gives each new app's rules, which you then follow in the same request. Not for a change the person didn't ask for.",
+    "description": "Sets the wish's apps from now on, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"), or answers which devices a new wish is for. `apps` has one entry per app, each {\"kind\": …, \"places\": […]}. `kind` is what the app is: {{DEVICES}}. `places` are where it runs beyond its kind's own device: an app for the Mac and iPhone or iPad is one app, {\"kind\": \"mac\", \"places\": [\"iphone\"]}; an iPhone app with an Apple Watch app is {\"kind\": \"iphone\", \"places\": [\"watch\"]}; a game is at home on the Mac and is played wherever else its places say (\"iphone\" or \"ipad\", \"android\", \"xbox-one\"); a screen, a page shown full screen, is shown on its places (\"iphone\" or \"ipad\", \"tv\", \"xbox-one\"). A game or a screen stays the same game or page wherever it goes. A TV app and an Android app are each an app of their own, so a wish can be several apps made to work together, each in its own folder: [{\"kind\": \"tv\"}, {\"kind\": \"iphone\"}] is a TV app and an iPhone app; [{\"kind\": \"mac\"}, {\"kind\": \"game\", \"places\": [\"iphone\"]}] is a Mac app and a game played on the Mac and the iPhone. Phones that steer a TV app (controllers, a remote, a buzzer) can do it through a page the TV app serves, which any phone opens with nothing to install, or as apps of the wish's own, or both: choose what fits the wish and what this Mac can build. A game's players use a controller, the keyboard or touch on the device it's played on; it doesn't hear the wish's other apps. An app the wish already has stays as it is, its code kept; one left out of `apps` is taken away, whichever it is, the first app included, so list every app the person keeps and leave out only what they asked to drop. The wish keeps its name, chat and history either way. Lamp checks this Mac can build each, writes their build files and keeps the data; the reply says how to adapt the code and gives each new app's rules, which you then follow in the same request. Not for a change the person didn't ask for.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "devices"
+        "apps"
       ],
       "properties": {
-        "devices": {
+        "apps": {
           "type": "array",
           "minItems": 1,
-          "uniqueItems": true,
+          "description": "Every app the wish has from now on, one entry each",
           "items": {
-            "type": "string"
-          },
-          "description": "Every device the app runs on from now on"
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "description": "What the app is"
+              },
+              "places": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                },
+                "description": "Where it runs beyond its kind's own device; every place from now on"
+              }
+            }
+          }
         },
         "doing": {
           "type": "string",
