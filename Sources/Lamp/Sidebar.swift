@@ -370,14 +370,16 @@ final class SidebarServer {
     private func tryOn(for project: LampProject, busy: Bool) -> SidebarTryOn? {
         let store = Store.shared
         var sections = TryOnMenu.make(for: project, store: store)?.sections ?? []
-        let parts = store.parts(of: project)
-        if !parts.isEmpty {
-            sections.append(TryOnMenu.Section(title: "Its Other Apps", items: parts.map { part in
-                let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
-                let open = store.isOpen(part)
-                return TryOnMenu.Item(id: (open ? "part-quit:" : "part-use:") + part.id, title: (open ? "Quit the " : "Use the ") + name,
-                                      symbol: symbol, disabled: busy)
-            }))
+        // Each of the wish's other apps in a menu of its own: used or quit alone, and given a place, as the wish is.
+        for part in store.parts(of: project) {
+            let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
+            let open = store.isOpen(part)
+            var items = [TryOnMenu.Item(id: "part:\(part.id):" + (open ? "quit" : "use"), title: (open ? "Quit the " : "Use the ") + name,
+                                        symbol: open ? "stop.fill" : symbol, disabled: busy)]
+            items += (TryOnMenu.make(for: part, store: store)?.sections ?? []).flatMap(\.items).map { item in
+                TryOnMenu.Item(id: "part:\(part.id):" + item.id, title: item.title, symbol: item.symbol, checked: item.checked, disabled: item.disabled)
+            }
+            sections.append(TryOnMenu.Section(title: name, items: items, submenu: true))
         }
         guard !sections.isEmpty else { return nil }
         let symbol = TryOnMenu.make(for: project, store: store)?.symbol ?? "laptopcomputer"
@@ -1130,17 +1132,29 @@ final class SidebarServer {
             }
             scheduleUpdate()
         case .tryOn(let id):
-            if id.hasPrefix("part-use:") || id.hasPrefix("part-quit:"), let part = store.parts(of: project).first(where: { id.hasSuffix(":" + $0.id) }) {
-                if id.hasPrefix("part-use:") { store.openPrepared(part) } else { Task { await store.quitApp(part) } }
-                return
+            // One of the wish's other apps: "part:<its id>:<what>".
+            if id.hasPrefix("part:"), let part = store.parts(of: project).first(where: { id.hasPrefix("part:\($0.id):") }) {
+                let what = String(id.dropFirst("part:\(part.id):".count))
+                switch what {
+                case "use": store.openPrepared(part)
+                case "quit": Task { await store.quitApp(part) }
+                default: store.tryOn(part, what)
+                }
+                return scheduleUpdate()
             }
             // Beside its Mac app the chat has no Play: a place chosen there is where it opens at once.
             store.tryOn(project, id, open: Self.besideItsApp(project, place: histories[project.id]?.value?.place))
             scheduleUpdate()
         case .play:
-            // A Mac app opens with its chat beside it (asked from Lamp's panel, which then closes); anything else is used.
-            if Self.besideItsApp(project, place: histories[project.id]?.value?.place) { return store.change(project) }
-            store.openWish(project)
+            // A Mac app that can have its chat beside it opens with it there (asked from Lamp's panel, which then closes);
+            // anything else, an app built before the chat could go beside it included, is opened as Play opens it.
+            let beside = Self.besideItsApp(project, place: histories[project.id]?.value?.place)
+            Task {
+                if beside, FileManager.default.fileExists(atPath: project.installedURL.path), await MagicPanel.chatsInApp(project) {
+                    return store.change(project)
+                }
+                store.openWish(project)
+            }
         case .quit:
             Task { await store.quitWish(project) }
         case .rename(let name):

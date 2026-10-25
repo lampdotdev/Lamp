@@ -163,8 +163,14 @@ final class ChatPanel: NSObject, NSWindowDelegate {
     /// The wish's Mac app was open when last looked: one that opens since takes its chat beside it.
     private var openOnMac: Bool?
 
+    /// Looks at which the wish was gone: one gone for good (deleted, or an empty wish discarded) takes its chat with it.
+    private var missing = 0
+
     private func place() {
         let project = Store.shared.projects.first { $0.id == id }
+        // Looked at again a moment later, so a wish between its old folder and its new one isn't taken for gone.
+        missing = project == nil && Store.shared.project(following: id) == nil ? missing + 1 : 0
+        if missing > 3 { return close() }
         // Its name in the Window menu and Mission Control follows the wish's.
         if let title = project?.title, window.title != title { window.title = title }
         // Its Mac app opened (Play, a reopen for a change, the person opening it): the chat goes beside it, in one place.
