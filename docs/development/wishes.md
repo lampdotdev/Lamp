@@ -83,10 +83,12 @@ with a part says 10.
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp
-saves of a wish carries its kinds (`Lamp-Apps`, `Versions.appsTrailer`), a request that changed only the list is a
+saves of a wish carries its kinds (`Lamp-Apps`, `Versions.appsTrailer`), its first one too (`Store.initRepo`: a new wish, an
+import, a copy), a request that changed only the list is a
 version of its own (an empty one, titled by the request), and Undo or going back to a version gives back the list it had
 (`Versions.apps(at:in:)`, in `restoreFiles` before any app's own files are written), each app its files have on it and
-one still waiting keeping what stops it; a version from before carries none, and the list is what its files make. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
+one still waiting keeping what stops it, and forgetting a part the version doesn't have leaves that list as it is
+(only taking an app away takes it off, `removePart`); a version from before carries none, and the list is what its files make. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
 which take the app in the wish's own folder and each other found as made whatever the list says, `Parts.made`). The apps a wish waits for are made at
 the start of its next turn (`Store.makeWaitingParts`), each tried once rather than at every turn, since the kind's check
 opens its setup window: one this Mac can't build yet keeps what stops it and gets the chat's setup line
