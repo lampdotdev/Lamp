@@ -239,14 +239,15 @@ extension Agent.Rules {
         """
     }
 
-    /// How a Swift part reaches the wish's other apps (`wishTalk`), and its TV app's game as a player of
-    /// `Lamp.controllers`, through `LampController`.
+    /// How a Swift part reaches the wish's other apps (`wishTalk`), and, when it fits, its TV app's game as a player of
+    /// `Lamp.controllers` through `LampController`: one way the agent may choose, not a rule.
     static func partTalk(mac: Bool) -> String {
         wishTalk + """
 
-        - When the wish has a TV app and this app steers it (a game's controller, a remote), that goes with \
-        `LampController` from LampSupport.swift, beside `LampWish` for everything else: \
-        `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
+        - When the wish has a TV app and this app steers it, choose what fits: plain `LampWish` messages do for a few \
+        commands (a slideshow's next and back, a remote), and `LampController` from LampSupport.swift is one way \
+        suited to game-style input (buttons held and let go, sticks, several players), which the TV app takes in \
+        `Lamp.controllers`: `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
         Wi‑Fi, with nothing to pair or set up: it goes the way `LampWish` reaches the TV app, so it goes on with Lamp \
         closed. \
         `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \

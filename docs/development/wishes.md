@@ -283,8 +283,9 @@ question), its prompt has no rule and its requests no line about the hub, no key
 the relay, and `BuildStamp` leaves the block out and stamps no fingerprint of it, so no app is built again for code it
 doesn't carry (`WishHubStaysOutTests`).
 
-A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) does so as a player of
-`Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`: it finds the wish's TV app in the
+A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) can do so as a player of
+`Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`; the prompt offers it beside plain
+`LampWish` messages and the agent picks what fits (`Rules.partTalk`). It finds the wish's TV app in the
 wish's list (the app whose kind is "tv"), and what it says goes as **`pad`** messages, the straight way when there is
 one, else through Lamp's room (`{"t":"pad","m":…}`, with `to` and `from` through the room; the relay passes one to a
 member that speaks 3, at a phone's rate to each player apart (an app, and which of its controllers), since a TV app
