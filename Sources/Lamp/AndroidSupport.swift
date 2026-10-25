@@ -959,6 +959,9 @@ extension Template {
      *     LampWish.set("list", listOf("milk", "eggs"))           // sets one here and in every other app, now or when they next meet;
      *                                                            // null removes it; false (with why in the log) when it wasn't set
      *     LampWish.onChange { key, value, from -> … }            // a value changed, here (from == me) or in another app
+     *     val sending = LampWish.sendFile(bytes, "photo.jpg", "image/jpeg", to = "tv")
+     *                                                            // up to 64 MB to one app: sending.sent, .state (flows), .cancel(), .finished()
+     *     LampWish.onFile { from, file -> … }                    // a file another app sent: who, and file.name, .type, .bytes
      *     LampWishStatus()                                       // a ready-made composable of all that: one line for each other app
      *     LampWishStatus("tv")                                   // the TV app's line alone
      *
@@ -968,8 +971,9 @@ extension Template {
      * are for what must outlast an app being closed: each is JSON of at most `valueLimit` (8 KB), all of them
      * `valuesLimit` (64 KB), read back as messages are (a JSONObject, JSONArray, String, Number or Boolean), and where
      * two apps set one while apart, the later setting wins in both. `data` is anything LampAI's `about` takes: text, a number, a map or list, or a
-     * @Serializable value. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files between
-     * the wish's apps aren't carried yet. Keep every control usable while an app isn't open. What this app says and
+     * @Serializable value. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); anything bigger (a
+     * picture, a recording, a document) goes with `sendFile`, to an app open now, two at a time to each. Keep every
+     * control usable while an app isn't open. What this app says and
      * hears is sealed with a key only the wish's apps have: carried by Lamp while it's open (this app speaks HTTP to
      * Lamp, polling for what came), and straight between the wish's apps on the same Wi‑Fi, so they go on talking with
      * Lamp closed. Handlers and the flows change on the main thread.
@@ -1008,8 +1012,8 @@ extension Template {
         const val valueLimit = 8 * 1024
         const val valuesLimit = 64 * 1024
         /** What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-         *  2 brought values; an app from before says none, which counts as 1. */
-        private const val wire = 2
+         *  2 brought values, 3 files; an app from before says none, which counts as 1. */
+        private const val wire = 3
 
         private val appsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
         private val peersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
@@ -1115,21 +1119,25 @@ extension Template {
         }
         @Volatile private var link: Link? = null
         private val sending = Mutex()
-        private val outbox = kotlinx.coroutines.channels.Channel<Pair<Link, String>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        /** What goes to Lamp's room, in order: a message, or a file's piece, with what to do once it has gone. */
+        private class Out(val link: Link, val bytes: ByteArray, val then: (() -> Unit)? = null)
+        private val outbox = kotlinx.coroutines.channels.Channel<Out>(kotlinx.coroutines.channels.Channel.UNLIMITED)
         private val sender: kotlinx.coroutines.Job by lazy {
             scope.launch(start = CoroutineStart.LAZY) {
-                for ((to, text) in outbox) {
-                    try { say(to, sealed = listOf(text)) }
+                for (out in outbox) {
+                    try { say(out.link, sealed = listOf(out.bytes)) }
                     catch (e: CancellationException) { throw e }
                     catch (e: Exception) { Log.e("LampWish", "A message didn't go: ${e.message ?: e}") }
+                    out.then?.invoke()
                 }
             }
         }
+        private fun toRoom(current: Link, text: String) { sender.start(); outbox.trySend(Out(current, text.toByteArray(Charsets.UTF_8))) }
 
         /** One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way. What
          *  goes out is written by one coroutine of its own, in the order it was given, each sealed as it's written. */
         private class Direct(val socket: Socket, val input: InputStream, val output: java.io.OutputStream, val dialled: Boolean, var peer: String) {
-            class Frame(val opcode: Int, val bytes: ByteArray, val seal: Boolean)
+            class Frame(val opcode: Int, val bytes: ByteArray, val seal: Boolean, val then: (() -> Unit)? = null)
             var hello: Pair<ByteArray, ByteArray>? = null
             var transcript: ByteArray? = null
             @Volatile var sealer: Sealer? = null
@@ -1141,6 +1149,8 @@ extension Template {
             var done: ((Boolean) -> Unit)? = null
             val out = kotlinx.coroutines.channels.Channel<Frame>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             fun send(text: String, seal: Boolean) { out.trySend(Frame(1, text.toByteArray(Charsets.UTF_8), seal)) }
+            /** A file's piece, sealed as it's written; `then` once it has been. */
+            fun piece(bytes: ByteArray, then: () -> Unit) { out.trySend(Frame(2, bytes, true, then)) }
             @Volatile var over = false
             fun close() { over = true; out.close(); try { socket.close() } catch (e: Exception) {} }
         }
@@ -1202,6 +1212,7 @@ extension Template {
             scope.launch(Dispatchers.Main) {
                 closed = true
                 relayGone()
+                dropFiles("The link was stopped.") { _, _ -> true }
                 for (direct in directs.values.toList() + opening.toList()) drop(direct)
                 stopListening()
                 stopLooking()
@@ -1288,8 +1299,7 @@ extension Template {
                 if (direct != null) {
                     direct.send(JSONObject().put("t", "message").put("data", value).toString(), seal = true)
                 } else if (target in inRoom && current != null && current.sealer != null) {
-                    sender.start()
-                    outbox.trySend(current to JSONObject().put("t", "send").put("data", value).put("to", target).toString())
+                    toRoom(current, JSONObject().put("t", "send").put("data", value).put("to", target).toString())
                 }
             }
             return true
@@ -1378,6 +1388,8 @@ extension Template {
             if (next == State.CONNECTED) saidAway = false
             appsFlow.value = list
             peersFlow.value = list.filter { it.isOpen }
+            // An app no longer open takes the files on their way to it and from it with it.
+            for (app in list) if (!app.isOpen) dropFiles("${app.name.replaceFirstChar { it.uppercase() }} closed.") { key, _ -> key.startsWith(app.peer + "\t") }
             report()
             // An app that has just come is told every value this one has, and tells this one its own, so the two agree
             // again whichever was open meanwhile.
@@ -1545,8 +1557,7 @@ extension Template {
                 val current = link
                 if (direct != null) direct.send(plain(frame.toString()), seal = true)
                 else if (peer in relayed && current != null && current.sealer != null) {
-                    sender.start()
-                    outbox.trySend(current to plain(frame.put("to", peer).toString()))
+                    toRoom(current, plain(frame.put("to", peer).toString()))
                 }
                 batch = JSONObject()
                 size = 0
@@ -1598,8 +1609,7 @@ extension Template {
             val now = "${stateFlow.value} ${direct.joinToString(",")}"
             if (now == reported) return
             reported = now
-            sender.start()
-            outbox.trySend(current to JSONObject().put("t", "status").put("state", stateFlow.value.name).put("direct", JSONArray(direct)).toString())
+            toRoom(current, JSONObject().put("t", "status").put("state", stateFlow.value.name).put("direct", JSONArray(direct)).toString())
         }
 
         private fun setRoster(list: List<JSONObject>) {
@@ -1649,6 +1659,186 @@ extension Template {
             for (place in told[peer].orEmpty()) if (place !in list) list.add(place)
             told[peer] = list.take(6)
             keep()
+        }
+
+        // MARK: Files
+
+        const val fileLimit = 64 * 1024 * 1024
+        private const val fileChunk = 64 * 1024
+        private const val fileWindow = 512 * 1024
+        private const val fileTransfers = 2
+
+        /**
+         * Sends a file (up to 64 MB) to one of the wish's apps that's open now, in pieces, the straight way when there is
+         * one, else through Lamp's room; the transfer says how far it's got, and ends failed, with why, when it didn't get
+         * there. Two go to each app at a time: send a third once one has finished (`transfer.finished()`). Call it from
+         * anywhere.
+         */
+        fun sendFile(bytes: ByteArray, name: String, type: String = "application/octet-stream", to: String): LampTransfer {
+            start()
+            val transfer = LampTransfer(nextFile.getAndUpdate { if (it >= Int.MAX_VALUE - 1) 1 else it + 1 }, name, bytes.size)
+            scope.launch(Dispatchers.Main) { startFile(transfer, bytes, type, to) }
+            return transfer
+        }
+
+        /** Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole, on the main thread. */
+        fun onFile(handler: (from: String, file: LampFile) -> Unit) { start(); lock.withLock { fileListeners.add(handler) } }
+
+        /** A file on its way to another app, on the way it started on: a file's pieces and acknowledgements can't change ways
+         *  halfway, so a way that goes takes its files with it. */
+        private class Outgoing(val peer: String, val via: Direct?, val transfer: LampTransfer, val bytes: ByteArray) {
+            var offset = 0
+            var acknowledged = 0
+            var sending = false
+            /** When the other app last acknowledged some of it: a file it stops taking ends. */
+            var moved = System.currentTimeMillis()
+        }
+        private class Incoming(val name: String, val type: String, val size: Int, val via: Direct?) { val data = ByteArrayOutputStream(minOf(size, fileChunk)) }
+        private val nextFile = java.util.concurrent.atomic.AtomicInteger(1)
+        private val outgoing = mutableMapOf<String, Outgoing>()
+        private val incoming = mutableMapOf<String, Incoming>()
+        private val fileListeners = mutableListOf<(String, LampFile) -> Unit>()
+
+        private fun startFile(transfer: LampTransfer, bytes: ByteArray, type: String, peer: String) {
+            val name = transfer.name
+            fun failed(reason: String) {
+                Log.e("LampWish", "the file \"$name\" wasn't sent: $reason")
+                transfer.end(LampTransfer.State.Failed(reason))
+            }
+            val app = appsFlow.value.firstOrNull { it.peer == peer }
+            val title = app?.name?.replaceFirstChar { it.uppercase() } ?: peer
+            when {
+                bytes.size > fileLimit -> return failed("The file is too big to send: 64 MB at most.")
+                app == null -> return failed("The wish has no app called \"$peer\".")
+                !app.isOpen || stateFlow.value != State.CONNECTED -> return failed(app.status.reason.ifEmpty { "$title isn't open now." })
+                wireOf(peer) < 3 -> return failed(outOfDate(app.name, true))
+                outgoing.keys.count { it.startsWith(peer + "\t") } >= fileTransfers -> return failed("Another file to ${app.name} is still on its way: send this one once it's there.")
+            }
+            val via = directs[peer]?.takeIf { it.ready }
+            val start = JSONObject().put("t", "file").put("id", transfer.id).put("name", name.take(200)).put("type", type.take(100)).put("size", bytes.size)
+            if (!fileMessage(start, peer, via)) return failed("$title isn't reachable now.")
+            val key = "$peer\t${transfer.id}"
+            transfer.cancelling = {
+                scope.launch(Dispatchers.Main) {
+                    val file = outgoing.remove(key) ?: return@launch
+                    fileMessage(JSONObject().put("t", "file-cancel").put("id", transfer.id), peer, file.via)
+                    transfer.end(LampTransfer.State.Failed("The file was cancelled."))
+                }
+            }
+            outgoing[key] = Outgoing(peer, via, transfer, bytes)
+            pump(key)
+        }
+
+        /** A file's message on the way it goes: straight, or through Lamp's room, there with whom it's for. */
+        private fun fileMessage(message: JSONObject, peer: String, via: Direct?): Boolean {
+            if (via != null) {
+                if (directs[peer] !== via || !via.ready) return false
+                via.send(message.toString(), seal = true)
+                return true
+            }
+            val current = link
+            if (!relayIn || peer !in relayPresent || current?.sealer == null) return false
+            toRoom(current, message.put("to", peer).toString())
+            return true
+        }
+
+        /** A file's next pieces, one handed over at a time and never more than a window past what the other app has
+         *  acknowledged, so a message sent meanwhile waits behind one piece at most. */
+        private fun pump(key: String) {
+            val file = outgoing[key] ?: return
+            if (file.sending || file.offset >= file.bytes.size || file.offset - file.acknowledged >= fileWindow) return
+            val count = minOf(fileChunk, file.bytes.size - file.offset)
+            val name = if (file.via == null) file.peer.toByteArray(Charsets.UTF_8) else ByteArray(0)
+            val id = file.transfer.id
+            val piece = ByteArrayOutputStream(2 + name.size + 4 + count).apply {
+                write(1); write(name.size); write(name)
+                write(byteArrayOf((id shr 24).toByte(), (id shr 16).toByte(), (id shr 8).toByte(), id.toByte()))
+                write(file.bytes, file.offset, count)
+            }.toByteArray()
+            file.offset += count
+            file.sending = true
+            val sent = { scope.launch(Dispatchers.Main) { file.sending = false; pump(key) }; Unit }
+            val via = file.via
+            val current = link
+            if (via != null && directs[file.peer] === via) {
+                via.piece(piece, sent)
+            } else if (via == null && relayIn && current?.sealer != null) {
+                sender.start()
+                outbox.trySend(Out(current, piece, sent))
+            } else {
+                outgoing.remove(key)
+                file.transfer.end(LampTransfer.State.Failed("The link was lost."))
+            }
+        }
+
+        /** A file's message from another app: one coming (`file`), how far one going has got (`file-ack`), one going turned
+         *  down (`file-refuse`), or one coming called off (`file-cancel`). */
+        private fun heardFile(m: JSONObject, peer: String, via: Direct?) {
+            val id = m.optInt("id", 0).takeIf { it > 0 } ?: return
+            val key = "$peer\t$id"
+            when (m.optString("t")) {
+                "file" -> {
+                    val size = m.optInt("size", -1)
+                    val takes = lock.withLock { fileListeners.isNotEmpty() } && m.optString("ch").isEmpty()
+                    if (size !in 0..fileLimit || key in incoming || incoming.keys.count { it.startsWith(peer + "\t") } >= fileTransfers || !takes) {
+                        fileMessage(JSONObject().put("t", "file-refuse").put("id", id).put("reason", if (takes) "The file is too big to take now." else "This app takes no files."), peer, via)
+                        return
+                    }
+                    val file = Incoming(m.optString("name", "file"), m.optString("type"), size, via)
+                    incoming[key] = file
+                    if (size == 0) finished(key, id, file, peer)
+                }
+                "file-ack" -> {
+                    val file = outgoing[key]?.takeIf { it.via === via } ?: return
+                    val got = m.optInt("got", -1)
+                    if (got < file.acknowledged || got > file.offset) return
+                    file.acknowledged = got
+                    file.moved = System.currentTimeMillis()
+                    file.transfer.progressed(got)
+                    if (got == file.bytes.size) { outgoing.remove(key); file.transfer.end(LampTransfer.State.Done) } else pump(key)
+                }
+                "file-refuse" -> {
+                    val file = outgoing[key]?.takeIf { it.via === via } ?: return
+                    outgoing.remove(key)
+                    file.transfer.end(LampTransfer.State.Failed(m.optString("reason").ifEmpty { "The other app turned the file down." }))
+                }
+                "file-cancel" -> if (incoming[key]?.via === via) incoming.remove(key)
+            }
+        }
+
+        /** A file's piece: 1, a peer's name with its length before it (the one it's from, through Lamp's room; none
+         *  straight), the transfer's id, then the bytes. */
+        private fun piece(plain: ByteArray, via: Direct?) {
+            val n = plain.getOrNull(1)?.toInt()?.and(0xff) ?: return
+            if (n > 32 || plain.size <= 2 + n + 4) return
+            val peer = via?.peer ?: String(plain, 2, n, Charsets.UTF_8)
+            val at = 2 + n
+            val id = ((plain[at].toInt() and 0xff) shl 24) or ((plain[at + 1].toInt() and 0xff) shl 16) or ((plain[at + 2].toInt() and 0xff) shl 8) or (plain[at + 3].toInt() and 0xff)
+            val key = "$peer\t$id"
+            val file = incoming[key]?.takeIf { it.via === via } ?: return
+            val count = plain.size - at - 4
+            if (file.data.size() + count > file.size) {
+                incoming.remove(key)
+                fileMessage(JSONObject().put("t", "file-refuse").put("id", id).put("reason", "The file was bigger than it said."), peer, via)
+                return
+            }
+            file.data.write(plain, at + 4, count)
+            fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", file.data.size()), peer, via)
+            if (file.data.size() == file.size) finished(key, id, file, peer)
+        }
+
+        private fun finished(key: String, id: Int, file: Incoming, peer: String) {
+            incoming.remove(key)
+            if (file.size == 0) fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", 0), peer, file.via)
+            val done = LampFile(file.name, file.type, file.data.toByteArray())
+            val handlers = lock.withLock { fileListeners.toList() }
+            for (handler in handlers) try { handler(peer, done) } catch (e: Exception) { Log.e("LampWish", "a file handler failed: ${e.message}") }
+        }
+
+        /** The files on their way that `gone` picks (by the other app's peer name and id, and the way each goes) end, with why. */
+        private fun dropFiles(reason: String, gone: (String, Direct?) -> Boolean) {
+            for ((key, file) in outgoing.toList()) if (gone(key, file.via)) { outgoing.remove(key); file.transfer.end(LampTransfer.State.Failed(reason)) }
+            for ((key, file) in incoming.toList()) if (gone(key, file.via)) incoming.remove(key)
         }
 
         // MARK: Lamp's room
@@ -1724,6 +1914,7 @@ extension Template {
         private fun relayGone() {
             relayIn = false
             relayPresent.clear()
+            dropFiles("The link was lost.") { _, way -> way == null }
         }
 
         // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages. Anything
@@ -1737,6 +1928,8 @@ extension Template {
             } else if (event.has("data")) {
                 val opener = current.opener
                 val plain = try { opener?.open(java.util.Base64.getDecoder().decode(event.optString("data"))) } catch (e: Exception) { null }
+                // A file's piece, else a message.
+                if (plain != null && plain.isNotEmpty() && plain[0] == 1.toByte()) { withContext(Dispatchers.Main) { piece(plain, null) }; return true }
                 val said = plain?.let { try { JSONObject(String(it, Charsets.UTF_8)) } catch (e: Exception) { null } }
                 if (said != null) { withContext(Dispatchers.Main) { hear(said) }; return true }
             }
@@ -1756,18 +1949,18 @@ extension Template {
             current.opener = Sealer(derive("lamp-wish s2c", key, transcript))
             current.sealer = Sealer(derive("lamp-wish c2s", key, transcript))
             say(current, text = JSONObject().put("t", "proof").put("proof", encode(derive("lamp-wish client", key, transcript))).toString(),
-                sealed = listOf(JSONObject().put("t", "join").put("device", device).put("wire", wire).toString()))
+                sealed = listOf(JSONObject().put("t", "join").put("device", device).put("wire", wire).toString().toByteArray(Charsets.UTF_8)))
             return true
         }
 
         /** Seals each message with the next number this way and posts them, after anything sent before, so they reach the
          *  room in the order they were sealed. */
-        private suspend fun say(current: Link, text: String? = null, sealed: List<String>) {
+        private suspend fun say(current: Link, text: String? = null, sealed: List<ByteArray>) {
             sending.withLock {
                 val frames = mutableListOf<JSONObject>()
                 if (text != null) frames.add(JSONObject().put("text", text))
                 val sealer = current.sealer ?: return
-                for (each in sealed) frames.add(JSONObject().put("data", encode(sealer.seal(each.toByteArray(Charsets.UTF_8)))))
+                for (each in sealed) frames.add(JSONObject().put("data", encode(sealer.seal(each))))
                 post(current, frames)
             }
         }
@@ -1800,6 +1993,7 @@ extension Template {
                 "apps" -> setRoster(jsonList(m.optJSONArray("apps")))
                 "message" -> deliver(m.optString("from"), if (m.isNull("data")) null else m.opt("data"))
                 "values" -> m.optString("from").takeIf(::isName)?.let { heardValues(m, it) }
+                "file", "file-ack", "file-refuse", "file-cancel" -> m.optString("from").takeIf(::isName)?.let { heardFile(m, it, null) }
                 "undelivered" -> {
                     // Said once for each app until the room changes: the code that sent it can't tell otherwise.
                     val to = m.optString("to")
@@ -1825,13 +2019,17 @@ extension Template {
             val port = listenerPort ?: return
             val current = link ?: return
             if (!relayIn || current.sealer == null) return
-            sender.start()
-            outbox.trySend(current to JSONObject().put("t", "at").put("addresses", JSONArray(addresses().map { "$it:$port" })).toString())
+            toRoom(current, JSONObject().put("t", "at").put("addresses", JSONArray(addresses().map { "$it:$port" })).toString())
         }
 
         private fun tick() {
             if (closed) return
             val now = System.currentTimeMillis()
+            for ((key, file) in outgoing.toList()) if (now - file.moved > 20_000) {
+                outgoing.remove(key)
+                fileMessage(JSONObject().put("t", "file-cancel").put("id", file.transfer.id), file.peer, file.via)
+                file.transfer.end(LampTransfer.State.Failed("The file stopped moving."))
+            }
             for (direct in directs.values.toList()) {
                 if (now - direct.heard > 15_000) { drop(direct); continue }
                 direct.send("""{"t":"beat"}""", seal = false)
@@ -1959,6 +2157,7 @@ extension Template {
                     for (frame in direct.out) {
                         val bytes = if (frame.seal) (direct.sealer ?: continue).seal(frame.bytes) else frame.bytes
                         Ws.write(direct.output, if (frame.seal) 2 else frame.opcode, bytes, mask = direct.dialled)
+                        frame.then?.invoke()
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { drop(direct) }
@@ -1967,7 +2166,7 @@ extension Template {
             scope.launch {
                 try {
                     while (true) {
-                        val (opcode, payload) = Ws.read(direct.input, messageLimit + 2048)
+                        val (opcode, payload) = Ws.read(direct.input, fileChunk + 1024)   // a file's piece, sealed
                         direct.heard = System.currentTimeMillis()
                         when (opcode) {
                             1 -> withContext(Dispatchers.Main) { text(String(payload, Charsets.UTF_8), direct) }
@@ -2042,6 +2241,7 @@ extension Template {
 
         private fun binary(sealed: ByteArray, direct: Direct) {
             val plain = direct.opener?.open(sealed) ?: return drop(direct)
+            if (plain.isNotEmpty() && plain[0] == 1.toByte()) return if (direct.ready) piece(plain, direct) else drop(direct)
             val m = try { JSONObject(String(plain, Charsets.UTF_8)) } catch (e: Exception) { return drop(direct) }
             when (m.optString("t")) {
                 "join" -> if (!direct.dialled && !direct.ready) {
@@ -2057,6 +2257,7 @@ extension Template {
                 }
                 "message" -> if (direct.ready && m.has("data")) deliver(direct.peer, if (m.isNull("data")) null else m.opt("data"))
                 "values" -> if (direct.ready) heardValues(m, direct.peer)
+                "file", "file-ack", "file-refuse", "file-cancel" -> if (direct.ready) heardFile(m, direct.peer, direct)
             }
         }
 
@@ -2083,6 +2284,7 @@ extension Template {
         private fun drop(direct: Direct) {
             opening.remove(direct)
             direct.close()
+            dropFiles("The link was lost.") { _, way -> way === direct }
             if (directs[direct.peer] === direct) {
                 directs.remove(direct.peer)
                 rebuild()
@@ -2342,6 +2544,36 @@ extension Template {
             } catch (e: Exception) { null }
         }
     }
+
+    /** A file on its way to another app of the wish (`LampWish.sendFile`): how much of it that app has, and how it ended. */
+    class LampTransfer internal constructor(val id: Int, val name: String, val size: Int) {
+        sealed class State {
+            object Sending : State()
+            object Done : State()
+            data class Failed(val reason: String) : State()
+        }
+        private val sentFlow = kotlinx.coroutines.flow.MutableStateFlow(0)
+        private val stateFlow = kotlinx.coroutines.flow.MutableStateFlow<State>(State.Sending)
+        private val ended = kotlinx.coroutines.CompletableDeferred<String?>()
+        /** How many of its bytes the other app has. */
+        val sent: kotlinx.coroutines.flow.StateFlow<Int> get() = sentFlow
+        val state: kotlinx.coroutines.flow.StateFlow<State> get() = stateFlow
+        val progress: Float get() = if (size == 0) 1f else sentFlow.value.toFloat() / size
+        internal var cancelling: () -> Unit = {}
+        fun cancel() { if (stateFlow.value == State.Sending) cancelling() }
+        /** Waits until the other app has all of it; throws, with why, when it didn't get there. */
+        suspend fun finished() { ended.await()?.let { throw IOException(it) } }
+        internal fun progressed(got: Int) { sentFlow.value = got }
+        internal fun end(result: State) {
+            if (stateFlow.value != State.Sending) return
+            if (result == State.Done) sentFlow.value = size
+            stateFlow.value = result
+            ended.complete((result as? State.Failed)?.reason)
+        }
+    }
+
+    /** A file another app of the wish sent (`LampWish.onFile`). */
+    class LampFile(val name: String, val type: String, val bytes: ByteArray)
 
     /**
      * How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on your
