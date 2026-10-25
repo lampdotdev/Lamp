@@ -241,12 +241,13 @@ struct AppMenu: View {
 
     var body: some View {
         let busy = store.busy.contains(project.id)
-        Button("Open") { store.openPrepared(project) }
+        // The whole wish, as Play and Stop are: each app's own menu in the toolbar is for that app alone.
+        Button("Open") { store.openWish(project) }
         Button("Rebuild & Open") { store.runPrepared(project) }
             .disabled(busy)
-        Button("Quit") { Task { await store.quitApp(project) } }
-            .disabled(!store.isOpen(project))
-        if project.platform.target.places != [.mac] {
+        Button("Quit") { Task { await store.quitWish(project) } }
+            .disabled(!store.isWishOpen(project))
+        if project.holdsApp, project.platform.target.places != [.mac] {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)
@@ -337,6 +338,11 @@ enum AppInfoView {
         }
         sections.append(SidebarInfoSection(title: "Building", rows: building,
                                            buttons: [SidebarInfoButton(title: "Building Settings…", action: "building")]))
+        // Of the app in the wish's own folder: a wish whose apps are all in folders of their own has only its code.
+        guard project.holdsApp else {
+            sections.append(SidebarInfoSection(title: "App", rows: [], buttons: [SidebarInfoButton(title: "Show Source Code in Finder", action: "showSource")]))
+            return sections
+        }
         var app: [SidebarInfoRow] = []
         if let stamp = store.stamps[project.id] { app.append(SidebarInfoRow(label: "Built with", value: stamp.summary)) }
         app.append(SidebarInfoRow(label: "Bundle ID", value: project.bundleID))

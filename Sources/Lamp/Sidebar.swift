@@ -26,7 +26,7 @@ enum Sidebar {
 
     /// Whether this app gets the chat: a Mac app with windows (one that is only its widget has none).
     static func applies(to project: LampProject) -> Bool {
-        project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
+        project.holdsApp && project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
     }
 
     /// Puts the extension into a built app, before it's signed. Its program is the same for every app; what
@@ -359,7 +359,7 @@ final class SidebarServer {
 
     /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window.
     static func besideItsApp(_ project: LampProject, place: WishPlace?) -> Bool {
-        project.destination == .mac && project.hasMac && (place ?? .window) == .window
+        project.holdsApp && project.destination == .mac && project.hasMac && (place ?? .window) == .window
     }
 
     /// Where each chat was being read, the first line in view, or none at its end (`SidebarCommand.scrolled`).
@@ -382,7 +382,8 @@ final class SidebarServer {
             sections.append(TryOnMenu.Section(title: name, items: items, submenu: true))
         }
         guard !sections.isEmpty else { return nil }
-        let symbol = TryOnMenu.make(for: project, store: store)?.symbol ?? "laptopcomputer"
+        let symbol = TryOnMenu.make(for: project, store: store)?.symbol
+            ?? store.parts(of: project).first.flatMap { TryOnMenu.make(for: $0, store: store)?.symbol } ?? "laptopcomputer"
         return SidebarTryOn(sections: sections.map { section in
             SidebarTryOn.Section(title: section.title, items: section.items.map {
                 SidebarTryOn.Item(id: $0.id, title: $0.title, symbol: $0.symbol, checked: $0.checked, disabled: $0.disabled || busy)

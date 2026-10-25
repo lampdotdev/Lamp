@@ -345,6 +345,8 @@ enum AIStatus {
     }
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, offered: Set<SetupOffer>) -> String {
+        // Said of the app in the wish's own folder; a wish whose apps are all in folders of their own has none.
+        guard project.holdsApp else { return "" }
         let now = line(for: project, offered: offered)
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\nAI this app can use right now (from Lamp, not part of the request above):\n\(now)"

@@ -170,8 +170,13 @@ enum Sharing {
         // other apps are read off its folder, as Lamp lists them.
         var wish = project
         wish.partFolders = Parts.folders(in: project.dir)
-        let parts = Parts.load(wish)
-        for app in [project] + parts {
+        let found = Parts.load(wish)
+        // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
+        // be taken away: a wish whose apps are all in folders of their own travels with the first of them at the root,
+        // so any Lamp that opens format 10 opens it whole.
+        let root = wish.holdsApp ? project : (found.first ?? project)
+        let parts = wish.holdsApp ? found : Array(found.dropFirst())
+        for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
         }
         let fm = FileManager.default
@@ -186,7 +191,7 @@ enum Sharing {
         // Every app's own files count against one cap, so shared wishes stay small enough to send and within what
         // another Lamp accepts (`open`).
         var attachedBytes = 0
-        let root = try stageApp(project, into: stage, attachedBytes: &attachedBytes)
+        let first = try stageApp(root, into: stage, attachedBytes: &attachedBytes)
         for part in parts {
             let folder = stage.appendingPathComponent(part.dir.lastPathComponent)
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -211,12 +216,12 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: format(withWidget: root.widget, capabilities: root.capabilities,
-                                                    platform: project.platform, watch: root.watch, share: root.share,
-                                                    scene: root.scene, parts: !parts.isEmpty),
+        try encoder.encode(Manifest(format: format(withWidget: first.widget, capabilities: first.capabilities,
+                                                    platform: root.platform, watch: first.watch, share: first.share,
+                                                    scene: first.scene, parts: !parts.isEmpty),
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
-                                    platform: project.platform, family: project.hasIOS ? project.family : nil,
+                                    platform: root.platform, family: root.hasIOS ? root.family : nil,
                                     parts: parts.isEmpty ? nil : parts.map {
                                         Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
                                     }))

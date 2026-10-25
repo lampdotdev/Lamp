@@ -29,6 +29,8 @@ struct TryOnMenu: Equatable {
     /// Every kind's places but a Mac app's alone, which has only this Mac: a game's or a screen's (`places`), a TV app's,
     /// a device app's, an Android app's, and an Apple app's simulators and phones.
     @MainActor static func make(for project: LampProject, store: Store) -> TryOnMenu? {
+        // A wish whose apps are all in folders of their own opens nowhere itself: each app has its own menu.
+        guard project.holdsApp else { return nil }
         guard project.platform.addsPlaces else { return choices(for: project, store: store) }
         let places = project.openPlaces, verb = project.platform == .screen ? "Show" : "Play"
         var sections: [Section] = []

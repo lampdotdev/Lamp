@@ -28,7 +28,7 @@
         },
         "part": {
           "type": "string",
-          "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Left out, the app at the wish's root."
+          "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Needed then; left out only when the wish has one app."
         },
         "doing": {
           "type": "string",
@@ -141,7 +141,7 @@
         },
         "part": {
           "type": "string",
-          "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Left out, the app at the wish's root."
+          "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Needed then; left out only when the wish has one app."
         },
         "doing": {
           "type": "string",
@@ -370,6 +370,10 @@
           ],
           "type": "string"
         },
+        "part": {
+          "type": "string",
+          "description": "For a wish of more than one app: which one the picture is for, by its device (\"iphone\", \"tv\", \"mac\"); it goes in that app's Assets/. Needed then; left out only when the wish has one app."
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
@@ -422,7 +426,7 @@
   {
     "name": "make_app_for",
     "label": "Change devices",
-    "description": "Changes which devices this wish is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"), or answers which devices a new wish is for. List every device it should run on from now on: {{DEVICES}}. For a game, list the places it's played (\"mac\", \"iphone\" or \"ipad\", \"android\", \"xbox-one\"): it stays the same game. For a screen, a page shown full screen, list \"screen\" and the places it's shown (\"mac\", \"iphone\" or \"ipad\", \"tv\", \"xbox-one\"): it stays the same page. Apple's devices share one code; a TV app and an Android app are each an app of their own, so \"tv\" or \"android\" with other devices makes the wish several apps made to work together (\"tv\" and \"iphone\": a TV app and an iPhone app; \"mac\" and \"android\": a Mac app and an Android app), each in its own folder. Phones that steer a TV app (controllers, a remote, a buzzer) can do it through a page the TV app serves, which any phone opens with nothing to install, or as apps of the wish's own, or both: choose what fits the wish and what this Mac can build. An app the wish already has stays as it is, its code kept (\"tv\" added to a Mac wish keeps the Mac app and adds the TV app beside it); one left out of the list is taken away, except the app the wish began with, which stays. Lamp checks this Mac can build each, writes their build files and keeps the data; the reply says how to adapt the code and gives each new app's rules, which you then follow in the same request. Not for a change the person didn't ask for.",
+    "description": "Changes which devices this wish is made for, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"), or answers which devices a new wish is for. List every device it should run on from now on: {{DEVICES}}. For a game, list the places it's played (\"mac\", \"iphone\" or \"ipad\", \"android\", \"xbox-one\"): it stays the same game. For a screen, a page shown full screen, list \"screen\" and the places it's shown (\"mac\", \"iphone\" or \"ipad\", \"tv\", \"xbox-one\"): it stays the same page. Apple's devices share one code; a TV app and an Android app are each an app of their own, so \"tv\" or \"android\" with other devices makes the wish several apps made to work together (\"tv\" and \"iphone\": a TV app and an iPhone app; \"mac\" and \"android\": a Mac app and an Android app), each in its own folder. Phones that steer a TV app (controllers, a remote, a buzzer) can do it through a page the TV app serves, which any phone opens with nothing to install, or as apps of the wish's own, or both: choose what fits the wish and what this Mac can build. An app the wish already has stays as it is, its code kept (\"tv\" added to a Mac wish keeps the Mac app and adds the TV app beside it); one left out of the list is taken away, whichever it is, the first app included (\"tv\" alone for a Mac wish replaces the Mac app with a TV app), so list what the person keeps and leave out only what they asked to drop. The wish keeps its name, chat and history either way. Lamp checks this Mac can build each, writes their build files and keeps the data; the reply says how to adapt the code and gives each new app's rules, which you then follow in the same request. Not for a change the person didn't ask for.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

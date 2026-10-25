@@ -413,6 +413,8 @@ enum Runtime {
     /// Whether the app needs building: its code or bundled files changed after the current build was made,
     /// or there's no build at all.
     static func sourcesChanged(_ project: LampProject) -> Bool {
+        // A wish whose apps are all in folders of their own has nothing of its own to build.
+        guard project.holdsApp else { return false }
         guard FileManager.default.fileExists(atPath: project.builtURL.path),
               let built = try? String(contentsOf: builtURL(project), encoding: .utf8), !built.isEmpty else { return true }
         return built != fingerprint(project)

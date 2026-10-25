@@ -486,6 +486,8 @@ extension PhoneSetup.Context {
 @MainActor
 extension Store {
     func openPrepared(_ project: LampProject) {
+        // Only the wish, its apps all in folders of their own: each of them opens, with its own setup.
+        guard project.holdsApp else { openWish(project); return }
         PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.open(current) } }
     }
     func choosePreparedDevice(_ project: LampProject, _ phone: String?) {
@@ -503,6 +505,7 @@ extension Store {
     }
 
     func runPrepared(_ project: LampProject) {
+        guard project.holdsApp else { for part in parts(of: project) { runPrepared(part) }; return }
         PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.run(current) } }
     }
 }

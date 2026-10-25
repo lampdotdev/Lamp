@@ -402,6 +402,8 @@ enum DeviceNote {
     }
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
+        // A wish whose apps are all in folders of their own is on no device itself: where each opens is the wish's note.
+        guard project.holdsApp else { return "" }
         let now = line(for: project, store: .shared)
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\nThe device this app is for (from Lamp, not part of the request above): \(now)"

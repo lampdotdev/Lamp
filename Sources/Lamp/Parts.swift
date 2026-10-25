@@ -1,17 +1,19 @@
 import Foundation
 
-/// A wish made of more than one app: a TV app with an iPhone app that controls it, say. No app of a wish leads: one is
-/// at the wish's root, where every wish made so far keeps its first app, and each other part is an app of its own kind
-/// in a folder of the wish's (`iPhone/`, `Mac/`, `TV/`), with its own `.lamp/meta.json`, build files, bundle id and
-/// runtime folder, so it's built, opened, looked at and used exactly as an app of that kind is. The root is one more
-/// place an app lives, not a role: the TV app of a wish is reached the same way from its root or from `TV/`. What a part
+/// A wish made of more than one app: a TV app with an iPhone app that controls it, say. No app of a wish leads, and any
+/// of them can be added, replaced or taken away on the person's word, the wish keeping its name, chat and history. Each
+/// app is in a folder of the wish's (`iPhone/`, `Mac/`, `TV/`), with its own `.lamp/meta.json`, build files, bundle id
+/// and runtime folder, so it's built, opened, looked at and used exactly as an app of that kind is; a wish made before
+/// that keeps its first app in its own folder (`LampProject.holdsApp`) until it's taken away. That folder is one more
+/// place an app lives, not a role: the TV app of a wish is reached the same way from it or from `TV/`. What an app
 /// doesn't have of its own is the wish's: the chat and its turns, the versions (one history for the whole folder), the
-/// icon and the name. Lamp keeps a part in `Store.projects` beside its wish (`LampProject.partOf`), never on the desk.
+/// icon and the name. Lamp keeps an app in a folder of its own in `Store.projects` beside its wish
+/// (`LampProject.partOf`), never on the desk.
 ///
-/// What the agent knows follows the parts: the wish's prompt is the kind's of the app at its root, with one rule naming
-/// the other parts, and each other part's rules are a skill of their own (`target-iphone`, …, `Parts.packs`), named
-/// with the request once the wish has that part (`Skills.applying`), so a conversation reads a kind's rules only when
-/// its wish has one.
+/// What the agent knows follows the apps: a wish whose own folder holds an app has that kind's prompt, with one rule
+/// naming the others; a wish whose apps are all in folders has the wish's prompt (`Agent.wishPrompt`). Each kind's rules
+/// for an app in a folder are a skill of their own (`target-iphone`, …, `Parts.packs`), named with the request once the
+/// wish has that app (`Skills.applying`), so a conversation reads a kind's rules only when its wish has one.
 /// One of the apps a wish should have (`LampProject.apps`, kept in the wish's own meta.json beside what its folder
 /// holds): its kind and, while it isn't made yet, what stops it ("this Mac can't build the iPhone app yet…"), so a quit
 /// or a failure between asking for an app and making it loses neither.
@@ -90,7 +92,7 @@ enum Parts {
 
     /// The kinds a wish for these devices is made of, in Lamp's order: the devices of one part family are one kind between
     /// them (Apple's: `Platform(devices:)`); a TV app and an Android app are each a kind of their own. No kind leads:
-    /// which of them is at the wish's root is the wish's own affair (`root`), never the list's. A device with an
+    /// what a wish does with the list is `plan`. A device with an
     /// integration that declares its apps still stands alone (`Target.Words.alone`). Nil for a list Lamp can't make.
     static func kinds(for devices: Set<String>) -> [Platform]? {
         if let one = Platform(devices: devices) { return [one] }
@@ -106,18 +108,38 @@ enum Parts {
         return all
     }
 
-    /// The kind the app at a wish's root is once the wish is for these kinds: the one of its own family (an iPhone app
-    /// that's to be for the Mac too is changed in place, keeping its code), or, while nothing is written for it yet (a
-    /// wish still to be told what it's for), the first in Lamp's order, where `Store.rootKind` prefers one this Mac
-    /// can build now. Nil when the list leaves its family out and its code is written: no app is ever written over
-    /// again as another kind, and a wish keeps the app it began with, so "tv" added to a Mac wish keeps the Mac app
-    /// and adds the TV app beside it.
-    static func root(among kinds: [Platform], for wish: LampProject) -> Platform? {
-        kinds.first { group($0) == group(wish.platform) } ?? (wish.scaffolded ? nil : kinds.first)
+    /// What `make_app_for` does to a wish's apps (`apps`, as `Store.apps(of:)` has them) for the kinds listed: every app
+    /// is treated alike, the one in the wish's own folder as much as any other. An app whose family is listed stays, its
+    /// code kept, and is changed in place when listed as another kind of that family (an iPhone app that's to be for the
+    /// Mac too); a family listed that the wish has no app of is added, in its own folder; an app whose family is left out
+    /// is taken away. So "tv" added to a Mac wish keeps the Mac app and adds the TV app beside it, and "tv" alone for it
+    /// replaces the Mac app with the TV app: the wish, its chat and its history stay.
+    struct Plan: Equatable {
+        /// Apps that stay, by id, each with the kind it's to be (its own, or another of its family).
+        var keep: [String: Platform] = [:]
+        var add: [Platform] = []
+        var remove: [String] = []
     }
 
-    /// The kinds beside the one at the root: every other family's.
-    static func others(among kinds: [Platform], root: Platform) -> [Platform] { kinds.filter { group($0) != group(root) } }
+    /// Of the apps a plan takes away (`remove`, in order), those that stay for now: none while another app survives
+    /// the request (`survivors`: those kept and those just added), else the first, so a wish always has an app.
+    static func staying(of remove: [String], survivors: Int) -> [String] {
+        survivors > 0 ? [] : Array(remove.prefix(1))
+    }
+
+    /// Whether `make_app_for`'s answer for an app that stays says nothing the agent needs: its kind was already right,
+    /// with no more to do. One that goes on to say what to do about a watch app (`Store.changeKind`) says something.
+    static func saysNothingNew(_ text: String) -> Bool { text.hasPrefix("It's already made for") && !text.contains("\n\n") }
+
+    static func plan(_ kinds: [Platform], for apps: [LampProject]) -> Plan {
+        var plan = Plan()
+        for app in apps {
+            if let wanted = kinds.first(where: { group($0) == group(app.platform) }) { plan.keep[app.id] = wanted }
+            else { plan.remove.append(app.id) }
+        }
+        plan.add = kinds.filter { kind in !apps.contains { group($0.platform) == group(kind) } }
+        return plan
+    }
 
     /// What a wish has one of: a part family, or for a kind that's no part the kind itself.
     static func group(_ kind: Platform) -> String { kind.target.part?.family ?? kind.rawValue }
@@ -138,26 +160,31 @@ enum Parts {
     // MARK: The apps a wish should have
 
     /// The apps a wish should have (`LampProject.apps`), as they are: the list its meta.json keeps, with what's made
-    /// (the app at its root, each part found in its folder) taken as made whatever the list said, and listed when the
+    /// (the app in its own folder, each other found in its folder: `made`) taken as made whatever the list said, and listed when the
     /// list left it out (a wish from before wishes kept the list). An app made as another kind of the same family (the
     /// iPhone app that became one for both) counts as made.
     static func wanted(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
         var apps = wish.apps
-        for made in [wish.platform] + parts.map(\.platform) {
+        for made in made(in: wish, parts: parts) {
             if let index = apps.firstIndex(where: { group($0.kind) == group(made) }) { apps[index] = WishApp(kind: made) }
             else { apps.append(WishApp(kind: made)) }
         }
         return apps
     }
 
+    /// The kinds a wish has made: the app in its own folder while it holds one, and each other found in its folder.
+    static func made(in wish: LampProject, parts: [LampProject]) -> [Platform] {
+        (wish.holdsApp ? [wish.platform] : []) + parts.map(\.platform)
+    }
+
     /// The apps a wish should have and doesn't yet: each with what stops it (`needs`), or nothing when it's only not
     /// made yet (its turn hasn't started, or what stopped it was cleared for another try).
     static func waiting(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
-        let made = Set(([wish.platform] + parts.map(\.platform)).map(group))
+        let made = Set(made(in: wish, parts: parts).map(group))
         return wish.apps.filter { !made.contains(group($0.kind)) }
     }
 
-    /// The list once a part of this kind is made: every app the wish has, the one at its root included (a wish from
+    /// The list once a part of this kind is made: every app the wish has, the one in its own folder included (a wish from
     /// before the list has none written), with this one in place of any of its family.
     static func listing(_ kind: Platform, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
         setting(WishApp(kind: kind), in: wanted(in: wish, parts: parts))
@@ -201,7 +228,7 @@ enum Parts {
         for kind in partKinds {
             let skill = skill(for: kind)
             let folder = parts.first { $0.platform == kind }?.dir.lastPathComponent ?? folder(for: kind)
-            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish that has one beside the app at its root, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
+            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
                                         body: pack(for: kind, in: folder))
         }
         return skills
@@ -209,22 +236,26 @@ enum Parts {
 
     static func pack(for kind: Platform, in folder: String? = nil) -> String { kind.target.part?.rules(folder ?? self.folder(for: kind)) ?? "" }
 
-    /// The rule the wish's own prompt gets when it has other parts: what they are, where, how to reach each with the
-    /// tools, and to open each one's rules before changing it.
+    /// The rule the wish's prompt gets when it's more than one app: what each is, where, how to reach each with the tools,
+    /// and to open the rules of each in a folder of its own before changing it. The app in the wish's own folder, while
+    /// it holds one (`LampProject.holdsApp`), is the one the prompt's own rules are for.
     static func rule(for wish: LampProject, parts: [LampProject]) -> String {
         // A wish that asks for apps it doesn't have yet is told how they'll share data from its first request, since its
         // first app is written to talk to them (`Template.talksToOtherApps`).
-        guard !parts.isEmpty else { return Template.talksToOtherApps(wish) ? Agent.Rules.wishTalk : "" }
-        let listed = parts.map { "\(name(of: $0.platform)) in \($0.dir.lastPathComponent)/ (part \"\(word(for: $0.platform))\", its rules in the \(skill(for: $0.platform)) skill)" }
+        let apps = (wish.holdsApp ? [wish] : []) + parts
+        guard apps.count > 1 else { return Template.talksToOtherApps(wish) ? Agent.Rules.wishTalk : "" }
+        let listed = apps.map { app in
+            app.isPart ? "\(name(of: app.platform)) in \(app.dir.lastPathComponent)/ (part \"\(word(for: app.platform))\", its rules in the \(skill(for: app.platform)) skill)"
+                : "\(name(of: app.platform)) in the wish's own folder (part \"\(word(for: app.platform))\", the rules above)"
+        }
         return """
 
-        - This wish is more than one app: \(name(of: wish.platform)), at the root as the rules above describe, and \
-        \(listed.joined(separator: ", and ")). Each is an app of its own kind with its own build files, made to work \
-        with the others, and each is the person's: build them together. Before you write or change one of them, open \
-        its rules with `read_skill` (once per conversation) and follow them for the files in its folder; the rules \
-        above are for the app at the root. `look_at_app` and `use_app` reach another part with `part` (left out, \
-        they're for the app at the root): look at each part you changed before finishing.
-        """ + Agent.Rules.wishTalk + Targets.all.filter { kind in ([wish] + parts).contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
+        - This wish is \(apps.count) apps: \(listed.joined(separator: ", and ")). Each is an app of its own kind with its own \
+        build files, made to work with the others, and each is the person's: none comes first, and any of them can be \
+        added, replaced or taken away when the person asks (`make_app_for`). Before you write or change one in a folder of \
+        its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
+        `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing.
+        """ + Agent.Rules.wishTalk + Targets.all.filter { kind in apps.contains { $0.platform == kind.platform } }.compactMap(\.part?.wishRule).joined()
     }
 }
 
@@ -234,7 +265,7 @@ extension Agent.Rules {
         """
         These are the rules for the part of the wish in \(folder)/: \(kind). Everything they say about "the app" is \
         about that part, and every path in them is inside \(folder)/ (its Sources/, its APP.md, its .lamp/runtime/). \
-        Lamp writes its build files as it does at the root. The rules you were given first still hold for the wish as a \
+        Lamp writes its build files as it does for every app. The rules you were given first still hold for the wish as a \
         whole: how to ask, talk, use the shell and finish.
         """
     }

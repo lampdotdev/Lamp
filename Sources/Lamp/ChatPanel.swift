@@ -276,7 +276,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == id }) else { return nil }
         // The wish's own app, or one of its others (the TV app beside an iPhone app) that's open now.
-        for app in [project] + store.parts(of: project) {
+        for app in store.apps(of: project) {
             if let preview = TVPreview.window(app), preview.isVisible, !preview.isMiniaturized { return .lamp(preview) }
             // The simulator it was last open in, while that device's window is still up: a quit app's chat stays
             // beside the simulator, where Play opens it again.
