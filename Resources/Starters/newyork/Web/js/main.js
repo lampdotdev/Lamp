@@ -20,6 +20,7 @@ import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem } from './lighting.js';
 import { NYCMapSystem } from './nyc-map.js';
 import { setupSceneCulling, updateSceneCulling } from './scene-culling.js';
+import { loadTerrain, setOnTerrain, groundHeight } from './terrain.js';
 import { CityAudioSystem } from './audio-system.js';
 
 // js/main.js
@@ -85,6 +86,10 @@ async function initApp() {
     loadingStatus.textContent = 'Constructing Manhattan Grid, Landmarks & Streetscape...';
   }
 
+  // Lamp: the ground's real heights, which everything below is set on (terrain.js)
+  await loadTerrain();
+  markInit('terrain');
+
   // 3. Build Manhattan Geography, Iconic Landmarks, Blocks, Street Details & Traffic
   const cityGrid = buildCityGrid(scene);
   markInit('cityGrid');
@@ -100,16 +105,26 @@ async function initApp() {
   markInit('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
-  // Elevated building sections that clear even a bus don't obstruct ground traffic.
+  // Elevated building sections that clear even a bus don't obstruct ground traffic (Lamp: measured from the ground
+  // under them, as colliders' heights are the world's since the city stands on terrain.js's heights).
   const trafficSystem = createTrafficSystem(scene, cityGrid.sidewalks, [
     ...cityGrid.footprints,
     ...streetDetails.footprints,
-    ...allColliders.filter((c) => !c.obb && (c.minY ?? 0) < 3.5)
+    ...allColliders.filter((c) => !c.obb
+      && (c.minY ?? 0) - groundHeight((c.minX + c.maxX) * 0.5, (c.minZ + c.maxZ) * 0.5) < 3.5)
   ]);
   markInit('traffic');
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
-  buildRoadPaint(scene, trafficSystem.network);
+  const roadMarkings = buildRoadPaint(scene, trafficSystem.network);
   markInit('roadPaint');
+
+  // Lamp: the street level built flat at y = 0, set on the ground: buildings, landmarks and trees were placed on it as
+  // they were built
+  setOnTerrain(scene.getObjectByName('ManhattanCityGrid'));
+  setOnTerrain(scene.getObjectByName('ManhattanStreetDetails'));
+  setOnTerrain(roadMarkings, 0); // vertex by vertex: its strips come cut to length (road-paint.js)
+  setOnTerrain(scene.getObjectByName('BlockYards'));
+  markInit('ground');
 
   // 4. Initialize Third-Person Controllers (Person, Car, Cyclist, Helicopter) & Multi-Camera System
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
@@ -771,7 +786,8 @@ async function initApp() {
       const activeEnt = controllerManager.getActiveEntity();
       const mode = controllerManager.activeMode;
       const mph = Math.round(Math.abs(activeEnt.speed) * 2.237);
-      const altFt = Math.max(0, Math.round(activeEnt.position.y * 3.281));
+      // Lamp: height above the ground below (terrain.js)
+      const altFt = Math.max(0, Math.round((activeEnt.position.y - groundHeight(activeEnt.position.x, activeEnt.position.z)) * 3.281));
 
       if (elFps) {
         elFps.textContent = String(currentFps);

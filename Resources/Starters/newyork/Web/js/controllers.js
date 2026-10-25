@@ -22,6 +22,7 @@ import {
 import { PersonCrowd, PersonRig } from './pedestrians.js';
 import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
 import { bryantParkLawn } from './landmarks.js';
+import { groundHeight, groundTilt } from './terrain.js';
 
 // js/controllers.js
 // Sculpted, non-blocky GTA 6-style 3D models, animations, and physics controllers
@@ -221,6 +222,13 @@ class ThirdPersonControllerManager {
       }
     });
 
+    // Lamp: whatever stands on the ground starts on it (terrain.js), not only the vehicle in use, which updates its own
+    for (const key of ['person', 'car', 'cyclist']) {
+      const e = this.entities[key];
+      e.position.y = this.getGroundHeight(e.position.x, e.position.z, key);
+      e.mesh.position.copy(e.position);
+    }
+
     this.bindKeyboard();
   }
 
@@ -329,7 +337,7 @@ class ThirdPersonControllerManager {
     this.resetInput();
     if (!Number.isFinite(heading)) heading = ent.heading;
     const heli = this.activeMode === 'helicopter';
-    const altitude = heli ? Math.max(0.25, Math.min(380, savedAltitude ?? Math.max(92, ent.position.y))) : 0;
+    const altitude = heli ? Math.max(groundHeight(x, z) + 0.25, Math.min(380, savedAltitude ?? Math.max(92, ent.position.y))) : 0;
     const destination = this.findTeleportPosition(x, z, heading, altitude);
     if (destination) {
       ent.position.x = destination.x;
@@ -832,20 +840,22 @@ class ThirdPersonControllerManager {
   }
 
   getGroundHeight(x, z, mode = 'person') {
+    // Lamp: the ground's own height there (terrain.js), with what's laid on it
+    const ground = groundHeight(x, z);
     // Inside Central Park (5th Ave to Central Park West, 59th St to 110th St)
     const cp = CENTRAL_PARK_BOUNDS;
     if (x > cp.minX && x < cp.maxX && z > cp.minZ && z < cp.maxZ) {
-      return 1.24;
+      return ground + 1.24;
     }
-    // Inside Bryant Park's Great Lawn (west of the New York Public Library, 40th-42nd St)
+    // Inside Bryant Park's Great Lawn (west of the New York Public Library, 40th-42nd St), which stands level
     const lawn = bryantParkLawn;
     if (lawn && x > lawn.minX && x < lawn.maxX && z > lawn.minZ && z < lawn.maxZ) {
       return lawn.top;
     }
     if (mode === 'person') {
-      return this.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0;
+      return ground + (this.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0);
     }
-    return 0.0;
+    return ground;
   }
 
   // The colliders whose bounds come within `r` of (x, z), in their original order. They never move, so they are
@@ -1011,6 +1021,7 @@ class ThirdPersonControllerManager {
       p.position.z += Math.cos(p.heading) * walkSpeed * dt;
       if (p.position.z < -340) p.heading = 0;
       else if (p.position.z > 340) p.heading = Math.PI;
+      p.position.y = this.getGroundHeight(p.position.x, p.position.z, 'person');
     }
 
     if (this.activeMode === 'car') {
@@ -1024,7 +1035,13 @@ class ThirdPersonControllerManager {
     for (const key of Object.keys(this.entities)) {
       const e = this.entities[key];
       e.mesh.position.copy(e.position);
-      e.mesh.rotation.y = e.heading;
+      // Lamp: a car or bike tilts with the slope under its wheels (terrain.js); yaw first, then pitch and roll
+      if (e.type === 'car' || e.type === 'cyclist') {
+        const [pitch, roll] = groundTilt(e.position.x, e.position.z, e.heading, e.type === 'car' ? 4.2 : 1.6, e.type === 'car' ? 1.8 : 0.4);
+        e.mesh.rotation.set(-pitch, e.heading, e.type === 'car' ? -roll : 0, 'YXZ');
+      } else {
+        e.mesh.rotation.y = e.heading;
+      }
     }
 
     // Modulate clustered vehicle & bike lights by time of day (off during Midday & Golden Hour; fade in at Dusk & Night)
@@ -1065,14 +1082,19 @@ class ThirdPersonControllerManager {
     this.resolveHorizontalCollision(p.position, 0.48);
 
     const groundY = this.getGroundHeight(p.position.x, p.position.z, 'person');
-    if (this.keys.up && p.position.y <= groundY + 0.02) {
+    const grounded = p.grounded ?? true;
+    if (this.keys.up && grounded) {
       p.verticalVel = 5.2;
     }
     p.verticalVel -= 14.5 * dt;
     p.position.y += p.verticalVel * dt;
-    if (p.position.y < groundY) {
+    // Lamp: walking downhill, or off a curb, keeps the feet on the ground rather than stepping into the air
+    if (p.position.y < groundY || (grounded && p.verticalVel <= 0 && p.position.y - groundY < 0.4)) {
       p.position.y = groundY;
       p.verticalVel = 0;
+      p.grounded = true;
+    } else {
+      p.grounded = false;
     }
   }
 
@@ -1221,10 +1243,12 @@ class ThirdPersonControllerManager {
     h.position.z += Math.cos(h.heading) * h.speed * dt;
     h.position.y += h.verticalSpeed * dt;
 
-    if (h.position.y < 0.25) {
-      this.reportCollision(h, groundCollider, 'ground', h.position.x, 0.25, h.position.z, 0, 1, 0, -h.verticalSpeed);
+    // Lamp: the skids rest on the ground wherever it is
+    const floor = groundHeight(h.position.x, h.position.z) + 0.25;
+    if (h.position.y < floor) {
+      this.reportCollision(h, groundCollider, 'ground', h.position.x, floor, h.position.z, 0, 1, 0, -h.verticalSpeed);
     }
-    h.position.y = Math.max(0.25, Math.min(380, h.position.y));
+    h.position.y = Math.max(floor, Math.min(380, h.position.y));
     this.resolveHorizontalCollision(h.position, 4.5, null, h);
 
     const targetPitch = (h.speed / maxHorizSpeed) * 0.24;

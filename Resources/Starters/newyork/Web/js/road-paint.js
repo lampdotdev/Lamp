@@ -10,7 +10,8 @@ import { createRoadPaintMaterial } from './tsl-materials.js';
 const WHITE = new THREE.Color(0xe6e2d6);
 const YELLOW = new THREE.Color(0xe8ad22);
 const GREEN = new THREE.Color(0x2a8a4e);
-const HEIGHT = 0.012; // above the asphalt
+const STEP = 6; // Lamp: metres between a strip's vertices along it, so it follows the ground
+const HEIGHT = 0.04; // above the asphalt (Lamp: clear of it where the two follow the ground by different cuts, terrain.js)
 
 function buildRoadPaint(scene, network) {
   const position = [];
@@ -27,15 +28,25 @@ function buildRoadPaint(scene, network) {
     if (len < 0.05) return;
     const sx = ((az - bz) / len) * w * 0.5;
     const sz = ((bx - ax) / len) * w * 0.5;
-    const i = position.length / 3;
     const end = phase + len * flow;
-    for (const [x, z, s, u] of [[ax, az, -1, phase], [ax, az, 1, phase], [bx, bz, 1, end], [bx, bz, -1, end]]) {
-      position.push(x + sx * s, HEIGHT, z + sz * s);
-      side.push(sx * s, sz * s);
-      paint.push(u, period, duty);
-      colors.push(col.r, col.g, col.b);
+    // Lamp: in lengths of at most STEP, so the strip can follow the ground (terrain.js lays each vertex on it and
+    // doesn't cut the strip itself: a cut would average its two sides' `side` vectors to nothing)
+    const pieces = Math.max(1, Math.ceil(len / STEP));
+    const first = position.length / 3;
+    for (let k = 0; k <= pieces; k++) {
+      const t = k / pieces;
+      const x = ax + (bx - ax) * t, z = az + (bz - az) * t, u = phase + (end - phase) * t;
+      for (const s of [-1, 1]) {
+        position.push(x + sx * s, HEIGHT, z + sz * s);
+        side.push(sx * s, sz * s);
+        paint.push(u, period, duty);
+        colors.push(col.r, col.g, col.b);
+      }
     }
-    index.push(i, i + 1, i + 2, i, i + 2, i + 3);
+    for (let k = 0; k < pieces; k++) {
+      const i = first + k * 2;
+      index.push(i, i + 1, i + 3, i, i + 3, i + 2);
+    }
   }
 
   // Edges run between stop lines; s is measured from the start one and o to the right of the centre line

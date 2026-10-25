@@ -1494,6 +1494,7 @@ function buildCityGrid(scene) {
   harborWaterGeo.rotateX(-Math.PI / 2);
   const harborWaterMesh = new THREE.Mesh(harborWaterGeo, waterMat);
   harborWaterMesh.position.set(0, ISLAND_BOUNDS.waterLevel, -50);
+  harborWaterMesh.userData.terrain = 'set'; // the harbour stays at sea level wherever the land rises
   group.add(harborWaterMesh);
 
   // =========================================================================
@@ -1516,11 +1517,14 @@ function buildCityGrid(scene) {
     z: p.z + (p.z > 1350 ? 6 : (p.z < -1550 ? -6 : 0))
   }));
   const seawallMesh = createExtrudedPolygonMesh(seawallPolygon, -2.35, 2.31, seawallMat, true, false);
+  // Lamp: the seawall's top only shows at the water, where the ground is level (terrain.js); inland it stays under the street
+  seawallMesh.userData.terrain = 'set';
   group.add(seawallMesh);
 
   // Unified Manhattan Roadway Asphalt Deck (Y = 0.0) following true Manhattan coastline
   const roadMat = createRoadSurfaceMaterial();
   const roadMesh = createFlatPolygonMesh(MANHATTAN_COASTLINE, 0.0, roadMat, true);
+  roadMesh.userData.terrainTolerance = 0.03; // Lamp: close enough to the ground that the road markings stay on it
   group.add(roadMesh);
 
   // =========================================================================
@@ -1589,6 +1593,9 @@ function buildCityGrid(scene) {
   swInstanced.receiveShadow = true;
   curbInstanced.receiveShadow = true;
   curbInstanced.castShadow = true;
+  // One slab per block, too big to stand level on a hill: setOnTerrain makes them follow the ground
+  swInstanced.userData.terrain = 'drape';
+  curbInstanced.userData.terrain = 'drape';
 
   rectSlabs.forEach((blk, i) => {
     dummy.rotation.set(0, 0, 0);

@@ -27,6 +27,7 @@ import {
   getLocationLabel,
   isTypingInField
 } from './city-config.js';
+import { groundHeight } from './terrain.js';
 
 // js/nyc-map.js
 // GTA 6-Style Live Radar Minimap + Full-Screen Interactive New York City Cartographic Atlas.
@@ -979,7 +980,7 @@ class NYCMapSystem {
     const px = ent.position.x;
     const pz = ent.position.z;
     // Ground-level radar shows ~800 m of the city; it zooms out as the camera climbs (helicopter)
-    const target = Math.max(0.05, RADAR_SCALE / (1 + Math.max(0, ent.position.y - 25) / 180));
+    const target = Math.max(0.05, RADAR_SCALE / (1 + Math.max(0, ent.position.y - groundHeight(ent.position.x, ent.position.z) - 25) / 180));
     this.miniScale += (target - this.miniScale) * 0.08;
     const scale = this.miniScale;
 
