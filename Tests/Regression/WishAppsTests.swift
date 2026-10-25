@@ -81,6 +81,8 @@ final class WishGameAppsTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         var game = LampProject(id: Parts.id(wish: wish.id, folder: "Game"), name: "Party", exe: "Party", dir: dir, platform: .game, partOf: wish.id)
         game.places = [.mac, .ios]
+        // Made beside the Mac app, it was given a name of its own to be installed under.
+        game.installName = "Party Game"
         try Template.saveMeta(game)
         try "A game made with Lamp.\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
         let read = try XCTUnwrap(Store.readWish(at: wish.dir))
@@ -91,6 +93,12 @@ final class WishGameAppsTests: XCTestCase {
         // Both have a Mac copy, so they can't both be installed under the wish's name: each would replace the other.
         XCTAssertEqual(read.installedURL.lastPathComponent, "Party.app")
         XCTAssertEqual(parts.first?.installedURL.lastPathComponent, "Party Game.app")
+        // The Mac app taken away, the game is where it was installed: its install name is its own, not the wish's
+        // apps' order of the moment, so nothing installed is left behind under an old name.
+        for name in ["Sources", "Package.swift", "build.sh", "APP.md"] { try? FileManager.default.removeItem(at: wish.dir.appendingPathComponent(name)) }
+        let alone = try XCTUnwrap(Store.readWish(at: wish.dir))
+        XCTAssertFalse(alone.holdsApp)
+        XCTAssertEqual(Parts.load(alone).first?.installedURL.lastPathComponent, "Party Game.app")
     }
 }
 

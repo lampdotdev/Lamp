@@ -54,7 +54,8 @@ enum Template {
                                              undecided: project.undecided,
                                              apps: project.apps.isEmpty ? nil : project.apps,
                                              waitsForDevice: project.waitsForDevice ? true : nil,
-                                             decided: project.decided ? true : nil)),
+                                             decided: project.decided ? true : nil,
+                                             installName: project.isPart ? project.installName : nil)),
                             to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 

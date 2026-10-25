@@ -79,9 +79,6 @@ enum Parts {
     /// part whose file is gone (its folder brought back by a restore, which keeps no `.lamp`) is still the part.
     static func load(_ wish: LampProject) -> [LampProject] {
         guard !wish.isPart else { return [] }
-        // A wish's apps are installed under its name, and only one can be: the app in its own folder first, then the
-        // first in Lamp's order. Each other with a Mac copy (a game beside a Mac app) has its kind's name after it.
-        var nameTaken = wish.holdsApp && wish.hasMac
         return wish.partFolders.compactMap { folder -> LampProject? in
             let dir = wish.dir.appendingPathComponent(folder)
             guard let kind = kindOfScaffold(in: dir, wish: wish.dir), partKinds.contains(kind) else { return nil }
@@ -98,10 +95,8 @@ enum Parts {
                 part.engine = meta?.engine
                 part.integration = GameKit.integration(for: part)
             }
-            if part.hasMac {
-                if nameTaken, let menu = kind.target.part?.menu.name { part.installName = wish.name + " " + menu }
-                nameTaken = true
-            }
+            // Where it's installed when that isn't under the wish's name, as it was given when it was made.
+            part.installName = meta?.installName
             return part
         }
     }

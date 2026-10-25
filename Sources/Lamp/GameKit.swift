@@ -53,8 +53,8 @@ enum GameKit {
 
     // MARK: Where it's played
 
-    /// The words a game's places are given by, in the naming call's answer and `make_app_for`'s list: "game" itself,
-    /// and the devices it's played on.
+    /// The words a game's or a screen's places are given by, in the naming call's `places` and `make_app_for`'s (the
+    /// kind's own word, "game" or "screen", is in their `devices`), and the place each is.
     static let placeWords: [String: Destination?] = ["game": nil, "screen": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
                                                      "android": .android, "tv": .tv, xbox: .device, xboxKind: .device, "xbox": .device]
 
@@ -622,7 +622,6 @@ extension Agent {
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps]
         return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
-            .replacingOccurrences(of: #"(["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…)"#, with: #"(["game", "iphone"], with the wish's other apps)"#)
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
@@ -671,8 +670,8 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
     it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
-    make_app_for with every place it's to be played (["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…); it \
-    stays the same game.
+    make_app_for with "game" and every other app the wish keeps in `devices`, and every place it's to be played \
+    beside the Mac in `places` (["iphone"], ["android"], ["xbox-one"]…); it stays the same game.
     """
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

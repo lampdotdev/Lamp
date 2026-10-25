@@ -15,9 +15,11 @@ again) is only the wish: it's no draft (`scaffolded`), and nothing builds, insta
 files for it (`Template.writeOwnedFiles`, `fill`, `writeSupport`, `Runtime.sourcesChanged`, `buildNow`, `installNow`,
 `run`), so nothing puts an app back in its folder. Quitting it (`quit`) finds only a copy of the app it held by that
 app's own id (`macCopies`, never by the install place its name shares with a Mac app of the wish), so a restore past
-that app quits it as any app is quit. A wish's apps are installed under its name; when two of them have a Mac copy (a
-game beside a Mac app), the app in its own folder, else the first in Lamp's order, has that name and each other has its
-kind's after it (`LampProject.installName`, set by `Parts.load`); Play, Open and Use open its apps (`openWish`),
+that app quits it as any app is quit. A wish's apps are installed under its name; an app with a Mac copy made while another
+of the wish already had that name (a game beside a Mac app) is installed under a name of its own, the wish's with its
+kind's after it, free among every wish's names and every app's own (`Store.installName`, `uniqueName`), and kept in its
+meta.json (`LampProject.installName`), so it stays where it's installed as the wish's other apps come and go. A rename
+moves every app's installed copy, and gives one with a name of its own the new name (`Store.giveName`); Play, Open and Use open its apps (`openWish`),
 the desk captions it with where they are (`WishPlace.of`), and `Store.everyApp` is every app without it. Moving existing
 first apps into folders of their own, and a shared file's layout for such a wish, are a later change: until then a file
 carries its first app in the file's root (`Sharing.export`), and opening it makes a new wish rather than an update. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
