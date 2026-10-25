@@ -239,10 +239,13 @@ public struct SidebarTryOn: Codable, Equatable {
     public struct Section: Codable, Equatable {
         public var title: String?
         public var items: [Item]
+        /// Drawn as a submenu under its title.
+        public var submenu: Bool?
 
-        public init(title: String?, items: [Item]) {
+        public init(title: String?, items: [Item], submenu: Bool? = nil) {
             self.title = title
             self.items = items
+            self.submenu = submenu
         }
     }
 

@@ -112,8 +112,10 @@ struct ChatBar: View {
         if let tryOn = state.tryOn {
             Menu {
                 ForEach(Array(tryOn.sections.enumerated()), id: \.offset) { index, section in
-                    if index > 0 { Divider() }
-                    if let title = section.title {
+                    if index > 0, section.submenu != true { Divider() }
+                    if let title = section.title, section.submenu == true {
+                        Menu(title) { tryOnItems(section) }
+                    } else if let title = section.title {
                         Section(title) { tryOnItems(section) }
                     } else {
                         tryOnItems(section)

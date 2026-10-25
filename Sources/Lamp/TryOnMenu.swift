@@ -6,7 +6,7 @@ import AppKit
 /// two never offer different things. A choice is named by its `id` and done by `Store.tryOn(_:_:)`.
 struct TryOnMenu: Equatable {
     struct Item: Equatable, Identifiable {
-        /// What choosing it does, for `Store.tryOn`: "mac", "family:ipad", "phone:<udid>", "pair:<udid>", "emulator",
+        /// What choosing it does, for `Store.tryOn`: "mac", "family:ipad", "simulator:<udid>", "phone:<udid>", "pair:<udid>", "emulator",
         /// "android:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", or "settings" and "look".
         let id: String
         let title: String
@@ -18,6 +18,8 @@ struct TryOnMenu: Equatable {
     struct Section: Equatable {
         let title: String?
         let items: [Item]
+        /// Drawn as a submenu under its title (Choose Simulator's models), not inline.
+        var submenu = false
     }
 
     let sections: [Section]
@@ -34,10 +36,18 @@ struct TryOnMenu: Equatable {
         }
         if places.contains(.ios) {
             let simulator = project.onIOS && project.device == nil
+            // Lamp's pick of the family, unless one simulator was chosen by name.
+            let byFamily = simulator && project.simulator == nil
             sections.append(Section(title: "Simulator", items: [
-                Item(id: "family:iphone", title: "iPhone", symbol: "iphone", checked: simulator && project.family == .iphone),
-                Item(id: "family:ipad", title: "iPad", symbol: "ipad", checked: simulator && project.family == .ipad),
+                Item(id: "family:iphone", title: "iPhone", symbol: "iphone", checked: byFamily && project.family == .iphone),
+                Item(id: "family:ipad", title: "iPad", symbol: "ipad", checked: byFamily && project.family == .ipad),
             ]))
+            // A particular model, for what only some have (a Dynamic Island, an iPad's size).
+            let models = store.simulators.filter { Store.opens(project, on: $0.family) }.map { choice in
+                Item(id: "simulator:\(choice.udid)", title: choice.label, symbol: choice.family.symbol,
+                     checked: simulator && project.simulator == choice.udid)
+            }
+            if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
                 Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))", symbol: device.kind.symbol,
@@ -94,6 +104,7 @@ extension Store {
         switch what {
         case "mac": setMac(project)
         case "family": if let family = DeviceFamily(rawValue: value) { setSimulator(project, family) }
+        case "simulator": if let choice = simulators.first(where: { $0.udid == value }) { setSimulator(project, choice) }
         case "phone": choosePreparedDevice(project, value)
         case "pair": if let device = devices.first(where: { $0.udid == value }) { pairDevice(device, for: project) }
         case "emulator": setAndroidDevice(project, nil)

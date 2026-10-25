@@ -287,7 +287,7 @@ final class SidebarServer {
             SidebarTryOn(sections: menu.sections.map { section in
                 SidebarTryOn.Section(title: section.title, items: section.items.map {
                     SidebarTryOn.Item(id: $0.id, title: $0.title, symbol: $0.symbol, checked: $0.checked, disabled: $0.disabled)
-                })
+                }, submenu: section.submenu ? true : nil)
             }, symbol: menu.symbol, current: menu.sections.flatMap(\.items).first(where: \.checked)?.title)
         }
         state.panel = panels[project.id]

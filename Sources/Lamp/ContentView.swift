@@ -1846,8 +1846,10 @@ private struct TryOnChoices: View {
     @ViewBuilder private var gameChoices: some View {
         if let menu = TryOnMenu.make(for: project, store: store) {
             ForEach(Array(menu.sections.enumerated()), id: \.offset) { index, section in
-                if index > 0 { Divider() }
-                if let title = section.title {
+                if index > 0, !section.submenu { Divider() }
+                if let title = section.title, section.submenu {
+                    Menu(title) { tryOnItems(section) }
+                } else if let title = section.title {
                     Section(title) { tryOnItems(section) }
                 } else {
                     tryOnItems(section)
