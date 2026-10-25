@@ -83,8 +83,16 @@ list places among the devices, and then in a `places` of their own, before, so i
 before is started again. `look_at_app` and `use_app` find an app by its own word or folder before reading "mac" or
 "iphone" as wherever an app opens (`Parts.pick`), so beside a game "mac" is the Mac app. The request's device line says
 a game's or a screen's places and budget whichever folder it's in (`DeviceNote.brief`).
-A game has no `Lamp.wish` (its page's lamp.js is the device kit's), so the agent is told its other apps can't steer it
-or share with it (`Rules.gameAmongApps`); a screen's page is a TV app's, with the TV app's lamp.js.
+A game and a screen are peers of the wish like the others, named "game" and "screen": their page has `Lamp.wish` in
+its Web/lamp.js (a screen's is the TV app's lamp.js; a game's is the device kit's with the same block after it,
+`GameKit.lampJS`), and on the Mac, the iPhone and the iPad the app of Lamp's own around the page is the peer, with
+`LampWish` in its LampSupport.swift, which the page mirrors (`LampPageWish` in LampPage.swift, `hosted` in lamp.js):
+it listens, is found and keeps the values on the device as every Swift app of a wish does, so it goes on with Lamp
+closed. A screen on a TV is a TV page as a TV app is. A page served over https elsewhere (the Xbox's host, a game's
+Android app) can neither open the plain links nor ask Lamp itself, and a game's page in Lamp's own preview has no way
+to Lamp, so there `Lamp.wish` stays `away` with a reason saying it can't reach the others yet (`stranded`); the
+agent is told where it works (`Rules.gameAmongApps`, `Rules.screenAmongApps`). The TV preview of a screen joins the
+wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
 and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, one whose folder is
 the one its kind gets, since the app at a file's root comes out named by its kind, `WishRooms.peer`, and every app of a

@@ -7,7 +7,7 @@ import XCTest
 /// others in its wish gets all of it.
 @MainActor
 final class WishHubStaysOutTests: XCTestCase {
-    private let kinds: [Platform] = [.mac, .iphone, .universal, .android, .tv]
+    private let kinds: [Platform] = [.mac, .iphone, .universal, .android, .tv, .game, .screen]
     private let hubWords = ["LampWish", "Lamp.wish", "wish's room", "wish's apps right now", "/app/wish", "lamp-wish", "x25519"]
 
     private func project(_ kind: Platform, partOf wish: String? = nil) -> LampProject {
@@ -38,6 +38,19 @@ final class WishHubStaysOutTests: XCTestCase {
             case .tv:
                 for word in hubWords { XCTAssertFalse(TVTemplate.lampJS(for: alone).contains(word), word) }
                 XCTAssertTrue(TVTemplate.lampJS(for: several).contains("window.Lamp.wish = api"))
+            case .game, .screen:
+                // The page's script, and the Swift around it on the Mac and the iPhone, which answers its `Lamp.wish`.
+                let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                let page = try! String(contentsOf: repo.appendingPathComponent("Resources/GameKit/apple/LampPage.swift"), encoding: .utf8)
+                let script = { (app: LampProject) in kind == .game ? GameKit.lampJS(for: app) : TVTemplate.lampJS(for: app) }
+                for word in hubWords + [Template.wishKeyName] {
+                    XCTAssertFalse(Template.lampSupportSwift(for: alone).contains(word), "\(kind.rawValue): \(word)")
+                    XCTAssertFalse(GameKit.pageText(page, for: alone).contains(word), "\(kind.rawValue)'s page bridge: \(word)")
+                    XCTAssertFalse(script(alone).contains(word), "\(kind.rawValue)'s lamp.js: \(word)")
+                }
+                XCTAssertTrue(Template.lampSupportSwift(for: several).contains("final class LampWish"), kind.rawValue)
+                XCTAssertTrue(GameKit.pageText(page, for: several).contains("final class LampPageWish"), kind.rawValue)
+                XCTAssertTrue(script(several).contains("window.Lamp.wish = api"), kind.rawValue)
             default:
                 for word in hubWords + [Template.wishKeyName] { XCTAssertFalse(Template.lampSupportSwift(for: alone).contains(word), "\(kind.rawValue): \(word)") }
                 XCTAssertTrue(Template.lampSupportSwift(for: several).contains("final class LampWish"), kind.rawValue)

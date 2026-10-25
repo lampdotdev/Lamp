@@ -40,7 +40,7 @@ extension Target {
                        refines: .device,
                        shareRefusal: "Lamp doesn't share games yet."),
         part: Part(folder: "Game", family: "game", word: "game", menu: ("Game", "gamecontroller"), rules: { Agent.gamePrompt(part: $0, alone: $1) },
-                   // What the wish's other apps can't do with it.
+                   // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.gameAmongApps) { dir, wish in
             AppFile.read(dir.appendingPathComponent(GameKit.marker), inFolder: wish, last: 1) != nil
         },

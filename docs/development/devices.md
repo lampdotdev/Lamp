@@ -294,5 +294,7 @@ a Mac app. `Native.swift` is the app's own: Lamp writes it only when it isn't th
 while it's still Lamp's scaffold, and the two Package.swift files compile all of `Sources/`. Everywhere else (a TV, the
 Xbox, Android, Lamp's preview of either) `LampNative.available` is false and its calls reject, so the rule
 (`Rules.pageNative`) has the page show example content then, which also keeps the game preview's replay exact; a C++
-game has no such bridge.
+game has no such bridge. In a wish of several apps the same app answers the page's `Lamp.wish` with its own `LampWish`
+(`LampPageWish`, written only for such an app, as `LampWish` is), so a game or a screen on the Mac, the iPhone or the
+iPad is one of the wish's peers (the "Wishes" guide).
 

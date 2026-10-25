@@ -5,17 +5,19 @@ description: How the apps of a wish share data and send each other messages - La
 
 # The apps of a wish, talking to each other
 
-A wish of several apps (a Mac app and an Android app, a TV app and an iPhone app) usually needs them to share
-something: a score, a list, a "next" button. There's more than one way to do it. Lamp gives every app of such a wish
+A wish of several apps (a Mac app and an Android app, a TV app and an iPhone app, a game and the phone app that
+sends it things to play with, a screen on the wall and the app that fills it) usually needs them to share something:
+a score, a list, a "next" button. There's more than one way to do it. Lamp gives every app of such a wish
 one way built in, `LampWish`, and it's the one to use unless the wish or the person calls for another.
 
 ## LampWish, built in
 
 Every app of the wish has it, the same in each language: `LampWish.shared` in LampSupport.swift, `LampWish` in
-LampSupport.kt, `Lamp.wish` in lamp.js. Read the block's own comment there before using it.
+LampSupport.kt, `Lamp.wish` in lamp.js (a TV app's page, a game's and a screen's, in Web/lamp.js). Read the block's
+own comment there before using it.
 
 - Each app of the wish is a peer named by its folder in the wish, lowercased: "tv", "iphone", "apple" (an app for
-  iPhone and Mac), "mac", "android".
+  iPhone and Mac), "mac", "android", "game", "screen".
 - `peers` lists the wish's other apps that are open now (observable: @Published, a StateFlow, onPeers).
 - `peer("tv")` is that app, open or not, with its `status`: `state`, a `reason` in words to show as they are ("Open
   the TV app on your TV.", "The TV app was last open 5 min ago. Open it on your TV.", "The TV app isn't ready yet."
@@ -36,6 +38,9 @@ LampSupport.kt, `Lamp.wish` in lamp.js. Read the block's own comment there befor
   or iPhone, `localNetworkDenied`: the person turned off Local Network for it). An open app built by an earlier Lamp is
   `outOfDate`: still open, with a reason saying to open it from Lamp. More states may come: treat any you don't name as
   not connected.
+- A game played on Android or the Xbox, a screen shown on the Xbox, and a game in Lamp's own preview can't reach the
+  others yet: there `Lamp.wish` is `away`, with a reason saying so. Write the sharing the same way for every place,
+  and keep the game or screen whole without it.
 - `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line
   for each other app, or one app's line with its peer name. Use them, restyle them, or show the statuses your own way.
 
