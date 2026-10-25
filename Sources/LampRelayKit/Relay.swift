@@ -122,7 +122,8 @@ public final class Relay: @unchecked Sendable {
         var link: [String: Any] = [:]
         /// Files on their way from it, by the peer each is for and its id (`sendingKey`).
         var sending: [String: Transfer] = [:]
-        /// How often it may send a game's controls to each app, apart: a TV app speaks to each of its players every frame.
+        /// How often it may send a game's controls to each player, apart (an app, and which of its controllers): a TV app
+        /// speaks to each of its players every frame. A few dozen at most are kept, so made-up ids hold nothing for long.
         var padRates: [String: Rate] = [:]
         init(peer: RelayPeer, kind: String, name: String, device: String, wire: Int, sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
             self.peer = peer
@@ -512,8 +513,11 @@ public final class Relay: @unchecked Sendable {
         switch kind {
         case "pad":
             // A button let go is never dropped for a TV that's behind: one it thinks is still held stays held.
-            let rate = member.padRates[to] ?? Rate()
-            member.padRates[to] = rate
+            // By the player it's for or from: an app, and which of its controllers (`pad`), since each is a player of its own.
+            let player = to + "\t" + Self.short((message["m"] as? [String: Any])?["pad"], 16)
+            if member.padRates[player] == nil, member.padRates.count >= 64 { member.padRates = [:] }
+            let rate = member.padRates[player] ?? Rate()
+            member.padRates[player] = rate
             guard room.apps[to] != nil, rate.allowed(member.peer), let m = message["m"] as? [String: Any], let target,
                   target.peer.pendingText <= Self.hostBehind || (m["t"] as? String == "button" && m["down"] as? Bool != true) else { return }
             target.send(Self.json(["t": "pad", "from": id, "m": m]))

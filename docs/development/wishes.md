@@ -211,7 +211,10 @@ in Swift and Kotlin; `Lamp.wish.values()`, `set`, `onChange` in lamp.js): a smal
 all of them 64 KB, that every app keeps on its device beside what it keeps of the wish (by the wish's tag: UserDefaults, a
 file in the Android app's storage, localStorage; in the TV preview a store of the app's own, which a wish's TV app has
 too, by a UUID made from its instance, `TVPreview.store(for:)`, removed when the app, its wish or the part goes:
-`TVPreview.forget`, in the background since WebKit lets go of a closed page's store a few seconds later) and that is the
+`TVPreview.forget`, in the background since WebKit lets go of a closed page's store a few seconds later; `PreviewStores`
+makes WebKit's default store first, since WebKit's calls about stores that aren't open crash a process in which nothing
+of WebKit has started yet, as Lamp is when opened again and a wish is deleted before any preview opens:
+`PreviewStoresTests` runs it in such a process) and that is the
 same in every app once they've met. Each setting carries
 when it was made: the clock of the app that made it, a count within that millisecond, and that app's name (`c: [ms, n,
 peer]`). An app's clock never goes back past the latest setting it has made or heard of, so what it sets next is later
@@ -284,10 +287,12 @@ A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files
 `Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`: it finds the wish's TV app in the
 wish's list (the app whose kind is "tv"), and what it says goes as **`pad`** messages, the straight way when there is
 one, else through Lamp's room (`{"t":"pad","m":…}`, with `to` and `from` through the room; the relay passes one to a
-member that speaks 3, at a phone's rate to each app apart, since a TV app speaks to each of its players every frame,
+member that speaks 3, at a phone's rate to each player apart (an app, and which of its controllers), since a TV app
+speaks to each of its players every frame,
 and never drops a button let go for a TV that's behind). Each `LampController` has an id of its own (`pad`, on
 everything it says and is told), so it is a player of its own: two in one app are two players, and one made again
-while the old one's `leave` is still on its way gets in all the same; a `join` asked again is answered again. The controller asks to play (`join`, with
+while the old one's `leave` is still on its way gets in all the same; a `join` asked again is answered again. One closed
+or let go after asking to play, welcomed or not yet, says `leave`, so the TV app keeps no player for it. The controller asks to play (`join`, with
 its clock, for telling late movement) whenever the TV app is open and speaks 3; lamp.js's `Lamp.wish` answers only while
 the page's `Lamp.controllers` takes players (`welcome`, then `player` with its number), and tells every open app when
 it starts (`host`) and stops (`state` with `host: false`). Buttons, sticks, messages and `too-big` go as a phone's do;

@@ -15373,7 +15373,8 @@ enum Template {
         private var sending: [LampTransfer] = []
         private var closed = false
         private var saidAway = false
-        /// Who to tell this player has gone when the controller is let go without `close()`, kept where `deinit` reaches it.
+        /// The TV app this controller has asked to play with, welcomed or not yet: who to tell it has gone when it's closed
+        /// or let go, kept where `deinit` reaches it.
         private final class Leaving: @unchecked Sendable { var tv: String?; var pad = "" }
         private let leaving = Leaving()
 
@@ -15424,7 +15425,8 @@ enum Template {
 
         func close() {
             guard !closed else { return }
-            if let tv, state == .connected { wish.sendPad(["t": "leave", "pad": pad], to: tv) }
+            // Asked to play, even if not welcomed yet: the TV app may take it in after this, and must let it go again.
+            if let asked = leaving.tv { wish.sendPad(["t": "leave", "pad": pad], to: asked) }
             closed = true
             leaving.tv = nil
             wish.removePad(owner: self)
@@ -15466,8 +15468,9 @@ enum Template {
             guard !closed else { return }
             let app = wish.apps.first { $0.kind == "tv" }
             tv = app?.id
-            leaving.tv = state == .connected ? tv : nil
             guard let app, app.isOpen else {
+                // Its players went with it.
+                leaving.tv = nil
                 if state != .waiting { state = .waiting }
                 player = nil
                 return
@@ -15483,7 +15486,7 @@ enum Template {
         private func join() {
             guard let tv else { return }
             if state == .waiting || state == .ended { state = .connecting }
-            wish.sendPad(["t": "join", "now": Int(Date().timeIntervalSince1970 * 1000), "pad": pad], to: tv)
+            if wish.sendPad(["t": "join", "now": Int(Date().timeIntervalSince1970 * 1000), "pad": pad], to: tv) { leaving.tv = tv }
         }
 
         /// What the TV app's `Lamp.controllers` says to this player.

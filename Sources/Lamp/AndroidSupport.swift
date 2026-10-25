@@ -1708,6 +1708,8 @@ extension Template {
 
         private fun startFile(transfer: LampTransfer, bytes: ByteArray, type: String, peer: String) {
             val name = transfer.name
+            // Cancelled before it could start: nothing goes.
+            if (transfer.cancelled) return transfer.end(LampTransfer.State.Failed("The file was cancelled."))
             fun failed(reason: String) {
                 Log.e("LampWish", "the file \"$name\" wasn't sent: $reason")
                 transfer.end(LampTransfer.State.Failed(reason))
@@ -1733,6 +1735,8 @@ extension Template {
                 }
             }
             outgoing[key] = Outgoing(peer, via, transfer, bytes)
+            // Cancelled from another thread while it was starting, before the handler above was there to hear it.
+            if (transfer.cancelled) return transfer.cancelling()
             pump(key)
         }
 
@@ -2580,7 +2584,9 @@ extension Template {
         val state: kotlinx.coroutines.flow.StateFlow<State> get() = stateFlow
         val progress: Float get() = if (size == 0) 1f else sentFlow.value.toFloat() / size
         internal var cancelling: () -> Unit = {}
-        fun cancel() { if (stateFlow.value == State.Sending) cancelling() }
+        /** Cancelled, perhaps before the file started on its way: what starts it checks this first. */
+        @Volatile internal var cancelled = false
+        fun cancel() { if (stateFlow.value == State.Sending) { cancelled = true; cancelling() } }
         /** Waits until the other app has all of it; throws, with why, when it didn't get there. */
         suspend fun finished() { ended.await()?.let { throw IOException(it) } }
         internal fun progressed(got: Int) { sentFlow.value = got }
