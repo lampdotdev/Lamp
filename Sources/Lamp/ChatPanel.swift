@@ -143,7 +143,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         // Only a width the person chose: a panel squeezed beside a window keeps the width they want for the next. Beside
         // a window and on its own are kept apart.
         guard window.inLiveResize else { return }
-        if besideKey == nil { Self.aloneWidth = window.frame.width } else { Self.width = min(window.frame.width, Self.widest) }
+        if besideKey == nil { Self.aloneWidth = window.frame.width } else { Self.width = window.frame.width }
     }
 
     // MARK: Moving it
@@ -223,13 +223,23 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         let screen = frame.flatMap { frame in NSScreen.screens.first { $0.frame.intersects(frame) } } ?? window.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         var placed = frame.map { Self.frame(beside: $0, in: visible, width: Self.width) } ?? Self.floating(in: visible, width: Self.aloneWidth)
-        // Two chats on their own at once: each a step down and across, as windows cascade, so none hides another.
+        // Two chats on their own at once: each a step down and across, as windows cascade, so none hides another. On a
+        // screen too short to step down, it steps across and gives up the height that step would have taken.
         if frame == nil {
-            while placed.minY - 28 >= visible.minY, placed.maxX + 28 <= visible.maxX,
-                  Self.open.values.contains(where: { $0 !== self && $0.window.isVisible && $0.window.frame.origin == placed.origin }) {
-                placed = placed.offsetBy(dx: 28, dy: -28)
+            for _ in 0..<12 {
+                guard Self.open.values.contains(where: { $0 !== self && $0.window.isVisible && $0.window.frame.origin == placed.origin }) else { break }
+                if placed.maxX + 28 > visible.maxX { break }
+                if placed.minY - 28 >= visible.minY {
+                    placed = placed.offsetBy(dx: 28, dy: -28)
+                } else {
+                    placed.origin.x += 28
+                    placed.origin.y += 28
+                    placed.size.height -= 56
+                }
             }
         }
+        // As wide as it may be where it is: narrow beside a window, wider on its own.
+        window.maxSize = NSSize(width: frame == nil ? Self.aloneWidest : Self.widest, height: .greatestFiniteMagnitude)
         window.setFrame(placed, display: true, animate: false)
     }
 
