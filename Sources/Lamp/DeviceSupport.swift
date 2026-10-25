@@ -50,6 +50,53 @@ enum DeviceSupport {
         return String(core[range].filter(\.isNumber))
     }
 
+    /// three.js's node renderer (three.webgpu.js and three.tsl.js) and the addons built on it, as a whole: given only to a
+    /// page whose own files name `three/webgpu` or `three/tsl`, since they double what three.js takes in every app.
+    static let threeNodeFiles: Set<String> = {
+        let node = ["three.webgpu.js", "three.tsl.js"]
+        let imports = try! NSRegularExpression(pattern: #"(?:from\s*|import\s*\(?\s*)['"]([^'"]+)['"]"#)
+        func named(_ file: (name: String, contents: String)) -> [String] {
+            imports.matches(in: file.contents, range: NSRange(file.contents.startIndex..., in: file.contents)).compactMap { match in
+                Range(match.range(at: 1), in: file.contents).map { String(file.contents[$0]) }
+            }
+        }
+        var found = Set(node)
+        // An addon that imports the node renderer, or another addon that does, is one of them.
+        var changed = true
+        while changed {
+            changed = false
+            for file in threeFiles where !found.contains(file.name) {
+                let folder = (file.name as NSString).deletingLastPathComponent
+                let needs = named(file).contains { spec in
+                    if spec == "three/webgpu" || spec == "three/tsl" { return true }
+                    let path = spec.hasPrefix("three/addons/") ? "addons/" + spec.dropFirst("three/addons/".count)
+                        : spec.hasPrefix(".") ? ((folder as NSString).appendingPathComponent(spec) as NSString).standardizingPath : ""
+                    return found.contains(path)
+                }
+                if needs { found.insert(file.name); changed = true }
+            }
+        }
+        return found
+    }()
+
+    /// three.js as a page in `page` (a folder of the app's) is given it: the node renderer only when its own files use it.
+    static func threeFiles(for project: LampProject, page: String) -> [(name: String, contents: String)] {
+        usesNodeRenderer(project, page: page) ? threeFiles : threeFiles.filter { !threeNodeFiles.contains($0.name) }
+    }
+
+    /// Whether the page's own files (not three.js's) name the node renderer, `three/webgpu` or `three/tsl`.
+    static func usesNodeRenderer(_ project: LampProject, page: String) -> Bool {
+        let folder = project.dir.appendingPathComponent(page)
+        guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        for case let url as URL in walk {
+            if url.lastPathComponent == "three" { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if text.contains("three/webgpu") || text.contains("three/tsl") { return true }
+        }
+        return false
+    }
+
     static let threeFiles: [(name: String, contents: String)] = {
         guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/three"),
               let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
@@ -131,7 +178,9 @@ enum DeviceSupport {
     /// What the device's integration asks for (`app.declared.support` and `icons`), for its app or a game played there.
     static func writeDeclared(for project: LampProject) throws {
         for entry in libraries(for: project) {
-            for file in entry.library.files {
+            let files = entry.library == .three
+                ? threeFiles(for: project, page: (entry.path as NSString).deletingLastPathComponent) : entry.library.files
+            for file in files {
                 let path = file.name.isEmpty ? entry.path : entry.path + "/" + file.name
                 try Template.put(file.contents, at: project.dir.appendingPathComponent(path), for: project)
             }
