@@ -53,13 +53,10 @@ enum GameAndroid {
                 Template.androidDebugManifest].map { "\(folder)/\($0)" }
     }
 
-    /// The game's activity for a game on its own: without the line that answers the page's `Lamp.wish`.
-    static func withoutWish(activity: String) -> String { activity.replacingOccurrences(of: pageWishLine, with: "") }
-
-    private static let pageWishLine = """
-            LampPageWish.attach(web, "https://$HOST") // the wish's other apps
-
-    """
+    /// The game's activity for a game on its own: without the lines that answer the page's `Lamp.wish`, each marked so.
+    static func withoutWish(activity: String) -> String {
+        activity.components(separatedBy: "\n").filter { !$0.hasSuffix("// the wish's other apps") }.joined(separator: "\n")
+    }
 
     /// build.sh's Android part: the page into the game's build/ (which no version keeps), its files only, the icon,
     /// then Gradle.
@@ -288,6 +285,7 @@ enum GameAndroid {
         override fun onInputDeviceChanged(id: Int) {}
         override fun onDestroy() {
             (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
+            LampPageWish.detach(web) // the wish's other apps
             super.onDestroy()
         }
         override fun onResume() { super.onResume(); web.onResume() }
@@ -369,20 +367,29 @@ enum GameAndroid {
     import android.webkit.WebView
     import androidx.webkit.WebViewCompat
     import androidx.webkit.WebViewFeature
+    import java.lang.ref.WeakReference
     import kotlinx.coroutines.Job
     import kotlinx.coroutines.MainScope
+    import kotlinx.coroutines.cancel
+    import kotlinx.coroutines.flow.StateFlow
     import kotlinx.coroutines.flow.combine
     import kotlinx.coroutines.launch
     import org.json.JSONArray
     import org.json.JSONObject
     import org.json.JSONTokener
 
-    class LampPageWish private constructor(private val web: WebView) {
+    /** One activity's page. It lives as long as its activity (`detach` in onDestroy) and holds the page's web view only
+     *  weakly: LampWish's handlers are the whole app's, so they reach the page of the activity open now, never one
+     *  that's gone. */
+    class LampPageWish private constructor(web: WebView) {
+        private val page = WeakReference(web)
         private val scope = MainScope()
-        private var listening = false
-        private var filesHeard = false
         private val transfers = mutableMapOf<Int, LampTransfer>()
         private val watching = mutableMapOf<Int, Job>()
+        // LampWish's flows, taken once: their getters join the wish, so reading them to report a stop would undo it.
+        private var apps: StateFlow<List<LampWish.Peer>>? = null
+        private var status: StateFlow<LampWish.Status>? = null
+        private var values: StateFlow<Map<String, Any>>? = null
 
         private fun heard(text: String) {
             val call = try { JSONObject(text) } catch (e: Exception) { return }
@@ -403,14 +410,7 @@ enum GameAndroid {
                     val value = json(call.optString("value"))
                     LampWish.set(call.optString("key"), if (value == null || value == JSONObject.NULL) null else value)
                 }
-                "files" -> {
-                    if (filesHeard) return
-                    filesHeard = true
-                    LampWish.onFile { from, file ->
-                        tell(JSONObject().put("t", "file").put("from", from).put("name", file.name).put("type", file.type)
-                            .put("data", Base64.encodeToString(file.bytes, Base64.NO_WRAP)))
-                    }
-                }
+                "files" -> hearFiles()
                 "sendFile" -> {
                     val id = call.optInt("id")
                     val bytes = try { Base64.decode(call.optString("data"), Base64.DEFAULT) } catch (e: Exception) { return }
@@ -423,33 +423,33 @@ enum GameAndroid {
         }
 
         private fun listen() {
-            if (listening) return
-            listening = true
+            if (apps != null) return
+            val apps = LampWish.apps.also { this.apps = it }
+            val status = LampWish.status.also { this.status = it }
+            values = LampWish.values
+            hearWish()
             // Who is open and how this app's link stands, as each changes.
-            scope.launch { LampWish.apps.combine(LampWish.status) { _, _ -> }.collect { tellState() } }
-            LampWish.onMessage { from, data -> tell(JSONObject().put("t", "message").put("from", from).put("data", data ?: JSONObject.NULL)) }
-            // Who made each change; the page says to its onChange every value that differs from its copy.
-            LampWish.onChange { key, value, from ->
-                tellValues(JSONArray().put(JSONObject().put("key", key).put("value", value ?: JSONObject.NULL).put("from", from)))
-            }
+            scope.launch { apps.combine(status) { _, _ -> }.collect { tellState() } }
         }
 
         private fun tellState() {
-            val apps = JSONArray()
-            for (peer in LampWish.apps.value) {
-                apps.put(JSONObject().put("peer", peer.peer).put("kind", peer.kind).put("name", peer.name).put("device", peer.device)
+            val apps = apps?.value ?: return
+            val status = status?.value ?: return
+            val list = JSONArray()
+            for (peer in apps) {
+                list.put(JSONObject().put("peer", peer.peer).put("kind", peer.kind).put("name", peer.name).put("device", peer.device)
                     .put("open", peer.isOpen).put("status", JSONObject().put("state", peer.status.state.name).put("reason", peer.status.reason)
                         .put("lastSeen", peer.status.lastSeen ?: JSONObject.NULL)))
             }
-            val status = LampWish.status.value
-            tell(JSONObject().put("t", "state").put("me", LampWish.me).put("apps", apps)
+            tell(JSONObject().put("t", "state").put("me", LampWish.me).put("apps", list)
                 .put("status", JSONObject().put("state", status.state.name).put("reason", status.reason)))
         }
 
         private fun tellValues(changed: JSONArray) {
-            val values = JSONObject()
-            for ((key, value) in LampWish.values.value) values.put(key, value)
-            tell(JSONObject().put("t", "values").put("values", values).put("changed", changed))
+            val now = values?.value ?: return
+            val json = JSONObject()
+            for ((key, value) in now) json.put(key, value)
+            tell(JSONObject().put("t", "values").put("values", json).put("changed", changed))
         }
 
         private fun tellTransfer(id: Int) {
@@ -468,19 +468,63 @@ enum GameAndroid {
         }
 
         private fun tell(message: JSONObject) {
+            val web = page.get() ?: return
             val script = "window.__lampWish && window.__lampWish(" + message.toString() + ")"
             web.post { web.evaluateJavascript(script, null) }
         }
 
         private fun json(text: String): Any? = try { JSONTokener(text).nextValue() } catch (e: Exception) { null }
 
+        private fun close() {
+            scope.cancel()
+            transfers.clear()
+            watching.clear()
+            if (current?.get() === this) current = null
+        }
+
         companion object {
+            /** The page of the activity open now. */
+            private var current: WeakReference<LampPageWish>? = null
+            private var heardWish = false
+            private var heardFiles = false
+
             /** Answers the page at `origin`, the game's own, in its main frame: no other page or frame reaches the wish. */
             fun attach(web: WebView, origin: String) {
                 if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
                 val bridge = LampPageWish(web)
+                current = WeakReference(bridge)
                 WebViewCompat.addWebMessageListener(web, "lampWishHost", setOf(origin)) { _, message, _, isMainFrame, _ ->
                     if (isMainFrame) message.data?.let { bridge.heard(it) }
+                }
+            }
+
+            /** The activity is going: its page hears nothing more, and nothing here keeps it. */
+            fun detach(web: WebView) {
+                val bridge = current?.get()
+                if (bridge != null && bridge.page.get() === web) bridge.close()
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) WebViewCompat.removeWebMessageListener(web, "lampWishHost")
+            }
+
+            // LampWish's handlers can't be taken back, so each is given once for the whole app, and passes on to the page
+            // open now.
+            private fun hearWish() {
+                if (heardWish) return
+                heardWish = true
+                LampWish.onMessage { from, data ->
+                    current?.get()?.tell(JSONObject().put("t", "message").put("from", from).put("data", data ?: JSONObject.NULL))
+                }
+                // Who made each change; the page says to its onChange every value that differs from its copy.
+                LampWish.onChange { key, value, from ->
+                    current?.get()?.tellValues(JSONArray().put(JSONObject().put("key", key).put("value", value ?: JSONObject.NULL).put("from", from)))
+                }
+            }
+
+            private fun hearFiles() {
+                if (heardFiles) return
+                heardFiles = true
+                LampWish.onFile { from, file ->
+                    current?.get()?.tell(JSONObject().put("t", "file").put("from", from).put("name", file.name).put("type", file.type)
+                        .put("data", Base64.encodeToString(file.bytes, Base64.NO_WRAP)))
                 }
             }
         }
