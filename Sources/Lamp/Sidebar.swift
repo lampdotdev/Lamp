@@ -42,8 +42,10 @@ enum Sidebar {
         let info: [String: Any] = [
             "CFBundleExecutable": "LampSidebar",
             "CFBundleIdentifier": bundleID(for: project),
-            "CFBundleName": "Lamp",
-            "CFBundleDisplayName": "Lamp",
+            // The app's own name, which is what macOS names when it asks about the extension (its data after the app
+            // is signed for another team, say): "Lamp" there read as Lamp itself.
+            "CFBundleName": project.name,
+            "CFBundleDisplayName": project.name,
             "CFBundlePackageType": "XPC!",
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleShortVersionString": "1.0",

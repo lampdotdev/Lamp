@@ -316,11 +316,14 @@ struct LogLine: Identifiable, Codable, Equatable {
     var isDetail: Bool { kind == .detail || kind == .tool || kind == .summary }
 
     /// "Worked for 4m 21s · $0.48", and "Worked for 4m 21s" when nothing was spent: a turn on a Claude or ChatGPT
-    /// sign-in, or on this Mac's own model. Only OpenRouter's calls (pi's, and the pictures painted) cost money.
-    static func workSummary(seconds: Double, cost: Double) -> String {
+    /// sign-in, or on this Mac's own model. Only OpenRouter's calls (pi's, and the pictures painted) cost money, so a
+    /// turn whose only cost was its pictures says so ("· $0.07 on pictures"): on a sign-in it reads as the turn's.
+    static func workSummary(seconds: Double, cost: Double, pictures: Double = 0) -> String {
         let total = Int(seconds.rounded())
         let time = total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
-        return cost < 0.005 ? "Worked for \(time)" : String(format: "Worked for %@ · $%.2f", time, cost)
+        if cost < 0.005 { return "Worked for \(time)" }
+        if cost - pictures < 0.005 { return String(format: "Worked for %@ · $%.2f on pictures", time, cost) }
+        return String(format: "Worked for %@ · $%.2f", time, cost)
     }
 
     /// Older chats logged tool calls and run summaries as plain details, and named the engine in summaries.
@@ -4285,7 +4288,8 @@ final class Store: ObservableObject {
         showWritten(for: project)
         turn.writing = nil
         // Pictures are already in the app's building cost (recordArt); the summary shows them with the rest.
-        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore))
+        log(project, .summary, LogLine.workSummary(seconds: Date().timeIntervalSince(started), cost: cost + turn.artCost - artBefore,
+                                                          pictures: turn.artCost - artBefore))
         // The folds the run's messages didn't close get their lines now, never waited on.
         StepTitles.start(for: project, turn: titleRoute)
         recordAgent(project, cost: cost)
