@@ -13642,13 +13642,20 @@ enum Template {
     ///                                                   // .localNetworkDenied (the person turned off Local Network for this app), .ended
     ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
+    ///     wish.values["list"]                           // a value the wish's apps share, kept on each device (@Published)
+    ///     wish.set("list", ["milk", "eggs"])            // sets it here and in every other app, now or when they next meet;
+    ///                                                   // nil removes it; false (with why in the app's log) when it wasn't set
+    ///     wish.onChange { key, value, from in … }       // a value changed, here (from == me) or in another app
     ///     LampWishStatus()                              // a ready-made view of all that: one line for each other app
     ///     LampWishStatus("tv")                          // the TV app's line alone
     ///
     /// A `State` is one of the values above, and more may come: switch on it with a `default`. Show a `reason` as it is
-    /// rather than words of your own; it changes as time goes by ("5 min ago"). Each message, as the JSON that goes out,
-    /// is at most `messageLimit` (16 KB); files between the wish's apps aren't carried yet. Keep every control usable
-    /// while an app isn't open. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
+    /// rather than words of your own; it changes as time goes by ("5 min ago"). An open app built by an older Lamp is
+    /// `.outOfDate`, still open, with a reason saying to open it from Lamp. Each message, as the JSON that goes out, is at
+    /// most `messageLimit` (16 KB); files between the wish's apps aren't carried yet. A message is for apps open now;
+    /// `values` are for what must outlast an app being closed: each is JSON of at most `valueLimit` (8 KB), all of them
+    /// `valuesLimit` (64 KB), and where two apps set one while apart, the later setting wins in both. Keep every control
+    /// usable while an app isn't open. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
     @MainActor final class LampWish: ObservableObject {
         /// Where this app's link stands, or another app's. More values may come.
         struct State: RawRepresentable, Hashable, Sendable {
@@ -13668,6 +13675,8 @@ enum Template {
             static let localNetworkDenied = State(rawValue: "localNetworkDenied")
             /// Another app isn't open now.
             static let notOpen = State(rawValue: "notOpen")
+            /// Another app is open but was built by another Lamp than this one: it's to be opened from Lamp to be updated.
+            static let outOfDate = State(rawValue: "outOfDate")
         }
         /// A state with what it means to the person, in words to show as they are ("" when there's nothing to say).
         struct Status: Equatable, Sendable {
@@ -13687,15 +13696,23 @@ enum Template {
             /// Where it runs, in its own words, once it has been open: "TV preview", "iPhone simulator", "Android emulator", "Mac"…
             var device: String
             var status: Status
-            var isOpen: Bool { status.state == .connected }
+            var isOpen: Bool { status.state == .connected || status.state == .outOfDate }
         }
         static let messageLimit = 16 * 1024
+        static let valueLimit = 8 * 1024
+        static let valuesLimit = 64 * 1024
         static let shared = LampWish()
 
         /// Every other app of the wish, open or not.
         @Published private(set) var apps: [Peer] = []
         @Published private(set) var status = Status(state: .connecting, reason: LampWish.reason(.connecting), lastSeen: nil)
         @Published private(set) var me = ""
+        /// The values the wish's apps share, by name: the same in every app once they've met.
+        @Published private(set) var values: [String: Any] = [:]
+
+        /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
+        /// 2 brought values; an app from before says none, which counts as 1.
+        private static let wire = 2
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
@@ -13713,8 +13730,15 @@ enum Template {
         private var relayIn = false
         private var lampAway = false
         private var alone = false
-        /// The apps in Lamp's room now, by peer name: the device they said and since when.
-        private var relayPresent: [String: (device: String, since: Date)] = [:]
+        /// The apps in Lamp's room now, by peer name: the device they said, since when, and what they speak (`wire`).
+        private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
+        /// Each value as it was last set, here or by another app, and when: a removed one is kept, without its value, so
+        /// an older setting from an app that was away doesn't bring it back.
+        private var entries: [String: Entry] = [:]
+        /// This app's clock for values: the latest time it has set or heard of, and a count within the same millisecond, so
+        /// what it sets next is later than anything it knows of, whatever the device's own clock says.
+        private var clock: (ms: Int64, n: Int64) = (0, 0)
+        private var changeListeners: [(String, Any?, String) -> Void] = []
         /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
         private var roster: [(id: String, kind: String, name: String)] = []
         private var directs: [String: Direct] = [:]
@@ -13758,6 +13782,7 @@ enum Template {
             var ready = false
             var heard = Date()
             var device = ""
+            var wire = 1
             var done: ((Bool) -> Void)?
             init(connection: NWConnection, dialled: Bool, peer: String) {
                 self.connection = connection
@@ -13767,6 +13792,7 @@ enum Template {
         }
 
         private init() {
+            restoreValues()
             restore()
             open()
             reach()
@@ -13855,6 +13881,47 @@ enum Template {
         /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { listeners.append(handler) }
 
+        /// Sets a value the wish's apps share (anything JSON can hold; nil removes it), here at once and in each other app
+        /// now if it's open, else when they next meet. False, with the reason in the app's log, when it wasn't set.
+        @discardableResult
+        func set(_ key: String, _ value: Any?) -> Bool {
+            let what = "The value \"\(key)\""
+            guard Self.isValueName(key) else {
+                fputs("LampWish: \(what) wasn't set: a value's name is 1 to 64 bytes, and not __proto__.\n", stderr)
+                return false
+            }
+            dropExpired()
+            var kept: Any?
+            if let value, !(value is NSNull) {
+                guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
+                    fputs("LampWish: \(what) wasn't set: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                    return false
+                }
+                let bytes = Self.size(of: value)
+                guard bytes <= Self.valueLimit else {
+                    fputs("LampWish: \(what) of \(bytes) bytes wasn't set: a value is at most \(Self.valueLimit) bytes as JSON.\n", stderr)
+                    return false
+                }
+                guard size(without: key) + key.utf8.count + max(32, bytes) <= Self.valuesLimit else {
+                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
+                    return false
+                }
+                // Kept as it reads back from JSON, so this app sees what the others will.
+                kept = ((try? JSONSerialization.jsonObject(with: data)) as? [Any])?.first
+            }
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
+            let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: me)
+            entries[key] = entry
+            valuesChanged([(key, kept)], from: me)
+            for app in apps where app.isOpen && wire(of: app.id) >= 2 { share([key: entry], to: app.id) }
+            return true
+        }
+
+        /// Hears every change to the wish's values: its name, the new value (nil when removed), and the peer name of the
+        /// app that set it, this one's own (`me`) for a change made here.
+        func onChange(_ handler: @escaping (_ key: String, _ value: Any?, _ from: String) -> Void) { changeListeners.append(handler) }
+
         /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
         static func reason(_ state: State) -> String {
             switch state {
@@ -13878,6 +13945,13 @@ enum Template {
             let place = ["tv": "your TV", "mac": "your Mac", "iphone": "your iPhone", "android": "your Android device"][kind] ?? "its device"
             guard let lastSeen else { return "Open \(name) on \(place)." }
             return "\(title) was last open \(ago(now.timeIntervalSince(lastSeen))). Open it on \(place)."
+        }
+
+        /// What to do about an open app built by another Lamp, in the same words in every language: the older of the two
+        /// is opened from Lamp, which builds it again.
+        static func outOfDate(name: String, older: Bool) -> String {
+            older ? "\(name.prefix(1).uppercased() + name.dropFirst()) is out of date. Open it from Lamp on your Mac to update it."
+                : "This app is older than \(name). Open it from Lamp on your Mac to update it."
         }
 
         static func ago(_ seconds: TimeInterval) -> String {
@@ -13920,6 +13994,12 @@ enum Template {
         /// The state and the list of apps, from what each way says now.
         private func rebuild() {
             let now = Date()
+            var arrived: [String] = []
+            // Values set before this app knew its own name take it now, so two apps' settings never tie.
+            if !me.isEmpty, entries.values.contains(where: { $0.peer.isEmpty }) {
+                for (key, entry) in entries where entry.peer.isEmpty { entries[key]?.peer = me }
+                keepValues()
+            }
             let list = roster.filter { $0.id != me }.map { app in
                 let direct = directs[app.id].flatMap { $0.ready ? $0 : nil }
                 let relayed = relayPresent[app.id]
@@ -13927,14 +14007,17 @@ enum Template {
                 if open {
                     // Open, so made, whatever a list kept from before said.
                     waiting.remove(app.id)
-                    if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now }
+                    if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now; arrived.append(app.id) }
                     if let device = direct?.device ?? relayed?.device, !device.isEmpty { devices[app.id] = device }
                 } else if openSince[app.id] != nil {
                     openSince[app.id] = nil
                     lastSeen[app.id] = now
                     keep()
                 }
-                let status = open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
+                let wire = direct?.wire ?? relayed?.wire ?? Self.wire
+                let status = open && wire != Self.wire
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: app.name, older: wire < Self.wire), lastSeen: openSince[app.id])
+                    : open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
                     : Status(state: .notOpen, reason: Self.notOpen(name: app.name, kind: app.kind, lastSeen: lastSeen[app.id],
                                                                    waiting: waiting.contains(app.id), now: now),
                              lastSeen: lastSeen[app.id])
@@ -13950,6 +14033,200 @@ enum Template {
             // Set only when something changed, since a reason is worked out again on every beat ("5 min ago").
             if list != apps { apps = list }
             report()
+            // An app that has just come is told every value this one has, and tells this one its own, so the two agree
+            // again whichever was open meanwhile.
+            for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
+        }
+
+        /// What another open app speaks: 1 for an app from before values, which says nothing of it.
+        private func wire(of peer: String) -> Int {
+            directs[peer].flatMap { $0.ready ? $0.wire : nil } ?? relayPresent[peer]?.wire ?? 1
+        }
+
+        // MARK: Values
+
+        /// A value as it was last set, and when: by the clock of the app that set it, then the count within that
+        /// millisecond, then that app's name, so every app orders two settings the same way.
+        private struct Entry {
+            var value: Any?
+            var ms: Int64
+            var n: Int
+            var peer: String
+            func isLater(than other: Entry) -> Bool { (ms, n, peer) > (other.ms, other.n, other.peer) }
+            var json: [String: Any] {
+                var json: [String: Any] = ["c": [ms, n, peer]]
+                if let value { json["v"] = value }
+                return json
+            }
+            init(value: Any?, ms: Int64, n: Int, peer: String) { self.value = value; self.ms = ms; self.n = n; self.peer = peer }
+            /// One another app sent, or this one kept: whole numbers in range only, as every language reads them.
+            init?(_ json: Any?) {
+                guard let json = json as? [String: Any], let c = json["c"] as? [Any], c.count == 3,
+                      let ms = LampWish.whole(c[0]), let n = LampWish.whole(c[1]), let peer = c[2] as? String,
+                      ms <= LampWish.latest, n <= LampWish.counts, peer.utf8.count <= 32 else { return nil }
+                self.init(value: json["v"].flatMap { $0 is NSNull ? nil : $0 }, ms: ms, n: Int(n), peer: peer)
+            }
+        }
+
+        /// The bounds every app holds a setting's time to: a millisecond clock within 2^50, a count within a million.
+        nonisolated private static let latest: Int64 = 1 << 50
+        nonisolated private static let counts: Int64 = 1_000_000
+        /// How long a removal is kept, so an app away longer than this may bring the value back.
+        private static let removalsKept: Int64 = 30 * 24 * 3600 * 1000
+
+        nonisolated private static func whole(_ value: Any) -> Int64? {
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), !CFNumberIsFloatType(number),
+                  number.int64Value >= 0 else { return nil }
+            return number.int64Value
+        }
+
+        /// A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
+        private static func isValueName(_ key: String) -> Bool { (1...64).contains(key.utf8.count) && key != "__proto__" }
+
+        /// A value's size as JSON, slashes as they are, the same as the TV page's and the Android app's measure.
+        private static func size(of value: Any) -> Int {
+            ((try? JSONSerialization.data(withJSONObject: [value], options: .withoutEscapingSlashes)).map(\.count) ?? 2) - 2
+        }
+
+        private static func json(_ object: Any) -> Data? { try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) }
+
+        /// What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+        /// removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+        /// make, removals included, fits in what the others take from it.
+        private static func held(_ key: String, _ entry: Entry) -> Int { key.utf8.count + max(32, entry.value.map(size(of:)) ?? 32) }
+
+        /// What the store takes, removals kept included, leaving one name out.
+        private func size(without key: String) -> Int {
+            entries.reduce(0) { $1.key == key ? $0 : $0 + Self.held($1.key, $1.value) }
+        }
+
+        /// What every setting this app has adds up to, sealed with the wish's key: two apps with the same say the same.
+        private func digest() -> String {
+            guard let key = Self.key else { return "" }
+            var data = Data()
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) {
+                for part in [name, String(entry.ms), String(entry.n), entry.peer] { data.append(Data(part.utf8)); data.append(0) }
+            }
+            return Self.derive("lamp-wish values", key, data).prefix(8).base64EncodedString()
+        }
+
+        /// What another app sent of the values: settings, taken when they're later than what this app has; what all of
+        /// its add up to (`sum`), answered with all of this app's and a request for all of its when they differ; and that
+        /// request (`ask`), answered with all of this app's. So a setting lost on the way is made up within a minute.
+        private func heardValues(_ m: [String: Any], from peer: String) {
+            merge(m["values"] as? [String: Any] ?? [:], from: peer)
+            if let sum = m["sum"] as? String, sum != digest() { share(entries, to: peer, extra: ["ask": true]) }
+            else if m["ask"] as? Bool == true { share(entries, to: peer) }
+        }
+
+        /// Settings another app sent: each taken when it's later than what this app has, so whichever order they come
+        /// in, every app ends with the same.
+        private func merge(_ given: [String: Any], from peer: String) {
+            var changed: [(String, Any?)] = []
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
+            // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            dropExpired()
+            let most = Self.valuesLimit * 2 * max(2, roster.count)
+            var held = entries.reduce(0) { $0 + Self.held($1.key, $1.value) }
+            // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes an
+            // older copy of what it removed, and the oldest matter least.
+            var removals: [String]? = nil, next = 0
+            func oldestRemoval(except key: String) -> String? {
+                if removals == nil {
+                    removals = entries.filter { $0.value.value == nil }.sorted { $1.value.isLater(than: $0.value) }.map(\.key)
+                }
+                while let list = removals, next < list.count {
+                    let name = list[next]
+                    next += 1
+                    if name != key, let entry = entries[name], entry.value == nil { return name }
+                }
+                return nil
+            }
+            for (key, json) in given.sorted(by: { $0.key < $1.key }) {
+                guard Self.isValueName(key), let entry = Entry(json) else { continue }
+                if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
+                if let had = entries[key], !entry.isLater(than: had) { continue }
+                // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
+                // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
+                if let value = entry.value, Self.size(of: value) > Self.valueLimit * 2 { continue }
+                let old = entries[key].map { Self.held(key, $0) } ?? 0, need = Self.held(key, entry)
+                while held - old + need > most, let gone = oldestRemoval(except: key), let removal = entries.removeValue(forKey: gone) {
+                    held -= Self.held(gone, removal)
+                }
+                if held - old + need > most {
+                    // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                    // keeping it, so a value removed is never left behind.
+                    guard entry.value == nil, let had = entries.removeValue(forKey: key) else { continue }
+                    held -= old
+                    if had.value != nil { changed.append((key, nil)) }
+                    continue
+                }
+                held = held - old + need
+                entries[key] = entry
+                changed.append((key, entry.value))
+            }
+            if !changed.isEmpty { valuesChanged(changed, from: peer) }
+        }
+
+        private func valuesChanged(_ changed: [(String, Any?)], from peer: String) {
+            values = entries.compactMapValues(\.value)
+            keepValues()
+            for (key, value) in changed { for listener in changeListeners { listener(key, value, peer) } }
+        }
+
+        /// Sends settings to another open app, the straight way when there is one, else through Lamp's room, a few at a
+        /// time so each message stays within what a message may be; `extra` goes with the last.
+        private func share(_ list: [String: Entry], to peer: String, extra: [String: Any] = [:]) {
+            var batch: [String: Any] = [:], size = 0
+            func flush(last: Bool) {
+                guard !batch.isEmpty || (last && !extra.isEmpty) else { return }
+                var frame: [String: Any] = ["t": "values", "values": batch]
+                if last { frame.merge(extra) { $1 } }
+                if let direct = directs[peer], direct.ready {
+                    if let json = Self.json(frame) { sealed(json, on: direct) }
+                } else if relayPresent[peer] != nil {
+                    frame["to"] = peer
+                    if let json = Self.json(frame) { say(json) }
+                }
+                batch = [:]
+                size = 0
+            }
+            for (key, entry) in list.sorted(by: { $0.key < $1.key }) {
+                let json = entry.json
+                let bytes = Self.json([key: json])?.count ?? 0
+                if size + bytes > 12 * 1024 { flush(last: false) }
+                batch[key] = json
+                size += bytes
+            }
+            flush(last: true)
+        }
+
+        private var valuesKey: String? { Self.keptKey.map { $0 + ".values" } }
+
+        /// A removal is kept for a month, then let go: before anything is weighed against a limit, on restore, and before
+        /// what's kept is written, so an app whose removals filled it can set values again once the month is over.
+        private func dropExpired() {
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            entries = entries.filter { $0.value.value != nil || $0.value.ms > old }
+        }
+
+        private func keepValues() {
+            dropExpired()
+            guard let valuesKey else { return }
+            let kept: [String: Any] = ["values": entries.mapValues(\.json), "clock": [clock.ms, clock.n]]
+            UserDefaults.standard.set(Self.json(kept), forKey: valuesKey)
+        }
+
+        private func restoreValues() {
+            guard let valuesKey, let data = UserDefaults.standard.data(forKey: valuesKey),
+                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+            for (key, json) in kept["values"] as? [String: Any] ?? [:] where Self.isValueName(key) { if let entry = Entry(json) { entries[key] = entry } }
+            if let c = kept["clock"] as? [Any], c.count == 2, let ms = Self.whole(c[0]), let n = Self.whole(c[1]), ms <= Self.latest, n <= Self.counts {
+                clock = (ms, n)
+            }
+            dropExpired()
+            values = entries.compactMapValues(\.value)
         }
 
         /// Tells Lamp's room how this app's link stands (its state, and which apps it reaches straight), only when that
@@ -14127,7 +14404,7 @@ enum Template {
             task.send(.string(String(decoding: mine ?? Data(), as: UTF8.self))) { _ in }
             sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
             opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
-            if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device]) { say(join) }
+            if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device, "wire": Self.wire]) { say(join) }
             return true
         }
 
@@ -14175,6 +14452,9 @@ enum Template {
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
                 for listener in listeners { listener(from, data) }
+            case "values":
+                guard let from = m["from"] as? String, Self.isName(from) else { return }
+                heardValues(m, from: from)
             case "undelivered":
                 // Said once for each app until the room changes: the code that sent it can't tell otherwise.
                 guard let to = m["to"] as? String, undeliveredSaid.insert(to).inserted else { return }
@@ -14187,7 +14467,7 @@ enum Template {
         private func present(_ json: [String: Any]) {
             guard let id = json["peer"] as? String else { return }
             let since = (json["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date()
-            relayPresent[id] = (json["device"] as? String ?? "", since)
+            relayPresent[id] = (json["device"] as? String ?? "", since, json["wire"] as? Int ?? 1)
             if let places = json["at"] as? [String], !places.isEmpty { remember(id, at: places); lookAgain() }
         }
 
@@ -14237,6 +14517,8 @@ enum Template {
             for app in apps where app.isOpen { lastSeen[app.id] = now }
             beats += 1
             if beats % 12 == 0, !peers.isEmpty { keep() }
+            // Once a minute each open app is told what this one's values add up to, so one that missed a setting asks.
+            if beats % 12 == 0 { for app in apps where app.isOpen && wire(of: app.id) >= 2 { share([:], to: app.id, extra: ["sum": digest()]) } }
             // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
             reach()
@@ -14573,7 +14855,7 @@ enum Template {
                 }
                 direct.sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
                 direct.opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
-                if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device]) { sealed(join, on: direct) }
+                if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device, "wire": Self.wire]) { sealed(join, on: direct) }
                 return
             }
             if !direct.dialled, direct.transcript == nil, kind == "hello",
@@ -14607,14 +14889,18 @@ enum Template {
             switch m["t"] as? String {
             case "join" where !direct.dialled && !direct.ready:
                 direct.device = String((m["device"] as? String ?? "").prefix(40))
-                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": me, "device": Self.device]) { sealed(welcome, on: direct) }
+                direct.wire = m["wire"] as? Int ?? 1
+                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": me, "device": Self.device, "wire": Self.wire]) { sealed(welcome, on: direct) }
                 ready(direct)
             case "welcome" where direct.dialled && !direct.ready:
                 direct.device = String((m["device"] as? String ?? "").prefix(40))
+                direct.wire = m["wire"] as? Int ?? 1
                 ready(direct)
             case "message" where direct.ready:
                 guard let data = m["data"] else { return }
                 for listener in listeners { listener(direct.peer, data) }
+            case "values" where direct.ready:
+                heardValues(m, from: direct.peer)
             default:
                 break
             }
@@ -14738,7 +15024,11 @@ enum Template {
                     line(.orange, wish.status.reason)
                 } else {
                     ForEach(wish.apps.filter { only == nil || $0.id == only }) { app in
-                        line(app.isOpen ? .green : .secondary, app.isOpen ? LampWish.connected(app.name) : app.status.reason)
+                        switch app.status.state {
+                        case .connected: line(.green, LampWish.connected(app.name))
+                        case .outOfDate: line(.orange, app.status.reason)
+                        default: line(.secondary, app.status.reason)
+                        }
                     }
                 }
             }

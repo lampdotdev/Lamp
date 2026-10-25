@@ -4624,7 +4624,7 @@ final class Store: ObservableObject {
                 await Emulator.bringForward()
                 return
             }
-            if FileManager.default.fileExists(atPath: project.builtURL.path), !Runtime.sourcesChanged(project) {
+            if FileManager.default.fileExists(atPath: project.builtURL.path), !Runtime.sourcesChanged(project), !Template.androidWishOutdated(project) {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
                 await installReportingCrash(project)
@@ -4639,7 +4639,7 @@ final class Store: ObservableObject {
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
             // An app for both reuses a build only when it was made for this place from this code (the
             // place is part of the fingerprint), else it's built again.
-            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated != true,
+            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated(for: project) != true,
                !(project.platform == .universal && Runtime.sourcesChanged(project)) {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -4651,7 +4651,7 @@ final class Store: ObservableObject {
         }
         // Built by an older Lamp: rebuild it first, so it gets this Lamp's fixes and building blocks.
         // Not while it's running (that would quit it under the user); if the build fails, the old one opens.
-        if stamps[project.id]?.isOutdated == true, !busy.contains(project.id),
+        if stamps[project.id]?.isOutdated(for: project) == true, !busy.contains(project.id),
            macCopies(of: project).isEmpty {
             if await updateForThisForge(project) { return }
         }
