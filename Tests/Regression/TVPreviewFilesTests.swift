@@ -93,6 +93,34 @@ final class TVPreviewFilesTests: XCTestCase {
         XCTAssertEqual(second.last.map { String($0.suffix(8)) }, "opened 1", "what it saved was there: \(second)")
     }
 
+    /// What a TV app of a wish saved in its preview goes when the app is deleted, with its wish or on its own: a part's
+    /// store is named after its instance, so it would otherwise stay for good.
+    func testWhatATVAppOfAWishSavedGoesWithIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("tv-preview-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("app"), staged = root.appendingPathComponent("web")
+        for folder in [dir, staged] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try "<html><body><script>localStorage.setItem('n', '1'); console.log('saved');</script></body></html>"
+            .write(to: staged.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        var whole = LampProject(id: "tv-preview-gone", name: "Tally", exe: "Tally", dir: root)
+        whole.instance = UUID().uuidString
+        var project = LampProject(id: "tv-preview-gone.tv", name: "Tally", exe: "Tally", dir: dir, platform: .tv, partOf: "tv-preview-gone")
+        project.instance = Parts.instance(wish: whole, folder: "TV")
+        let store = try XCTUnwrap(TVPreview.store(for: project.instance))
+        defer { Task { try? await WKWebsiteDataStore.remove(forIdentifier: store) } }
+        let shown = await TVPreview.show(project, staged: staged, inFront: false)
+        XCTAssertNil(shown)
+        for _ in 0..<50 where !(((try? String(contentsOf: Runtime.logURL(project), encoding: .utf8)) ?? "").contains("saved")) {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let kept = await WKWebsiteDataStore.allDataStoreIdentifiers
+        XCTAssertTrue(kept.contains(store), "the page saved something in its own store")
+        await TVPreview.forget(project).value
+        XCTAssertFalse(TVPreview.isOpen(project))
+        let left = await WKWebsiteDataStore.allDataStoreIdentifiers
+        XCTAssertFalse(left.contains(store), "its store is gone with it")
+    }
+
     /// A page may ask for any range; one ending at the largest number there is still gets the file's bytes.
     func testARangeToTheLargestNumberStaysInTheFile() {
         XCTAssertEqual(StagedFiles.part("bytes=0-\(Int.max)", of: 10), 0..<10)

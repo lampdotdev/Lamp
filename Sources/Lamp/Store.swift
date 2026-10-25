@@ -1906,6 +1906,8 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.buildFolder(for: part))
         try? fm.removeItem(at: Devices.signingFolder(for: part))
         AppSecrets.forget(app: part.instance)
+        // What its page saved in the TV preview, the values its wish's apps shared included.
+        if part.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(part) }
         simulatorApps[part.id] = nil
         queued[part.id] = nil
         stamps[part.id] = nil
@@ -4509,6 +4511,7 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
+        if project.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(project) }
         WishKeys.forget(project)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil
@@ -5472,8 +5475,9 @@ final class Store: ObservableObject {
             let (part, problem, setup) = await addPart(wanted, to: wish)
             guard let part else {
                 recordNeeds(problem ?? "Lamp couldn't make it.", for: wanted, of: wish, setup: setup)
-                said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it.") Tell the person in a sentence; " +
-                            "build the rest. Lamp keeps it on the wish's list and makes it once that's done.")
+                said.append("Not yet for \(Parts.name(of: wanted)): \(problem ?? "Lamp couldn't make it.") Lamp keeps it on the wish's list and makes it " +
+                            "once that's done. Build the rest; what it was to do may go another way meanwhile if one works now, your choice. " +
+                            "Tell the person in a sentence.")
                 continue
             }
             log(wish, .status, "\(wish.name) has \(Parts.name(of: wanted)) to go with it now.")
@@ -5555,7 +5559,9 @@ final class Store: ObservableObject {
         guard kind != current.platform || (kind.reaches(.device) && integration != current.integration) || current.undecided != nil
         else { return (200, ["text": "It's already made for \(words)."]) }
         if let problem = await kind.target.setup.notReady(integration, nil) {
-            return (200, ["text": "Not yet: \(problem) Tell the person in a sentence, and that you'll make the change when they ask again once it's done. Change nothing else for it."])
+            return (200, ["text": "Not yet: \(problem) Nothing changed. If what the person wants can be made well another way that needs none of it " +
+                          "(other devices with make_app_for, or another way of doing the same thing), you may choose that now and tell them in a sentence " +
+                          "what you made and what the setup would add; otherwise tell them in a sentence, and that you'll make the change when they ask again once it's done."])
         }
         // Every copy closes first, the turn's own answer included: one kept open (the person kept unsaved work)
         // would go on as an app Lamp no longer knows by its id.
@@ -8928,6 +8934,8 @@ final class Store: ObservableObject {
                     offerDrawing(project, spec: spec)
                     return await artworkWontCome(project, spec: spec, failed: false)
                 }
+                // Deleted while these were being drawn: saving would make its folder again, outside the Trash.
+                guard exists(project) else { return }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.artwork(project, spec: spec) == nil else { return }
                 switch art {
@@ -9468,42 +9476,16 @@ final class Store: ObservableObject {
         return await appRequest(request, for: project)
     }
 
-    /// Who a TV app's game is with (`Lamp.controllers` in lamp.js), asked by its page in the preview or on a TV, and by the
-    /// wish's other apps (`LampController`). Lamp only introduces them; what they say to each other never comes here:
-    ///
-    /// - The TV app's page gets its links: the relay (`ControllerRelay`), by the address the page reached Lamp at, with a
-    ///   host's credential, and each of the wish's iPhone apps listening now, with a ticket for it.
-    /// - A wish's iPhone app says where it's listening (`as: listener`) and gets the key its tickets are signed with.
-    /// - A wish's Mac app, or an iPhone app that can't listen, joins at the relay as a player (`as: player`), with a link's
-    ///   credential, as a phone following the TV's QR code has.
-    ///
-    /// Only a part of the same wish is answered for a wish, and none of it is anything of Lamp's.
+    /// Where a TV app's game meets the phones that join it (`Lamp.controllers` in lamp.js), asked by its page in the
+    /// preview or on a TV: the relay (`ControllerRelay`), by the address the page reached Lamp at, with a host's
+    /// credential. Lamp only introduces them; what they say to each other never comes here. A wish's own apps join the
+    /// game the way the wish's apps reach each other (`LampController` over `LampWish`), with nothing from Lamp, so an app
+    /// of a wish that asks here was built by an earlier Lamp. None of it is anything of Lamp's.
     private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-        // One of the wish's other apps asking for its TV app, which is at the wish's root or in its TV/ folder alike: the
-        // asker may be a part of a TV wish, or the Mac app at the root of a wish whose TV app is in TV/.
-        if !project.hasTV {
-            let wish = wish(of: project)
-            guard let tv = Self.tvApp(for: project, among: [wish] + parts(of: wish)) else { return (403, ["error": "This app's wish has no TV app."]) }
-            if body["as"] as? String == "listener" {
-                let token = "^[A-Za-z0-9_-]{8,64}$"
-                guard let port = (body["port"] as? Int).flatMap({ UInt16(exactly: $0) }), port > 0,
-                      let listener = body["listener"] as? String, listener.range(of: token, options: .regularExpression) != nil,
-                      let device = body["device"] as? String, device.range(of: token, options: .regularExpression) != nil else {
-                    return (400, ["error": "Say where the app is listening."])
-                }
-                guard let key = PhoneControllers.shared.register(listener: listener, wish: tv.id, device: device,
-                                                                 address: request.peerAddress ?? "127.0.0.1", port: port) else {
-                    return (409, ["error": "Another app is listening under that name."])
-                }
-                return (200, ["key": key.withUnsafeBytes { Data($0) }.base64EncodedString(), "renew": 20])
-            }
-            syncLocalNetwork()
-            guard Self.servesPhonePage(tv) else { return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."]) }
-            guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
-            return (200, ["socket": "ws://\(host):\(port)/", "app": tv.id, "join": ControllerCredential.issue(kind: .join, app: tv.id)])
+        guard project.hasTV else {
+            return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
@@ -9511,9 +9493,7 @@ final class Store: ObservableObject {
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
         let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,
                                     "credential": PhoneControllers.shared.hostCredential(for: project, preview: request.fromPreview)]
-        let direct = PhoneControllers.shared.directLinks(for: project.id, preview: request.fromPreview,
-                                                         from: request.fromPreview ? nil : request.peerAddress)
-        return (200, ["links": [relay] + direct, "renew": 15])
+        return (200, ["links": [relay], "renew": 15])
     }
 
     /// The wish's apps seeing each other and talking (`WishRooms`): any app of a wish, by its own token, is told where its
@@ -9538,14 +9518,6 @@ final class Store: ObservableObject {
             let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
-    }
-
-    /// The TV app one of a wish's apps joins as a player (`controllerSession`): its wish's, at the root or in TV/ alike,
-    /// among the wish's apps (`apps`: the wish and its parts). Nil for an app that isn't of a wish with a TV app.
-    nonisolated static func tvApp(for project: LampProject, among apps: [LampProject]) -> LampProject? {
-        guard !project.hasTV else { return nil }
-        let wish = project.partOf ?? project.id
-        return apps.first { $0.hasTV && ($0.id == wish || $0.partOf == wish) }
     }
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or

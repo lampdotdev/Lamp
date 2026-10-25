@@ -337,6 +337,59 @@ final class WishRoomTests: XCTestCase {
         var last: [[String: Any]]? { lock.lock(); defer { lock.unlock() }; return lists.last }
     }
 
+    /// A file goes to the one app it's for: its start and its pieces with the sender's name where the receiver's was, its
+    /// acknowledgements back; a piece past the size the file said ends it for both. A file for an app from before files is
+    /// turned down, and nothing of it reaches that app.
+    func testAFilesPiecesGoToTheAppTheyreForAndKeepToWhatItSaid() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV", wire: 3)
+        _ = try await tv.next()
+        let phone = try await join(address, as: "iphone", device: "iPhone", wire: 3)
+        _ = try await phone.next()
+        _ = try await tv.next()
+        let android = try await join(address, as: "android", device: "Android", wire: 2)
+        _ = try await android.next()
+        _ = try await tv.next()
+        _ = try await phone.next()
+
+        try await tv.send(["t": "file", "to": "android", "id": 1, "name": "old.bin", "type": "", "size": 10])
+        let turnedDown = try await tv.next()
+        XCTAssertEqual(turnedDown["t"] as? String, "file-refuse")
+        XCTAssertEqual(turnedDown["from"] as? String, "android")
+        XCTAssertEqual(turnedDown["reason"] as? String, "That app is out of date.")
+
+        try await tv.send(["t": "file", "to": "iphone", "id": 7, "name": "picture.png", "type": "image/png", "size": 6])
+        let started = try await phone.next()
+        XCTAssertEqual(started["t"] as? String, "file")
+        XCTAssertEqual(started["from"] as? String, "tv")
+        XCTAssertEqual(started["size"] as? Int, 6)
+        XCTAssertEqual(started["name"] as? String, "picture.png")
+        try await tv.sendSealed(WishChannel.piece(peer: "iphone", id: 7, bytes: Data([1, 2, 3, 4])))
+        let piece = try await phone.nextPlain()
+        let header = try XCTUnwrap(WishChannel.pieceHeader(piece))
+        XCTAssertEqual(header.peer, "tv", "the receiver hears who it's from")
+        XCTAssertEqual(header.id, 7)
+        XCTAssertEqual([UInt8](piece.dropFirst(header.offset)), [1, 2, 3, 4])
+        try await phone.send(["t": "file-ack", "to": "tv", "id": 7, "got": 4])
+        let acknowledged = try await tv.next()
+        XCTAssertEqual(acknowledged["t"] as? String, "file-ack")
+        XCTAssertEqual(acknowledged["from"] as? String, "iphone")
+        XCTAssertEqual(acknowledged["got"] as? Int, 4)
+
+        try await tv.sendSealed(WishChannel.piece(peer: "iphone", id: 7, bytes: Data([5, 6, 7])))
+        let cancelled = try await phone.next()
+        XCTAssertEqual(cancelled["t"] as? String, "file-cancel", "a piece past its size ends it: \(cancelled)")
+        let refused = try await tv.next()
+        XCTAssertEqual(refused["t"] as? String, "file-refuse")
+        XCTAssertEqual(refused["reason"] as? String, "The file didn't keep to its size.")
+
+        try await tv.send(["t": "send", "data": "after"])
+        let onAndroid = try await android.next()
+        XCTAssertEqual(onAndroid["data"] as? String, "after", "the app from before files heard none of it: \(onAndroid)")
+        for each in [tv, phone, android] { each.socket.cancel(with: .goingAway, reason: nil) }
+    }
+
     // MARK: Helpers
 
     private static func refused(_ socket: URLSessionWebSocketTask) async throws { try await closed(socket, code: 4003) }
@@ -377,6 +430,19 @@ final class WishPeer {
 
     func send(_ value: [String: Any]) async throws {
         try await say(.data(sealer!.seal(try JSONSerialization.data(withJSONObject: value))))
+    }
+
+    func sendSealed(_ plain: Data) async throws { try await say(.data(sealer!.seal(plain))) }
+
+    /// What the next sealed message holds, as it is, past beats.
+    func nextPlain() async throws -> Data {
+        while true {
+            switch try await hear() {
+            case .data(let sealed): return try XCTUnwrap(opener!.open(sealed), "a sealed message that opens")
+            case .string(let text): XCTAssertEqual(WishRoomTests.parse(text)?["t"] as? String, "beat", "only beats are in clear: \(text)")
+            @unknown default: continue
+            }
+        }
     }
 
     /// The next sealed message, past beats.

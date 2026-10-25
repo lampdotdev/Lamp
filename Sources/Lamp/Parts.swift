@@ -239,15 +239,17 @@ extension Agent.Rules {
         """
     }
 
-    /// How a Swift part reaches the wish's other apps (`wishTalk`), and its TV app's game as a player of
-    /// `Lamp.controllers`, through `LampController`.
+    /// How a Swift part reaches the wish's other apps (`wishTalk`), and, when it fits, its TV app's game as a player of
+    /// `Lamp.controllers` through `LampController`: one way the agent may choose, not a rule.
     static func partTalk(mac: Bool) -> String {
         wishTalk + """
 
-        - When the wish has a TV app and this app steers it (a game's controller, a remote), that goes with \
-        `LampController` from LampSupport.swift, beside `LampWish` for everything else: \
-        `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
-        Wi‑Fi, with nothing to pair or set up\(mac ? "" : ": the TV app connects straight to the phone, and Lamp on the Mac only introduces them"). \
+        - When the wish has a TV app and this app steers it, choose what fits: plain `LampWish` messages do for a few \
+        commands (a slideshow's next and back, a remote), and `LampController` from LampSupport.swift is one way \
+        suited to game-style input (buttons held and let go, sticks, several players), which the TV app takes in \
+        `Lamp.controllers`: `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
+        Wi‑Fi, with nothing to pair or set up: it goes the way `LampWish` reaches the TV app, so it goes on with Lamp \
+        closed. \
         `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \
         `pad.axis("stick", x: 0.5, y: 0)` moves a stick (-1 to 1), and `pad.send(["volume": 4])` sends JSON of \
         16 KB at most; the TV app hears them in `Lamp.controllers`' onButton, onAxis and onMessage. Anything bigger \
@@ -270,7 +272,7 @@ extension Agent {
         return """
         You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Lamp makes apps \
         \(Targets.lampMakes), and one wish can be more than \
-        one of them, made to work together: a TV app with an iPhone app that controls it, a Mac app with its TV app. \
+        one of them, made to work together: a TV app with an iPhone app, a Mac app with its TV app. \
         This wish could be \(named.isEmpty ? "for more than one of them" : named), and it didn't say which, so nothing \
         is written until it's known.
 

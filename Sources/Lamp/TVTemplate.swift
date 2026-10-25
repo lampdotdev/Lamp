@@ -501,11 +501,12 @@ extension TVTemplate {
 
         """#
 
-    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp who its players are
-    /// (`/app/controller`), as it opens and every few seconds after, and opens its own sockets to them: one to the relay,
-    /// where phones' pages and the wish's Mac app join, and one straight to each of the wish's iPhone apps that's
-    /// listening. Lamp carries none of it. The page numbers the players itself, whichever way they came. What a phone holds
-    /// down is let go when it leaves or its link drops, and movement that arrives late is dropped.
+    /// Phones as controllers (`PhoneControllers`): the TV page's half. The page asks Lamp where its relay is
+    /// (`/app/controller`), as it opens and every few seconds after, and opens its own socket there, where phones' pages
+    /// join. A wish's own apps (`LampController`) come the way the wish's apps reach each other instead, which the wish's
+    /// block joins here (`_attach`), so they go on playing with Lamp closed. The page numbers the players itself, whichever
+    /// way they came. What a player holds down is let go when it leaves or its link drops, and movement that arrives late
+    /// is dropped.
     static let controllersJS = #"""
         /* Phones as controllers. Written by Lamp before every build; don't edit.
          *
@@ -542,6 +543,8 @@ extension TVTemplate {
           var MESSAGE = 16384;     // bytes of JSON in one message, the most the relay passes on (ControllerWire.message)
           var on = { link: [], join: [], leave: [], button: [], axis: [], message: [], file: [], error: [] };
           var players = {}, byKey = {}, kept = {}, links = {}, link = null, linkTimer = null, askTimer = null, beatTimer = null, started = false, away = false;
+          // Players that come another way than Lamp's relay: each way's own code joins them here (`_attach`).
+          var others = [];
         /*LAMP_FILES*/
           var files = lampFiles(function (route, file) {
             var number = byKey[route.key];
@@ -572,11 +575,11 @@ extension TVTemplate {
             for (n = 1; taken[n]; n++) {}
             return n;
           }
-          function join(key, route) {
+          function join(key, route, offset) {
             if (byKey[key]) return byKey[key];
             var number = numberFor(key, route.place);
             byKey[key] = number;
-            players[number] = { key: key, route: route, held: {}, seen: {} };
+            players[number] = { key: key, route: route, held: {}, seen: {}, offset: offset === undefined ? null : offset };
             route.text({ t: 'player', number: number });
             emit('join', [number]);
             return number;
@@ -625,49 +628,51 @@ extension TVTemplate {
             }
           }
 
-          // Links: one socket to the relay, and one to each of the wish's iPhone apps that's listening.
+          // The link to Lamp's relay, where phones' pages join.
           function sendOn(l, m) {
             if (!l.socket || l.socket.readyState !== 1) return false;
             l.socket.send(JSON.stringify(m));
             return true;
           }
           function routeOn(l, place) {
-            var relay = l.kind === 'relay';
             return {
-              key: relay ? 'r' + place : 'd' + l.device, place: relay ? place : 0,
-              text: function (m) { if (relay) m.player = place; return sendOn(l, m); },
-              say: function (data) { return sendOn(l, relay ? { t: 'send', player: place, data: data } : { t: 'message', data: data }); },
+              key: 'r' + place, place: place,
+              text: function (m) { m.player = place; return sendOn(l, m); },
+              say: function (data) { return sendOn(l, { t: 'send', player: place, data: data }); },
               binary: function (buffer) { if (!l.socket || l.socket.readyState !== 1) return false; l.socket.send(buffer); return true; },
               buffered: function () { return l.socket ? l.socket.bufferedAmount : 0; }
             };
           }
           function fromLink(l, m) {
             if (typeof m.now === 'number') l.offset = m.now - Date.now();
-            if (l.kind === 'relay') {
-              if (m.t === 'welcome') {
-                for (var i = 0; i < (m.players || []).length; i++) join('r' + m.players[i], routeOn(l, m.players[i]));
-                askLink();
-              } else if (m.t === 'link') {
-                link = m.url;
-                emit('link', [link]);
-              } else if (m.t === 'joined') {
-                leave('r' + m.player);
-                join('r' + m.player, routeOn(l, m.player));
-              } else if (m.t === 'left') {
-                leave('r' + m.player);
-              } else if (m.t === 'too-big') {
-                tooBig('Player ' + (byKey['r' + m.player] || m.player) + "'s message", m.bytes);
-              } else if (typeof m.player === 'number' && !files.text(routeOn(l, m.player), m) && /^(button|axis|message)$/.test(m.t)) {
-                input(byKey['r' + m.player] || join('r' + m.player, routeOn(l, m.player)), m, l.offset);
-              }
-            } else if (m.t === 'welcome') {
-              l.welcomed = true;
-              join('d' + l.device, routeOn(l, 0));
-            } else if (l.welcomed && m.t === 'too-big') {
-              tooBig('Player ' + byKey['d' + l.device] + "'s message", m.bytes);
-            } else if (l.welcomed && !files.text(routeOn(l, 0), m)) {
-              input(byKey['d' + l.device], m, l.offset);
+            if (m.t === 'welcome') {
+              for (var i = 0; i < (m.players || []).length; i++) join('r' + m.players[i], routeOn(l, m.players[i]));
+              askLink();
+            } else if (m.t === 'link') {
+              link = m.url;
+              emit('link', [link]);
+            } else if (m.t === 'joined') {
+              leave('r' + m.player);
+              join('r' + m.player, routeOn(l, m.player));
+            } else if (m.t === 'left') {
+              leave('r' + m.player);
+            } else if (m.t === 'too-big') {
+              tooBig('Player ' + (byKey['r' + m.player] || m.player) + "'s message", m.bytes);
+            } else if (typeof m.player === 'number' && !files.text(routeOn(l, m.player), m) && /^(button|axis|message)$/.test(m.t)) {
+              input(byKey['r' + m.player] || join('r' + m.player, routeOn(l, m.player)), m, l.offset);
             }
+          }
+          // What another way's code is given to join its players here, each by a key of its own: its route says how to reach
+          // the player (text, say, and sendFile for a way that carries files itself), and `offset` how far its clock is
+          // from this page's, for telling late movement.
+          function hooks() {
+            return {
+              join: function (key, route, offset) { return join(key, route, offset); },
+              leave: leave,
+              input: function (key, m) { var n = byKey[key]; if (n) input(n, m, players[n].offset); },
+              file: function (key, file) { var n = byKey[key]; if (n) emit('file', [n, file]); else file.cancel(); },
+              tooBig: function (key, size) { tooBig('Player ' + (byKey[key] || '?') + "'s message", size); }
+            };
           }
           function connect(l) {
             clearTimeout(l.again);
@@ -678,13 +683,13 @@ extension TVTemplate {
             l.socket = socket;
             l.heard = Date.now();
             socket.onopen = function () {
-              socket.send(JSON.stringify(l.kind === 'relay' ? { t: 'hello', app: l.app, credential: l.credential } : { t: 'hello', credential: l.credential }));
+              socket.send(JSON.stringify({ t: 'hello', app: l.app, credential: l.credential }));
             };
             socket.onmessage = function (event) {
               l.heard = Date.now();
               if (typeof event.data !== 'string') {
                 var view = new Uint8Array(event.data);
-                if (view.length > 1) files.binary(routeOn(l, l.kind === 'relay' ? view[1] : 0), view);
+                if (view.length > 1) files.binary(routeOn(l, view[1]), view);
                 return;
               }
               var m; try { m = JSON.parse(event.data); } catch (e) { return; }
@@ -692,21 +697,15 @@ extension TVTemplate {
             };
             socket.onclose = function (event) { if (l.socket === socket) lost(l, event.code); };
           }
-          // A link that drops lets its players go. The relay's is opened again after a moment (with a fresh credential
-          // once Lamp has given one); a phone's goes, and comes back if Lamp still lists it.
+          // The relay's link dropping lets its players go, and it's opened again after a moment (with a fresh credential
+          // once Lamp has given one).
           function lost(l, code) {
             l.socket = null;
-            l.welcomed = false;
-            for (var key in byKey) if (l.kind === 'relay' ? key.charAt(0) === 'r' : key === 'd' + l.device) leave(key);
+            for (var key in byKey) if (key.charAt(0) === 'r') leave(key);
             if (!started) return;
-            if (l.kind === 'relay') {
-              // Turned away, or the session ended: its credential is no use, and Lamp gives a fresh one.
-              if (code === 4003 || code === 4005) return ask(1000);
-              l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
-            } else {
-              delete links[l.id];
-              ask(2000);
-            }
+            // Turned away, or the session ended: its credential is no use, and Lamp gives a fresh one.
+            if (code === 4003 || code === 4005) return ask(1000);
+            l.again = setTimeout(function () { connect(l); }, code === 4009 ? 5000 : 2000);
           }
           function ask(after) {
             clearTimeout(askTimer);
@@ -716,8 +715,9 @@ extension TVTemplate {
                 if (!started) return;
                 var list = answer.links || [];
                 for (var i = 0; i < list.length; i++) {
-                  var info = list[i], id = info.kind === 'relay' ? 'relay' : 'd' + info.device;
-                  var l = links[id] || (links[id] = { id: id, kind: info.kind, device: info.device, socket: null, offset: null });
+                  var info = list[i], id = 'relay';
+                  if (info.kind !== 'relay') continue;
+                  var l = links[id] || (links[id] = { id: id, kind: info.kind, socket: null, offset: null });
                   l.credential = info.credential;
                   l.app = info.app;
                   if (!l.socket) { l.address = info.socket; connect(l); }
@@ -751,12 +751,14 @@ extension TVTemplate {
               started = true;
               ask(0);
               beatTimer = setInterval(beat, 5000);
+              for (var i = 0; i < others.length; i++) others[i].start(hooks());
               return Promise.resolve();
             },
             stop: function () {
               started = false;
               clearTimeout(askTimer); clearInterval(beatTimer); clearInterval(linkTimer);
               for (var id in links) { var l = links[id]; clearTimeout(l.again); if (l.socket) { var s = l.socket; l.socket = null; s.close(); } }
+              for (var i = 0; i < others.length; i++) others[i].stop();
               for (var key in byKey) leave(key);
               links = {}; link = null;
             },
@@ -768,11 +770,8 @@ extension TVTemplate {
               if (player) {
                 went = !!players[player] && players[player].route.say(data);
               } else {
-                for (var id in links) {
-                  var l = links[id];
-                  if (l.kind === 'relay') went = sendOn(l, { t: 'send', player: 0, data: data }) || went;
-                  else if (l.welcomed) went = sendOn(l, { t: 'message', data: data }) || went;
-                }
+                for (var id in links) went = sendOn(links[id], { t: 'send', player: 0, data: data }) || went;
+                for (var p in players) if (players[p].key.charAt(0) !== 'r') went = players[p].route.say(data) || went;
               }
               // Being away is said once until a message goes again.
               if (went) { away = false; return true; }
@@ -787,12 +786,16 @@ extension TVTemplate {
                 none.done.catch(function () {});
                 return none;
               }
-              return files.send(players[player].route, data, info);
+              var route = players[player].route;
+              return route.sendFile ? route.sendFile(data, info) : files.send(route, data, info);
             },
             isHeld: function (player, name) { return !!(players[player] && players[player].held[name]); },
             players: function () { var list = []; for (var p in players) list.push(+p); return list.sort(function (a, b) { return a - b; }); },
             onLink: adder('link'), onJoin: adder('join'), onLeave: adder('leave'), onButton: adder('button'),
-            onAxis: adder('axis'), onMessage: adder('message'), onFile: adder('file'), onError: adder('error')
+            onAxis: adder('axis'), onMessage: adder('message'), onFile: adder('file'), onError: adder('error'),
+            // For another way players come by: `source.start(hooks)` as the game starts (now, if it has), `source.stop()`
+            // as it stops.
+            _attach: function (source) { others.push(source); if (started) source.start(hooks()); }
           };
           if (window.Lamp) window.Lamp.controllers = api;
         })();
@@ -1084,6 +1087,7 @@ extension TVTemplate {
         """#
 
     static let wishJS = wishJSBody.replacingOccurrences(of: "/*LAMP_WISH_CRYPTO*/", with: wishCryptoJS.trimmingCharacters(in: .whitespacesAndNewlines))
+        .replacingOccurrences(of: "/*LAMP_FILES*/", with: filesJS)
 
     private static let wishJSBody = #"""
         /* The wish's other apps. Written by Lamp before every build; don't edit.
@@ -1118,7 +1122,12 @@ extension TVTemplate {
          * Lamp.wish.set('list', value)       sets one here and in every other app, now or when they next meet; null
          *                                     removes it; false (with why in the console) when it wasn't set
          * Lamp.wish.onChange(fn(key, value, from))   a value changed, here (from is me()) or in another app
-         * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; files aren't carried yet
+         * Lamp.wish.sendFile(data, 'iphone', { name, type })   a File, Blob, ArrayBuffer, bytes or text, up to 64 MB, to
+         *                                     one app open now (two at a time to each); gives a transfer: onProgress(fn(sent,
+         *                                     size)), cancel(), done (a Promise that fails with why it didn't get there)
+         * Lamp.wish.onFile(fn(from, file))   another app is sending a file: file.name, .type, .size,
+         *                                     file.onProgress(fn(received, size)), file.cancel(), file.done.then(fn(arrayBuffer))
+         * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; anything bigger goes with sendFile
          * Lamp.wish.valueLimit, valuesLimit  8192 and 65536: the most bytes one value, and all of them, take as JSON
          * Lamp.wish.statusView('iphone')     a ready-made element of all that, kept up to date (the same one each time): a line for each other app
          *                                     ("TV app connected"), or that app's alone; it takes the page's font and colour
@@ -1127,21 +1136,22 @@ extension TVTemplate {
          * More states may come: compare with the names above and treat any other as not connected. An open app built by
          * an older Lamp is 'outOfDate', still open, with a reason saying to open it from Lamp. Show a reason as it
          * is rather than words of your own (it changes as time goes by: "5 min ago"), and keep the app usable while an app
-         * isn't open. A message is for apps open now; values are for what must outlast an app being closed, and where two
-         * apps set one while apart, the later setting wins in both. A phone steering this app as
-         * a game controller is Lamp.controllers (above), not this.
+         * isn't open. A message or a file is for apps open now; values are for what must outlast an app being closed, and
+         * where two apps set one while apart, the later setting wins in both. A phone steering this app as a game
+         * controller is Lamp.controllers (above), not this; the wish's own apps that do (LampController) join
+         * Lamp.controllers through this, the same way as everything else here.
          */
         (function () {
           'use strict';
           var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
           // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-          // 2 brought values; an app from before says none, which counts as 1.
-          var WIRE = 2;
+          // 2 brought values, 3 files and a game's controls; an app from before says none, which counts as 1.
+          var WIRE = 3;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
           var C = /*LAMP_WISH_CRYPTO*/;
-          var on = { peers: [], apps: [], message: [], state: [], change: [] };
+          var on = { peers: [], apps: [], message: [], state: [], change: [], file: [] };
           var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
           var address = null, mine = '', state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
           // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
@@ -1166,6 +1176,26 @@ extension TVTemplate {
           // its c, so an older setting from an app that was away doesn't bring it back), and this page's clock for them:
           // the latest it has set or heard of, so what it sets next is later than anything it knows of.
           var entries = Object.create(null), clock = [0, 0];
+          // Files to and from the other apps, each on the way it started on (a file's pieces and acknowledgements can't
+          // change ways halfway): a route for each app and way (`routeTo`); what a file is for (`ch`: '' for onFile, 'pad'
+          // for Lamp.controllers) is said as it starts.
+          var routes = {}, links_ = 0, coming = '';
+        /*LAMP_FILES*/
+          var files = lampFiles(function (route, file) {
+            var ch = coming, key = ch.indexOf('pad') === 0 ? padKey(route.peer, ch.slice(4)) : null;
+            // A file that stops coming ends, as one that stops going does.
+            var watch = setTimeout(stalled, 20000);
+            function stalled() { file.cancel(); }
+            file.onProgress(function () { clearTimeout(watch); watch = setTimeout(stalled, 20000); });
+            file.done.then(function () { clearTimeout(watch); }, function () { clearTimeout(watch); });
+            if (key !== null) { if (padHooks && padPlayers[key]) padHooks.file(key, file); else file.cancel(); }
+            else if (on.file.length) emit('file', [route.peer, file]);
+            else file.cancel();
+          });
+          // The wish's own apps playing this app's game (LampController): joined to Lamp.controllers while it takes
+          // players, each controller of each app a player of its own ('w' + its app's peer name + ':' + its id).
+          var padHooks = null, padPlayers = {};
+          function padKey(peer, id) { return 'w' + peer + (typeof id === 'string' && /^[a-z0-9]{1,16}$/.test(id) ? ':' + id : ''); }
 
           function emit(name, args) {
             var list = on[name];
@@ -1237,6 +1267,14 @@ extension TVTemplate {
             }
             apps = next;
             for (var id in directs) if (directs[id].ready) any = true;
+            // An app no longer open takes its files and its place in the game with it; one that has just come is told the
+            // game takes players.
+            for (var g = 0; g < apps.length; g++) {
+              if (apps[g].open) continue;
+              dropRoutes(apps[g].peer, null, apps[g].name.charAt(0).toUpperCase() + apps[g].name.slice(1) + ' closed.');
+              for (var pk in padPlayers) if (padPlayers[pk].peer === apps[g].peer) { delete padPlayers[pk]; if (padHooks) padHooks.leave(pk); }
+            }
+            if (padHooks) for (var q = 0; q < arrived.length; q++) sendPad(arrived[q], { t: 'host' });
             // This page's own state first: code that hears an app arrive in peers sends to it at once, and must find this
             // page connected when it does.
             if (started) {
@@ -1583,7 +1621,8 @@ extension TVTemplate {
             } else if (m.t === 'joined' && m.peer) {
               present(m.peer); rebuild(); reach();
             } else if (m.t === 'left') {
-              delete relayPresent[m.peer]; rebuild();
+              // What was on its way through the room to or from it can't arrive now, even if it's still reached straight.
+              delete relayPresent[m.peer]; dropRoutes(m.peer, 'r', 'The link was lost.'); rebuild();
             } else if (m.t === 'at' && isName(m.peer)) {
               remember(m.peer, m.addresses); lookAgain();
             } else if (m.t === 'apps') {
@@ -1593,6 +1632,10 @@ extension TVTemplate {
               emit('message', [m.from, m.data]);
             } else if (m.t === 'values' && isName(m.from)) {
               heardValues(m, m.from);
+            } else if (m.t === 'pad' && isName(m.from) && m.m && typeof m.m === 'object') {
+              heardPad(m.m, m.from);
+            } else if (typeof m.t === 'string' && m.t.indexOf('file') === 0 && isName(m.from)) {
+              fileText(routeTo(m.from, null), m);
             } else if (m.t === 'undelivered' && typeof m.to === 'string') {
               if (!undeliveredSaid[m.to]) { undeliveredSaid[m.to] = true; say('a message to "' + m.to + '" did not arrive: ' + (m.reason || 'it is not in the room') + '.'); }
             }
@@ -1603,9 +1646,9 @@ extension TVTemplate {
                                      wire: typeof p.wire === 'number' ? p.wire : 1 };
             if (p.at instanceof Array && p.at.length) remember(p.peer, p.at);
           }
-          // Seals a message with the next number this way and sends it.
+          // Seals a message (text, or a file's piece as bytes) with the next number this way and sends it.
           function seal(text) {
-            var box = C.seal(sendKey, C.nonce(sent), C.utf8(text));
+            var box = C.seal(sendKey, C.nonce(sent), typeof text === 'string' ? C.utf8(text) : text);
             sent++;
             socket.send(box.buffer);
           }
@@ -1635,7 +1678,10 @@ extension TVTemplate {
               if (!sendKey && m && m.t === 'challenge' && answer(m)) return;
             } else if (openKey) {
               var plain = C.open(openKey, C.nonce(opened), new Uint8Array(data)), said = null;
-              if (plain) { opened++; try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
+              if (plain) opened++;
+              // A file's piece, else a message.
+              if (plain && plain[0] === 1) return piece(plain, null);
+              if (plain) { try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
               if (said && typeof said === 'object') return hear(said);
             }
             say('the link to the wish\'s other apps heard something that was not theirs, and started again.');
@@ -1665,6 +1711,7 @@ extension TVTemplate {
           function lost(code) {
             var wasIn = relayIn;
             socket = null; hello = null; sendKey = openKey = null; relayIn = false; relayPresent = {};
+            dropRoutes(null, 'r', 'The link was lost.');
             rebuild();
             if (!started) return;
             if (code === 4003 || code === 4005 || !wasIn || retry >= 3) address = null;
@@ -1725,10 +1772,12 @@ extension TVTemplate {
             if (!started) return;
             try { ws = new WebSocket('ws://' + place + '/'); } catch (e) { return failed(); }
             ws.binaryType = 'arraybuffer';
-            d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null };
+            d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null,
+                  way: 'd' + (++links_) };
             function end() {
               if (d.over) return;
               d.over = true;
+              dropRoutes(null, d.way, 'The link was lost.');
               clearTimeout(timer);
               try { ws.close(); } catch (e) {}
               var at = pending.indexOf(d);
@@ -1765,19 +1814,141 @@ extension TVTemplate {
               }
             } else if (d.openKey) {
               var plain = C.open(d.openKey, C.nonce(d.opened), new Uint8Array(data)), said = null;
-              if (plain) { d.opened++; try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
+              if (plain) d.opened++;
+              if (plain && plain[0] === 1 && d.ready) return piece(plain, d);
+              if (plain) { try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
               if (said && said.t === 'welcome' && !d.ready) return ready(d, said);
               if (said && said.t === 'message' && d.ready && said.data !== undefined) return emit('message', [d.peer, said.data]);
               if (said && said.t === 'values' && d.ready) return heardValues(said, d.peer);
+              if (said && said.t === 'pad' && d.ready && said.m && typeof said.m === 'object') return heardPad(said.m, d.peer);
+              if (said && typeof said.t === 'string' && said.t.indexOf('file') === 0 && d.ready) return fileText(routeTo(d.peer, d), said);
               if (said && typeof said === 'object') return;
             }
             d.end();
           }
           function directSeal(d, text) {
-            var box = C.seal(d.sendKey, C.nonce(d.sent), C.utf8(text));
+            var box = C.seal(d.sendKey, C.nonce(d.sent), typeof text === 'string' ? C.utf8(text) : text);
             d.sent++;
             d.ws.send(box.buffer);
           }
+
+          // A route to another app on one way (d: a link straight to it; null: Lamp's room), as the files' code takes it:
+          // its messages go sealed on that way, and its pieces as the wish's apps write them (1, a peer's name with its
+          // length before it, none straight, the transfer's id, the bytes), not the controllers' 8-byte header.
+          function routeTo(peer, d) {
+            var way = d ? d.way : 'r', k = 'w-' + peer + '-' + way;
+            if (routes[k]) return routes[k];
+            function up() { return d ? !d.over && directs[peer] === d && d.ready : relayIn && !!socket && socket.readyState === 1 && !!sendKey && !!relayPresent[peer]; }
+            var route = routes[k] = {
+              key: k, place: 0, peer: peer, way: way,
+              text: function (m) {
+                if (!up()) return false;
+                if (d) directSeal(d, JSON.stringify(m));
+                else { m.to = peer; seal(JSON.stringify(m)); }
+                return true;
+              },
+              binary: function (buffer) {
+                if (!up()) return false;
+                var v = new Uint8Array(buffer), n = d ? new Uint8Array(0) : C.utf8(peer), out = new Uint8Array(2 + n.length + v.length - 4);
+                out[0] = 1; out[1] = n.length; out.set(n, 2); out.set(v.subarray(4), 2 + n.length);
+                if (d) directSeal(d, out); else seal(out);
+                return true;
+              },
+              buffered: function () { return d ? d.ws.bufferedAmount : socket ? socket.bufferedAmount : 0; }
+            };
+            return route;
+          }
+          // The files of one app (null: every app) on one way (null: every way) end, with why.
+          function dropRoutes(peer, way, reason) {
+            for (var k in routes) {
+              var r = routes[k];
+              if ((peer === null || r.peer === peer) && (way === null || r.way === way)) { files.drop(r, reason); delete routes[k]; }
+            }
+          }
+          // A file's message from another app: what a coming one is for is kept while the files' code takes it.
+          function fileText(route, m) {
+            coming = typeof m.ch === 'string' ? m.ch : '';
+            try { files.text(route, m); } finally { coming = ''; }
+          }
+          // A file's piece, as the files' code reads one: with the controllers' 8-byte header.
+          function piece(plain, d) {
+            var n = plain[1], at = 2 + n;
+            if (plain.length <= at + 4 || n > 32) return;
+            var peer = d ? d.peer : C.fromUtf8(plain.subarray(2, at));
+            if (!isName(peer)) return;
+            var view = new Uint8Array(4 + plain.length - at);
+            view[0] = 1;
+            view.set(plain.subarray(at), 4);
+            files.binary(routeTo(peer, d), view);
+          }
+          // A file to another app open now, the straight way when there is one, else through Lamp's room.
+          function sendFile(peer, data, info, ch) {
+            var p = find(peer), d = directs[peer] && directs[peer].ready ? directs[peer] : null, why = null;
+            if (!p) why = 'the wish has no app called "' + peer + '".';
+            else if (!p.open || state !== 'connected') why = p.status.reason || p.name + ' is not open now.';
+            else if (wireOf(peer) < 3) why = outOfDate(p.name, true);
+            else if (!d && !(relayIn && relayPresent[peer] && socket && socket.readyState === 1 && sendKey)) why = p.name + ' is not reachable now.';
+            if (why) {
+              say('a file was not sent: ' + why);
+              var none = { name: String((info && info.name) || 'file'), size: 0, sent: 0, onProgress: function () {}, cancel: function () {}, done: Promise.reject(new Error(why)) };
+              none.done.catch(function () {});
+              return none;
+            }
+            var base = routeTo(peer, d), route = base;
+            if (ch) route = { key: base.key, place: 0, peer: peer, way: base.way, binary: base.binary, buffered: base.buffered,
+                              text: function (m) { if (m.t === 'file') m.ch = ch; return base.text(m); } };
+            return files.send(route, data, info);
+          }
+
+          // A game's controls between a wish's app (LampController) and this app's Lamp.controllers.
+          function sendPad(peer, m) {
+            var d = directs[peer] && directs[peer].ready ? directs[peer] : null;
+            if (wireOf(peer) < 3) return false;
+            if (d) { directSeal(d, JSON.stringify({ t: 'pad', m: m })); return true; }
+            if (relayIn && relayPresent[peer] && socket && socket.readyState === 1 && sendKey) { seal(JSON.stringify({ t: 'pad', m: m, to: peer })); return true; }
+            return false;
+          }
+          function heardPad(m, peer) {
+            if (!padHooks) return;
+            var id = typeof m.pad === 'string' ? m.pad : '', key = padKey(peer, id);
+            if (m.t === 'join') {
+              // Asked again (a controller that missed its welcome): it's told again, with the number it has.
+              padPlayers[key] = { peer: peer, pad: id };
+              var n = padHooks.join(key, {
+                key: key, place: 0,
+                text: function (out) { if (id) out.pad = id; return sendPad(peer, out); },
+                say: function (data) { var out = { t: 'message', data: data }; if (id) out.pad = id; return sendPad(peer, out); },
+                sendFile: function (data, info) { return sendFile(peer, data, info, id ? 'pad:' + id : 'pad'); }
+              }, typeof m.now === 'number' ? m.now - Date.now() : null);
+              var welcome = { t: 'welcome' }, number = { t: 'player', number: n };
+              if (id) { welcome.pad = id; number.pad = id; }
+              sendPad(peer, welcome);
+              sendPad(peer, number);
+            } else if (!padPlayers[key]) {
+              return;
+            } else if (m.t === 'leave') {
+              delete padPlayers[key];
+              padHooks.leave(key);
+            } else if (m.t === 'too-big') {
+              padHooks.tooBig(key, m.bytes);
+            } else if (m.t === 'button' || m.t === 'axis' || m.t === 'message') {
+              padHooks.input(key, m);
+            }
+          }
+          // Lamp.controllers taking players, or no longer: the wish's open apps are told, and those that play join.
+          var padSource = {
+            start: function (h) {
+              padHooks = h;
+              api.start();
+              for (var i = 0; i < apps.length; i++) if (apps[i].open) sendPad(apps[i].peer, { t: 'host' });
+            },
+            stop: function () {
+              var told = {};
+              for (var k in padPlayers) if (!told[padPlayers[k].peer]) { told[padPlayers[k].peer] = true; sendPad(padPlayers[k].peer, { t: 'state', host: false }); }
+              padPlayers = {};
+              padHooks = null;
+            }
+          };
           function ready(d, welcome) {
             var at = pending.indexOf(d);
             if (at >= 0) pending.splice(at, 1);
@@ -1927,6 +2098,7 @@ extension TVTemplate {
               if (socket) { var s = socket; socket = null; s.close(); }
               sendKey = openKey = null; relayIn = false; relayPresent = {};
               epoch++;
+              dropRoutes(null, null, 'The link was stopped.');
               for (var id in directs) directs[id].end();
               while (pending.length) pending[0].end();
               dialing = {}; nextDial = {};
@@ -2004,9 +2176,12 @@ extension TVTemplate {
               }
               return true;
             },
-            onMessage: adder('message'), onPeers: adder('peers'), onApps: adder('apps'), onState: adder('state'), onChange: adder('change')
+            sendFile: function (data, to, info) { api.start(); return sendFile(to, data, info, ''); },
+            onMessage: adder('message'), onPeers: adder('peers'), onApps: adder('apps'), onState: adder('state'), onChange: adder('change'),
+            onFile: adder('file')
           };
           if (window.Lamp) window.Lamp.wish = api;
+          if (window.Lamp && window.Lamp.controllers && window.Lamp.controllers._attach) window.Lamp.controllers._attach(padSource);
         })();
 
         """#
@@ -2271,15 +2446,19 @@ extension Agent.Rules {
     """
 
     static let tvPhone = """
-    - A page for phones (controllers, a buzzer, a second screen) goes in Phone/, which Lamp serves while the app \
-    runs: never start a server or anything that keeps running for it. Open the phone-controllers skill first.
+    - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
+    what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
+    the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
+    first for one. Apps of the wish's own on the iPhone or Android (`make_app_for`) suit what a page does poorly, such as the \
+    phone's hardware or data the phone keeps.
     """
 
     /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone
     /// or Mac app steers the TV app's game as a player of `Lamp.controllers`.
     static let tvParts = String(wishTalk.dropFirst()) + """
-    - When the wish's iPhone or Mac app steers the TV app (a game's controller, a remote), it joins the TV app the way a \
-    phone's page does, as a player of `Lamp.controllers`, beside `Lamp.wish` for everything else: its buttons, sticks \
+    - When the wish's iPhone or Mac app steers the TV app as a player (`LampController`, one way to, suited to a \
+    game's controls), it joins the TV app the way a phone's page does, as a player of `Lamp.controllers`, beside \
+    `Lamp.wish` for everything else: its buttons, sticks \
     and messages arrive in onButton, onAxis and onMessage, the files it sends in onFile, and `Lamp.controllers.send` \
     and `sendFile` reach it. Call `Lamp.controllers.start()` as the TV app opens; it needs no page in Phone/ for that.
     """
