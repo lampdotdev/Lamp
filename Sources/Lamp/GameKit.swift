@@ -636,7 +636,8 @@ extension Agent.Rules {
 
         - This wish has other apps beside the \(word). make_app_for's `devices` are the wish's apps, "\(word)" among \
         them, and every other app the person keeps: one left out is taken away. Where the \(word) is \(verb) beside \
-        the Mac goes in `places`, never in `devices`, where "mac" or "iphone" is an app of its own.
+        the Mac goes in `places` under its own word ({"\(word)": ["iphone"]}), never in `devices`, where "mac" or "iphone" is \
+        an app of its own.
         """
     }
 
@@ -671,7 +672,7 @@ extension Agent.Rules {
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
     it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
     make_app_for with "game" and every other app the wish keeps in `devices`, and every place it's to be played \
-    beside the Mac in `places` (["iphone"], ["android"], ["xbox-one"]…); it stays the same game.
+    beside the Mac in `places`, by app ({"game": ["iphone"]}, {"game": ["android", "xbox-one"]}…); it stays the same game.
     """
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

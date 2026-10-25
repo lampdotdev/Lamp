@@ -4530,9 +4530,9 @@ final class Store: ObservableObject {
         guard !project.isPart, !project.makesNoApp else { return }
         let file = project.dir.appendingPathComponent(".lamp/prompt-for")
         let parts = parts(of: project)
-        // A game's or a screen's own prompt once told it to list its places among `devices`; they're `places` now, so a
-        // conversation that began before that starts again with the rules that say so.
-        let now = project.holdsApp ? (project.platform.addsPlaces ? "app places" : "app")
+        // A game's or a screen's own prompt once told it to list its places among `devices`, then as one list in `places`;
+        // they're `places` by app now, so a conversation that began before that starts again with the rules that say so.
+        let now = project.holdsApp ? (project.platform.addsPlaces ? "app places by app" : "app")
             : parts.count == 1 ? "wish " + parts[0].platform.rawValue : "wish"
         guard (AppFile.text(file, in: project)?.trimmed ?? "app") != now else { return }
         for engine in Engine.allCases { Self.forgetConversation(of: project, engine: engine) }
@@ -5561,13 +5561,14 @@ final class Store: ObservableObject {
     /// setup. An app is never taken away while nothing would be left: it stays until what replaces it is made.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
-        let places = Set((arguments["places"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         guard var wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
-        // `devices` are the wish's apps, every one; a game's or a screen's places are given apart, in `places`.
-        guard let asked = Parts.asked(devices, places: places) else {
+        // `devices` are the wish's apps, every one; a game's or a screen's places are given apart, in `places`, by app.
+        let places = Parts.places(arguments["places"], devices: devices)
+        guard let places, let asked = Parts.asked(devices, places: places) else {
             if Parts.asked(devices) != nil {
-                return (400, ["error": "`places` is where the wish's game is played (\"iphone\" or \"ipad\", \"android\", \"xbox-one\") or its screen is " +
-                              "shown (\"iphone\" or \"ipad\", \"tv\", \"xbox-one\"), beside the Mac, and only with \"game\" or \"screen\" in `devices`."])
+                return (400, ["error": "`places` gives each game's or screen's places beside the Mac, by that app: {\"game\": [\"iphone\"]} for a game also " +
+                              "played on the iPhone (\"iphone\" or \"ipad\", \"android\", \"xbox-one\"), {\"screen\": [\"tv\"]} for a screen also shown on " +
+                              "the TV (\"iphone\" or \"ipad\", \"tv\", \"xbox-one\"), and only for a \"game\" or \"screen\" in `devices`."])
             }
             let others = DeviceApps.kinds().map(\.id)
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"

@@ -139,7 +139,7 @@ extension Agent.Rules {
     Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Lay the page out for a fixed \
     1920x1080, as for a TV: Lamp scales it to every screen. Where else it's shown is the person's to ask for: when they \
     want it on their iPad, TV or Xbox, call make_app_for with "screen" in `devices` and every place beside the Mac it's \
-    to be on in `places` (["ipad"], ["tv"]…), with the wish's other apps in `devices` too if it has any; it stays the \
+    to be on in `places`, by app ({"screen": ["ipad"]}, {"screen": ["tv"]}…), with the wish's other apps in `devices` too if it has any; it stays the \
     same screen.
     """
 

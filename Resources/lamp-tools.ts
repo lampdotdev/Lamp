@@ -18,7 +18,7 @@
  *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
- * - `make_app_for`: asks Lamp to make the wish these apps (a game's or a screen's places apart, in `places`): an app it has stays, one it lacks is added beside it,
+ * - `make_app_for`: asks Lamp to make the wish these apps (a game's or a screen's places apart, in `places`, by app): an app it has stays, one it lacks is added beside it,
  *   one left out goes; the reply says how to adapt the code and gives each new app's rules.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.

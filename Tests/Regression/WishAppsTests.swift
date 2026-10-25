@@ -50,19 +50,27 @@ final class WishGameAppsTests: XCTestCase {
         XCTAssertTrue(Parts.partKinds.contains(.screen))
     }
 
-    /// Every word of `devices` is an app; where the game is played or the screen shown is `places`, apart. So the
-    /// phones' own apps beside a game are "iphone" and "android" in `devices`, and the game played on an Xbox too is
-    /// "xbox-one" in `places`.
-    func testDevicesAreAppsAndPlacesAreGivenApart() throws {
-        XCTAssertEqual(Parts.asked(["game", "iphone", "android"], places: ["xbox-one"]),
+    /// Every word of `devices` is an app; where the game is played or the screen shown is `places`, apart and by app.
+    /// So the phones' own apps beside a game are "iphone" and "android" in `devices`, the game played on an Xbox too is
+    /// {"game": ["xbox-one"]}, and a wish with a game and a screen says which places are whose.
+    func testDevicesAreAppsAndPlacesAreGivenApartByApp() throws {
+        XCTAssertEqual(Parts.asked(["game", "iphone", "android"], places: ["game": ["xbox-one"]]),
                        Parts.Asked(kinds: [.iphone, .android, .game], places: [.game: ["xbox-one"]]))
-        XCTAssertEqual(Parts.asked(["game"], places: ["iphone", "android"]), Parts.Asked(kinds: [.game], places: [.game: ["iphone", "android"]]))
-        XCTAssertEqual(Parts.asked(["screen"], places: ["tv"]), Parts.Asked(kinds: [.screen], places: [.screen: ["tv"]]))
+        XCTAssertEqual(Parts.asked(["game"], places: ["game": ["iphone", "android"]]), Parts.Asked(kinds: [.game], places: [.game: ["iphone", "android"]]))
+        XCTAssertEqual(Parts.asked(["screen"], places: ["screen": ["tv"]]), Parts.Asked(kinds: [.screen], places: [.screen: ["tv"]]))
+        XCTAssertEqual(Parts.asked(["game", "screen"], places: ["game": ["xbox-one"], "screen": ["tv"]])?.places,
+                       [.game: ["xbox-one"], .screen: ["tv"]])
         XCTAssertEqual(Parts.kinds(for: ["game", "tv"]), [.tv, .game])
         XCTAssertEqual(Parts.kinds(for: ["screen", "tv"]), [.tv, .screen])
-        // Places are only a game's or a screen's, and only where it can be.
-        XCTAssertNil(Parts.asked(["mac"], places: ["iphone"]))
-        XCTAssertNil(Parts.asked(["game"], places: ["tv"]))
+        // Places are only a game's or a screen's, only one the list has, and only where it can be.
+        XCTAssertNil(Parts.asked(["mac"], places: ["mac": ["iphone"]]))
+        XCTAssertNil(Parts.asked(["game"], places: ["screen": ["tv"]]))
+        XCTAssertNil(Parts.asked(["game"], places: ["game": ["tv"]]))
+        // The tool's argument: by app, or the plain list it once was, which is the one game's or screen's.
+        XCTAssertEqual(Parts.places(["game": [" iPhone "]], devices: ["game"]), ["game": ["iphone"]])
+        XCTAssertEqual(Parts.places(["iphone"], devices: ["game", "mac"]), ["game": ["iphone"]])
+        XCTAssertNil(Parts.places(["tv"], devices: ["game", "screen"]))
+        XCTAssertEqual(Parts.places(nil, devices: ["game"]), [:])
     }
 
     /// With a game and a Mac app, "mac" for `look_at_app` and `use_app` is the Mac app, though the game runs on the
