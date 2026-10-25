@@ -64,11 +64,14 @@ its list, so a missing tool holds back only the app that needs it.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
 stands alone. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
-its meta.json (`Parts.load` reads them): in a list of devices (`Parts.asked`), a game or a screen, listed by its own word
-or one the wish already has, takes each device it can be on as one of its places ("game" with "iphone" is a game played
-on the iPhone too, and a game's own wish asked for "mac" and "iphone" keeps its game, as it always did), and a device
-with "app" after it ("mac app", "iphone app") is an app of its own beside it; a list that gives the game none of its
-words leaves it out, so it's taken away like any other app ("tv" for a game's wish replaces the game with a TV app).
+its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). Each word means one
+thing (`Parts.asked`): `make_app_for`'s `devices`, and the naming call's, are the wish's apps and nothing else ("mac"
+beside "game" is a Mac app), and where the game is played or the screen shown beside the Mac is `places`, apart. A list
+without "game" leaves the game out, so it's taken away like any other app. A game's own wish told its conversations to
+list places among the devices before, so its prompt is recorded as "app places" (`followPromptShape`), and one begun
+before is started again. `look_at_app` and `use_app` find an app by its own word or folder before reading "mac" or
+"iphone" as wherever an app opens (`Parts.pick`), so beside a game "mac" is the Mac app. The request's device line says
+a game's or a screen's places and budget whichever folder it's in (`DeviceNote.brief`).
 A game has no `Lamp.wish` (its page's lamp.js is the device kit's), so the agent is told its other apps can't steer it
 or share with it (`Rules.gameAmongApps`); a screen's page is a TV app's, with the TV app's lamp.js.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,

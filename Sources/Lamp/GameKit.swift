@@ -61,10 +61,9 @@ enum GameKit {
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
-        // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new.
-        devices.contains("game") && devices.allSatisfy { word in
-            word == "game" || (placeWords[word] ?? nil).map(Platform.game.reaches) == true
-        }
+        // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
+        // given apart (`Parts.asked`'s places): "mac" beside "game" is a Mac app.
+        devices == ["game"]
     }
 
     /// The places a list of devices gives a kind that takes places one at a time (a game, a screen): always the Mac, its
@@ -623,7 +622,6 @@ extension Agent {
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps]
         return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
-            // Beside other apps the list names the game too, and the apps it keeps (`placesAmongApps`).
             .replacingOccurrences(of: #"(["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…)"#, with: #"(["game", "iphone"], with the wish's other apps)"#)
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -637,14 +635,18 @@ extension Agent.Rules {
     static func placesAmongApps(_ word: String, verb: String) -> String {
         """
 
-        - This wish has other apps beside the \(word). Where the \(word) is \(verb) and which apps the wish has are         both given with make_app_for, in one list: "\(word)" with its places, and every other app the person keeps.         A device it's \(verb) on that has an app of its own too is written with "app" after it ("mac app",         "iphone app", "android app"), so ["\(word)", "iphone", "mac app"] is the \(word) \(verb) on the Mac and the         iPhone with the Mac app beside it. An app left out of the list is taken away.
+        - This wish has other apps beside the \(word). make_app_for's `devices` are the wish's apps, "\(word)" among \
+        them, and every other app the person keeps: one left out is taken away. Where the \(word) is \(verb) beside \
+        the Mac goes in `places`, never in `devices`, where "mac" or "iphone" is an app of its own.
         """
     }
 
     /// For a wish with a game beside other apps: how its places are given, and what its other apps can't do with it.
     static let gameAmongApps = placesAmongApps("game", verb: "played") + """
 
-    - The wish's game doesn't send or get messages from its other apps yet: it has no `Lamp.wish` and no     `Lamp.controllers`, and its players use a controller, the keyboard or the touch controls Lamp draws. Don't write     another app of the wish to steer it or share data with it; say so if the person asks for that.
+    - The wish's game doesn't send or get messages from its other apps yet: it has no `Lamp.wish` and no \
+    `Lamp.controllers`, and its players use a controller, the keyboard or the touch controls Lamp draws. Don't write \
+    another app of the wish to steer it or share data with it; say so if the person asks for that.
     """
 
     static let gameHeader = """

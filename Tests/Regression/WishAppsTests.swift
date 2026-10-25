@@ -36,35 +36,42 @@ final class WishGameAppsTests: XCTestCase {
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
 
-    /// "Make a fun TV party game": the agent of a Mac wish asked for ["game", "mac"], which is a game played on the Mac,
-    /// and Lamp said it couldn't make a game as a part of another wish. The game replaces the Mac app, in a folder of its own.
-    func testAGameReplacesTheMacAppOfAWish() throws {
+    /// "Make a fun TV party game" for a Mac wish: Lamp said it couldn't make a game as a part of another wish. Asked
+    /// for the game alone, the game replaces the Mac app, in a folder of its own; asked for both, the Mac app stays.
+    func testAGameReplacesTheMacAppOrGoesBesideIt() throws {
         let wish = try Template.scaffold(name: "Party", platform: .mac, in: root)
-        let asked = try XCTUnwrap(Parts.asked(["game", "mac"], has: [.mac]))
-        XCTAssertEqual(asked, Parts.Asked(kinds: [.game], places: [.game: ["mac"]]))
-        XCTAssertEqual(Parts.plan(asked.kinds, for: [wish]), Parts.Plan(keep: [:], add: [.game], remove: [wish.id]))
+        let alone = try XCTUnwrap(Parts.asked(["game"]))
+        XCTAssertEqual(alone, Parts.Asked(kinds: [.game], places: [.game: []]))
+        XCTAssertEqual(Parts.plan(alone.kinds, for: [wish]), Parts.Plan(keep: [:], add: [.game], remove: [wish.id]))
+        let both = try XCTUnwrap(Parts.asked(["game", "mac"]))
+        XCTAssertEqual(both.kinds, [.mac, .game])
+        XCTAssertEqual(Parts.plan(both.kinds, for: [wish]), Parts.Plan(keep: [wish.id: .mac], add: [.game], remove: []))
         XCTAssertTrue(Parts.partKinds.contains(.game))
         XCTAssertTrue(Parts.partKinds.contains(.screen))
     }
 
-    /// A game with the phones' own apps beside it: three apps. Without "app", the same words are where the game is played.
-    func testAppAfterADeviceIsAnAppOfItsOwnBesideAGame() throws {
-        XCTAssertEqual(Parts.asked(["game", "iphone app", "android app"]), Parts.Asked(kinds: [.iphone, .android, .game], places: [.game: []]))
-        XCTAssertEqual(Parts.asked(["game", "iphone", "android"]), Parts.Asked(kinds: [.game], places: [.game: ["iphone", "android"]]))
-        XCTAssertEqual(Parts.asked(["game", "iphone", "mac app"]), Parts.Asked(kinds: [.mac, .game], places: [.game: ["iphone"]]))
-        // A TV isn't somewhere a game is played: a TV app goes beside it.
+    /// Every word of `devices` is an app; where the game is played or the screen shown is `places`, apart. So the
+    /// phones' own apps beside a game are "iphone" and "android" in `devices`, and the game played on an Xbox too is
+    /// "xbox-one" in `places`.
+    func testDevicesAreAppsAndPlacesAreGivenApart() throws {
+        XCTAssertEqual(Parts.asked(["game", "iphone", "android"], places: ["xbox-one"]),
+                       Parts.Asked(kinds: [.iphone, .android, .game], places: [.game: ["xbox-one"]]))
+        XCTAssertEqual(Parts.asked(["game"], places: ["iphone", "android"]), Parts.Asked(kinds: [.game], places: [.game: ["iphone", "android"]]))
+        XCTAssertEqual(Parts.asked(["screen"], places: ["tv"]), Parts.Asked(kinds: [.screen], places: [.screen: ["tv"]]))
         XCTAssertEqual(Parts.kinds(for: ["game", "tv"]), [.tv, .game])
-        // A TV is somewhere a screen is shown, unless it's a TV app of its own.
-        XCTAssertEqual(Parts.asked(["screen", "tv"]), Parts.Asked(kinds: [.screen], places: [.screen: ["tv"]]))
-        XCTAssertEqual(Parts.kinds(for: ["screen", "tv app"]), [.tv, .screen])
+        XCTAssertEqual(Parts.kinds(for: ["screen", "tv"]), [.tv, .screen])
+        // Places are only a game's or a screen's, and only where it can be.
+        XCTAssertNil(Parts.asked(["mac"], places: ["iphone"]))
+        XCTAssertNil(Parts.asked(["game"], places: ["tv"]))
     }
 
-    /// A wish whose game is its own app keeps its places as they were always given ("mac", "iphone"), and a list that
-    /// leaves the game nothing replaces it.
-    func testAWishsGameKeepsItsPlacesUntilItsLeftOut() throws {
-        XCTAssertEqual(Parts.asked(["mac", "iphone"], has: [.game]), Parts.Asked(kinds: [.game], places: [.game: ["mac", "iphone"]]))
-        XCTAssertEqual(Parts.kinds(for: ["mac app"], has: [.game]), [.mac])
-        XCTAssertEqual(Parts.kinds(for: ["tv"], has: [.game]), [.tv])
+    /// With a game and a Mac app, "mac" for `look_at_app` and `use_app` is the Mac app, though the game runs on the
+    /// Mac too and comes first; "game" is the game.
+    func testAPartIsNamedByItsOwnWordFirst() throws {
+        let wish = LampProject(id: "party", name: "Party", exe: "Party", dir: root.appendingPathComponent("party"), platform: .game)
+        let mac = LampProject(id: "party.mac", name: "Party", exe: "Party", dir: wish.dir.appendingPathComponent("Mac"), platform: .mac, partOf: wish.id)
+        XCTAssertEqual(Parts.pick("mac", among: [wish, mac])?.id, mac.id)
+        XCTAssertEqual(Parts.pick("game", among: [wish, mac])?.id, wish.id)
     }
 
     /// A game made beside other apps is found in its folder, with the places its own meta.json keeps.

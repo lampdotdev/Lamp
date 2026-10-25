@@ -11,13 +11,13 @@ extension Target {
         platform: .screen, places: [.mac, .ios, .tv, .device],
         identity: Identity(name: "the screen", phrase: "a screen shown on the Mac, an iPad, a TV or an Xbox", analytics: "screen",
                            made: { _, _ in "a screen" },
-                           devices: Words(words: [("screen", "\"screen\" for a screen (with \"mac\", \"ipad\", \"tv\" and \"xbox-one\" for where it's shown)",
+                           devices: Words(words: [("screen", "\"screen\" for a screen (where it's shown, \"ipad\", \"tv\" or \"xbox-one\" beside the Mac, goes in `places`)",
                                                    "\"screen\" for something shown full screen and glanced at")],
                                           hint: "[\"screen\"] for something shown full screen and glanced at from across a room rather than used up close: "
                                               + "a family calendar or chore board, a photo frame or album slideshow, a dashboard, a scoreboard, a clock, "
-                                              + "the day's weather; with \"tv\" when it's for their TV, \"ipad\" on an iPad on a stand, \"xbox-one\" on "
-                                              + "their Xbox. An app the person works in or plays is no screen",
-                                          claims: { $0.contains("screen") && $0.allSatisfy { GameKit.placeWords.keys.contains($0) } && !$0.contains("game") },
+                                              + "the day's weather, with where else it's shown in \"places\": \"tv\" for their TV, \"ipad\" for an iPad on a stand, "
+                                              + "\"xbox-one\" for their Xbox. An app the person works in or plays is no screen",
+                                          claims: { $0 == ["screen"] },
                                           alone: true),
                            tryOnHelp: { _ in "Where it's shown: this Mac, an iPhone or iPad, one of your TVs, or your Xbox" },
                            place: { _ in .window }),

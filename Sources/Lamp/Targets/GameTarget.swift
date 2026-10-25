@@ -11,11 +11,11 @@ extension Target {
         platform: .game, places: [.mac, .ios, .android, .device],
         identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, Android or an Xbox", analytics: "game",
                            made: { _, _ in "a game" },
-                           devices: Words(words: [("game", "\"game\" for a game (with \"mac\", \"iphone\", \"android\" and \"xbox-one\" for the places it's played on)",
+                           devices: Words(words: [("game", "\"game\" for a game (where it's played, \"iphone\", \"android\" or \"xbox-one\" beside the Mac, goes in `places`)",
                                                    "\"game\" for a game played in real time")],
                                           hint: "[\"game\"] for a game played in real time (3D, racing, a platformer, a shooter, an arcade or sports game, "
-                                              + "anything played with a controller or on their Xbox), whatever device it names; with \"iphone\" when it's to "
-                                              + "be played on an iPhone or iPad too, \"android\" on an Android phone, with \"xbox-one\" when it's for their Xbox. "
+                                              + "anything played with a controller or on their Xbox), whatever device it names, with where else it's played in \"places\": "
+                                              + "\"iphone\" for an iPhone or iPad, \"android\" for an Android phone, \"xbox-one\" for their Xbox. "
                                               + "A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
                            tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, an Android phone or tablet, or your Xbox" },

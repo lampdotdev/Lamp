@@ -1858,7 +1858,8 @@ final class Store: ObservableObject {
     /// build that kind yet or the folder can't be made.
     /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
     /// and not tried again by itself.
-    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
+    /// `places`: for a game or a screen, where it's played or shown from the start, beside the Mac.
+    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil, places: [Destination]? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
         if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
@@ -1874,9 +1875,13 @@ final class Store: ObservableObject {
         let kept = Sharing.kept(in: wish.dir, for: kind).flatMap { $0.package.platform == kind ? $0 : nil }
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
-            let part = LampProject(id: Parts.id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: dir,
+            var part = LampProject(id: Parts.id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: dir,
                                    instance: Parts.instance(wish: wish, folder: folder), platform: kind,
                                    family: family ?? kept?.package.family ?? .iphone, partOf: wish.id)
+            if kind.addsPlaces, let places {
+                part.places = places
+                part.integration = GameKit.integration(for: part)
+            }
             try Template.saveMeta(part)
             try Template.fill(part)
             if let kept {
@@ -3167,7 +3172,7 @@ final class Store: ObservableObject {
     private func makeWaitingParts(of wish: LampProject) async {
         guard let wish = current(wish), !wish.isPart else { return }
         for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
-            let (part, problem, setup) = await addPart(app.kind, to: wish)
+            let (part, problem, setup) = await addPart(app.kind, to: wish, places: app.places)
             if let part { log(wish, .status, "\(wish.name) has \(Parts.name(of: part.platform)) to go with it now.") }
             else if let problem { recordNeeds(problem, for: app.kind, of: wish, setup: setup) }
         }
@@ -3213,14 +3218,14 @@ final class Store: ObservableObject {
             } else if let suggestion, let kind = await firstKind(among: suggestion.kinds, integration: suggestion.integration) {
                 let parts = suggestion.kinds.filter { Parts.group($0) != Parts.group(kind) }
                 project = await chooseKind(project, kind, said: suggestion.kindSaid, watch: suggestion.watch, integration: suggestion.integration,
-                                           parts: parts, places: suggestion.places, engine: suggestion.engine)
+                                           parts: parts, places: suggestion.places[kind], engine: suggestion.engine)
                 // The wish's other apps are kept in its list from here, and made once its first app is written
                 // (`startQueued`, `makeWaitingParts`), each in its own folder. So are they when the first couldn't be made
                 // as it was read (this Mac can't build it yet, so it's a Mac app with the setup a click away): what's
                 // missing holds back only the app that needs it.
                 let rest = parts.filter { Parts.group($0) != Parts.group(project.platform) }
                 if !rest.isEmpty {
-                    project = setApps(project, [WishApp(kind: project.platform)] + rest.map { WishApp(kind: $0) })
+                    project = setApps(project, [WishApp(kind: project.platform)] + rest.map { WishApp(kind: $0, places: suggestion.places[$0]) })
                 }
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
@@ -4493,7 +4498,10 @@ final class Store: ObservableObject {
         guard !project.isPart, !project.makesNoApp else { return }
         let file = project.dir.appendingPathComponent(".lamp/prompt-for")
         let parts = parts(of: project)
-        let now = project.holdsApp ? "app" : parts.count == 1 ? "wish " + parts[0].platform.rawValue : "wish"
+        // A game's or a screen's own prompt once told it to list its places among `devices`; they're `places` now, so a
+        // conversation that began before that starts again with the rules that say so.
+        let now = project.holdsApp ? (project.platform.addsPlaces ? "app places" : "app")
+            : parts.count == 1 ? "wish " + parts[0].platform.rawValue : "wish"
         guard (AppFile.text(file, in: project)?.trimmed ?? "app") != now else { return }
         for engine in Engine.allCases { Self.forgetConversation(of: project, engine: engine) }
         try? now.write(to: file, atomically: true, encoding: .utf8)
@@ -5514,17 +5522,22 @@ final class Store: ObservableObject {
     /// setup. An app is never taken away while nothing would be left: it stays until what replaces it is made.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
+        let places = Set((arguments["places"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         guard var wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
-        // A game or a screen the wish has keeps the words of its places ("iphone": played on the iPhone too), unless one
-        // has "app" after it ("iphone app": an app of its own beside it).
-        guard let asked = Parts.asked(devices, has: apps(of: wish).map(\.platform)) else {
+        // `devices` are the wish's apps, every one; a game's or a screen's places are given apart, in `places`.
+        guard let asked = Parts.asked(devices, places: places) else {
+            if Parts.asked(devices) != nil {
+                return (400, ["error": "`places` is where the wish's game is played (\"iphone\" or \"ipad\", \"android\", \"xbox-one\") or its screen is " +
+                              "shown (\"iphone\" or \"ipad\", \"tv\", \"xbox-one\"), beside the Mac, and only with \"game\" or \"screen\" in `devices`."])
+            }
             let others = DeviceApps.kinds().map(\.id)
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
         let kinds = asked.kinds
-        // The words each app is made from: a game's or a screen's own and its places', every other app's the list's.
+        // The words each app is made from: for a game or a screen its places, for every other app the list.
         let words = { (kind: Platform) in kind.addsPlaces ? (asked.places[kind] ?? []).union([kind.rawValue]) : devices }
+        let placesOf = { (kind: Platform) in kind.addsPlaces ? GameKit.places(for: words(kind), of: kind) : nil }
         var said: [String] = []
         // A wish with nothing made yet (still to be told what it's for, or held for its device) is made as a new wish
         // is: its first app in its own folder, the first of its kinds this Mac can build now, so answered "TV and iPhone"
@@ -5540,11 +5553,11 @@ final class Store: ObservableObject {
         let apps = apps(of: wish)
         let plan = Parts.plan(kinds, for: apps)
         // The wish should have these from now on; what each one that can't be made yet needs is kept as it's found.
-        setApps(wish, kinds.map { WishApp(kind: $0) })
+        setApps(wish, kinds.map { WishApp(kind: $0, places: placesOf($0)) })
         // Each app that stays as another kind of its family is changed in place.
         for app in apps {
             guard let kind = plan.keep[app.id] else { continue }
-            // A game stays a game, a screen a screen: what's listed for it are its places.
+            // A game stays a game, a screen a screen: what's given for it are its places.
             if kind == app.platform, kind.addsPlaces {
                 let (status, answer) = await kindPlaces(words(kind), for: app)
                 let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
@@ -5570,10 +5583,11 @@ final class Store: ObservableObject {
             }
             added += 1
             log(wish, .status, "\(wish.name) has \(Parts.name(of: kind)) now.")
-            // A game or a screen is at home on the Mac, and goes wherever else it was listed for.
-            if kind.addsPlaces {
-                let placed = await setPlaces(part, GameKit.places(for: words(kind), of: kind))
+            // A game or a screen is at home on the Mac, and goes wherever else it was given, with what that allows.
+            if kind.addsPlaces, let places = placesOf(kind) {
+                let placed = await setPlaces(part, places)
                 if !placed.hasPrefix("It's already"), current(part) != nil { said.append(placed) }
+                if let now = current(part) { said.append(kind == .screen ? Agent.Rules.screenPlaces(now) : Agent.Rules.gamePlaces(now)) }
             }
             said.append("Done: the wish has \(Parts.name(of: kind)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. Build it in this " +
                         "request, made to work with the rest. `look_at_app` and `use_app` reach it with `part` \"\(Parts.word(for: kind))\". " +
@@ -5607,15 +5621,9 @@ final class Store: ObservableObject {
     /// `make_app_for` on a game or a screen: the places it's played or shown from now on, the same code everywhere, with
     /// what each place asks of it (for a game, the budget of the weakest, which the request's device line carries from now on).
     private func kindPlaces(_ devices: Set<String>, for game: LampProject) async -> (Int, [String: Any]) {
+        // Only the places it can be on reach here (`Parts.asked`).
         let words = devices.subtracting(["game", "screen"])
         let kind = game.platform
-        let allowed = Set(GameKit.placeWords.filter { $0.value.map(kind.target.places.contains) ?? false }.keys)
-        guard words.allSatisfy(allowed.contains) else {
-            let list = kind == .screen ? "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"tv\" and \"xbox-one\""
-                : "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"android\" and \"xbox-one\""
-            return (400, ["error": "\(kind == .screen ? "A screen is shown" : "A game is played") on \(list); list those it's to be on. " +
-                          "An app of its own beside it is listed with \"app\" after its device (\"mac app\")."])
-        }
         if kind == .screen {
             let said = await setPlaces(game, GameKit.places(for: words, of: kind), family: words.contains("ipad") && !words.contains("iphone") ? .ipad : nil)
             guard let now = current(game) else { return (404, ["error": "Lamp can't find the screen."]) }

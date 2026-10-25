@@ -124,7 +124,8 @@ enum AppName {
     can be for more than one kind at once, apps made to work together: ["tv", "mac"] for a TV app and a Mac app \
     together, ["iphone", "android"] when they want it on both kinds of phone. Phones that steer a TV app or show a \
     second screen for it can join it without apps of their own, and how they do is the builder's choice: list the \
-    devices the wish's own apps are for.
+    devices the wish's own apps are for. For a game or a screen, give where else it's played or shown, beside this Mac, \
+    in "places" (["iphone"], ["tv"]), never in "devices": "mac" in "devices" is a Mac app.
 
     Only when the wish is for something people do as much on a TV as on another of these devices, and nothing in \
     it points to one (a slideshow of family photos, a dashboard for the whole household, a game for the family), \
@@ -136,7 +137,7 @@ enum AppName {
     what suits its mood, like Apple's own icons: mostly one vivid color, sometimes white or graphite.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "devices": ["..."], "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
+    "devices": ["..."], "places": ["..."] or left out, "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
     """ }
 
     struct Suggestion {
@@ -149,8 +150,9 @@ enum AppName {
         var kindSaid = false
         /// For a device app (`Platform.device`), the integration it's for.
         var integration: String?
-        /// For a game, the places it's played from the start: the Mac, and any other device the wish names.
-        var places: [Destination]?
+        /// For a game or a screen, the places it's played or shown from the start: the Mac, and any other device the wish
+        /// names for it. Kept for each such kind of the wish, the first or one made beside it (`WishApp.places`).
+        var places: [Platform: [Destination]] = [:]
         /// For a game, what it's written for: three.js, or C++ on the kit when the wish needs an Xbox's whole power.
         var engine: GameKit.Engine?
         /// For one of the person's devices Lamp can't make apps for yet (`seen`): nothing is made until the agent has
@@ -176,11 +178,13 @@ enum AppName {
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
         let devices = Set(object["devices"] as? [String] ?? [])
         let said = object["devices_by_user"] as? Bool ?? false
-        let kinds = Parts.kinds(for: devices) ?? []
+        let asked = Parts.asked(devices, places: Set((object["places"] as? [String] ?? []).map { $0.trimmed.lowercased() }))
+            ?? Parts.asked(devices)
+        let kinds = asked?.kinds ?? []
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kinds: kinds, kindSaid: said,
                           integration: kinds == [.device] ? devices.first : nil,
-                          places: kinds.count == 1 && kinds[0].addsPlaces ? GameKit.places(for: devices, of: kinds[0]) : nil,
+                          places: (asked?.places ?? [:]).reduce(into: [:]) { $0[$1.key] = GameKit.places(for: $1.value, of: $1.key) },
                           engine: kinds == [.game] ? GameKit.engine(for: devices) : nil,
                           forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
                           undecided: said ? nil : candidates(object["candidates"]),

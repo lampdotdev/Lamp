@@ -165,7 +165,7 @@ console before installs over the earlier EdgeHTML one (same family, newer versio
 
 A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, `GameKit`), never a device's: the naming
 call gives "game" for a 3D game or one played with a controller or on an Xbox (a 2D game played with the mouse or by
-tapping stays a Mac or iPhone app), with the devices it's played on beside it. Its home is the Mac, and the places it's
+tapping stays a Mac or iPhone app), with the devices it's played on beside the Mac in its `places`. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
 `LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator or
 the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp's Android app in the game's
@@ -174,7 +174,7 @@ like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, 
 to the page's `lampNativePad`) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
 app, installed as a game). `make_app_for` on
 a game sets its places (`Store.kindPlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
-and a list that leaves the game none of its words takes it away like any app of a wish (the "Wishes" guide; a game
+given in `places`, apart from the apps in `devices`, and a list without "game" takes it away like any app of a wish (the "Wishes" guide; a game
 can also be added beside a wish's other apps, in Game/);
 Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
