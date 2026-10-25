@@ -1,25 +1,30 @@
 import Foundation
 
-/// Screens: a TV app (`Platform.tv`) given places beside the TV (`LampProject.places`), for something shown full screen
-/// and glanced at from across a room: a family calendar, a photo album, a dashboard, a scoreboard, a clock. It's the TV
-/// app's page in `Web/` and its `Web/lamp.js` (`TVTemplate`: LampAI, LampStore and LampAssets for the web, a remote's
-/// keys, focus moved with the arrows), laid out at 1920x1080, shown wherever it's been put.
+/// Screens: Lamp's own kind of app (`Platform.screen`) for something shown full screen and glanced at from across a room:
+/// a family calendar, a photo album, a dashboard, a scoreboard, a clock. It's a page in `Web/`, the TV app's page and
+/// its `Web/lamp.js` (`TVTemplate`: LampAI, LampStore and LampAssets for the web, a remote's keys, focus moved with the
+/// arrows), laid out at 1920x1080, and it's shown wherever it's been put (`LampProject.places`).
 ///
-/// On this Mac, an iPhone or an iPad it's an app with a little Swift of Lamp's own around the page (`LampScreen.swift`,
-/// `LampPage.swift` and LampSupport.swift, so a Mac copy has the wand and the chat beside it), which zooms the page to
-/// the window and answers its LampAI and `LampNative` calls for it. On a Samsung or LG TV it's the TV app it always was,
-/// and on the Xbox the integration's web app ("xbox-one"), each reaching Lamp as a TV app does.
+/// Its home is the Mac: a Mac app in the person's Apps like any other, with a little Swift of Lamp's own around the page
+/// (`LampScreen.swift` and LampSupport.swift, so it has the wand and the chat beside it), which zooms the page to the
+/// window and answers its LampAI calls for it (the `lampGateway` bridge, with the app's own token). The same app goes on
+/// an iPhone or iPad. On a Samsung or LG TV it's the TV app's own way there (`TVs`), and on the Xbox the integration's
+/// web app ("xbox-one"), each reaching Lamp as a TV app does.
 ///
 /// Wherever it's shown, the agent looks at it in the TV preview on the Mac, the same page at the same size with a
 /// remote's keys, so it never waits for a build of the Mac app to see a change.
 enum ScreenKit {
-    /// A TV app, whatever its places: every one is a screen, the TV its only place until it's given others.
-    static func isScreen(_ project: LampProject) -> Bool { project.platform == .tv }
+    /// What marks a screen's folder, kept with the code so a version restored brings the kind back with it.
+    static let marker = ".lamp-screen"
 
-    /// Shown on this Mac or an iPhone or iPad, so it has the app around the page, which a TV app alone doesn't.
+    static func isScreen(_ project: LampProject) -> Bool { project.platform == .screen }
+
+    /// Shown on this Mac or an iPhone or iPad, where it's an app of Lamp's around the page.
     static func hostsOnApple(_ project: LampProject) -> Bool {
-        isScreen(project) && !project.isPart && (project.openPlaces.contains(.mac) || project.openPlaces.contains(.ios))
+        isScreen(project) && (project.openPlaces.contains(.mac) || project.openPlaces.contains(.ios))
     }
+
+    static func isMade(_ dir: URL) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path) }
 
     struct Failure: LocalizedError {
         let message: String
@@ -30,43 +35,47 @@ enum ScreenKit {
         Bundle.main.resourceURL.flatMap { try? String(contentsOf: $0.appendingPathComponent("GameKit/apple/LampScreen.swift"), encoding: .utf8) }
     }
 
-    /// The files Lamp writes for the app around the page.
-    static let hostPaths = ["Sources/LampScreen.swift", "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift"]
-
-    /// Lamp's own files, written before every turn and build: the page's script, and where it's shown on Apple's
-    /// devices the Swift around it and what builds it; where it's no longer shown there, those go.
+    /// Lamp's own files, written before every turn and build: the page's script, the Swift around it, what builds it.
     static func write(for project: LampProject) throws {
-        try TVTemplate.writeOwnedFiles(for: project)
-        guard hostsOnApple(project) else {
-            if FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(hostPaths[0]).path) { remove(from: project) }
-            return
-        }
         guard let host else { throw Failure(message: "This copy of Lamp is missing its screen kit.") }
+        try TVTemplate.writeOwnedFiles(for: project)
         try Template.write(host, to: "Sources/LampScreen.swift", for: project)
         try GameKit.writePage(for: project)
         try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try Template.write(GameKit.webBuildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
-        let ignore = project.dir.appendingPathComponent(".gitignore")
-        if let kept = AppFile.read(ignore, in: project).map({ String(decoding: $0, as: UTF8.self) }), !kept.contains(".build/") {
-            try AppFolder.write(kept + ".build/\nbuild/\n", to: ignore, in: project.dir)
-        }
+        try Template.write("A screen made with Lamp: a page in Web/, shown full screen.\n", to: marker, for: project)
     }
 
     /// The scaffold: the TV app's page, which already shows the app's name at a TV's size.
     static func fill(_ project: LampProject) throws {
-        try TVTemplate.fill(project)
+        try Template.write(TVTemplate.indexHTML, to: "Web/index.html", for: project)
+        try Template.write(TVTemplate.styleCSS, to: "Web/style.css", for: project)
+        try Template.write(TVTemplate.appJS, to: "Web/app.js", for: project)
+        try Template.write(appMd, to: "APP.md", for: project)
+        try Template.write(".lamp/\n.build/\nbuild/\n", to: ".gitignore", for: project)
         try write(for: project)
     }
 
-    /// Takes the app around the page away (it's shown on a TV alone now, or no longer a screen).
     static func remove(from project: LampProject) {
-        for path in hostPaths { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
+        for path in ["Sources/LampScreen.swift", marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
         GameKit.removePage(from: project)
     }
 
     /// Every path Lamp owns in a screen.
-    static func paths(for project: LampProject) -> [String] { [TVTemplate.supportFile] + (hostsOnApple(project) ? hostPaths : []) }
+    static let paths = [TVTemplate.supportFile, "Sources/LampScreen.swift", "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
+
+    static let appMd = """
+    # {{NAME}}
+
+    A screen built and changed with Lamp: a page in Web/ (HTML, CSS and JavaScript) shown full screen and glanced at from
+    across a room. It's a Mac app shown in its own window, and goes on an iPhone, an iPad, a Samsung or LG TV or an Xbox
+    too once it's put there. Lamp looks at it in its TV preview on the Mac.
+
+    ## What it does
+    Nothing yet: fresh scaffold.
+
+    """
 
     static let packageSwift = """
     // swift-tools-version:5.9
@@ -117,8 +126,8 @@ extension Agent.Rules {
     at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, a TV or the \
     Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Lay the page out for a fixed \
     1920x1080, as for a TV: Lamp scales it to every screen. Where else it's shown is the person's to ask for: when they \
-    want it on their iPad, TV or Xbox, call make_app_for with "screen" and every place it's to be on (["screen", \
-    "mac", "ipad"], ["screen", "mac", "tv"]…); it stays the same screen.
+    want it on their iPad, TV or Xbox, call make_app_for with every place it's to be on (["mac", "ipad"], ["mac", \
+    "tv"]…); it stays the same screen.
     """
 
     /// Where a screen is shown, for the request's device line.

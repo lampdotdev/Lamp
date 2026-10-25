@@ -269,26 +269,22 @@ such build).
 
 ## Screens
 
-A screen is a TV app (`Platform.tv`, `Targets/TVTarget.swift`, `ScreenKit`) given places beside the TV, as a game is
-(`addsPlaces`, `LampProject.places`): something shown full screen and glanced at from across a room, a family calendar,
-a photo album, a dashboard, a clock. It's the TV app's page in `Web/` with the same `Web/lamp.js` (`TVTemplate`), laid
-out at 1920x1080, wherever it's shown. A TV app from before has the TV as its only place (`Target.startsAt`), and is
-what it was. The naming call gives "screen" for something glanced at, with the places it's shown ("screen" alone is
-this Mac; `GameKit.places(for:of:)`), and "tv" alone for one that's only for the TV; `make_app_for` takes places for it
-only when its list says "screen", since a TV app's "iphone" is otherwise a wish's iPhone app beside it, and a TV app that
-is one of a wish's apps stays the TV's alone (`setPlaces`). On this Mac, an iPhone or an iPad (`ScreenKit.hostsOnApple`)
-it's a Swift app of Lamp's own around the page (`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift, so a
-Mac copy has the wand and the chat beside it), written with build.sh and Package.swift by `ScreenKit.write` and taken
-away again when those places go; on a Samsung or LG TV it goes as a TV app does, and on the Xbox as the integration's
-web app. On the person's own iPhone or iPad the phone's Xcode project carries `Web/` as a folder beside Assets
-(`Template.withWebFolder`, `Devices.stage`), as it does for a three.js game; a C++ game stays on the simulators. Wherever
-it's shown the agent looks at it in the TV preview on the Mac (`openDevicePreview`), the same page at the same size, so
-a change is seen without a build of the Mac app, and the request's device line says where it's shown
-(`Rules.screenPlaces`).
+A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is something shown full screen and glanced at
+from across a room: a family calendar, a photo album, a dashboard, a clock. It's the TV app's page in `Web/`, with the
+same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, and it takes places as a game does (`addsPlaces`, the Mac
+always first): on the Mac, the iPhone and the iPad it's a Swift app of Lamp's own around the page
+(`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift, so it has the wand and the chat beside it), which
+zooms the page to the window; on a Samsung or LG TV it goes as a TV app does, and on the Xbox as the integration's web
+app. A TV app (`Platform.tv`) stays what it was, the TV its one place: a screen is its own kind, whose recipe refines
+the TV's (a screen's folder holds a TV app's page as well as its mark, `.lamp-screen`). On the person's own iPhone or
+iPad the phone's Xcode project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as
+it does for a three.js game. Wherever it's shown the agent looks at it in the TV preview on the Mac
+(`openDevicePreview`), the same page at the same size, so a change is seen without a build of the Mac app; pointed at a
+TV it's staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`),
+and the request's device line says where it's shown (`Rules.screenPlaces`).
 
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
-`hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team, and a TV app
-on the TV alone is no Mac app and no iPhone app of its wish.
+`hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team.
 
 **What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the

@@ -71,7 +71,7 @@ Read the guide for the part you're changing before you change it. A section name
 | [kinds of app](docs/development/kinds-of-app.md) | `Platform`, `Targets/`, a kind's identity, guidance, recipe, part and setup; `Destination` |
 | [iPhone](docs/development/iphone.md) | iPhone apps, the simulator and phones, Apple TV and Vision Pro; Apps for both the Mac and the iPhone |
 | [Android](docs/development/android.md) | Android apps, the emulator and Android devices |
-| [devices](docs/development/devices.md) | Devices as data (device integrations), games and their places, and screens (TV apps shown elsewhere too) |
+| [devices](docs/development/devices.md) | Devices as data (device integrations), games and their places, and screens |
 | [TV](docs/development/tv.md) | TV apps |
 | [wishes](docs/development/wishes.md) | Wishes of more than one app: parts, plans, how a wish's apps reach each other |
 | [Apple services](docs/development/apple-services.md) | iCloud, Apple Health, work while an iPhone app is closed, photos, location, weather, music and the home |

@@ -68,11 +68,8 @@ enum GameKit {
     /// home, and each other one it names that the kind can be.
     static func places(for devices: Set<String>, of kind: Platform = .game) -> [Destination] {
         let named = Set(devices.compactMap { placeWords[$0] ?? nil })
-        // A game's home is the Mac. A screen's is too ("screen"), unless the list names only where else it's shown;
-        // a TV app alone is the TV's.
-        guard kind == .tv else { return kind.target.places.filter { $0 == .mac || named.contains($0) } }
-        let places = kind.target.places.filter(named.contains)
-        return places.isEmpty ? (devices.contains("screen") ? [.mac] : [.tv]) : places
+        // The Mac is a game's and a screen's home, whatever else is listed.
+        return kind.target.places.filter { $0 == .mac || named.contains($0) }
     }
 
     /// The integration a game reaches its Xbox through, when the Xbox is one of its places: worked out from its places,
@@ -80,7 +77,7 @@ enum GameKit {
     static func integration(for project: LampProject) -> String? {
         guard project.openPlaces.contains(.device) else { return nil }
         // A screen goes on the Xbox as its web app; a game as the kind its engine makes.
-        return project.platform == .tv ? xbox : xboxKind(for: engine(project))
+        return project.platform == .screen ? xbox : xboxKind(for: engine(project))
     }
 
     /// What a place is called to the person and to the agent.

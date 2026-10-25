@@ -1903,9 +1903,7 @@ extension Agent.Rules {
     - Make the change the user asks for by editing the files in Web/: index.html, style.css, app.js, and more \
     files as the app grows (scripts, styles, pictures), loaded from index.html with relative paths. File names use \
     letters, digits, dots, dashes and underscores only. Web/lamp.js belongs to Lamp and is rewritten before every \
-    build: never edit it, and keep index.html loading it before the app's own scripts. When the person wants it \
-    shown on their Mac, iPhone, iPad or Xbox as well, call make_app_for with "screen" and every place it's to be on \
-    (["screen", "tv", "mac"], ["screen", "tv", "ipad"]…): it stays the same page, and Lamp puts an app around it there.
+    build: never edit it, and keep index.html loading it before the app's own scripts.
     """
 
     static let tvFrameworks = """

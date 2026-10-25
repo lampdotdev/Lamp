@@ -1870,7 +1870,7 @@ private struct TryOnChoices: View {
         let missing = Store.placesToAdd(project)
         if !missing.isEmpty {
             Divider()
-            let verb = project.platform == .tv ? "Show" : "Play"
+            let verb = project.platform == .screen ? "Show" : "Play"
             ForEach(missing, id: \.self) { place in
                 Button("\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too") { store.addPlace(project, place) }
             }

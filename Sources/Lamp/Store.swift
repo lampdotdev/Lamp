@@ -1794,13 +1794,9 @@ final class Store: ObservableObject {
             setKind(project, kind, places: places, engine: engine)
             guard let chosen = current(project) else { return project }
             let elsewhere = chosen.openPlaces.filter { $0 != .mac }
-            let (what, verb) = kind == .tv ? ("a screen", "show") : ("a game", "play")
-            if !chosen.openPlaces.contains(.mac) {
-                log(chosen, .status, "Making this for \(GameKit.spoken(chosen.openPlaces)).")
-            } else {
-                log(chosen, .status, elsewhere.isEmpty ? "Making this as \(what) for your Mac."
-                    : "Making this as \(what) for your Mac, to \(verb) on \(GameKit.spoken(elsewhere)) too.")
-            }
+            let (what, verb) = kind == .screen ? ("a screen", "show") : ("a game", "play")
+            log(chosen, .status, elsewhere.isEmpty ? "Making this as \(what) for your Mac."
+                : "Making this as \(what) for your Mac, to \(verb) on \(GameKit.spoken(elsewhere)) too.")
             return chosen
         }
         // Not asked for and not buildable here yet: a Mac app, with the setup a button away (the kind's own check).
@@ -2137,16 +2133,12 @@ final class Store: ObservableObject {
         if GameKit.isGame(current), GameKit.engine(current) == .native, wanted.filter({ $0 != .mac }) != [.device] {
             return "This game is written in C++ for the Xbox, and is played there alone. A three.js game, a new wish, plays everywhere."
         }
-        // A game's home is the Mac, kept whatever's asked; a screen is where it's put.
-        let places = target.places.filter { ($0 == .mac && current.platform == .game) || wanted.contains($0) }
-        guard !places.isEmpty else { return "It has to be shown somewhere: name at least one place." }
-        // A TV app with other apps in its wish is the TV's alone: those apps are Mac or iPhone apps of their own.
-        if current.platform == .tv, !current.partFolders.isEmpty || current.isPart, places != [.tv] {
-            return "A TV app that's one of a wish's apps is shown on the TV alone; the wish's other apps are made for the other devices."
-        }
+        // A game's and a screen's home is the Mac, kept whatever's asked (a C++ game's is the Xbox alone, above).
+        let native = GameKit.isGame(current) && GameKit.engine(current) == .native
+        let places = target.places.filter { ($0 == .mac && !native) || wanted.contains($0) }
         let added = places.filter { !current.openPlaces.contains($0) }, gone = current.openPlaces.filter { !places.contains($0) }
         guard !added.isEmpty || !gone.isEmpty || family.map({ $0 != current.family }) == true else {
-            return "It's already \(current.platform == .tv ? "shown" : "played") on \(GameKit.spoken(places))."
+            return "It's already \(current.platform == .screen ? "shown" : "played") on \(GameKit.spoken(places))."
         }
         if places.contains(.device), Integrations.integration(GameKit.xbox) == nil { return "This copy of Lamp has no way to reach an Xbox." }
         for place in gone where place == .ios { await quit(current, only: .ios) }
@@ -2169,7 +2161,7 @@ final class Store: ObservableObject {
         projects[index] = changed
         syncLocalNetwork()
         var said: [String] = []
-        let screen = changed.platform == .tv
+        let screen = changed.platform == .screen
         if !added.isEmpty { said.append("\(changed.name) \(screen ? "shows" : "plays") on \(GameKit.spoken(added)) too now.") }
         if !gone.isEmpty { said.append("\(changed.name) isn't \(screen ? "shown" : "played") on \(GameKit.spoken(gone)) any more.") }
         log(changed, .status, said.joined(separator: " "))
@@ -5431,10 +5423,7 @@ final class Store: ObservableObject {
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
         // A game stays a game: what's listed are the places it's played (the Mac always, its home), which aren't kinds.
-        // A TV app is given places the same way, when the list says it's a screen; else it's the TV app of a wish of
-        // several (an iPhone app beside it), as it always was.
-        if let wish = current(project), !wish.isPart, wish.platform.addsPlaces, wish.scaffolded,
-           wish.platform != .tv || devices.contains("screen") { return await kindPlaces(devices, for: wish) }
+        if let wish = current(project), !wish.isPart, wish.platform.addsPlaces, wish.scaffolded { return await kindPlaces(devices, for: wish) }
         guard let kinds = Parts.kinds(for: devices) else {
             let others = DeviceApps.kinds().map(\.id)
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
@@ -5499,12 +5488,12 @@ final class Store: ObservableObject {
         let kind = game.platform
         let allowed = Set(GameKit.placeWords.filter { $0.value.map(kind.target.places.contains) ?? false }.keys)
         guard words.allSatisfy(allowed.contains) else {
-            let list = kind == .tv ? "\"screen\" with \"mac\", \"iphone\" or \"ipad\", \"tv\" and \"xbox-one\""
+            let list = kind == .screen ? "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"tv\" and \"xbox-one\""
                 : "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"android\" and \"xbox-one\""
-            return (400, ["error": "\(kind == .tv ? "A screen is shown" : "A game is played") on \(list); list those it's to be on. " +
+            return (400, ["error": "\(kind == .screen ? "A screen is shown" : "A game is played") on \(list); list those it's to be on. " +
                           "It can't be made for anything else: tell the person in a sentence that a new wish can be."])
         }
-        if kind == .tv {
+        if kind == .screen {
             let said = await setPlaces(game, GameKit.places(for: words, of: kind), family: words.contains("ipad") && !words.contains("iphone") ? .ipad : nil)
             guard let now = current(game) else { return (404, ["error": "Lamp can't find the screen."]) }
             return (200, ["text": said + " It's the same page everywhere, laid out at 1920x1080 and scaled to each screen, so nothing in Web/ changes for it. " +
@@ -5626,7 +5615,7 @@ final class Store: ObservableObject {
         // before the next version is saved.
         if kind != current.platform, let marker = before.recipe.marker { AppFolder.remove(changed.dir.appendingPathComponent(marker), in: changed.dir) }
         if current.platform == .game, kind != .game { GameKit.remove(from: changed) }
-        if current.platform == .tv, kind != .tv { ScreenKit.remove(from: changed) }
+        if current.platform == .screen, kind != .screen { ScreenKit.remove(from: changed) }
         let (old, new) = (before.recipe.language, after.recipe.language)
         let rewrite = fresh || old == new ? "" : new.rewrite(old.code, old.leftover)
         if undecided {
@@ -10310,8 +10299,9 @@ final class Store: ObservableObject {
         try? await writeOwnFiles(project, all: false)
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
         if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
-        // A screen is looked at in the TV preview, wherever it's shown, with no build of the app around it.
-        if ScreenKit.isScreen(project), !onDevice || project.onTV {
+        // A screen is looked at in the TV preview, wherever it's shown, with no build of the app around it. Pointed at a TV
+        // it goes the TV app's way below, which stages the page before it opens the preview.
+        if ScreenKit.isScreen(project), !onDevice, !project.onTV {
             return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
         }
         let changed = Runtime.sourcesChanged(project)

@@ -306,7 +306,7 @@ enum DeviceNote {
         let here = place(for: project, store: store)
         // A game says every place it's played and what the slowest allows, then where Try On points.
         return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here
-            : ScreenKit.isScreen(project) && project.openPlaces != [.tv] ? Agent.Rules.screenPlaces(project) + " " + here : here
+            : ScreenKit.isScreen(project) ? Agent.Rules.screenPlaces(project) + " " + here : here
     }
 
     @MainActor private static func place(for project: LampProject, store: Store) -> String {
