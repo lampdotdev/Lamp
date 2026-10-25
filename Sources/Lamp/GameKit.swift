@@ -213,6 +213,9 @@ enum GameKit {
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
         for file in webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
         hasher.update(data: Data((webBuildSh + webPackageSwift).utf8))
+        // And Lamp's Android app around it, with the Kotlin blocks a game of several apps carries there, so a game on
+        // Android built by an earlier Lamp is built again rather than shown to its wish's other apps as out of date.
+        hasher.update(data: Data((GameAndroid.mainActivity + GameAndroid.pageWish + GameAndroid.wishBuildGradle + Template.androidSupportKotlin).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }()
 
@@ -679,7 +682,7 @@ extension Agent.Rules {
 
     - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
     messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
-    its score. That works where it's played on the Mac, an iPhone or an iPad; played on Android or the Xbox, and in \
+    its score. That works where it's played on the Mac, an iPhone or an iPad and Android; played on the Xbox, and in \
     Lamp's preview of it, `Lamp.wish` is 'away' with a reason saying it can't reach them there yet, so the game stays \
     whole without them. Its players still play with a controller, the keyboard or the touch controls Lamp draws: it \
     has no `Lamp.controllers`, so the wish's other apps send it messages rather than joining as players.

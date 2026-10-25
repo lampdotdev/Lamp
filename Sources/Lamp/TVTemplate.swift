@@ -1164,12 +1164,15 @@ extension TVTemplate {
           // there (`claim`), and keeps it.
           var installed = /*LAMP_INSTALL*/null;
           var key = null, claiming = null, claims = 0, claimPair = null;
-          // In the app of Lamp's own around a game's or a screen's page on the Mac, an iPhone or an iPad, that app is the
-          // wish's peer, with the same LampWish as the wish's Swift apps (it listens, is found, keeps the values on the
-          // device), and this page mirrors it (`hosted`, below). A page served over https anywhere else (the Xbox, a game
-          // on Android) can't open the plain links the wish's apps speak, nor ask Lamp itself, and a game's page in
-          // Lamp's own preview has no way to Lamp at all, so each says so.
+          // In the app of Lamp's own around a game's or a screen's page on the Mac, an iPhone or an iPad, and around a
+          // game's on Android, that app is the wish's peer, with the same LampWish as the wish's Swift and Kotlin apps (it
+          // listens, is found, keeps the values on the device), and this page mirrors it (`hosted`, below); Android's
+          // takes text. A page served over https anywhere else (the Xbox) can't open the plain links the wish's apps
+          // speak, nor ask Lamp itself, and a game's page in Lamp's own preview has no way to Lamp at all, so each says so.
           var host = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampWish;
+          if (!host && window.lampWishHost && typeof window.lampWishHost.postMessage === 'function') {
+            host = { postMessage: function (m) { window.lampWishHost.postMessage(JSON.stringify(m)); } };
+          }
           var where = window.location ? window.location.protocol : '';
           var stranded = !host && !bridge && (where === 'https:' || where === 'lamp-game:');
           var STRANDED = "Can't reach the wish's other apps on this device yet.";

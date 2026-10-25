@@ -88,8 +88,11 @@ its Web/lamp.js (a screen's is the TV app's lamp.js; a game's is the device kit'
 `GameKit.lampJS`), and on the Mac, the iPhone and the iPad the app of Lamp's own around the page is the peer, with
 `LampWish` in its LampSupport.swift, which the page mirrors (`LampPageWish` in LampPage.swift, `hosted` in lamp.js):
 it listens, is found and keeps the values on the device as every Swift app of a wish does, so it goes on with Lamp
-closed. A screen on a TV is a TV page as a TV app is. A page served over https elsewhere (the Xbox's host, a game's
-Android app) can neither open the plain links nor ask Lamp itself, and a game's page in Lamp's own preview has no way
+closed. A game on Android is the same: Lamp's Android app around its page carries LampSupport.kt with `LampWish`, and
+the Android app's libraries and Lamp's debug manifest with it, and answers the page (`GameAndroid.pageWish`, through
+AndroidX WebKit's message listener, which hears only the game's own page in its main frame; `lampWishHost` in
+lamp.js). A screen on a TV is a TV page as a TV app is. A page served over https elsewhere (the Xbox's host) can
+neither open the plain links nor ask Lamp itself, and a game's page in Lamp's own preview has no way
 to Lamp, so there `Lamp.wish` stays `away` with a reason saying it can't reach the others yet (`stranded`); the
 agent is told where it works (`Rules.gameAmongApps`, `Rules.screenAmongApps`). The TV preview of a screen joins the
 wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place.
