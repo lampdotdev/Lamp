@@ -283,6 +283,13 @@ final class SidebarServer {
         let history = history(for: project, busy: busy, lines: log.count)
         state.toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && (history?.made ?? false),
                                        hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
+        state.tryOn = TryOnMenu.make(for: project, store: store).map { menu in
+            SidebarTryOn(sections: menu.sections.map { section in
+                SidebarTryOn.Section(title: section.title, items: section.items.map {
+                    SidebarTryOn.Item(id: $0.id, title: $0.title, symbol: $0.symbol, checked: $0.checked, disabled: $0.disabled)
+                })
+            }, symbol: menu.symbol, current: menu.sections.flatMap(\.items).first(where: \.checked)?.title)
+        }
         state.panel = panels[project.id]
         switch state.panel {
         case .versions:
@@ -915,6 +922,9 @@ final class SidebarServer {
                 NSApp.activate(ignoringOtherApps: true)
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
+            scheduleUpdate()
+        case .tryOn(let id):
+            store.tryOn(project, id)
             scheduleUpdate()
         case .hello:
             break   // answered by the connection

@@ -9,7 +9,7 @@ extension View {
 }
 
 /// The bar at the top of the chat, one row: the red button that closes the chat, what the chat is for, and its
-/// buttons. Where the title and every button fit, they're all there; where they don't, Undo stays and a button for the
+/// buttons (for a game or a screen, Try On's device button first). Where the title and every button fit, they're all there; where they don't, Undo stays and a button for the
 /// rest takes their place, which pressed stays lit and puts them in the title's place: Wish Info, Share, Agent Details,
 /// Delete and Versions. Each does what its button in Lamp's window does: the sidebar only passes the click on. Closing
 /// and the room between the buttons, which moves the chat, are the app's to do (`Host`): the panel is its window.
@@ -33,7 +33,7 @@ struct ChatBar: View {
                         title(state).fixedSize()
                         Spacer(minLength: 0)
                         ToolGroup { rest(state, toolbar) }
-                        ToolGroup { undo(toolbar); versions(state, toolbar) }
+                        ToolGroup { tryOn(state); undo(toolbar); versions(state, toolbar) }
                     }
                     HStack(spacing: 8) {
                         CloseLight { Host.closeChat() }
@@ -45,6 +45,7 @@ struct ChatBar: View {
                             title(state).frame(maxWidth: .infinity)
                         }
                         ToolGroup {
+                            tryOn(state)
                             undo(toolbar)
                             if more { versions(state, toolbar) }
                             // Its own symbol says it's on (filled), so it has no lit circle behind it.
@@ -102,6 +103,39 @@ struct ChatBar: View {
                 .lineLimit(1).truncationMode(.tail)
                 // The title is part of the room to drag the chat by.
                 .allowsHitTesting(false)
+        }
+    }
+
+    /// Where the wish is played or shown, for a game or a screen: Try On's choices, as in Lamp's toolbar, and each place
+    /// it hasn't got yet. Every other wish has none.
+    @ViewBuilder private func tryOn(_ state: SidebarState) -> some View {
+        if let tryOn = state.tryOn {
+            Menu {
+                ForEach(Array(tryOn.sections.enumerated()), id: \.offset) { index, section in
+                    if index > 0 { Divider() }
+                    if let title = section.title {
+                        Section(title) { tryOnItems(section) }
+                    } else {
+                        tryOnItems(section)
+                    }
+                }
+            } label: {
+                ToolSymbol(tryOn.symbol, "Try On")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(tryOn.current.map { "Where it opens: \($0). Choose another device, or add one" } ?? "Choose where it opens, or add a device")
+        }
+    }
+
+    @ViewBuilder private func tryOnItems(_ section: SidebarTryOn.Section) -> some View {
+        ForEach(section.items) { item in
+            Toggle(isOn: Binding(get: { item.checked }, set: { _ in link.send(.tryOn(item.id)) })) {
+                Label(item.title, systemImage: item.symbol)
+            }
+            .disabled(item.disabled)
         }
     }
 

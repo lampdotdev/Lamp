@@ -1841,39 +1841,28 @@ private struct TryOnChoices: View {
         }
     }
 
-    /// A game's places: this Mac, its home, then the simulators once it's played on an iPhone or iPad and the person's
-    /// Xboxes once it's played on one, and a way to give it each place it hasn't got.
+    /// A game's or a screen's places, from the one list the chat beside the app draws too (`TryOnMenu`): where it's
+    /// played and on what, a tick on where Play puts it, then each place it hasn't got.
     @ViewBuilder private var gameChoices: some View {
-        let places = project.openPlaces
-        if places.contains(.ios) {
-            appleChoices
-        } else if places.contains(.mac) {
-            Picker("This Mac", selection: Binding(get: { project.destination == .mac ? Destination.mac : nil },
-                                                  set: { if $0 != nil { store.setMac(project) } })) {
-                Label("My Mac", systemImage: "laptopcomputer").tag(Optional(Destination.mac))
+        if let menu = TryOnMenu.make(for: project, store: store) {
+            ForEach(Array(menu.sections.enumerated()), id: \.offset) { index, section in
+                if index > 0 { Divider() }
+                if let title = section.title {
+                    Section(title) { tryOnItems(section) }
+                } else {
+                    tryOnItems(section)
+                }
             }
-            .pickerStyle(.inline)
+            .onAppear { store.refreshDevices(); store.refreshSimulators() }
         }
-        if places.contains(.android) {
-            Divider()
-            androidChoices
-        }
-        if places.contains(.tv) {
-            Divider()
-            tvChoices
-        }
-        if places.contains(.device) {
-            Divider()
-            deviceChoices
-        }
-        // The places the kind can have and this one hasn't yet, each a click away.
-        let missing = Store.placesToAdd(project)
-        if !missing.isEmpty {
-            Divider()
-            let verb = project.platform == .screen ? "Show" : "Play"
-            ForEach(missing, id: \.self) { place in
-                Button("\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too") { store.addPlace(project, place) }
+    }
+
+    @ViewBuilder private func tryOnItems(_ section: TryOnMenu.Section) -> some View {
+        ForEach(section.items) { item in
+            Toggle(isOn: Binding(get: { item.checked }, set: { _ in store.tryOn(project, item.id) })) {
+                Label(item.title, systemImage: item.symbol)
             }
+            .disabled(item.disabled)
         }
     }
 
