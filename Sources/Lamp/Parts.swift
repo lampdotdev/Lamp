@@ -247,7 +247,8 @@ extension Agent.Rules {
         - When the wish has a TV app and this app steers it (a game's controller, a remote), that goes with \
         `LampController` from LampSupport.swift, beside `LampWish` for everything else: \
         `let pad = LampController.connect()` joins the TV app as a player, as a phone's page would, over the home \
-        Wi‑Fi, with nothing to pair or set up\(mac ? "" : ": the TV app connects straight to the phone, and Lamp on the Mac only introduces them"). \
+        Wi‑Fi, with nothing to pair or set up: it goes the way `LampWish` reaches the TV app, so it goes on with Lamp \
+        closed. \
         `pad.press("next")` taps a button, `pad.button("fire", down: true)` and `down: false` hold and let go, \
         `pad.axis("stick", x: 0.5, y: 0)` moves a stick (-1 to 1), and `pad.send(["volume": 4])` sends JSON of \
         16 KB at most; the TV app hears them in `Lamp.controllers`' onButton, onAxis and onMessage. Anything bigger \

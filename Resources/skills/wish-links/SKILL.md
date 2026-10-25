@@ -24,6 +24,10 @@ LampSupport.kt, `Lamp.wish` in lamp.js. Read the block's own comment there befor
   ones.
 - `send(data, to: "tv")` sends JSON of 16 KB at most to one of them, `send(data)` to all; false, with why in the app's
   log, when it wasn't sent. `onMessage { from, data in … }` hears what they send. A message is for apps open now.
+- `sendFile(data, name: "photo.jpg", type: "image/jpeg", to: "tv")` (`Lamp.wish.sendFile(data, 'iphone', { name,
+  type })` in lamp.js) sends a file of up to 64 MB to one app open now, two at a time to each; the transfer it gives
+  says how far it's got and why it failed, and can be cancelled. `onFile { from, file in … }` hears the files they send,
+  whole. Like a message, a file is for an app open now.
 - `values` is a small map of JSON every app of the wish keeps on its device (each value 8 KB at most, all of them
   64 KB). `set("list", value)` sets one here and in the others, at once if they're open or when they next meet; nil
   (null) removes it. `onChange { key, value, from in … }` hears every change, this app's own included. Where two apps
@@ -39,14 +43,16 @@ What it gives: the apps find each other on the home Wi‑Fi with nothing to sign
 Lamp is open on the Mac it introduces them; with Lamp closed, the Mac asleep or Lamp updating they go on talking
 straight to each other on the same network. What they say is sealed with a key only the wish's apps have, and none of
 it leaves the home network. What it doesn't do: reach an app on another network (a phone away from home), keep a
-message for an app that isn't open, or hold more than a small amount in `values`.
+message or a file for an app that isn't open, or hold more than a small amount in `values`.
 
 How to use it well:
 - Start it as each app opens.
 - Pick by what the data is. Something that happens now (a button pressed, "next round") is a message. Something the
   other app should still see after being closed (a list, a score, a setting, what's on the dashboard) fits `values`:
-  they catch up by themselves when they meet, so there's nothing to resend. Something bigger or the app's own records
-  belong in its own store (LampStore), with only what the other app needs to show put in `values`.
+  they catch up by themselves when they meet, so there's nothing to resend. Something big the other app should have
+  (a photo, a recording, a document, a game to play) is a file: send it when that app is open, show its progress, and
+  say so plainly when it fails. The app's own records belong in its own store (LampStore), with only what the other app
+  needs to show put in `values`.
 - Draw from `values` and redraw on `onChange`, rather than keeping a copy of your own that can drift. What an app kept
   on its device can reach `values` a moment after it opens (on a TV, once it knows its wish), so never set a default
   because `values` looks empty at launch: show an empty state, and set a value when the person does something.

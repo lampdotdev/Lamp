@@ -78,7 +78,7 @@ when the site moves; `Lamp.onPhonePage` hears each change, so a QR code follows 
 need https.
 
 Phones as controllers never go through Lamp's own process: Lamp introduces the two sides and hands out short-lived
-credentials, and they talk directly or through a relay of Lamp's own (`PhoneControllers`), over the home network the
+credentials, and they talk through a relay of Lamp's own (`PhoneControllers`), over the home network the
 phone page is already served on, so nothing is hosted and nothing leaves the home. The relay (`LampRelayKit`'s `Relay`)
 runs as a process of its own, `LampRelay` in Lamp's Helpers, started by `ControllerRelay` while a TV app takes players
 or a wish's apps have a room there (`WishRooms`, under "Wishes of more than one app") and ended when none does, or when
@@ -89,9 +89,10 @@ loads `lamp-controller.js`, which Lamp serves beside the app's files (`TVTemplat
 buttons, sticks, messages and files, and tilt asked for from a tap), asks the page's own site where the relay is
 (`lamp-relay.json`, before each try) and opens its socket there, by the name the page was reached at. A link just opened
 always wins over a credential the page kept from before. The TV page has `Lamp.controllers` in lamp.js
-(`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp who its players are (`/app/controller`,
-through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own sockets to each: the
-relay, with a host credential, and each of the wish's iPhone apps listening (below), with a ticket. The preview's page
+(`TVTemplate.controllersJS`), the same in the preview and on a TV: it asks Lamp where its relay is (`/app/controller`,
+through the preview's bridge or the gateway, as it opens and every 15 seconds) and opens its own socket there, with a
+host credential. A wish's own iPhone or Mac app (`LampController`) joins the game through `Lamp.wish` instead, the way
+the wish's apps reach each other (under "Wishes of more than one app"), with nothing from Lamp. The preview's page
 reaches them from WebKit itself, never through an `evaluateJavaScript` or a script message per message. lamp.js numbers
 the players, whichever way they came, and tells each its number (`player`). The credentials are the controllers' own
 (`ControllerCredential`, `ControllerToken`, signed with a key kept only in Lamp's memory and the relay's: a host's for
@@ -116,7 +117,7 @@ than one piece. The relay never holds more than it must for anyone: a socket tha
 let go (cancelled outright before its handshake ends, since a close frame can't go then), at most 64 wait at once (8 from
 one address, an IPv6 one by its /64), a phone past its rate for ten seconds is let go, what phones send a TV that's
 behind is dropped, any peer more than 256 messages or 2 MB behind is let go, and an acknowledgement goes on only for a
-piece the relay passed. A wish's iPhone app takes each ticket once. The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt
+piece the relay passed. The page is plain http, so phones keep their motion sensors from it: buttons and sticks work, and tilt
 only where the person has put https in front of the page themselves (`LampController.canTilt`); Lamp builds nothing for
 that, and such a page can't reach the relay, which speaks plain ws.
 

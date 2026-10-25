@@ -130,7 +130,8 @@ device with one of them could join as any; there is no forward secrecy; and a re
 relay lets a peer in only once it has proved it holds the room's key and named an app the wish has, tells every member who joins and leaves
 (`welcome`, with every app the wish has; `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as
 a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
-phone's size and rate limits (16 KB of JSON a message, `ControllerWire`); files between peers aren't carried yet. The same
+phone's size and rate limits (16 KB of JSON a message, `ControllerWire`), and passes files and a game's controls to one
+peer (below). The same
 block in every language, under one name: `LampWish.shared` in LampSupport.swift (a WebSocket of its own to the relay),
 `Lamp.wish` in lamp.js (the same, from the TV page, in the preview and on a TV), and `LampWish` in LampSupport.kt, whose
 blocks speak HTTP on a socket and so can't hold a WebSocket: Lamp holds the room's socket for the Android app
@@ -209,7 +210,9 @@ Beside messages, which are for apps open now, the apps of a wish share **values*
 in Swift and Kotlin; `Lamp.wish.values()`, `set`, `onChange` in lamp.js): a small map of JSON, each value at most 8 KB and
 all of them 64 KB, that every app keeps on its device beside what it keeps of the wish (by the wish's tag: UserDefaults, a
 file in the Android app's storage, localStorage; in the TV preview a store of the app's own, which a wish's TV app has
-too, by a UUID made from its instance, `TVPreview.store(for:)`) and that is the same in every app once they've met. Each setting carries
+too, by a UUID made from its instance, `TVPreview.store(for:)`, removed when the app, its wish or the part goes:
+`TVPreview.forget`, in the background since WebKit lets go of a closed page's store a few seconds later) and that is the
+same in every app once they've met. Each setting carries
 when it was made: the clock of the app that made it, a count within that millisecond, and that app's name (`c: [ms, n,
 peer]`). An app's clock never goes back past the latest setting it has made or heard of, so what it sets next is later
 than anything it knows whatever the device's clock says, and every app orders two settings the same way. A removal is a
@@ -229,12 +232,33 @@ being kept when nothing older can make room, and only a value that doesn't fit b
 first knew its own name takes the name once it does. Nothing here decides what goes in values or who talks to whom: that's
 the agent's, from the `wish-links` skill.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 2 since values; an app from before says none,
+Besides messages and values, a wish's apps send each other **files** (`LampWish.sendFile`, `onFile` in Swift and Kotlin;
+`Lamp.wish.sendFile`, `onFile` in lamp.js): up to 64 MB to one app open now, in pieces under the controllers' flow
+(`ControllerWire`: 64 KB a piece, never more than 512 KB past what the receiver has acknowledged, two at a time each way
+between two apps, a file that stops moving for 20 seconds ended). A piece is a sealed message whose first byte is 1
+where a message's is "{" (`WishChannel.piece`): 1, a peer's name with its length before it (the one it's for, from the
+sender to the relay; the one it's from, from the relay; none on a link straight between two apps), the sender's id for
+the transfer, and the bytes; what the file is (`file`, with `ch` saying what it's for: nothing for `onFile`, `pad` for a
+game's controls, below), its acknowledgements and its end (`file-ack`, `file-refuse`, `file-cancel`) are messages, with
+`to` and `from` through the room as `send` has. A file stays on the way it started on, straight or through the room,
+and ends when that way goes, since its pieces and acknowledgements can't change ways halfway; it ends too when the other
+app closes, and an app with no `onFile` turns files down. The relay passes a file only to a member that speaks 3 or more
+(`fileOrPad`), holds it to the size it was announced at and to its window as it does a phone's (`Member.sending`),
+seals each piece for the receiver as it hands it to the network rather than when it's queued, so it takes its number in
+the order things really go out (`RelayPeer.send(piece:seal:)`), and drops a member's files when it leaves; Lamp's proxy
+for an Android app carries sealed pieces as it does messages. lamp.js reads and writes pieces with the controllers' own
+file code (`TVTemplate.filesJS`, a copy of its own inside `Lamp.wish`), turning the wish's header into theirs and back.
+On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow there. `WishFilesTests` sends files between
+two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
+them.
+
+What a wish's apps say to each other is numbered (`wire` in each library: 3 since files and a game's controls, 2 brought
+values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
 newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
-an app that speaks 2 or more. The builder's note says when an app in the room was built by an earlier Lamp
+an app that speaks 2 or more, files and a game's controls only to one that speaks 3. The builder's note says when an app in the room was built by an earlier Lamp
 (`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
 fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`
@@ -253,16 +277,22 @@ question), its prompt has no rule and its requests no line about the hub, no key
 the relay, and `BuildStamp` leaves the block out and stamps no fingerprint of it, so no app is built again for code it
 doesn't carry (`WishHubStaysOutTests`).
 
-A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) still does so as a player of
-`Lamp.controllers`, with `LampController` in LampSupport, beside `LampWish` for everything else. An iPhone part
-listens for the TV page itself (an `NWListener` speaking WebSocket, on the phone or in the simulator) and tells Lamp
-where (`/app/controller` with `as: listener`, its own token, every 20 seconds); Lamp keeps where it is and gives it a key
-of its own for that listener (`PhoneControllers.register`), and the TV page's answer lists it with a ticket signed with
-that key (`PhoneControllers.ticket`: for that listener, for two minutes), so the page opens its socket straight to the
-phone and Lamp carries nothing. A phone in the simulator registers from the loopback address: the preview reaches it
-there, and a TV on the network at this Mac's address on that network. The phone lets in one page at a time, the
-preview's before a TV's, and says who it is (a device id it keeps), so lamp.js gives it its number back when it returns.
-A Mac part, and an iPhone part that can't listen, joins at the relay as a player instead, with a link's credential
-(`as: player`), which Lamp gives only to a part of the same wish while the TV app is open. A TV app with a part takes
-players without a page in `Phone/` (`Store.takesPlayers`), and its site is served while it runs.
+A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) does so as a player of
+`Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`: it finds the wish's TV app in the
+wish's list (the app whose kind is "tv"), and what it says goes as **`pad`** messages, the straight way when there is
+one, else through Lamp's room (`{"t":"pad","m":…}`, with `to` and `from` through the room; the relay passes one to a
+member that speaks 3, and never drops a button let go for a TV that's behind). The controller asks to play (`join`, with
+its clock, for telling late movement) whenever the TV app is open and speaks 3; lamp.js's `Lamp.wish` answers only while
+the page's `Lamp.controllers` takes players (`welcome`, then `player` with its number), and tells every open app when
+it starts (`host`) and stops (`state` with `host: false`). Buttons, sticks, messages and `too-big` go as a phone's do;
+files go as the wish's files with `ch: "pad"`, to `LampController.onFile` and `Lamp.controllers.onFile`, never the
+app's own `onFile`. A controller let go or closed says `leave`; an app that closes leaves the game. `Lamp.controllers`
+takes such players through a hook any way of reaching players can use (`_attach(source)`: `source.start(hooks)` as the
+game starts, `stop()` as it ends), which only `Lamp.wish` uses, so a TV app on its own carries nothing of the wish in
+it. So the game goes on with Lamp closed, and Lamp hands out nothing for it: an app of a wish built by an earlier Lamp
+that asks `/app/controller` is told to be opened from Lamp. Phones' pages in a browser still join through the relay
+(`PhoneControllers`, under "TV apps"). A TV app with a part takes players without a page in `Phone/`
+(`Store.takesPlayers`), and its site is served while it runs. `LampController`, with `LampTransfer` and `LampFile`, is
+in the wish's block of LampSupport.swift, so an app on its own carries none of it. `WishFilesTests` has a Mac app play a
+TV page's game with no Lamp at all.
 
