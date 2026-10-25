@@ -488,6 +488,8 @@ final class Store: ObservableObject {
     /// both at once, and its Play and Stop are for the place Try On points at (`isOpen`).
     @Published private(set) var openOnMac: Set<String> = []
     @Published private(set) var openOnIOS: Set<String> = []
+    /// A choice in the chat's Try On waiting to open the app where it points (`Store.tryOn`), by app.
+    var openingChosen: [String: UUID] = [:]
 
     /// Whether any app of a wish is open, so its Play is a Stop: the TV app may be closed while its iPhone app runs.
     func isWishOpen(_ wish: LampProject) -> Bool { isOpen(wish) || parts(of: wish).contains(where: isOpen) }

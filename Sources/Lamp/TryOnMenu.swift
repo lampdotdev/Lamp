@@ -127,19 +127,41 @@ extension Store {
         default: return
         }
         // Pairing puts a question on the phone; the person chooses the phone once it's done.
-        if open, what != "pair" { openOnceSettled(project) }
+        guard open, what != "pair" else { return }
+        // Where the choice points, once it's made: some choices go through a check or a device's setup first.
+        let place: (Destination, String?)? = switch what {
+        case "mac": (.mac, nil)
+        case "family", "simulator": (.ios, nil)
+        case "phone": (.ios, value)
+        case "emulator": (.android, nil)
+        case "android": (.android, value)
+        case "preview": (.tv, nil)
+        case "tv": (.tv, value)
+        case "device": (.device, value)
+        case "add": Destination(rawValue: value).map { ($0, nil) }
+        default: nil
+        }
+        if let place { openWhenThere(project, place.0, device: place.1) }
     }
 
-    /// Opens the wish where it now points, once the change of place has gone through (it holds the wish for a moment,
-    /// and a new place is saved after a check): what Play would do, unless it's open there already.
-    private func openOnceSettled(_ project: LampProject) {
+    /// Opens the app where it was just chosen to open, once it points there: at once for most choices, and after a
+    /// check or the device's setup for the rest, however long that takes (a quarter of an hour at most). A later choice
+    /// takes this one's place. Opened even when a copy is open elsewhere, since this is where the person asked for it.
+    private func openWhenThere(_ project: LampProject, _ place: Destination, device: String?) {
+        let token = UUID()
+        openingChosen[project.id] = token
         Task { @MainActor in
-            for _ in 0..<100 {
-                try? await Task.sleep(for: .milliseconds(100))
-                if !busy.contains(project.id) { break }
+            for _ in 0..<1800 {
+                guard openingChosen[project.id] == token, let now = current(project) else { return }
+                let there = now.destination == place && (device == nil || now.device == device)
+                if there, !busy.contains(now.id) {
+                    openingChosen[project.id] = nil
+                    openPrepared(now)
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(500))
             }
-            guard let now = current(project), !isWishOpen(now) else { return }
-            openWish(now)
+            if openingChosen[project.id] == token { openingChosen[project.id] = nil }
         }
     }
 }
