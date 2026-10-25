@@ -114,7 +114,9 @@ emulator, or one of Lamp's own previews (a TV, a device's screen) Lamp's panel, 
 it (its own windows as their child; another app's found through Accessibility, by its title, or else the window list,
 and looked for again a few times a second); and where nothing on this Mac shows the wish (an app on a TV, an Xbox or the
 person's phone, a widget, the menu bar, the background, a wish not made yet or being found, an app that didn't build or
-crashed) the same panel on its own, at the side of the screen. Moving between these (the app opens or quits, a preview
+crashed) the same panel on its own: a window of its own size in the middle of the screen, wider than beside a window
+(the chat is what's being looked at) and clear of the corner where notifications come, with its width kept apart from
+the width beside a window (`ChatPanel.aloneWidth`). Moving between these (the app opens or quits, a preview
 closes) keeps the draft (it's the store's, `Store.updateDraft`) and where the person was reading: each chat says which
 line is first in view as the scrolling settles (`SidebarCommand.scrolled`), and a chat drawn again opens there
 (`SidebarState.readingAt`). A wish deleted with its chat in Lamp's panel takes the panel with it. The panel's bar has what the chat beside a Mac app has, and for a wish that isn't a Mac
@@ -122,7 +124,7 @@ window beside it Play and Stop (`SidebarToolbar.play`) and Try On's one list for
 of the wish's other apps in a menu of its own, to use, quit and give a place). In Lamp's panel a Mac app's chat has Play too, which opens the app with its chat beside it;
 and whenever a wish's Mac app opens while its chat is in Lamp's panel (Play, a reopen for a change, the person opening
 it), the app is asked to take the chat (`ChatPanel.place`, `MagicPanel.openChat`), and the panel closes once it has.
-Chats on their own are stepped in from one another so none hides another. Lamp's mark at the start of the bar brings
+Chats on their own cascade, a step down and across from one another, so none hides another. Lamp's mark at the start of the bar brings
 the desk forward (⌘[).
 
 What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
