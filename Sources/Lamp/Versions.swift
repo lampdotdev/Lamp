@@ -261,10 +261,30 @@ enum Versions {
     /// its list back with its files (`restoreFiles`), so an Undo of an app asked for and still waiting takes it off the
     /// list too, rather than leaving it to be made at the next turn. Nil for a folder that isn't a wish's.
     nonisolated static func appsTrailer(in dir: URL) -> String? {
+        guard let kinds = listedKinds(in: dir), !kinds.isEmpty else { return nil }
+        return "Lamp-Apps: " + kinds.map(\.rawValue).joined(separator: " ")
+    }
+
+    /// The kinds of app the wish in this folder asks for now, made or waiting.
+    private nonisolated static func listedKinds(in dir: URL) -> [Platform]? {
         guard var wish = Store.readWish(at: dir) else { return nil }
         wish.partFolders = Parts.folders(in: dir)
-        let kinds = Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind.rawValue)
-        return kinds.isEmpty ? nil : "Lamp-Apps: " + kinds.joined(separator: " ")
+        return Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind)
+    }
+
+    /// Whether going back to the latest version would give the wish another list of apps than it has, its files being
+    /// the same: the list changed and nothing else did (an app asked for that this Mac can't make yet). Read as a restore
+    /// reads it: the nearest version that says one, with what the files make.
+    private static func listDiffersFromLatest(in dir: URL) async -> Bool {
+        guard var wish = Store.readWish(at: dir), let now = listedKinds(in: dir) else { return false }
+        var said = ""
+        _ = await git("git log --first-parent --format='%(trailers:key=Lamp-Apps,valueonly,separator=%x2C)'", cwd: dir) { line in
+            if said.isEmpty { said = line.trimmed }
+        }
+        wish.partFolders = Parts.folders(in: dir)
+        wish.apps = (apps(from: said) ?? []).map { WishApp(kind: $0) }
+        let latest = Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind)
+        return Set(latest) != Set(now)
     }
 
     /// What a version that changes the app's name carries, for `name(at:in:)`.
@@ -381,7 +401,12 @@ enum Versions {
             if await git("git add -A && \(commit) \(arguments)", cwd: dir, env: env) == 0 { return .saved }
             var unsaved = ""
             let looked = await git("git status --porcelain", cwd: dir) { unsaved += $0 }
-            if looked == 0, unsaved.trimmed.isEmpty { return .nothingToSave }
+            if looked == 0, unsaved.trimmed.isEmpty {
+                // Only the wish's list changed: that's a version too, so Undo takes the request that changed it back.
+                guard env["LAMP_APPS"] != nil, await listDiffersFromLatest(in: dir),
+                      await git("\(commit) --allow-empty \(arguments)", cwd: dir, env: env) == 0 else { return .nothingToSave }
+                return .saved
+            }
             if attempt < savePauses.count { try? await Task.sleep(for: savePauses[attempt]) }
         }
         return .failed

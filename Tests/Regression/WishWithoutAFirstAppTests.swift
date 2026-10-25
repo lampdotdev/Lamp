@@ -162,4 +162,30 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         let after = await Versions.list(wish)
         XCTAssertEqual(after.first?.apps, [.mac])
     }
+
+    /// The same, as a turn that only asks for the Android app leaves it: no file changes, only the list. That's a version
+    /// of its own, so Undo takes the request back; a save with nothing changed at all still saves nothing.
+    func testAnAppAskedForWithNoOtherChangeIsAVersion() async throws {
+        var wish = try Template.scaffold(name: "Tally", platform: .mac, in: try newRoot())
+        wish.apps = [WishApp(kind: .mac)]
+        try Template.saveMeta(wish)
+        try Template.writeOwnedFiles(for: wish)
+        XCTAssertEqual(TestShell.run("/bin/bash", ["-c", "git init -q -b main"], in: wish.dir).status, 0)
+        let first = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Make a tally"])
+        XCTAssertEqual(first, .saved)
+        let again = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Nothing"])
+        XCTAssertEqual(again, .nothingToSave)
+
+        wish.apps = [WishApp(kind: .mac), WishApp(kind: .android, needs: "This Mac can't build Android apps yet.")]
+        try Template.saveMeta(wish)
+        let asked = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Put it on my Android phone too"])
+        XCTAssertEqual(asked, .saved)
+        let versions = await Versions.list(wish)
+        XCTAssertEqual(versions.map(\.message), ["Put it on my Android phone too", "Make a tally"])
+
+        let (undoing, target) = try XCTUnwrap(Versions.undoTarget(in: versions))
+        let undone = await Versions.restore(wish, to: target, message: "Undid “\(undoing.label)”", trailer: "Lamp-Undid: \(undoing.id)")
+        XCTAssertTrue(undone)
+        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac)])
+    }
 }
