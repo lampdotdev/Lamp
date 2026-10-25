@@ -421,32 +421,18 @@ private struct DrawIconsUpgrade: View {
     }
 }
 
-/// The line in the chat that offers to draw an app's icon, for someone who chose to draw icons themselves:
-/// what's so, and the button that opens Image Playground. It's shown only while it has something to offer
-/// (`Icons.awaitsDrawing`).
-struct DrawIconLine: View {
-    let project: LampProject
-
+/// The line in the chat that offers to draw an app's icon, for someone who chose to draw icons themselves: what's so,
+/// and Draw Icon…, which opens Image Playground in Lamp's setup sheet (`SetupSheet`). It's shown only while it has
+/// something to offer (`Icons.awaitsDrawing`).
+enum DrawIconLine {
     static func text(_ app: String) -> String { "\(app) has a plain icon for now." }
-
-    var body: some View {
-        ChatLook.ActionLine(symbol: "paintbrush.pointed", text: Self.text(project.name), button: "Draw Icon…") {
-            Store.shared.iconFromPlayground(project)
-        }
-    }
 }
 
 /// A first request that read as an iPhone app, made for the Mac because this Mac can't build one yet; or one of a
 /// wish's other apps that this Mac can't build yet (`part`: the wish keeps it on its list, `WishApp`). The button opens
 /// the kind's setup; once it's done, the app is asked to be made for the iPhone as well (or instead), or the wish's
 /// other app to be added, as the person would ask, so the change goes through the agent like any other.
-struct IPhoneSetupLine: View {
-    let project: LampProject
-    let wanted: Platform
-    var part = false
-    @ObservedObject private var asked = Asked.shared
-    @ObservedObject private var store = Store.shared
-
+enum IPhoneSetupLine {
     /// The line's text in the chat (`LogLine.text`): the kind wanted, and "part" for one of a wish's other apps.
     static func lineText(_ kind: Platform, part: Bool) -> String { kind.rawValue + (part ? " part" : "") }
     /// What a line's text says, as `lineText` wrote it; a kind Lamp no longer has reads as the iPhone's.
@@ -479,12 +465,6 @@ struct IPhoneSetupLine: View {
     /// What a setup under way is kept as: the app, and for one of a wish's other apps its kind too.
     static func key(_ project: LampProject, wanted: Platform, part: Bool) -> String { part ? project.id + "." + wanted.rawValue : project.id }
 
-    var body: some View {
-        ChatLook.ActionLine(symbol: Self.setup(for: wanted).symbol, text: Self.text(project.name, wanted: wanted, part: part), button: "See What's Needed…",
-                            disabled: asked.ids.contains(Self.key(project, wanted: wanted, part: part)) || Self.isOff(for: project, wanted: wanted, part: part),
-                            action: setUp)
-    }
-
     /// What the button asks of the agent once setup is done, for each kind: made for it, or added as the wish's other app.
     static var requests: [String] { Targets.all.compactMap(\.setup.later?.request) + Parts.partKinds.map(Parts.request(for:)) }
 
@@ -503,15 +483,13 @@ struct IPhoneSetupLine: View {
     }
 
     /// Whether the button is off for this app: its setup is under way, or the conversion it asked for is
-    /// waiting or running. The in-app chat's line asks the same.
+    /// waiting or running.
     @MainActor static func isOff(for project: LampProject, wanted: Platform = .iphone, part: Bool = false) -> Bool {
         let store = Store.shared
         return Asked.shared.ids.contains(key(project, wanted: wanted, part: part))
             || (store.queued[project.id] ?? []).contains { requests.contains($0.text) }
             || (store.busy.contains(project.id) && requests.contains { store.isRunning($0, for: project) })
     }
-
-    private func setUp() { Self.follow(project, wanted: wanted, part: part) }
 
     /// Opens the kind's setup and, once it's done, asks for the app: the button's click, and also what Lamp does when it
     /// opens the setup itself for one of a wish's other apps (`Store.recordNeeds`), so finishing the setup there adds

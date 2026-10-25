@@ -260,20 +260,3 @@ struct TurnProgress {
         (call.action == .write || call.action == .edit) && !call.argument.isEmpty ? call.argument : nil
     }
 }
-
-/// A turn's progress: one line saying what the agent is doing and for how long, under the steps since it last said
-/// something (in a new app's first build, under the part being built) (they aren't rows of their own while it goes on, `ChatItem.live`).
-struct ActivityRow: View {
-    let progress: TurnProgress
-    /// The chat's lines, for the steps the line opens to.
-    var lines: [LogLine] = []
-    /// The app's folder: the steps are split from the chat as the transcript shows it (`ChatItem.live(_:dir:)`).
-    let dir: URL
-    @AppStorage("showDetails") private var details = false
-
-    var body: some View {
-        let steps = details ? [] : ChatItem.live(lines, dir: dir, doing: progress.activity, looking: progress.looking).steps
-        ChatLook.ActivityLine(progress.activity, started: progress.started, since: progress.activitySince,
-                              hasSteps: !steps.isEmpty) { StepList(steps: steps) }
-    }
-}

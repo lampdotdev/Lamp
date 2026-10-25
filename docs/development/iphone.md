@@ -154,10 +154,13 @@ An app can be made for both (`Platform.universal`: the devices `mac` and `iphone
 Xcode's multiplatform apps are: one code, with what differs under `#if os(macOS)` and `#if os(iOS)`, built for
 one place at a time. Where it opens is `LampProject.destination`: a Mac app's is always the Mac and an iPhone
 app's always iOS, and an app for both goes where Try On last put it (`chosen`, `target` in `meta.json`; "My Mac"
-in `TryOnChoices`, `Store.setMac`, and the simulator and phone choices move it to iOS). It can be open in both places at once: Play
+in `TryOnMenu`, `Store.setMac`, and the simulator and phone choices move it to iOS). It can be open in both places at once: Play
 and Stop (and the app menu's Quit) are for where Try On points (`Store.isOpen`, from `openOnMac` and `openOnIOS`),
 moving Try On closes nothing, and Stop quits only that copy (`quit(only:)`; a Mac build replaces only the Mac
-copy). Each copy keeps its log and pictures in its own folder: the Mac copy's in `.lamp/runtime` (`Runtime.macFolder`,
+copy). The chat is beside whichever copy is open: the Mac copy's own beside its window, the simulator's in Lamp's
+panel attached to the device's window (found by its title through Accessibility, else the simulator's largest
+window), and a phone's in Lamp's panel on its own (`ChatPanel`); Play, Stop and Try On are in its bar while it isn't
+beside the Mac copy. Each copy keeps its log and pictures in its own folder: the Mac copy's in `.lamp/runtime` (`Runtime.macFolder`,
 which the app writes itself, and where what only a Mac copy has, such as a held build or its quit reply, is read),
 the iPhone copy's in `.lamp/runtime/ios` (`Runtime.folder` while Try On points at iOS). Everything about running,
 looking and using branches on `destination` (`onIOS`); what an app could have, such as the Try On menu or the

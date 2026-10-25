@@ -84,28 +84,13 @@ struct NoteReceipt: Codable, Equatable {
     }
 }
 
-/// The receipt in the chat: one line saying what was noted and about whom, with Undo. The line opens to the
-/// notes themselves, the way a command Lamp ran does (`ChatLook.RanCommand`): a receipt is there to be glanced at, and
-/// drawn as a card it competed with the card the person is answering. Taken back, it is the two words.
-struct NoteCard: View {
-    let line: LogLine
-    let dir: URL
-    @ObservedObject private var store = Store.shared
-    @State private var problem: String?
-
-    private var project: LampProject? { store.projects.first { $0.dir == dir } }
-
+/// The receipt in the chat: one line saying what was noted and about whom, with Undo (`ChatLook.NoteLine`). The line
+/// opens to the notes themselves, the way a command Lamp ran does: a receipt is there to be glanced at. Taken back, it
+/// is the two words.
+enum NoteCard {
     static func title(_ receipt: NoteReceipt, app: String) -> String {
         let whom = receipt.about == "you" ? "you" : app
         if receipt.undone == true { return "Taken back" }
         return receipt.added.isEmpty ? "No longer noted about \(whom)" : "Noted about \(whom)"
-    }
-
-    var body: some View {
-        if let receipt = line.noted {
-            ChatLook.NoteLine(title: Self.title(receipt, app: project?.name ?? "this app"), added: receipt.added,
-                              removed: receipt.removed, undone: receipt.undone == true, problem: problem,
-                              undo: project.map { project in { problem = store.undoNote(line.id, in: project) } })
-        }
     }
 }

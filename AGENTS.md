@@ -36,6 +36,9 @@ the part it governs. Only a rule that every change must follow belongs here.
 - **Ask a kind of app what it can do, not which kind it is.** Each kind is one `Target` in `Sources/Lamp/Targets/`;
   code outside it asks (`hasMac`, `hasIOS`, …) rather than checking the kind. Details:
   [kinds of app](docs/development/kinds-of-app.md).
+- **A wish's chat is one screen.** It's drawn by `ChatScreen` (LampSidebarKit) from the state Lamp sends, beside a Mac
+  app and in Lamp's own panel alike, and never in Lamp's window, which is the desk. What the chat shows or does is
+  added to that state and that screen, never to one place it's drawn. Details: [chat](docs/development/chat.md).
 - **Screens are for doing, not explaining.** On-screen words are short and plain, a control appears once it
   works, and a thing is shown where it's chosen. A new card or card state gets its entry in the gallery in the same
   change. Details: [interface](docs/development/interface.md).
@@ -64,9 +67,9 @@ Read the guide for the part you're changing before you change it. A section name
 | Guide | Read it when the change touches |
 | --- | --- |
 | [engines](docs/development/engines.md) | Keep the agent harnesses in step: `Engines.swift`, `EngineInstall`, the tools in `lamp-tools.json` and the MCP endpoint, prompt rules, memory, switching engines, skills, pictures shown to the agent, queued messages, tool names in the chat, models, what answers apps, using other apps |
-| [chat](docs/development/chat.md) | How the agent talks: `Talk`, cards, `ask`, `progress`, the chat's timeline, its activity line and folded steps |
+| [chat](docs/development/chat.md) | How the agent talks: `Talk`, cards, `ask`, `progress`, the chat's timeline, its activity line and folded steps; the chat's one screen (`ChatScreen`, `SidebarState`) and Lamp's chat panel (`ChatPanel`, `SetupSheet`) |
 | [approvals and privacy](docs/development/approvals-and-privacy.md) | `/agent/approve`, `Privacy`, the sandbox, file access outside an app's folder, data snapshots |
-| [desk](docs/development/desk.md) | The desk: wishes as icons, opening a wish, starters and their checks |
+| [desk](docs/development/desk.md) | The desk, Lamp's only window: wishes as icons, opening a wish, starters and their checks |
 | [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md) | Two Lamps on one Mac: `Edition`, worktree instances, `dev-data.sh`, `fresh-start.sh`, `LAMP_PRETEND_MISSING` |
 | [kinds of app](docs/development/kinds-of-app.md) | `Platform`, `Targets/`, a kind's identity, guidance, recipe, part and setup; `Destination` |
 | [iPhone](docs/development/iphone.md) | iPhone apps, the simulator and phones, Apple TV and Vision Pro; Apps for both the Mac and the iPhone |

@@ -15,11 +15,11 @@ enum Gallery {
     struct Entry: Identifiable {
         let group: String
         let name: String
-        let make: () -> AnyView
+        let make: @MainActor () -> AnyView
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -74,6 +74,89 @@ enum Gallery {
             """),
         ]),
     ]
+
+    /// What only some chats show: a new wish's intro, Apple's tools installing, the bar's Play, Stop and Try On for a wish
+    /// that isn't a Mac window beside the chat, a setup card's header and its sheet, Agent Details' output, and a phone
+    /// that didn't take the app.
+    private static let screenEntries: [Entry] = [
+        screen("A new wish", group: "Chat screen", []) { state in
+            state.toolbar = nil
+            state.intro = SidebarIntro(icon: nil, name: nil, namePrompt: "", line: introLine, ideas: ideas, canRename: true)
+        },
+        screen("A wish from the site", group: "Chat screen", []) { state in
+            state.toolbar = nil
+            state.intro = SidebarIntro(icon: nil, name: "", namePrompt: "A shelf for my hot sauces", line: "Here's your wish. Change anything you like.",
+                                       ideas: [], canRename: true)
+            state.draft = "A shelf for my hot sauces, with how hot each one is and where I bought it."
+            state.draftVersion = 1
+        },
+        screen("Named, nothing asked yet", group: "Chat screen", []) { state in
+            state.toolbar = nil
+            state.intro = SidebarIntro(icon: nil, name: "Today", namePrompt: "Today", line: "Describe what Today should do. Lamp builds it and opens it for you.",
+                                       ideas: ideas, canRename: true)
+        },
+        screen("Apple's tools installing", group: "Chat screen", Array(finishedChat.prefix(1))) { state in
+            state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
+                                         button: "Show Installer")
+            state.queued = [SidebarQueued(id: UUID(), text: "make the design more modern", attachments: [])]
+            state.waitingForSetup = true
+            state.lines = []
+        },
+        screen("An iPhone app, closed", group: "Chat screen", Array(finishedChat.prefix(11))) { state in
+            state.toolbar?.play = SidebarPlay(open: false, enabled: true, help: "Use Today")
+            state.tryOn = phoneTryOn
+        },
+        screen("An iPhone app, open", group: "Chat screen", Array(finishedChat.prefix(11))) { state in
+            state.toolbar?.play = SidebarPlay(open: true, enabled: true, help: "Quit Today")
+            state.tryOn = phoneTryOn
+        },
+        screen("A setup card", group: "Chat screen", [
+            LogLine(kind: .user, text: "add a picture of each plant"),
+            LogLine(kind: .agent, text: "Each plant now has a spot for its picture."),
+            LogLine(kind: .summary, text: "Worked for 1m 2s"),
+        ]) { state in
+            var card = SidebarLine(id: UUID(), kind: .offer, text: "Make pictures with AI", gap: 12)
+            card.symbol = Capability.pictures.symbol
+            card.status = "Today wants to make pictures, and nothing on this Mac makes them yet."
+            card.button = "Set Up…"
+            state.lines.append(card)
+        },
+        Entry(group: "Chat screen", name: "The setup sheet") {
+            AnyView(SetupCard(offer: SetupOffer(capability: .pictures), reason: "Today wants to make pictures, and nothing on this Mac makes them yet.",
+                              dir: wish.dir))
+        },
+        screen("Agent Details", group: "Chat screen", [
+            LogLine(kind: .user, text: "add some color"),
+            LogLine(kind: .tool, text: "Read Sources/Theme.swift"),
+            LogLine(kind: .tool, text: "Edit Sources/Theme.swift"),
+            LogLine(kind: .status, text: "Ran: swift build"),
+            LogLine(kind: .detail, text: (1...20).map { "Compiling Today Theme.swift (\($0) of 20)" }.joined(separator: "\n")),
+            LogLine(kind: .agent, text: "The cards have colored headings now."),
+            LogLine(kind: .summary, text: "Worked for 41 s"),
+        ], details: true),
+        screen("A phone that didn't take it", group: "Chat screen", [
+            LogLine(kind: .user, text: "put it on my phone"),
+            LogLine(kind: .error, text: "Today couldn't go on the iPhone: it's locked. Unlock it, then try again.", retryPhone: "00008110-gallery"),
+        ]),
+    ]
+
+    private static let introLine = "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
+
+    private static let ideas = [
+        SidebarIdea(id: "dinner", symbol: "fork.knife", hue: 0.08, text: "Help me figure out what to make for dinner from what's in my fridge"),
+        SidebarIdea(id: "plants", symbol: "leaf", hue: 0.33, text: "Remind me when each of my plants needs water"),
+        SidebarIdea(id: "maze", symbol: "circle.grid.cross", hue: 0.6, text: "Make a marble maze I play by tilting my phone"),
+        SidebarIdea(id: "budget", symbol: "creditcard", hue: 0.75, text: "Show me where my money went this month"),
+    ]
+
+    private static let phoneTryOn = SidebarTryOn(sections: [
+        SidebarTryOn.Section(title: "Simulator", items: [
+            SidebarTryOn.Item(id: "family:iphone", title: "iPhone", symbol: "iphone", checked: true, disabled: false),
+            SidebarTryOn.Item(id: "family:ipad", title: "iPad", symbol: "ipad", checked: false, disabled: false),
+        ]),
+        SidebarTryOn.Section(title: nil, items: [SidebarTryOn.Item(id: "check:iphone", title: "Check iPhone & iPad Setup…", symbol: "checklist",
+                                                                    checked: false, disabled: false)]),
+    ], symbol: "iphone", current: "iPhone")
 
     private static let finishedChat: [LogLine] = [
         LogLine(kind: .user, text: "make the design more modern"),
@@ -130,22 +213,44 @@ enum Gallery {
 
     private static func chat(_ name: String, _ lines: [LogLine], group: String = "Chat", undo: Bool = false,
                              activity: String? = nil) -> Entry {
+        screen(name, group: group, lines, progress: activity.map { activity in
+            var progress = TurnProgress(newApp: false)
+            progress.activity = activity
+            progress.started = .now.addingTimeInterval(-7)
+            progress.activitySince = progress.started
+            return progress
+        }) { state in
+            if undo { state.undoChange = "gallery" }
+        }
+    }
+
+    /// The made-up wish the gallery's chats are for: a Mac app called Today, with no folder.
+    static let wish = LampProject(id: "gallery-today", name: "Today", exe: "Today", dir: URL(fileURLWithPath: "/nonexistent"))
+
+    /// The chat as Lamp makes it for a wish (`SidebarServer.lines`), from made-up lines and the turn going on, with the
+    /// bar's buttons as a made Mac app has them.
+    @MainActor static func state(_ lines: [LogLine], progress: TurnProgress? = nil, details: Bool = false) -> SidebarState {
+        let busy = progress.map { $0.finished == nil } ?? false
+        let shown = busy && Talk.open(in: lines) == nil ? progress : nil
+        var state = SidebarState(app: wish.name, lines: SidebarServer.lines(lines, project: wish, busy: busy, progressShown: shown != nil,
+                                                                             details: details, progress: progress),
+                                 working: shown?.activity, workingSince: shown?.started, empty: lines.isEmpty, busy: busy,
+                                 draft: "", draftVersion: 0, attachments: [])
+        state.workingActivitySince = shown?.activitySince
+        state.workingSteps = shown == nil ? nil : SidebarServer.liveSteps(lines, project: wish, details: details, doing: shown?.activity)
+        state.toolbar = SidebarToolbar(canUndo: !lines.isEmpty, canShare: true, hasVersions: !lines.isEmpty, details: details, usage: nil)
+        state.canDictate = true
+        return state
+    }
+
+    /// A whole chat as people see it, beside an app or in Lamp's panel: the shared screen (`ChatScreen`), its bar and
+    /// message box included, at the width picked and a chat's height.
+    static func screen(_ name: String, group: String = "Chat", _ lines: [LogLine], progress: TurnProgress? = nil, details: Bool = false,
+                       _ change: @escaping (inout SidebarState) -> Void = { _ in }) -> Entry {
         Entry(group: group, name: name) {
-            AnyView(VStack(alignment: .leading, spacing: 0) {
-                Transcript(lines: lines, dir: URL(fileURLWithPath: "/nonexistent"), busy: activity != nil, progressShown: activity != nil)
-                // The line the chat has under a turn going on, as Lamp's window draws it (`ProjectView`).
-                if let activity {
-                    let progress = { () -> TurnProgress in
-                        var progress = TurnProgress(newApp: false)
-                        progress.activity = activity
-                        progress.started = .now.addingTimeInterval(-7)
-                        progress.activitySince = progress.started
-                        return progress
-                    }()
-                    ActivityRow(progress: progress, lines: lines, dir: URL(fileURLWithPath: "/nonexistent")).padding(.top, 12)
-                }
-                if undo { ChatLook.UndoChange {}.padding(.top, 12) }
-            })
+            var made = state(lines, progress: progress, details: details)
+            change(&made)
+            return AnyView(ChatScreen().environmentObject(GalleryChat(made) as ChatLink).frame(height: 640))
         }
     }
 
@@ -253,24 +358,15 @@ enum Gallery {
 
     private static func approval(_ name: String, command: String, title: String = "Can the agent do this?",
                                  explanation: ChatLook.Explanation?, why: String = flaggedAsk) -> Entry {
-        Entry(group: "Approval", name: name) {
-            AnyView(VStack(alignment: .leading, spacing: 0) {
-                Transcript(lines: [LogLine(kind: .user, text: trailsRequest),
-                                   LogLine(kind: .agent, text: "I'll add a trails layer to the map."),
-                                   LogLine(kind: .tool, text: "Read Sources/MapView.swift")],
-                           dir: URL(fileURLWithPath: "/nonexistent"), busy: true, progressShown: true)
-                ChatLook.ActivityLine("Waiting for your OK", started: .now.addingTimeInterval(-12)).padding(.top, 12)
-                ChatLook.ApprovalCard(title: title, command: command, explanation: explanation, request: trailsRequest, whyAsked: why,
-                                      onAllow: {}, onAllowAll: {}, onDeny: {})
-                    .padding(.top, 12)
-                ChatLook.MessageBar(busy: true, canSend: false, attachHelp: "", attach: {}, send: {}, stop: {}, focus: {}) {
-                    Text(ChatLook.placeholder(busy: true, empty: true))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, minHeight: Composer.lineHeight, alignment: .leading)
-                        .padding(.leading, 5)
-                } above: { EmptyView() }
-                    .padding(.top, 8)
-            })
+        var progress = TurnProgress(newApp: false)
+        progress.activity = "Waiting for your OK"
+        progress.started = .now.addingTimeInterval(-12)
+        progress.activitySince = progress.started
+        return screen(name, group: "Approval", [LogLine(kind: .user, text: trailsRequest),
+                                                LogLine(kind: .agent, text: "I'll add a trails layer to the map."),
+                                                LogLine(kind: .tool, text: "Read Sources/MapView.swift")], progress: progress) { state in
+            state.approval = SidebarApproval(id: UUID(), title: title, command: command, explanation: explanation, request: trailsRequest,
+                                             whyAsked: why)
         }
     }
 
@@ -421,33 +517,12 @@ enum Gallery {
 
     private static func firstBuild(_ name: String, _ lines: [LogLine], plan: [PlanPart],
                                    _ change: @escaping (inout TurnProgress) -> Void) -> Entry {
-        Entry(group: "First build", name: name) {
-            var progress = TurnProgress(newApp: true)
-            progress.plan = plan
-            progress.started = at(0)
-            change(&progress)
-            let shown = LogLine.visible(lines, details: false)
-            let dir = URL(fileURLWithPath: "/nonexistent")
-            return AnyView(VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(Chapters.segments(shown, progress: progress).enumerated()), id: \.offset) { _, segment in
-                        switch segment {
-                        case .lines(let lines): Transcript(lines: lines, dir: dir, busy: false)
-                        case .build(let build):
-                            BuildChapters(build: build, progress: build.live ? progress : nil) { part, now in
-                                if now {
-                                    Transcript(lines: build.parts[part], dir: dir, busy: true, progressShown: true)
-                                    ActivityRow(progress: progress, lines: build.parts[part], dir: dir).padding(.top, 10)
-                                } else {
-                                    Transcript(lines: build.parts[part], dir: dir, busy: false, chapterOf: shown)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(16)
-            })
-        }
+        var progress = TurnProgress(newApp: true)
+        progress.plan = plan
+        progress.started = at(0)
+        progress.activitySince = progress.started
+        change(&progress)
+        return screen(name, group: "First build", lines, progress: progress)
     }
 
     // MARK: Activity
@@ -492,7 +567,8 @@ enum Gallery {
                           LogLine(kind: .status, text: "Ran: grep -rn hot Sources", said: "Finding every hot-sauce word and number")]
             let steps = ChatItem.live(LogLine.visible(logged, details: false), doing: Activity.thinking).steps
             return AnyView(ChatLook.ActivityLine("Mulling it over", started: Date().addingTimeInterval(-40),
-                                                 hasSteps: true) { StepList(steps: steps) })
+                                                 hasSteps: true) { ChatLines(SidebarServer.stepLines(steps)) }
+                .environmentObject(GalleryChat(nil) as ChatLink))
         },
         // Steps that were tried and didn't work, as a fold opens to them: a command that failed, the file
         // work after it in words of its own, and a change that failed.
@@ -506,7 +582,8 @@ enum Gallery {
                           shared, LogLine(kind: .tool, text: "read Sources/App.swift"), edit,
                           LogLine(kind: .agent, text: "The page server is running, but sharing it didn't work.")]
             let steps = LogLine.visible(logged, details: false).filter(ChatItem.isStep)
-            return AnyView(VStack(alignment: .leading, spacing: 4) { StepList(steps: steps) })
+            return AnyView(VStack(alignment: .leading, spacing: 4) { ChatLines(SidebarServer.stepLines(steps)) }
+                .environmentObject(GalleryChat(nil) as ChatLink))
         },
         // A change waiting for Reload, under the answer that says so: the action line's symbol and words in the steps'
         // column, with "Worked for…" above and Undo Last Change below.
@@ -755,12 +832,12 @@ struct GalleryScene: Scene {
 }
 
 private struct GalleryView: View {
-    /// The widths a card is drawn at: the chat in Lamp's window (cards stop at 620), and the wand's panel beside
-    /// an app at its narrowest.
+    /// The widths a card is drawn at: the chat at its widest (cards stop at 620), and at its narrowest, beside an app
+    /// or in Lamp's panel.
     enum Width: String, CaseIterable, Identifiable {
-        case chat = "Chat", wand = "Wand Panel"
+        case chat = "Widest", wand = "Narrowest"
         var id: Self { self }
-        var points: CGFloat { self == .chat ? 680 : 280 }
+        var points: CGFloat { self == .chat ? 680 : 360 }
     }
 
     enum Look: String, CaseIterable, Identifiable {
@@ -838,5 +915,15 @@ private struct TransitionTrial: View {
             }
         }
         .padding()
+    }
+}
+
+/// A made-up chat for the gallery: the shared screen shows its state, and what's clicked goes nowhere.
+@MainActor
+final class GalleryChat: ChatLink {
+    init(_ state: SidebarState?) {
+        super.init()
+        self.state = state
+        connected = true
     }
 }
