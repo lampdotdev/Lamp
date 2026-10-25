@@ -41,12 +41,9 @@ struct Platform: RawRepresentable, Hashable, Codable, Sendable {
         self = target.platform
     }
 
-    var hasMac: Bool { target.places.contains(.mac) }
-    var hasIOS: Bool { target.places.contains(.ios) }
-    var hasAndroid: Bool { target.places.contains(.android) }
-    var hasTV: Bool { target.places.contains(.tv) }
-    /// Made for a device of the person's through its integration (`LampProject.integration`).
-    var hasDevice: Bool { target.places.contains(.device) }
+    /// Whether an app of this kind can open there at all. What an app has is the app's to say (`LampProject.hasMac`…):
+    /// a kind whose places are given one at a time (a game, a screen) has only those it was given.
+    func reaches(_ place: Destination) -> Bool { target.places.contains(place) }
     /// Opens in more than one place, where Try On last put it (`LampProject.chosen`).
     var choosesPlace: Bool { target.places.count > 1 }
     /// Its places are given one at a time, so each app of the kind says which it has (`LampProject.places`).

@@ -1847,7 +1847,7 @@ private struct TryOnChoices: View {
         let places = project.openPlaces
         if places.contains(.ios) {
             appleChoices
-        } else {
+        } else if places.contains(.mac) {
             Picker("This Mac", selection: Binding(get: { project.destination == .mac ? Destination.mac : nil },
                                                   set: { if $0 != nil { store.setMac(project) } })) {
                 Label("My Mac", systemImage: "laptopcomputer").tag(Optional(Destination.mac))
@@ -1905,7 +1905,7 @@ private struct TryOnChoices: View {
     }
 
     @ViewBuilder private var appleChoices: some View {
-        if project.platform.choosesPlace {
+        if project.platform.choosesPlace, project.hasMac {
             // An app for both: this Mac is a place to open it too, beside the simulators and phones.
             Picker("This Mac", selection: Binding(get: { project.destination == .mac ? Destination.mac : nil },
                                                   set: { if $0 != nil { store.setMac(project) } })) {
