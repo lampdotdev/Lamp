@@ -148,6 +148,7 @@ extension Template {
     androidxComposeBom = "2026.03.01"
     androidxNavigation3 = "1.0.1"
     androidxDatastore = "1.1.7"
+    androidxWebkit = "1.14.0"
     coroutines = "1.10.2"
     kotlin = "2.3.20"
     serialization = "1.9.0"
@@ -169,6 +170,7 @@ extension Template {
     androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "androidxDatastore" }
     kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
     kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+    androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "androidxWebkit" }
 
     [plugins]
     android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

@@ -16,26 +16,50 @@ enum GameAndroid {
         project.dir.appendingPathComponent("\(folder)/app/build/outputs/apk/debug/app-debug.apk")
     }
 
-    /// Lamp's Android project for the game, written before every build like the rest of its files.
+    /// Lamp's Android project for the game, written before every build like the rest of its files. A game with other
+    /// apps in its wish is one of the wish's peers here as on the Mac: the app carries Lamp's Kotlin building blocks
+    /// (`LampWish` among them, `Template.androidSupportKotlin`), with what they need to build and run (Compose and the rest
+    /// of an Android app's libraries, and Lamp's debug manifest: the network and the provider that hands them the app's
+    /// context), and answers the page's `Lamp.wish` with them (`pageWish`). A game on its own has none of it.
     static func write(for project: LampProject) throws {
         let package = Template.androidPackage(for: project)
         let kotlin = "\(folder)/app/src/main/kotlin/" + package.replacingOccurrences(of: ".", with: "/")
+        let talks = Template.talksToOtherApps(project)
         try Template.write(Template.androidSettingsGradle, to: "\(folder)/settings.gradle.kts", for: project)
-        try Template.write(rootBuildGradle, to: "\(folder)/build.gradle.kts", for: project)
+        try Template.write(talks ? Template.androidRootBuildGradle : rootBuildGradle, to: "\(folder)/build.gradle.kts", for: project)
         try Template.write(Template.androidGradleProperties, to: "\(folder)/gradle.properties", for: project)
         try Template.write(Template.androidVersionsCatalogue, to: "\(folder)/gradle/libs.versions.toml", for: project)
-        try Template.write(appBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
+        try Template.write(talks ? wishBuildGradle : appBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
         try Template.write(manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
-        try Template.write(mainActivity.replacingOccurrences(of: "{{PACKAGE}}", with: package), to: kotlin + "/MainActivity.kt", for: project)
+        try Template.write((talks ? mainActivity : withoutWish(activity: mainActivity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),
+                           to: kotlin + "/MainActivity.kt", for: project)
         try Template.write(".gradle/\n.kotlin/\nlocal.properties\n", to: "\(folder)/.gitignore", for: project)
+        let wish = [(kotlin + "/" + Template.androidSupportFile, Template.androidSupportKotlin(for: project)),
+                    (kotlin + "/LampPageWish.kt", pageWish),
+                    ("\(folder)/" + Template.androidDebugManifest, Template.androidDebugManifestXML)]
+        for (path, text) in wish {
+            let url = project.dir.appendingPathComponent(path)
+            if talks { try Template.put(text.replacingOccurrences(of: "{{PACKAGE}}", with: package), at: url, for: project) }
+            else if FileManager.default.fileExists(atPath: url.path) { AppFolder.remove(url, in: project.dir) }
+        }
     }
 
     /// Every path Lamp owns there, for the agent's file checks and the versions' diffs.
     static func paths(for project: LampProject) -> [String] {
         let package = Template.androidPackage(for: project).replacingOccurrences(of: ".", with: "/")
         return [".gitignore", "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml", "app/build.gradle.kts",
-                "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt"].map { "\(folder)/\($0)" }
+                "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt",
+                "app/src/main/kotlin/\(package)/\(Template.androidSupportFile)", "app/src/main/kotlin/\(package)/LampPageWish.kt",
+                Template.androidDebugManifest].map { "\(folder)/\($0)" }
     }
+
+    /// The game's activity for a game on its own: without the line that answers the page's `Lamp.wish`.
+    static func withoutWish(activity: String) -> String { activity.replacingOccurrences(of: pageWishLine, with: "") }
+
+    private static let pageWishLine = """
+            LampPageWish.attach(web, "https://$HOST") // the wish's other apps
+
+    """
 
     /// build.sh's Android part: the page into the game's build/ (which no version keeps), its files only, the icon,
     /// then Gradle.
@@ -104,6 +128,43 @@ enum GameAndroid {
     }
 
     """
+
+    /// The build of a game with other apps in its wish: an Android app's plugins and libraries, which Lamp's Kotlin
+    /// building blocks are written against, and AndroidX's WebKit, whose message listener lets only the game's own page
+    /// in its main frame reach `LampWish`.
+    static let wishBuildGradle = appBuildGradle
+        .replacingOccurrences(of: """
+            alias(libs.plugins.android.application)
+        }
+        """, with: """
+            alias(libs.plugins.android.application)
+            alias(libs.plugins.compose.compiler)
+            alias(libs.plugins.kotlin.serialization)
+        }
+        """)
+        .replacingOccurrences(of: "buildFeatures { buildConfig = false }", with: "buildFeatures {\n        compose = true\n        buildConfig = false\n    }")
+        .replacingOccurrences(of: """
+        kotlin {
+            jvmToolchain(17)
+        }
+        """, with: """
+        kotlin {
+            jvmToolchain(17)
+        }
+
+        dependencies {
+            val composeBom = platform(libs.androidx.compose.bom)
+            implementation(composeBom)
+            implementation(libs.androidx.core.ktx)
+            implementation(libs.androidx.lifecycle.runtime.ktx)
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.compose.ui)
+            implementation(libs.androidx.compose.material3)
+            implementation(libs.kotlinx.coroutines.android)
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.androidx.webkit)
+        }
+        """)
 
     static let manifest = """
     <?xml version="1.0" encoding="utf-8"?>
@@ -192,6 +253,7 @@ enum GameAndroid {
                 }
             }
             setContentView(web)
+            LampPageWish.attach(web, "https://$HOST") // the wish's other apps
             (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
             immerse()
             web.loadUrl("https://$HOST/index.html")
@@ -290,6 +352,138 @@ enum GameAndroid {
         private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), "".byteInputStream())
 
         companion object { const val HOST = "lamp.game" }
+    }
+
+    """#
+
+    /// The page's `Lamp.wish` (Web/lamp.js), answered by the app's own `LampWish` (LampSupport.kt), as `LampPageWish` in
+    /// LampPage.swift answers it on the Mac: the app is the wish's peer (it listens, is found, keeps the values on the
+    /// device, so it goes on with Lamp closed), and the page mirrors it. Only the game's own page, in its main frame, is
+    /// heard (AndroidX WebKit's message listener, by origin), and what the app hears goes to the page's `window.__lampWish`.
+    static let pageWish = #"""
+    // Written by Lamp before every build; don't edit. The page's Lamp.wish (Web/lamp.js), answered by this app's own
+    // LampWish (LampSupport.kt): the app is the wish's peer, and the page mirrors it.
+    package {{PACKAGE}}
+
+    import android.util.Base64
+    import android.webkit.WebView
+    import androidx.webkit.WebViewCompat
+    import androidx.webkit.WebViewFeature
+    import kotlinx.coroutines.Job
+    import kotlinx.coroutines.MainScope
+    import kotlinx.coroutines.flow.combine
+    import kotlinx.coroutines.launch
+    import org.json.JSONArray
+    import org.json.JSONObject
+    import org.json.JSONTokener
+
+    class LampPageWish private constructor(private val web: WebView) {
+        private val scope = MainScope()
+        private var listening = false
+        private var filesHeard = false
+        private val transfers = mutableMapOf<Int, LampTransfer>()
+        private val watching = mutableMapOf<Int, Job>()
+
+        private fun heard(text: String) {
+            val call = try { JSONObject(text) } catch (e: Exception) { return }
+            when (call.optString("op")) {
+                "start" -> {
+                    listen()
+                    LampWish.start()
+                    tellState()
+                    tellValues(JSONArray())
+                }
+                "stop" -> LampWish.stop()
+                "send" -> {
+                    val data = json(call.optString("data")) ?: return
+                    LampWish.send(if (data == JSONObject.NULL) null else data, if (call.isNull("to")) null else call.optString("to"))
+                }
+                "set" -> {
+                    if (call.isNull("key")) return
+                    val value = json(call.optString("value"))
+                    LampWish.set(call.optString("key"), if (value == null || value == JSONObject.NULL) null else value)
+                }
+                "files" -> {
+                    if (filesHeard) return
+                    filesHeard = true
+                    LampWish.onFile { from, file ->
+                        tell(JSONObject().put("t", "file").put("from", from).put("name", file.name).put("type", file.type)
+                            .put("data", Base64.encodeToString(file.bytes, Base64.NO_WRAP)))
+                    }
+                }
+                "sendFile" -> {
+                    val id = call.optInt("id")
+                    val bytes = try { Base64.decode(call.optString("data"), Base64.DEFAULT) } catch (e: Exception) { return }
+                    val transfer = LampWish.sendFile(bytes, call.optString("name", "file"), call.optString("type", "application/octet-stream"), call.optString("to"))
+                    transfers[id] = transfer
+                    watching[id] = scope.launch { transfer.sent.combine(transfer.state) { _, _ -> }.collect { tellTransfer(id) } }
+                }
+                "cancel" -> transfers[call.optInt("id")]?.cancel()
+            }
+        }
+
+        private fun listen() {
+            if (listening) return
+            listening = true
+            // Who is open and how this app's link stands, as each changes.
+            scope.launch { LampWish.apps.combine(LampWish.status) { _, _ -> }.collect { tellState() } }
+            LampWish.onMessage { from, data -> tell(JSONObject().put("t", "message").put("from", from).put("data", data ?: JSONObject.NULL)) }
+            // Who made each change; the page says to its onChange every value that differs from its copy.
+            LampWish.onChange { key, value, from ->
+                tellValues(JSONArray().put(JSONObject().put("key", key).put("value", value ?: JSONObject.NULL).put("from", from)))
+            }
+        }
+
+        private fun tellState() {
+            val apps = JSONArray()
+            for (peer in LampWish.apps.value) {
+                apps.put(JSONObject().put("peer", peer.peer).put("kind", peer.kind).put("name", peer.name).put("device", peer.device)
+                    .put("open", peer.isOpen).put("status", JSONObject().put("state", peer.status.state.name).put("reason", peer.status.reason)
+                        .put("lastSeen", peer.status.lastSeen ?: JSONObject.NULL)))
+            }
+            val status = LampWish.status.value
+            tell(JSONObject().put("t", "state").put("me", LampWish.me).put("apps", apps)
+                .put("status", JSONObject().put("state", status.state.name).put("reason", status.reason)))
+        }
+
+        private fun tellValues(changed: JSONArray) {
+            val values = JSONObject()
+            for ((key, value) in LampWish.values.value) values.put(key, value)
+            tell(JSONObject().put("t", "values").put("values", values).put("changed", changed))
+        }
+
+        private fun tellTransfer(id: Int) {
+            val transfer = transfers[id] ?: return
+            val said = JSONObject().put("t", "transfer").put("id", id).put("sent", transfer.sent.value)
+            when (val state = transfer.state.value) {
+                is LampTransfer.State.Failed -> said.put("state", "failed").put("error", state.reason)
+                LampTransfer.State.Done -> said.put("state", "done")
+                else -> said.put("state", "sending")
+            }
+            if (transfer.state.value != LampTransfer.State.Sending) {
+                transfers.remove(id)
+                watching.remove(id)?.cancel()
+            }
+            tell(said)
+        }
+
+        private fun tell(message: JSONObject) {
+            val script = "window.__lampWish && window.__lampWish(" + message.toString() + ")"
+            web.post { web.evaluateJavascript(script, null) }
+        }
+
+        private fun json(text: String): Any? = try { JSONTokener(text).nextValue() } catch (e: Exception) { null }
+
+        companion object {
+            /** Answers the page at `origin`, the game's own, in its main frame: no other page or frame reaches the wish. */
+            fun attach(web: WebView, origin: String) {
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+                val bridge = LampPageWish(web)
+                WebViewCompat.addWebMessageListener(web, "lampWishHost", setOf(origin)) { _, message, _, isMainFrame, _ ->
+                    if (isMainFrame) message.data?.let { bridge.heard(it) }
+                }
+            }
+        }
     }
 
     """#

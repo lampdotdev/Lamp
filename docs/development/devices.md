@@ -171,7 +171,8 @@ played are given one at a time (`LampProject.places`, kept in meta.json; `Target
 the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp's Android app in the game's
 `Lamp/Android` (never `Android/`, which `Parts.folders` reads as a wish's Android app), `GameAndroid`, built and installed
 like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
-to the page's `lampNativePad`) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
+to the page's `lampNativePad`; in a wish of several apps it also carries Lamp's Kotlin blocks and answers the page's
+`Lamp.wish` with `LampWish`, the "Wishes" guide) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
 app, installed as a game). `make_app_for` on
 a game sets its places (`Store.kindPlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
 given as its entry's `places` in `make_app_for`'s `apps`, and a list without the game takes it away like any app of a wish (the "Wishes" guide; a game
