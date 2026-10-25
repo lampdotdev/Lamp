@@ -1182,14 +1182,20 @@ extension TVTemplate {
           var routes = {}, links_ = 0, coming = '';
         /*LAMP_FILES*/
           var files = lampFiles(function (route, file) {
-            var ch = coming;
-            if (ch === 'pad') { if (padHooks && padPlayers[route.peer]) padHooks.file('w' + route.peer, file); else file.cancel(); }
+            var ch = coming, key = ch.indexOf('pad') === 0 ? padKey(route.peer, ch.slice(4)) : null;
+            // A file that stops coming ends, as one that stops going does.
+            var watch = setTimeout(stalled, 20000);
+            function stalled() { file.cancel(); }
+            file.onProgress(function () { clearTimeout(watch); watch = setTimeout(stalled, 20000); });
+            file.done.then(function () { clearTimeout(watch); }, function () { clearTimeout(watch); });
+            if (key !== null) { if (padHooks && padPlayers[key]) padHooks.file(key, file); else file.cancel(); }
             else if (on.file.length) emit('file', [route.peer, file]);
             else file.cancel();
           });
           // The wish's own apps playing this app's game (LampController): joined to Lamp.controllers while it takes
-          // players, by peer name, with how far each one's clock is from this page's.
+          // players, each controller of each app a player of its own ('w' + its app's peer name + ':' + its id).
           var padHooks = null, padPlayers = {};
+          function padKey(peer, id) { return 'w' + peer + (typeof id === 'string' && /^[a-z0-9]{1,16}$/.test(id) ? ':' + id : ''); }
 
           function emit(name, args) {
             var list = on[name];
@@ -1266,7 +1272,7 @@ extension TVTemplate {
             for (var g = 0; g < apps.length; g++) {
               if (apps[g].open) continue;
               dropRoutes(apps[g].peer, null, apps[g].name.charAt(0).toUpperCase() + apps[g].name.slice(1) + ' closed.');
-              if (padPlayers[apps[g].peer]) { delete padPlayers[apps[g].peer]; if (padHooks) padHooks.leave('w' + apps[g].peer); }
+              for (var pk in padPlayers) if (padPlayers[pk].peer === apps[g].peer) { delete padPlayers[pk]; if (padHooks) padHooks.leave(pk); }
             }
             if (padHooks) for (var q = 0; q < arrived.length; q++) sendPad(arrived[q], { t: 'host' });
             // This page's own state first: code that hears an app arrive in peers sends to it at once, and must find this
@@ -1615,7 +1621,8 @@ extension TVTemplate {
             } else if (m.t === 'joined' && m.peer) {
               present(m.peer); rebuild(); reach();
             } else if (m.t === 'left') {
-              delete relayPresent[m.peer]; rebuild();
+              // What was on its way through the room to or from it can't arrive now, even if it's still reached straight.
+              delete relayPresent[m.peer]; dropRoutes(m.peer, 'r', 'The link was lost.'); rebuild();
             } else if (m.t === 'at' && isName(m.peer)) {
               remember(m.peer, m.addresses); lookAgain();
             } else if (m.t === 'apps') {
@@ -1903,21 +1910,24 @@ extension TVTemplate {
           }
           function heardPad(m, peer) {
             if (!padHooks) return;
-            var key = 'w' + peer;
+            var id = typeof m.pad === 'string' ? m.pad : '', key = padKey(peer, id);
             if (m.t === 'join') {
-              if (padPlayers[peer]) return;
-              padPlayers[peer] = true;
-              sendPad(peer, { t: 'welcome' });
-              padHooks.join(key, {
+              // Asked again (a controller that missed its welcome): it's told again, with the number it has.
+              padPlayers[key] = { peer: peer, pad: id };
+              var n = padHooks.join(key, {
                 key: key, place: 0,
-                text: function (out) { return sendPad(peer, out); },
-                say: function (data) { return sendPad(peer, { t: 'message', data: data }); },
-                sendFile: function (data, info) { return sendFile(peer, data, info, 'pad'); }
+                text: function (out) { if (id) out.pad = id; return sendPad(peer, out); },
+                say: function (data) { var out = { t: 'message', data: data }; if (id) out.pad = id; return sendPad(peer, out); },
+                sendFile: function (data, info) { return sendFile(peer, data, info, id ? 'pad:' + id : 'pad'); }
               }, typeof m.now === 'number' ? m.now - Date.now() : null);
-            } else if (!padPlayers[peer]) {
+              var welcome = { t: 'welcome' }, number = { t: 'player', number: n };
+              if (id) { welcome.pad = id; number.pad = id; }
+              sendPad(peer, welcome);
+              sendPad(peer, number);
+            } else if (!padPlayers[key]) {
               return;
             } else if (m.t === 'leave') {
-              delete padPlayers[peer];
+              delete padPlayers[key];
               padHooks.leave(key);
             } else if (m.t === 'too-big') {
               padHooks.tooBig(key, m.bytes);
@@ -1933,7 +1943,8 @@ extension TVTemplate {
               for (var i = 0; i < apps.length; i++) if (apps[i].open) sendPad(apps[i].peer, { t: 'host' });
             },
             stop: function () {
-              for (var p in padPlayers) sendPad(p, { t: 'state', host: false });
+              var told = {};
+              for (var k in padPlayers) if (!told[padPlayers[k].peer]) { told[padPlayers[k].peer] = true; sendPad(padPlayers[k].peer, { t: 'state', host: false }); }
               padPlayers = {};
               padHooks = null;
             }

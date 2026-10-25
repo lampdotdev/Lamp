@@ -235,14 +235,17 @@ the agent's, from the `wish-links` skill.
 Besides messages and values, a wish's apps send each other **files** (`LampWish.sendFile`, `onFile` in Swift and Kotlin;
 `Lamp.wish.sendFile`, `onFile` in lamp.js): up to 64 MB to one app open now, in pieces under the controllers' flow
 (`ControllerWire`: 64 KB a piece, never more than 512 KB past what the receiver has acknowledged, two at a time each way
-between two apps, a file that stops moving for 20 seconds ended). A piece is a sealed message whose first byte is 1
+between two apps, a file that stops moving for 20 seconds ended, on either side; each app starts its numbering anywhere,
+so a file sent after a relaunch isn't taken for one from before still on its way). A piece is a sealed message whose first byte is 1
 where a message's is "{" (`WishChannel.piece`): 1, a peer's name with its length before it (the one it's for, from the
 sender to the relay; the one it's from, from the relay; none on a link straight between two apps), the sender's id for
 the transfer, and the bytes; what the file is (`file`, with `ch` saying what it's for: nothing for `onFile`, `pad` for a
 game's controls, below), its acknowledgements and its end (`file-ack`, `file-refuse`, `file-cancel`) are messages, with
 `to` and `from` through the room as `send` has. A file stays on the way it started on, straight or through the room,
-and ends when that way goes, since its pieces and acknowledgements can't change ways halfway; it ends too when the other
-app closes, and an app with no `onFile` turns files down. The relay passes a file only to a member that speaks 3 or more
+and ends when that way goes (through the room, when the other app leaves the room, though it may still be reached
+straight), since its pieces and acknowledgements can't change ways halfway; it ends too when the other app closes, and an
+app with no `onFile` turns files down. An Android app holds a file coming in at its size from the start, so it never
+needs room for two copies of it. The relay passes a file only to a member that speaks 3 or more
 (`fileOrPad`), holds it to the size it was announced at and to its window as it does a phone's (`Member.sending`),
 seals each piece for the receiver as it hands it to the network rather than when it's queued, so it takes its number in
 the order things really go out (`RelayPeer.send(piece:seal:)`), and drops a member's files when it leaves; Lamp's proxy
@@ -281,11 +284,14 @@ A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files
 `Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`: it finds the wish's TV app in the
 wish's list (the app whose kind is "tv"), and what it says goes as **`pad`** messages, the straight way when there is
 one, else through Lamp's room (`{"t":"pad","m":…}`, with `to` and `from` through the room; the relay passes one to a
-member that speaks 3, and never drops a button let go for a TV that's behind). The controller asks to play (`join`, with
+member that speaks 3, at a phone's rate to each app apart, since a TV app speaks to each of its players every frame,
+and never drops a button let go for a TV that's behind). Each `LampController` has an id of its own (`pad`, on
+everything it says and is told), so it is a player of its own: two in one app are two players, and one made again
+while the old one's `leave` is still on its way gets in all the same; a `join` asked again is answered again. The controller asks to play (`join`, with
 its clock, for telling late movement) whenever the TV app is open and speaks 3; lamp.js's `Lamp.wish` answers only while
 the page's `Lamp.controllers` takes players (`welcome`, then `player` with its number), and tells every open app when
 it starts (`host`) and stops (`state` with `host: false`). Buttons, sticks, messages and `too-big` go as a phone's do;
-files go as the wish's files with `ch: "pad"`, to `LampController.onFile` and `Lamp.controllers.onFile`, never the
+files go as the wish's files with `ch: "pad:<id>"`, to `LampController.onFile` and `Lamp.controllers.onFile`, never the
 app's own `onFile`. A controller let go or closed says `leave`; an app that closes leaves the game. `Lamp.controllers`
 takes such players through a hook any way of reaching players can use (`_attach(source)`: `source.start(hooks)` as the
 game starts, `stop()` as it ends), which only `Lamp.wish` uses, so a TV app on its own carries nothing of the wish in

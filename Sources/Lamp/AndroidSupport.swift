@@ -1693,8 +1693,15 @@ extension Template {
             /** When the other app last acknowledged some of it: a file it stops taking ends. */
             var moved = System.currentTimeMillis()
         }
-        private class Incoming(val name: String, val type: String, val size: Int, val via: Direct?) { val data = ByteArrayOutputStream(minOf(size, fileChunk)) }
-        private val nextFile = java.util.concurrent.atomic.AtomicInteger(1)
+        /** A file coming in, held at its size from the start, so it never needs room for more than one copy of it. */
+        private class Incoming(val name: String, val type: String, val size: Int, val via: Direct?) {
+            val data = ByteArray(size)
+            var got = 0
+            /** When its last piece came: a file that stops coming ends, as one that stops going does. */
+            var moved = System.currentTimeMillis()
+        }
+        /** Started anywhere, so a file sent after a relaunch isn't taken for one from before still on its way. */
+        private val nextFile = java.util.concurrent.atomic.AtomicInteger(1 + java.util.Random().nextInt(1 shl 30))
         private val outgoing = mutableMapOf<String, Outgoing>()
         private val incoming = mutableMapOf<String, Incoming>()
         private val fileListeners = mutableListOf<(String, LampFile) -> Unit>()
@@ -1817,20 +1824,22 @@ extension Template {
             val key = "$peer\t$id"
             val file = incoming[key]?.takeIf { it.via === via } ?: return
             val count = plain.size - at - 4
-            if (file.data.size() + count > file.size) {
+            if (file.got + count > file.size) {
                 incoming.remove(key)
                 fileMessage(JSONObject().put("t", "file-refuse").put("id", id).put("reason", "The file was bigger than it said."), peer, via)
                 return
             }
-            file.data.write(plain, at + 4, count)
-            fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", file.data.size()), peer, via)
-            if (file.data.size() == file.size) finished(key, id, file, peer)
+            System.arraycopy(plain, at + 4, file.data, file.got, count)
+            file.got += count
+            file.moved = System.currentTimeMillis()
+            fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", file.got), peer, via)
+            if (file.got == file.size) finished(key, id, file, peer)
         }
 
         private fun finished(key: String, id: Int, file: Incoming, peer: String) {
             incoming.remove(key)
             if (file.size == 0) fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", 0), peer, file.via)
-            val done = LampFile(file.name, file.type, file.data.toByteArray())
+            val done = LampFile(file.name, file.type, file.data)
             val handlers = lock.withLock { fileListeners.toList() }
             for (handler in handlers) try { handler(peer, done) } catch (e: Exception) { Log.e("LampWish", "a file handler failed: ${e.message}") }
         }
@@ -1984,7 +1993,13 @@ extension Template {
                     rebuild()
                 }
                 "joined" -> { m.optJSONObject("peer")?.let(::present); rebuild() }
-                "left" -> { relayPresent.remove(m.optString("peer")); rebuild() }
+                "left" -> {
+                    val id = m.optString("peer")
+                    relayPresent.remove(id)
+                    // What was on its way through the room to or from it can't arrive now, even if it's still reached straight.
+                    dropFiles("The link was lost.") { key, way -> way == null && key.startsWith(id + "\t") }
+                    rebuild()
+                }
                 "at" -> {
                     val id = m.optString("peer")
                     if (id.isNotEmpty()) { remember(id, strings(m.optJSONArray("addresses"))); lookAgain() }
@@ -2029,6 +2044,11 @@ extension Template {
                 outgoing.remove(key)
                 fileMessage(JSONObject().put("t", "file-cancel").put("id", file.transfer.id), file.peer, file.via)
                 file.transfer.end(LampTransfer.State.Failed("The file stopped moving."))
+            }
+            for ((key, file) in incoming.toList()) if (now - file.moved > 20_000) {
+                incoming.remove(key)
+                val id = key.substringAfter("\t").toIntOrNull() ?: continue
+                fileMessage(JSONObject().put("t", "file-refuse").put("id", id).put("reason", "The file stopped moving."), key.substringBefore("\t"), file.via)
             }
             for (direct in directs.values.toList()) {
                 if (now - direct.heard > 15_000) { drop(direct); continue }

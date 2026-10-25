@@ -122,6 +122,8 @@ public final class Relay: @unchecked Sendable {
         var link: [String: Any] = [:]
         /// Files on their way from it, by the peer each is for and its id (`sendingKey`).
         var sending: [String: Transfer] = [:]
+        /// How often it may send a game's controls to each app, apart: a TV app speaks to each of its players every frame.
+        var padRates: [String: Rate] = [:]
         init(peer: RelayPeer, kind: String, name: String, device: String, wire: Int, sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
             self.peer = peer
             self.kind = kind
@@ -510,7 +512,9 @@ public final class Relay: @unchecked Sendable {
         switch kind {
         case "pad":
             // A button let go is never dropped for a TV that's behind: one it thinks is still held stays held.
-            guard member.rate.allowed(member.peer), let m = message["m"] as? [String: Any], let target,
+            let rate = member.padRates[to] ?? Rate()
+            member.padRates[to] = rate
+            guard room.apps[to] != nil, rate.allowed(member.peer), let m = message["m"] as? [String: Any], let target,
                   target.peer.pendingText <= Self.hostBehind || (m["t"] as? String == "button" && m["down"] as? Bool != true) else { return }
             target.send(Self.json(["t": "pad", "from": id, "m": m]))
         case "file":
@@ -550,13 +554,15 @@ public final class Relay: @unchecked Sendable {
     private func pieceFromMember(_ room: Room, id: String, member: Member, data: Data) {
         guard let (to, fileID, offset) = WishChannel.pieceHeader(data), let transfer = member.sending[Self.sendingKey(to, fileID)] else { return }
         let bytes = data.count - offset
-        guard let target = room.members[to], bytes > 0, bytes <= ControllerWire.chunk, transfer.passed + bytes <= transfer.size,
-              transfer.passed + bytes - transfer.acknowledged <= ControllerWire.window + ControllerWire.chunk,
+        let kept = room.members[to] != nil && bytes > 0 && bytes <= ControllerWire.chunk && transfer.passed + bytes <= transfer.size
+            && transfer.passed + bytes - transfer.acknowledged <= ControllerWire.window + ControllerWire.chunk
+        guard kept, let target = room.members[to],
               target.peer.send(piece: WishChannel.piece(peer: id, id: fileID, bytes: data.dropFirst(offset)),
                                seal: { [weak target] plain in target?.sealer.seal(plain) ?? Data() }) else {
             member.sending[Self.sendingKey(to, fileID)] = nil
             room.members[to]?.send(Self.json(["t": "file-cancel", "from": id, "id": fileID]))
-            member.send(Self.json(["t": "file-refuse", "from": to, "id": fileID, "reason": "The file didn't keep to its size."]))
+            member.send(Self.json(["t": "file-refuse", "from": to, "id": fileID,
+                                   "reason": kept ? "That app is busy; try again." : "The file didn't keep to its size."]))
             return
         }
         transfer.passed += bytes

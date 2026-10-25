@@ -13777,11 +13777,12 @@ enum Template {
         /// Files on their way to the others and from them, by the other app's peer name and the id the sender gave it.
         private var outgoing: [String: Outgoing] = [:]
         private var incoming: [String: Incoming] = [:]
-        private var nextFile = 1
+        /// Started anywhere, so a file sent after a relaunch isn't taken for one from before still on its way.
+        private var nextFile = Int.random(in: 1..<(1 << 30))
         private var fileListeners: [(String, LampFile) -> Void] = []
         /// `LampController`s, each a player of the wish's TV app's game, by what they're held by: what the TV app sends
         /// them, and the files it sends them, which aren't the app's own `onMessage` and `onFile`.
-        private var pads: [(owner: Weak, message: (String, [String: Any]) -> Void, file: (String, LampFile) -> Void, apps: () -> Void)] = []
+        private var pads: [(owner: Weak, message: (String, [String: Any]) -> Void, file: (String, String, LampFile) -> Void, apps: () -> Void)] = []
         private final class Weak { weak var object: AnyObject?; init(_ object: AnyObject) { self.object = object } }
 
         /// One link straight to another app of the wish, dialled or taken: its handshake, then its seals each way.
@@ -14352,6 +14353,8 @@ enum Template {
             let channel: String
             let via: Direct?
             var data = Data()
+            /// When its last piece came: a file that stops coming ends, as one that stops going does.
+            var moved = Date()
             init(name: String, type: String, size: Int, channel: String, via: Direct?) {
                 self.name = name; self.type = type; self.size = size; self.channel = channel; self.via = via
             }
@@ -14449,7 +14452,7 @@ enum Template {
             switch m["t"] as? String {
             case "file":
                 let channel = m["ch"] as? String ?? ""
-                let takes = channel == "pad" ? pads.contains { $0.owner.object != nil } : !fileListeners.isEmpty
+                let takes = channel.hasPrefix("pad") ? pads.contains { $0.owner.object != nil } : !fileListeners.isEmpty
                 let coming = incoming.keys.filter { $0.hasPrefix(peer + "\t") }.count
                 guard let size = m["size"] as? Int, size >= 0, size <= LampFiles.largest, incoming[key] == nil, coming < LampFiles.transfers, takes else {
                     fileMessage(["t": "file-refuse", "id": id, "reason": takes ? "The file is too big to take now." : "This app takes no files."], to: peer, via: direct)
@@ -14495,6 +14498,7 @@ enum Template {
                 return
             }
             file.data.append(piece)
+            file.moved = Date()
             fileMessage(["t": "file-ack", "id": id, "got": file.data.count], to: peer, via: direct)
             if file.data.count == file.size { finished(key, file, from: peer) }
         }
@@ -14503,8 +14507,8 @@ enum Template {
             incoming[key] = nil
             if file.size == 0, let id = Int(key.split(separator: "\t").last ?? "") { fileMessage(["t": "file-ack", "id": id, "got": 0], to: peer, via: file.via) }
             let done = LampFile(name: file.name, type: file.type, data: file.data)
-            if file.channel == "pad" {
-                for pad in pads where pad.owner.object != nil { pad.file(peer, done) }
+            if file.channel.hasPrefix("pad") {
+                for pad in pads where pad.owner.object != nil { pad.file(peer, file.channel, done) }
             } else {
                 for listener in fileListeners { listener(peer, done) }
             }
@@ -14523,7 +14527,7 @@ enum Template {
 
         /// A `LampController` taking what the wish's TV app sends its players: kept for as long as `owner` is.
         /// `apps` hears whenever the list of the wish's apps changes (one came, went, or can take a game's controls).
-        fileprivate func addPad(owner: AnyObject, message: @escaping (String, [String: Any]) -> Void, file: @escaping (String, LampFile) -> Void,
+        fileprivate func addPad(owner: AnyObject, message: @escaping (String, [String: Any]) -> Void, file: @escaping (String, String, LampFile) -> Void,
                                 apps: @escaping () -> Void) {
             pads.removeAll { $0.owner.object == nil || $0.owner.object === owner }
             pads.append((Weak(owner), message, file, apps))
@@ -14700,7 +14704,11 @@ enum Template {
                 if let joined = m["peer"] as? [String: Any] { present(joined) }
                 rebuild()
             case "left":
-                if let id = m["peer"] as? String { relayPresent[id] = nil }
+                if let id = m["peer"] as? String {
+                    relayPresent[id] = nil
+                    // What was on its way through the room to or from it can't arrive now, even if it's still reached straight.
+                    dropFiles("The link was lost.") { key, way in way == nil && key.hasPrefix(id + "\t") }
+                }
                 rebuild()
             case "at":
                 if let id = m["peer"] as? String { remember(id, at: m["addresses"] as? [String] ?? []); lookAgain() }
@@ -14768,6 +14776,12 @@ enum Template {
                 outgoing[key] = nil
                 fileMessage(["t": "file-cancel", "id": file.transfer.id], to: file.peer, via: file.via)
                 file.transfer.end(.failed("The file stopped moving."))
+            }
+            for (key, file) in incoming where Date().timeIntervalSince(file.moved) > 20 {
+                incoming[key] = nil
+                if let peer = key.split(separator: "\t").first, let id = Int(key.split(separator: "\t").last ?? "") {
+                    fileMessage(["t": "file-refuse", "id": id, "reason": "The file stopped moving."], to: String(peer), via: file.via)
+                }
             }
             if let task = link.task {
                 if Date().timeIntervalSince(heard) > 12 {
@@ -15349,6 +15363,8 @@ enum Template {
         @Published private(set) var player: Int?
 
         private let wish = LampWish.shared
+        /// This controller among any others the app has, each a player of its own: on everything it says and is told.
+        private let pad = String(UUID().uuidString.prefix(8)).lowercased()
         /// The wish's TV app, by its peer name, once the wish's list is known.
         private var tv: String?
         private var seq = 0
@@ -15358,14 +15374,15 @@ enum Template {
         private var closed = false
         private var saidAway = false
         /// Who to tell this player has gone when the controller is let go without `close()`, kept where `deinit` reaches it.
-        private final class Leaving: @unchecked Sendable { var tv: String? }
+        private final class Leaving: @unchecked Sendable { var tv: String?; var pad = "" }
         private let leaving = Leaving()
 
         static func connect() -> LampController {
             let pad = LampController()
             // What the TV app's game says to its players, its files to them, and the TV app opening or closing.
+            pad.leaving.pad = pad.pad
             pad.wish.addPad(owner: pad, message: { [weak pad] from, m in pad?.hear(m, from: from) },
-                            file: { [weak pad] from, file in pad?.heardFile(file, from: from) },
+                            file: { [weak pad] from, channel, file in pad?.heardFile(file, channel: channel, from: from) },
                             apps: { [weak pad] in pad?.appsChanged() })
             pad.appsChanged()
             return pad
@@ -15373,7 +15390,8 @@ enum Template {
 
         deinit {
             guard let tv = leaving.tv else { return }
-            DispatchQueue.main.async { MainActor.assumeIsolated { _ = LampWish.shared.sendPad(["t": "leave"], to: tv) } }
+            let pad = leaving.pad
+            DispatchQueue.main.async { MainActor.assumeIsolated { _ = LampWish.shared.sendPad(["t": "leave", "pad": pad], to: tv) } }
         }
 
         func press(_ name: String) {
@@ -15399,14 +15417,14 @@ enum Template {
                 transfer.end(.failed("The TV app isn't connected."))
                 return transfer
             }
-            let transfer = wish.sendFile(data, name: name, type: type, to: tv, channel: "pad")
+            let transfer = wish.sendFile(data, name: name, type: type, to: tv, channel: "pad:" + pad)
             sending = sending.filter { $0.state == .sending } + [transfer]
             return transfer
         }
 
         func close() {
             guard !closed else { return }
-            if let tv, state == .connected { wish.sendPad(["t": "leave"], to: tv) }
+            if let tv, state == .connected { wish.sendPad(["t": "leave", "pad": pad], to: tv) }
             closed = true
             leaving.tv = nil
             wish.removePad(owner: self)
@@ -15427,6 +15445,7 @@ enum Template {
             var message = message
             message["seq"] = seq + 1
             message["at"] = Int(Date().timeIntervalSince1970 * 1000)
+            message["pad"] = pad
             // Measured as it goes through Lamp's room, wrapping and all.
             let frame: [String: Any] = ["t": "pad", "m": message, "to": tv]
             guard JSONSerialization.isValidJSONObject(frame), let data = try? JSONSerialization.data(withJSONObject: frame) else {
@@ -15435,7 +15454,7 @@ enum Template {
             }
             guard data.count <= Self.messageLimit else {
                 fputs("LampController: \(what) of \(data.count) bytes wasn't sent: a message between devices is at most \(Self.messageLimit) bytes as JSON. Send something big with sendFile.\n", stderr)
-                wish.sendPad(["t": "too-big", "bytes": data.count], to: tv)
+                wish.sendPad(["t": "too-big", "bytes": data.count, "pad": pad], to: tv)
                 return false
             }
             seq += 1
@@ -15464,12 +15483,13 @@ enum Template {
         private func join() {
             guard let tv else { return }
             if state == .waiting || state == .ended { state = .connecting }
-            wish.sendPad(["t": "join", "now": Int(Date().timeIntervalSince1970 * 1000)], to: tv)
+            wish.sendPad(["t": "join", "now": Int(Date().timeIntervalSince1970 * 1000), "pad": pad], to: tv)
         }
 
         /// What the TV app's `Lamp.controllers` says to this player.
         private func hear(_ m: [String: Any], from peer: String) {
-            guard !closed, peer == tv else { return }
+            // Said to another controller of this app's, not this one.
+            guard !closed, peer == tv, (m["pad"] as? String).map({ $0 == pad }) ?? true else { return }
             switch m["t"] as? String {
             case "host":
                 // The TV app has just started taking players.
@@ -15493,14 +15513,15 @@ enum Template {
                 if let data = m["data"] { for listener in listeners { listener(data) } }
             case "full":
                 closed = true
+                wish.removePad(owner: self)
                 state = .full
             default:
                 break
             }
         }
 
-        private func heardFile(_ file: LampFile, from peer: String) {
-            guard !closed, peer == tv else { return }
+        private func heardFile(_ file: LampFile, channel: String, from peer: String) {
+            guard !closed, peer == tv, channel == "pad" || channel == "pad:" + pad else { return }
             for listener in fileListeners { listener(file) }
         }
     }
