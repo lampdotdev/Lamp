@@ -125,7 +125,7 @@ enum AppName {
     together, ["iphone", "android"] when they want it on both kinds of phone. Phones that steer a TV app or show a \
     second screen for it can join it without apps of their own, and how they do is the builder's choice: list the \
     devices the wish's own apps are for. For a game or a screen, give where else it's played or shown, beside this Mac, \
-    in "places" (["iphone"], ["tv"]), never in "devices": "mac" in "devices" is a Mac app.
+    in "places", by that app ({"game": ["iphone"]}, {"screen": ["tv"]}), never in "devices": "mac" in "devices" is a Mac app.
 
     Only when the wish is for something people do as much on a TV as on another of these devices, and nothing in \
     it points to one (a slideshow of family photos, a dashboard for the whole household, a game for the family), \
@@ -137,7 +137,7 @@ enum AppName {
     what suits its mood, like Apple's own icons: mostly one vivid color, sometimes white or graphite.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "devices": ["..."], "places": ["..."] or left out, "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
+    "devices": ["..."], "places": {"game": ["..."]} or left out, "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
     """ }
 
     struct Suggestion {
@@ -178,8 +178,7 @@ enum AppName {
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
         let devices = Set(object["devices"] as? [String] ?? [])
         let said = object["devices_by_user"] as? Bool ?? false
-        let asked = Parts.asked(devices, places: Set((object["places"] as? [String] ?? []).map { $0.trimmed.lowercased() }))
-            ?? Parts.asked(devices)
+        let asked = Parts.places(object["places"], devices: devices).flatMap { Parts.asked(devices, places: $0) } ?? Parts.asked(devices)
         let kinds = asked?.kinds ?? []
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kinds: kinds, kindSaid: said,

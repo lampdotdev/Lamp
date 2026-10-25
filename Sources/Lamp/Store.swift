@@ -4530,9 +4530,10 @@ final class Store: ObservableObject {
         guard !project.isPart, !project.makesNoApp else { return }
         let file = project.dir.appendingPathComponent(".lamp/prompt-for")
         let parts = parts(of: project)
-        // A game's or a screen's own prompt once told it to list its places among make_app_for's devices; they're its own
-        // entry's places in `apps` now, so a conversation that began before that starts again with the rules that say so.
-        let now = project.holdsApp ? (project.platform.addsPlaces ? "app places" : "app")
+        // A game's or a screen's own prompt once told it to list its places among make_app_for's devices, then in a
+        // `places` of their own; they're its own entry's places in `apps` now, so a conversation that began before that
+        // starts again with the rules that say so.
+        let now = project.holdsApp ? (project.platform.addsPlaces ? "app apps" : "app")
             : parts.count == 1 ? "wish " + parts[0].platform.rawValue : "wish"
         guard (AppFile.text(file, in: project)?.trimmed ?? "app") != now else { return }
         for engine in Engine.allCases { Self.forgetConversation(of: project, engine: engine) }

@@ -77,7 +77,7 @@ wish's apps as the list keeps them (`Parts.asked(apps:)`, `AppAsked`): one entry
 "watch" gives it a watch app, a game's or a screen's are where it's played or shown beside the Mac), so a word is never at
 once an app and a place, and a game and a screen of one wish each have their own. An entry is an object so it can say
 more of its app later. An app left out is taken away like any other. The naming call answers with its `devices` (the
-apps) and `places` apart (`Parts.asked`). A game's own wish told its conversations to
+apps) and `places` by app apart (`{"game": ["iphone"]}`, `Parts.places`, `Parts.asked`). A game's own wish told its conversations to
 list places among the devices before, so its prompt is recorded as "app places" (`followPromptShape`), and one begun
 before is started again. `look_at_app` and `use_app` find an app by its own word or folder before reading "mac" or
 "iphone" as wherever an app opens (`Parts.pick`), so beside a game "mac" is the Mac app. The request's device line says

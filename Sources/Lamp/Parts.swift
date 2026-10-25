@@ -124,18 +124,23 @@ enum Parts {
         var words: [Platform: Set<String>] = [:]
     }
 
-    /// The apps a list of device words asks for, in Lamp's order, with the places given apart (`places`), so each word
-    /// means one thing: "mac" in the list is a Mac app, and a game played on the iPhone too is "game" in the list and
-    /// "iphone" in its places. The devices of one part family are one kind between them (Apple's: `Platform(devices:)`);
+    /// The apps a list of device words asks for, in Lamp's order, with each game's or screen's places given apart
+    /// (`places`, by that app's word: `["game": ["iphone"]]`), so each word means one thing: "mac" in the list is a Mac
+    /// app, and a game played on the iPhone too is "game" in the list and "iphone" in its places. A wish with a game and a
+    /// screen says which places are whose. The devices of one part family are one kind between them (Apple's: `Platform(devices:)`);
     /// a TV app, an Android app, a game and a screen are each a kind of their own. No kind leads: what a wish does with
     /// the list is `plan`. A device with an integration that declares its apps stands alone. Nil for a list Lamp can't
     /// make, or places no game or screen of the list can be on.
-    static func asked(_ devices: Set<String>, places: Set<String> = []) -> Asked? {
+    static func asked(_ devices: Set<String>, places: [String: Set<String>] = [:]) -> Asked? {
         guard let kinds = appKinds(for: devices) else { return nil }
         let hosts = kinds.filter(\.addsPlaces)
-        guard places.allSatisfy({ word in word == "mac" || hosts.contains { placeWords(of: $0).contains(word) } }) else { return nil }
         var asked = Asked(kinds: kinds)
-        for host in hosts { asked.places[host] = places.intersection(placeWords(of: host)) }
+        for host in hosts { asked.places[host] = [] }
+        for (word, wanted) in places {
+            guard let host = hosts.first(where: { $0.rawValue == word }),
+                  wanted.allSatisfy({ $0 == "mac" || placeWords(of: host).contains($0) }) else { return nil }
+            asked.places[host] = wanted.intersection(placeWords(of: host))
+        }
         return asked
     }
 
@@ -201,6 +206,28 @@ enum Parts {
     private static func sentence(_ words: [String]) -> String {
         let quoted = words.map { "\"\($0)\"" }
         return quoted.count < 2 ? quoted.joined() : quoted.dropLast().joined(separator: ", ") + " or " + quoted.last!
+    }
+
+    /// `places` as the tool and the naming call give it: by app (`{"game": ["iphone"]}`), each word trimmed and lowercased.
+    /// A plain list (`["iphone"]`, as the tool once took it) is the places of the list's one game or screen, and nothing
+    /// when the list has none or both. Nil when it's neither shape.
+    static func places(_ value: Any?, devices: Set<String>) -> [String: Set<String>]? {
+        let clean = { (words: [String]) in Set(words.map { $0.trimmed.lowercased() }) }
+        switch value {
+        case nil, is NSNull: return [:]
+        case let byApp as [String: Any]:
+            var out: [String: Set<String>] = [:]
+            for (app, words) in byApp {
+                guard let words = words as? [String] else { return nil }
+                out[app.trimmed.lowercased()] = clean(words)
+            }
+            return out
+        case let words as [String]:
+            if words.isEmpty { return [:] }
+            let hosts = devices.filter { ["game", "screen"].contains($0) }
+            return hosts.count == 1 ? [hosts.first!: clean(words)] : nil
+        default: return nil
+        }
     }
 
     /// The words of the places a game or a screen can be on.
