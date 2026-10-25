@@ -915,6 +915,8 @@ enum Emulator {
         ownProcesses().lazy.compactMap { NSRunningApplication(processIdentifier: $0.pid) }.first
     }
     static func bringForward() async { app()?.activate() }
+    /// The process whose window shows the device, for the chat beside it (`ChatPanel`).
+    static func windowOwner() -> pid_t? { app()?.processIdentifier }
     static func putBehind() async { app()?.hide() }
     /// Its window back on screen where it was, without taking the keyboard from whatever the person is in.
     static func unhide() async { app()?.unhide() }

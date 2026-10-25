@@ -4,60 +4,6 @@ import QuickLook
 import UniformTypeIdentifiers
 import LampSidebarKit
 
-/// An attachment, in the composer (with a remove button) or the chat. Clicking it shows it in Quick Look.
-struct AttachmentChip: View {
-    let url: URL
-    /// The attachments it was sent or is going with, which the arrow keys step through in Quick Look.
-    var siblings: [URL] = []
-    var onRemove: (() -> Void)?
-
-    var body: some View {
-        ChatLook.Chip(onRemove: onRemove) {
-            AttachmentPreview(url: url, siblings: siblings) {
-                ChatLook.ChipLabel(name: url.lastPathComponent) { AttachmentThumbnail(url: url, size: 28) }
-            }
-        }
-    }
-}
-
-/// Shows an attachment in Quick Look when clicked, the way Finder does with the space bar, instead of
-/// opening another app over Lamp. The arrow keys go through `siblings`, and the right-click menu still
-/// opens it or shows it in the Finder.
-struct AttachmentPreview<Label: View>: View {
-    let url: URL
-    var siblings: [URL] = []
-    @ViewBuilder let label: Label
-    @State private var previewing: URL?
-
-    var body: some View {
-        Button { previewing = url } label: { label.contentShape(Rectangle()) }
-            .buttonStyle(.plain)
-            .help(url.lastPathComponent)
-            .quickLookPreview($previewing, in: siblings.contains(url) ? siblings : [url])
-            .contextMenu {
-                Button("Quick Look") { previewing = url }
-                Button("Open") { NSWorkspace.shared.open(url) }
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-            }
-    }
-}
-
-struct AttachmentThumbnail: View {
-    let url: URL
-    let size: CGFloat
-
-    var body: some View {
-        if Attachments.isImage(url), let image = NSImage(contentsOf: url) {
-            Image(nsImage: image).resizable().scaledToFill()
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-        } else {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable()
-                .frame(width: size, height: size)
-        }
-    }
-}
-
 /// Where attachments live in an app's folder and how they're described to the agent.
 enum Attachments {
     /// Item types the chat accepts when something is dropped on it.

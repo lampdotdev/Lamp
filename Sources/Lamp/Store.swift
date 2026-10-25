@@ -517,11 +517,6 @@ final class Store: ObservableObject {
     @Published var placedWidgets: Set<String> = []
     /// Which Lamp built each installed app (see BuildStamp). Missing for apps that aren't built yet.
     @Published var stamps: [String: BuildStamp] = [:]
-    @Published var chatFocusRequest = 0
-    /// Wishes whose chat window should close, its chat having moved into the app's own window (`MagicPanel.handOff`).
-    @Published var chatsHandedOff: Set<String> = []
-    /// Wishes whose chat has a window of its own open now (`WishWindow`).
-    var chatWindows: Set<String> = []
     /// A wish from the site's link that came while the welcome is up, for the welcome to take (`take(wish:)`).
     @Published var arrivedWish: String?
     /// The wishes being written into a message box right now, by app (`Wish.Arrival`). The drafts hold them whole.
@@ -1593,14 +1588,17 @@ final class Store: ObservableObject {
         lines == 0 && !busy && !pending && !queued
     }
 
-    /// Brings Lamp to the front on an app's chat, in its own window, ready to type.
+    /// A wish's chat in front, ready to type, where it is now: beside its Mac app when that's open with its chat in it,
+    /// else in Lamp's panel beside whatever shows the wish, or on its own (`ChatPanel`). Lamp's window is the desk only.
     func showChat(_ id: String) {
         reload()
         offerStarterChanges(id, after: 0.5)
         selection = id
-        chatFocusRequest += 1
-        NSApp.activate()
-        LampWindows.showChat(id)
+        if SidebarServer.shared.isConnected(id), let project = projects.first(where: { $0.id == id }),
+           !macCopies(of: project).isEmpty, MagicPanel.runningCopiesTakeTheChat(project) {
+            return MagicPanel.shared.openChat(in: project)
+        }
+        ChatPanel.show(id)
     }
 
     /// The wish an open chat window shows, following it to wherever its first request moved it. Its own id
@@ -1638,16 +1636,15 @@ final class Store: ObservableObject {
     /// How a wish was started on Lamp's desk (`WishDesk`).
     enum DeskStart: String { case typed = "desk", spoken = "desk_spoken", finding = "desk_finding" }
 
-    /// A wish made on the desk goes straight to its chat, sent as if typed there: the chat sends it as it
-    /// appears (`sendWhenShown`), so it goes through the same setup checks and lands in the same place.
-    @Published var sendWhenShown: String?
+    /// A wish made on the desk goes straight to its chat, sent as if typed there (`SidebarServer.send`), so it goes
+    /// through the same setup checks and lands in the same place.
 
     func wish(_ text: String, attachments: [URL] = [], spoken: Bool = false) {
         guard !text.trimmed.isEmpty || !attachments.isEmpty else { return }
         create(from: spoken ? .spoken : .typed)
         guard let project = selected else { return }
         updateDraft(Draft(text: text.trimmed, attachments: attachments), for: project)
-        sendWhenShown = project.id
+        SidebarServer.shared.send(project)
     }
 
     /// Set Up… on a device Lamp doesn't know: a new wish whose first request asks the builder to write the device's
@@ -1666,7 +1663,7 @@ final class Store: ObservableObject {
         reload()
         showChat(project.id)
         updateDraft(Draft(text: Agent.deviceSetupRequest(device)), for: project)
-        sendWhenShown = project.id
+        SidebarServer.shared.send(project)
     }
 
     /// A device's setup conversation follows its device from the address it was found at to the id an integration
@@ -1754,7 +1751,7 @@ final class Store: ObservableObject {
         create(from: .finding)
         guard let project = selected else { return }
         updateDraft(Draft(text: Agent.findingRequest), for: project)
-        sendWhenShown = project.id
+        SidebarServer.shared.send(project)
     }
 
     /// The desk's window in front.
@@ -2623,6 +2620,7 @@ final class Store: ObservableObject {
         if unread.remove(old.id) != nil { unread.insert(project.id) }
         tokens = tokens.filter { $0.value != old.id }
         reload()
+        ChatPanel.moved(old.id, to: project.id)
         if selection == old.id { selection = project.id }
     }
 
@@ -5745,7 +5743,7 @@ final class Store: ObservableObject {
     }
 
     /// Whether one of a wish's apps goes on an iPhone, so what it does away from this Mac can be set up.
-    nonisolated static func hasPhoneApp(_ wish: LampProject, parts: [LampProject]) -> Bool { ([wish] + parts).contains { $0.hasIOS } }
+    nonisolated static func hasPhoneApp(_ wish: LampProject, parts: [LampProject]) -> Bool { ([wish].filter(\.holdsApp) + parts).contains { $0.hasIOS } }
 
     /// `offer_setup`: the agent asks Lamp to offer the person a way to set up a capability, with its reason.
     private func agentOffer(_ arguments: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
@@ -7689,6 +7687,9 @@ final class Store: ObservableObject {
     }
     /// The Android apps open now, by project.
     private var androidApps: [String: AndroidRun] = [:]
+
+    /// The app is open in Lamp's emulator (not on the person's own Android device), for its chat to go beside it.
+    func isOpenInEmulator(_ project: LampProject) -> Bool { androidApps[project.id]?.serial.hasPrefix("emulator-") == true }
     /// Which project each Android device's screen belongs to: the last launched there. A look or `use_app` by
     /// another project whose app is still alive in the background is refused the screen, as the simulator's
     /// leases do it.
@@ -8322,6 +8323,9 @@ final class Store: ObservableObject {
 
     /// iPhone apps running in the simulator: which simulator each was launched on, and its process id.
     private var simulatorApps: [String: (udid: String, pid: Int32)] = [:]
+
+    /// The simulator an app is open in now, for its chat to go beside (`ChatPanel`).
+    func simulatorDevice(of project: LampProject) -> String? { simulatorApps[project.id]?.udid }
     /// Which project each simulator belongs to right now: taken before a launch's first wait, so two launches
     /// on one device can't both go ahead, and checked before every action the driver takes.
     private var simulatorLeases: [String: String] = [:]
@@ -8417,6 +8421,8 @@ final class Store: ObservableObject {
             for _ in 0..<60 {
                 guard let self, let current = self.current(project) else { return }
                 if let crash = Runtime.newestCrash(of: current), crash.date > since {
+                    // Its chat went with it: it comes up in Lamp's panel, with what Lamp does about the crash.
+                    MagicPanel.shared.showChatAfterQuit(current)
                     // After Lamp's own fix it's said once, and left to the person.
                     if !self.fixCrash(current, detail: crash.summary), self.lastRequestByLamp(current),
                        self.crashesAnswered[current.id] != crash.date {

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -267,29 +268,3 @@ private enum Inventor {
 }
 #endif
 
-/// An idea's icon: its symbol on a squircle, like an app icon. Quiet gray until it's `lit` (hovered or
-/// chosen), when it takes its own color.
-struct IdeaIcon: View {
-    let symbol: String
-    let hue: Double
-    var size: CGFloat = 44
-    var lit = false
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-        ZStack {
-            shape.fill(lit ? AnyShapeStyle(LinearGradient(colors: [Color(hue: hue, saturation: 0.45, brightness: 1),
-                                                                  Color(hue: hue, saturation: 0.75, brightness: 0.88)],
-                                                         startPoint: .top, endPoint: .bottom))
-                           : AnyShapeStyle(Color(white: 0.93)))
-            shape.strokeBorder(lit ? .white.opacity(0.35) : .black.opacity(0.05), lineWidth: 1)
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(lit ? Color.white : Color(white: 0.45))
-        }
-        .frame(width: size, height: size)
-        .shadow(color: lit ? Color(hue: hue, saturation: 0.7, brightness: 0.7).opacity(0.25) : .clear,
-                radius: size * 0.16, y: size * 0.08)
-        .animation(.easeOut(duration: 0.2), value: lit)
-    }
-}

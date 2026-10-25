@@ -134,7 +134,8 @@ keep scenes within what an Xbox One's web view draws and have a game read the co
 played, the keyboard too. A kind that declares `preview` (a web app's folder) is looked at and used in the preview on the
 Mac, the TV preview's window under the device's name (`Store.openDevicePreview`, `TVPreview.show(device:)`, where Back
 is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play still puts
-it on the device.
+it on the device. The chat is Lamp's panel beside that preview while it's open, and on its own while the app is on
+the device, an Xbox with no Xbox to put it on included (`ChatPanel`), with Play, Stop and Try On in its bar.
 
 **The Xbox's web host** (`WebHost`, `Resources/WebHost`): an Xbox web app runs in Chromium, the console's WebView2,
 not in the EdgeHTML that Windows gives a package naming a start page (WebGL 1, Edge 18's JavaScript, about a third of

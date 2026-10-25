@@ -33,7 +33,7 @@ agent's sandbox lets a build read and never write, so what Lamp runs from there 
 Lamp put there; Gradle's cache is in `Edition.sharedCachesFolder`, which the sandbox opens for writing, and each app's
 Gradle daemon is its own (`-Dlamp.app`), since one started in another app's sandbox could read nothing of this one.
 The build runs build.sh in the app's sandbox like every build, with `AndroidTools.buildEnvironment`: its Android home is in the caches folder, since every debug build is signed with a key Gradle keeps there, while Lamp's own (adb's key to the person's devices, the emulators) stays in Lamp's folder. Where the
-app opens is Try On's choice (`TryOnChoices.androidChoices`): the emulator Lamp made (`Emulator`, one AVD,
+app opens is Try On's choice (`TryOnMenu.choices`): the emulator Lamp made (`Emulator`, one AVD,
 `AndroidTools.avdName`, started by Lamp as itself and shown as its own window) or one of the person's Android
 devices, which adb lists (`Adb.devices`, each a `Device` with its state: debugging allowed, or the next step) and which
 `LampProject.device` keeps by serial (`Store.setAndroidDevice`). Play and a look install the APK with adb and start
@@ -53,7 +53,7 @@ isn't asked for and the pill then offers Stop alone). Every input goes out only 
 checked again right before each one (`Adb.perform`'s `send`, which the key that wakes a sleeping screen goes through
 too), and the takeover is asked again once that check is back, since it waits on the device, so a takeover during the
 fingertip's glide, a screen read or the check itself stops the rest (`AndroidHandoverTests`). A look leaves the emulator hidden, so `use_app` brings its window
-back first (`Emulator.unhide`), without taking the keyboard. A device of the person's has nothing on the Mac to show it on. The chat stays in Lamp's window (no sidebar, no live reload: both are the Mac's). An Android app
+back first (`Emulator.unhide`), without taking the keyboard. A device of the person's has nothing on the Mac to show it on. The chat is Lamp's panel, beside the emulator's window and following it, or on its own for a device of the person's (`ChatPanel`; no sidebar, no live reload: both are the Mac's). An Android app
 is shared as a `.lampapp` of format 9 (`AndroidFiles`, SharingAndroid.swift): its `app/` whole (Kotlin, manifest,
 resources, `app/build.gradle.kts`), without `app/build`, hidden folders, `local.properties` or Lamp's own Gradle files,
 and `platform` "android" in `lamp-app.json`. The Mac that opens it writes Lamp's Gradle files and renames the code to

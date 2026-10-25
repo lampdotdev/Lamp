@@ -342,25 +342,6 @@ enum WishLink {
     }
 }
 
-/// The Share Link card as a sheet in Lamp's window.
-struct WishLinkSheet: View {
-    @ObservedObject private var cards = WishLinkCards.shared
-    let project: LampProject
-
-    var body: some View {
-        if let card = cards.card(for: project) {
-            WishLinkCard(icon: card.iconImage, picture: card.image,
-                         values: Binding(get: { cards.card(for: project)?.values ?? card.values },
-                                         set: { cards.update(project, values: $0) }),
-                         limits: WishLink.cardLimits, link: card.shared?.url.absoluteString, changed: card.changed,
-                         stage: card.stage, copied: card.copied,
-                         retake: cards.canRetake(project) ? { cards.retake(project) } : nil, retaking: card.retaking,
-                         share: { cards.share(project) }, copy: { cards.copy(project) }, stop: { cards.stop(project) },
-                         close: { cards.close(project) })
-        }
-    }
-}
-
 extension WishLink {
     static let cardLimits = WishLinkCard.Limits(name: Limit.name, line: Limit.line, words: Limit.words)
 }

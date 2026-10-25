@@ -540,66 +540,8 @@ enum ChatItem: Identifiable {
     }
 }
 
-struct Transcript: View {
-    let lines: [LogLine]
-    let dir: URL
-    let busy: Bool
-    /// The turn's progress line is on screen. It's the one spinner, and the one place that
-    /// says what's happening now, so nothing here repeats it.
-    var progressShown = false
-    /// Goes back to the version a request made, or (true) to the one before it.
-    var goBack: ((LogLine, Bool) -> Void)?
-    /// Takes a request back into the message box, to change it and send it again. Nil while the app is being
-    /// worked on: that has to finish first.
-    var sendAgain: ((LogLine) -> Void)?
-    var retryPhone: ((String) -> Void)?
-    /// The request just sent from the chat, which it holds at the top while the answer comes in below.
-    var pinned: UUID?
-    /// These lines are a part of a new app's first build that's done with (`ChatItem.chapter`), in `chat`, the whole
-    /// chat, which says whether a question among them still waits.
-    var chapterOf: [LogLine]?
-    /// Read so the chat follows the choice of what draws icons: it decides whether a "Draw Icon…" line shows.
-    @AppStorage("iconModel") private var iconChoice = ""
-    /// With Agent Details on every step is its own line; without, a finished turn's steps are gathered up.
-    @AppStorage("showDetails") private var details = false
-
-    var body: some View {
-        let _ = iconChoice
-        let lines = Self.withoutSpentOffers(lines, dir: dir)
-        let finalAnswers = Self.finalAnswers(in: lines, busy: busy)
-        let latestRequest = lines.last { $0.kind == .user }?.id
-        let openAsk = Talk.open(in: chapterOf ?? lines)?.id
-        // Answers clicked on a card are shown by the card, folded where it was: not again as a message.
-        let shown = lines
-        // A part's last stretch of steps took until what came after the part.
-        let ended = chapterOf.flatMap { chat in lines.last.flatMap { last in chat.firstIndex { $0.id == last.id } }
-            .flatMap { $0 + 1 < chat.count ? chat[$0 + 1].at : nil } }
-        // While the turn goes on, its steps since it last said something are in the one line that says what it's doing.
-        let items = chapterOf != nil && !details ? ChatItem.chapter(shown, waiting: openAsk, ended: ended)
-            : ChatItem.items(progressShown ? (details ? Self.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
-                             gather: !details)
-        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-            let isLast = index == items.count - 1
-            let gap = ChatItem.gap(after: index > 0 ? items[index - 1] : nil, before: item,
-                                   isFinalAnswer: finalAnswers.contains(item.id))
-            Group {
-                switch item {
-                // The agent's cards depend on what came after them, so they're outside the row that's
-                // redrawn only when its own line changes.
-                case .line(let line) where line.kind == .ask: AskCard(line: line, dir: dir, isOpen: line.id == openAsk)
-                case .line(let line): LogRow(line: line, dir: dir, busy: busy, goBack: goBack, sendAgain: sendAgain,
-                                             retryPhone: retryPhone, isLatestRequest: line.id == latestRequest).equatable()
-                case .tools(let lines): ToolGroup(lines: lines, running: isLast && busy && !progressShown).equatable()
-                case .statuses(let lines): StatusGroup(lines: lines, running: isLast && busy && !progressShown)
-                case .work(_, let title, let steps):
-                    ChatLook.Worked(title) { StepList(steps: steps) }
-                }
-            }
-            .padding(.top, gap)
-            // The gap goes off the top of the chat with whatever is above it.
-            .layoutValue(key: ChatStack.Pinned.self, value: item.id == pinned ? gap : nil)
-        }
-    }
+/// What both chats draw of a stretch of the chat, worked out from its lines (`SidebarServer.lines`).
+enum Transcript {
 
     /// Without the offers to draw an icon that have nothing left to offer: the icon was drawn or designed
     /// again, or icons are no longer drawn by hand. A line that stayed would say what's no longer so.
@@ -623,12 +565,14 @@ struct Transcript: View {
         }
     }
 
+
     /// Without the step at the end that's still going ("Building…"): the progress line is saying it.
     static func withoutStepInProgress(_ lines: [LogLine]) -> [LogLine] {
         var lines = lines
         while let last = lines.last, last.kind == .status, last.text.hasSuffix("…") { lines.removeLast() }
         return lines
     }
+
 
     /// The last agent message of each finished turn: the answer people actually read.
     static func finalAnswers(in lines: [LogLine], busy: Bool) -> Set<UUID> {
@@ -647,170 +591,8 @@ struct Transcript: View {
     }
 }
 
-/// Equatable so a row is only redrawn when its own line changes, not on every update during a turn.
-struct LogRow: View, Equatable {
-    let line: LogLine
-    let dir: URL
-    var busy = false
-    var goBack: ((LogLine, Bool) -> Void)?
-    var sendAgain: ((LogLine) -> Void)?
-    var retryPhone: ((String) -> Void)?
-    /// The latest request shows its Send Again button all the time, so there's one to find; earlier ones
-    /// show it when pointed at.
-    var isLatestRequest = false
-    @State private var expandedDetail = false
-    @State private var shownDetailHeight: CGFloat = 0
-    @State private var fullDetailHeight: CGFloat = 0
-
-    static func == (a: LogRow, b: LogRow) -> Bool {
-        a.line == b.line && a.busy == b.busy && a.dir == b.dir
-            && (a.retryPhone == nil) == (b.retryPhone == nil) && a.isLatestRequest == b.isLatestRequest && (a.sendAgain == nil) == (b.sendAgain == nil)
-    }
-
-    var body: some View {
-        switch line.kind {
-        case .user:
-            let urls = (line.attachments ?? []).map { dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
-            ChatLook.UserRow(text: line.text, busy: busy, goBack: line.version != nil ? goBack.map { goBack in { goBack(line, $0) } } : nil,
-                             sendAgain: line.canSendAgain ? sendAgain.map { sendAgain in { sendAgain(line) } } : nil,
-                             isLatest: isLatestRequest) {
-                // What was pointed at keeps its pill, and its picture isn't shown a second time beside it.
-                if let pointed = line.pointed, let url = urls.first(where: { $0.lastPathComponent == pointed.picture }) {
-                    AttachmentPreview(url: url, siblings: urls) {
-                        ChatLook.PointedPill(title: pointed.title, detail: pointed.detail)
-                    }
-                }
-                ForEach(urls.filter { $0.lastPathComponent != line.pointed?.picture }, id: \.self) { url in
-                    if Attachments.isImage(url) {
-                        AttachmentPreview(url: url, siblings: urls) { AttachmentThumbnail(url: url, size: 72) }
-                    } else {
-                        AttachmentChip(url: url, siblings: urls)
-                    }
-                }
-            }
-        case .agent:
-            // While a turn is going this may be a message still being written, a little longer every time.
-            ChatLook.AgentText(line.text, keep: !busy)
-        case .status, .tool:
-            // Shown through StatusGroup and ToolGroup.
-            EmptyView()
-        case .progress:
-            // A message like any other, while the turn goes on and once it's over.
-            ChatLook.AgentText(line.text)
-        case .summary:
-            ChatLook.SummaryLine(line.text)
-        case .error:
-            ChatLook.ErrorNote(line.text) {
-                if let udid = line.retryPhone, let retryPhone {
-                    Button("Retry") { retryPhone(udid) }
-                        .disabled(busy)
-                }
-            }
-        case .detail:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(line.text)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .lineLimit(expandedDetail ? nil : 12)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { shownDetailHeight = $0 }
-                    // The same text with no limit, unseen, says how tall it would be in full: the button to
-                    // show the rest appears only when there is a rest.
-                    .background {
-                        Text(line.text)
-                            .font(.caption.monospaced())
-                            .fixedSize(horizontal: false, vertical: true)
-                            .hidden()
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullDetailHeight = $0 }
-                    }
-                if expandedDetail || fullDetailHeight > shownDetailHeight + 1 {
-                    Button(expandedDetail ? "Show Less" : "Show Full Output") { expandedDetail.toggle() }
-                        .buttonStyle(.link)
-                        .pointingHand()
-                        .font(.caption)
-                }
-            }
-            // Set in with the steps' words, past their symbols, as what the step above it said.
-            .padding(.leading, ChatLook.stepIndent + ChatLook.stepSymbolRoom)
-            .padding(.trailing, 32)
-        case .needsKey, .offer:
-            if let offer = line.setupOffer { SetupCard(offer: offer, reason: line.text, dir: dir) }
-        case .noted:
-            NoteCard(line: line, dir: dir)
-        case .drawIcon:
-            if let project = Store.shared.projects.first(where: { $0.dir == dir }) { DrawIconLine(project: project) }
-        case .widget:
-            WidgetCardView(dir: dir)
-        case .reload:
-            if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
-                ReloadLine.Row(project: project)
-            }
-        case .iphoneSetup:
-            if let project = Store.shared.projects.first(where: { $0.dir == dir }) {
-                let (kind, part) = IPhoneSetupLine.wanted(from: line.text)
-                IPhoneSetupLine(project: project, wanted: kind, part: part)
-            }
-        case .deviceStep:
-            DeviceStepLine(deviceID: line.text)
-        case .ask, .result:
-            // Drawn by Transcript, which knows whether they're still waiting.
-            EmptyView()
-        }
-    }
-
-    @MainActor static func prose(_ text: String, keep: Bool = true) -> AttributedString { ChatLook.prose(text, keep: keep) }
-}
-
-/// Consecutive tool calls. A single call shows as is; several collapse into one summary line.
-struct ToolGroup: View, Equatable {
-    let lines: [LogLine]
-    let running: Bool
-    @State private var expanded = false
-
-    static func == (a: ToolGroup, b: ToolGroup) -> Bool { a.running == b.running && a.lines == b.lines }
-
-    var body: some View {
-        let calls = lines.map { ToolCall($0.text) }
-        if calls.count == 1 {
-            ToolRow(call: calls[0], help: lines[0].text, running: running).padding(.leading, ChatLook.stepIndent)
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Button {
-                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Group {
-                            if running { ProgressView().controlSize(.mini) } else { Image(systemName: Self.icon(calls)) }
-                        }
-                        .frame(width: 16)
-                        Text(Self.summary(calls))
-                        if running && !expanded, let last = calls.last, !last.argument.isEmpty {
-                            Text(last.argument)
-                                .font(.system(.subheadline, design: .monospaced))
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1).truncationMode(.middle)
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                    }
-                    .font(ChatLook.stepFont)
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointingHand()
-                if expanded {
-                    ForEach(Array(zip(calls, lines)), id: \.1.id) { call, line in
-                        ToolRow(call: call, help: line.text, running: running && line.id == lines.last?.id)
-                    }
-                    .padding(.leading, 10)
-                }
-            }
-            .padding(.leading, ChatLook.stepIndent)
-        }
-    }
+/// Consecutive tool calls, summed up in one line with Agent Details on.
+enum ToolGroup {
 
     /// "Read 4 files, wrote 7 files and ran 1 command"
     static func summary(_ calls: [ToolCall]) -> String {
@@ -827,6 +609,7 @@ struct ToolGroup: View, Equatable {
         return text.prefix(1).uppercased() + text.dropFirst()
     }
 
+
     /// The most frequent action's icon.
     static func icon(_ calls: [ToolCall]) -> String {
         let groups = Dictionary(grouping: calls, by: \.action)
@@ -834,86 +617,10 @@ struct ToolGroup: View, Equatable {
     }
 }
 
-struct ToolRow: View {
-    let call: ToolCall
-    let help: String
-    let running: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Group {
-                if running { ProgressView().controlSize(.mini) } else { Image(systemName: call.icon) }
-            }
-            .frame(width: 16)
-            .foregroundStyle(.secondary)
-            Text(call.verb).foregroundStyle(.secondary)
-            if !call.argument.isEmpty {
-                Text(call.argument)
-                    .font(.system(.subheadline, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1).truncationMode(.middle)
-            }
-        }
-        .font(ChatLook.stepFont)
-        .help(help)
-    }
-}
-
-/// Consecutive status updates, in one compact block. The latest shows a spinner while it's in progress.
-struct StatusGroup: View {
-    let lines: [LogLine]
-    let running: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(lines) { line in
-                if line.kind == .status, let command = ChatLook.ranCommand(in: line.text) {
-                    ChatLook.RanCommand(command, said: line.said)
-                } else {
-                    ChatLook.StatusLine(line.text, running: running && line.id == lines.last?.id && line.text.hasSuffix("…"))
-                }
-            }
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-    }
-}
-
-
 /// The line under a change that waits for the app to be reopened (`Store.awaitReload`): its button does what the
 /// one in the app's title bar does.
 enum ReloadLine {
     static func text(_ name: String) -> String { "Reload \(name) to see this change." }
     /// Reload was pressed while the agent was at work on the app: it goes in as soon as the agent is between steps.
     static func queued(_ name: String) -> String { "\(name) reloads in a moment." }
-
-    /// Its own view, watching Lamp: the row it's in is drawn again only when its line changes, and a Reload waiting
-    /// for the request changes no line.
-    struct Row: View {
-        let project: LampProject
-        @ObservedObject private var store = Store.shared
-
-        var body: some View {
-            let queued = store.reloadWhenFree.contains(project.id)
-            ChatLook.ActionLine(symbol: "arrow.clockwise", text: queued ? ReloadLine.queued(project.name) : ReloadLine.text(project.name),
-                                button: "Reload", disabled: queued, prominent: true) {
-                store.reloadWaiting(project.id)
-            }
-        }
-    }
-}
-
-/// A turn's steps as its one line opens to them: "Worked for…" once it's over, and the live line while it goes on.
-struct StepList: View {
-    let steps: [LogLine]
-
-    var body: some View {
-        ForEach(ChatItem.items(steps)) { step in
-            switch step {
-            case .tools(let lines): ToolGroup(lines: lines, running: false).equatable()
-            case .statuses(let lines): StatusGroup(lines: lines, running: false)
-            default: EmptyView()
-            }
-        }
-    }
 }

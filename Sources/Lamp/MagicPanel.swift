@@ -106,7 +106,7 @@ final class MagicPanel {
         // Lamp's window closes once the chat is up in the app, and not before: with no window of its own and no chat
         // connected, Lamp would quit, and an app that couldn't show the chat would leave it nowhere.
         for _ in 0..<50 {
-            if SidebarServer.shared.isConnected(project.id) { return Self.closeChatWindow(of: project) }
+            if SidebarServer.shared.isConnected(project.id) { return ChatPanel.close(project.id) }
             try? await Task.sleep(for: .milliseconds(200))
         }
     }
@@ -121,32 +121,25 @@ final class MagicPanel {
         if await Self.chatsInApp(project) {
             // A copy that opened brings its chat back as its window comes up: give it the time that takes.
             for _ in 0..<40 {
-                if SidebarServer.shared.isConnected(project.id) || Store.shared.chatWindows.contains(project.id) { return }
+                if SidebarServer.shared.isConnected(project.id) || ChatPanel.isOpen(project.id) { return }
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
-        guard !SidebarServer.shared.isConnected(project.id), !Store.shared.chatWindows.contains(project.id) else { return }
-        Store.shared.showChat(project.id)
+        guard !SidebarServer.shared.isConnected(project.id), !ChatPanel.isOpen(project.id) else { return }
+        // Beside whatever shows it now, without taking the keyboard from what the person is in.
+        ChatPanel.show(project.id, activate: NSApp.isActive)
     }
 
-    /// An app's chat is in one place at a time: when it opens beside the app, its window in Lamp closes. Not while
-    /// someone is using that window (Lamp in front, with it), which they opened on purpose (a setup card's button,
-    /// the Window menu) and may be typing in.
+    /// An app's chat is in one place at a time: when it opens beside the app, Lamp's panel for it closes.
     func chatOpenedInApp(_ project: LampProject) {
-        let store = Store.shared
         // Only once the chat Lamp checked is there (`SidebarServer.accepted`): the app's word that it's opening is a
-        // notification anything could send, and a window closed with no chat to take its place would leave it nowhere.
-        guard SidebarServer.shared.isConnected(project.id), !(NSApp.isActive && store.selection == project.id) else { return }
-        Self.closeChatWindow(of: project)
-    }
-
-    private static func closeChatWindow(of project: LampProject) {
-        guard Store.shared.chatWindows.contains(project.id) else { return }
-        Store.shared.chatsHandedOff.insert(project.id)
+        // notification anything could send, and a panel closed with no chat to take its place would leave it nowhere.
+        guard SidebarServer.shared.isConnected(project.id) else { return }
+        ChatPanel.close(project.id)
     }
 
     /// The app was opened to show its chat beside it: if no chat has come by the time it should have (the app
-    /// couldn't start, or quit as it opened), the chat is shown in Lamp's window, so it's never nowhere. A rebuild
+    /// couldn't start, or quit as it opened), the chat is shown in Lamp's panel, so it's never nowhere. A rebuild
     /// first (an app built by an older Lamp) is waited for, since its progress is in that chat.
     func showChatIfAppNeverComes(_ project: LampProject) {
         let id = project.id
@@ -162,7 +155,26 @@ final class MagicPanel {
             }
             guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
                   Store.shared.macCopies(of: current).isEmpty else { return }
-            Store.shared.showChat(id)
+            ChatPanel.show(id)
+        }
+    }
+
+    /// The app quit while its chat was beside it, and not for a change that reopens it: it crashed, or quit while a
+    /// turn was going on. The chat comes up in Lamp's panel, on its own, without taking the keyboard, once no chat
+    /// has come back beside a copy of the app.
+    func showChatAfterQuit(_ project: LampProject) {
+        let id = project.id
+        Task {
+            // A change that reopens the app leaves a moment with no copy running: only three seconds with none, and no
+            // chat back beside one, is the app gone.
+            var gone = 0
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
+                      !ChatPanel.isOpen(id) else { return }
+                gone = Store.shared.macCopies(of: current).isEmpty ? gone + 1 : 0
+                if gone >= 12 { return ChatPanel.show(id, activate: NSApp.isActive) }
+            }
         }
     }
 
@@ -275,7 +287,7 @@ final class MagicPanel {
     private func pointingEnded(_ id: String) {
         guard pointingFromLamp.remove(id) != nil else { return }
         NSApp.activate()
-        LampWindows.showChat(id)
+        ChatPanel.show(id)
     }
 
     /// The pointed-at thing goes into the message box as a pill: its picture, named after it ("Save button.png"),

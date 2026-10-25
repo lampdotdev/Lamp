@@ -46,18 +46,3 @@ enum WidgetCard {
         "Touch and hold the Home Screen, tap Edit, then Add Widget, and pick \(name)."
     }
 }
-
-struct WidgetCardView: View {
-    /// The folder of the app whose chat this is.
-    let dir: URL
-    @ObservedObject private var store = Store.shared
-
-    var body: some View {
-        if let project = store.projects.first(where: { $0.dir == dir }) {
-            let placed = store.placedWidgets.contains(project.id)
-            ChatLook.OfferCard(symbol: "widget.small", title: WidgetCard.title(project.name),
-                               status: project.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed),
-                               done: placed)
-        }
-    }
-}

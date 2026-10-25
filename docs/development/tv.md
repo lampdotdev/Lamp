@@ -14,7 +14,8 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 Web Audio (`Rules.webSound`, also given to every declared kind with the web library, the Xbox's included), with no
 building block of Lamp's: every one of these browsers has it, and the preview on the Mac plays it with no click first
 (WebKit on macOS starts audio without one). The agent tries the app in
-the TV preview (`TVPreview`): a window showing it at the TV's size, half scale, from the staged copy, where
+the TV preview (`TVPreview`; the chat is Lamp's panel, attached to it as its child window and moving with it, and on
+its own while the app is on a TV: `ChatPanel`): a window showing it at the TV's size, half scale, from the staged copy, where
 the page is opened at an address of its own (`lamp-tv://app/`, `StagedFiles`) rather than as a file, so it reads its own
 files with fetch and XMLHttpRequest, as text or bytes, as it does on a TV (WebKit refuses both to a file's page), and
 `look_at_app` pictures it (`TVPreview.picture`: the window as the screen shows it, through ScreenCaptureKit's capture of the

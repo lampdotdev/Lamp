@@ -1,11 +1,10 @@
 import SwiftUI
 import LampSidebarKit
 
-/// The agent's cards in Lamp's window: the views themselves are shared with the chat inside each app's window
-/// (LampSidebarKit's TalkCards.swift); these give them the chat's line and what a click does.
+/// The agent's cards: their views are LampSidebarKit's (TalkCards.swift), drawn by the shared chat.
 
-/// How far each open card has been answered, by its line. Kept apart from the card's view because the same
-/// card is drawn in Lamp's window and in the chat inside the app's window (`Sidebar`): an answer begun in one is
+/// How far each open card has been answered, by its line. Kept here, not in the card's view, because the chat that
+/// draws it can move (beside the app, into Lamp's panel) or be drawn twice for a moment: an answer begun in one is
 /// carried on in the other, not started over.
 @MainActor
 final class AskProgresses: ObservableObject {
@@ -23,31 +22,3 @@ final class AskProgresses: ObservableObject {
         progress[line] = value
     }
 }
-
-/// A set of questions in the chat. Open, it's answered by clicking; after that it shows what was chosen, or
-/// just what was asked when the person typed their answer instead.
-struct AskCard: View {
-    let line: LogLine
-    let dir: URL
-    let isOpen: Bool
-    @ObservedObject private var store = Store.shared
-    @ObservedObject private var progresses = AskProgresses.shared
-
-    var body: some View {
-        // Drawn with no app too (the gallery's chats), where a click has nowhere to go.
-        if let ask = line.ask {
-            let project = store.projects.first(where: { $0.dir == dir })
-            let waiting = project.flatMap { project in
-                Talk.waiting(on: line, in: store.queued[project.id] ?? []).map { message in
-                    AskWaiting(forSetup: !store.setup.ready) { store.unqueue(message, from: project) }
-                }
-            }
-            AskCardView(ask: ask, isOpen: isOpen, progress: progresses.binding(for: line.id), waiting: waiting) { answers in
-                guard let project else { return }
-                withAnimation(.snappy(duration: 0.3)) { store.answer(line, with: answers, in: project) }
-            }
-        }
-    }
-}
-
-

@@ -19,17 +19,11 @@ struct LampApp: App {
     }
 
     var body: some Scene {
+        // The desk, and only the desk: each wish's chat is beside whatever shows the wish (`ChatPanel`, `MagicPanel`).
         Window(Edition.name, id: "main") {
             ContentView()
                 .environmentObject(store)
         }
-        // Each wish's chat in a window of its own, listed in the Window menu like a document's.
-        WindowGroup("Wish", id: "wish", for: String.self) { $id in
-            WishWindow(id: $id)
-                .environmentObject(store)
-        }
-        .defaultSize(width: 980, height: 720)
-        .commandsRemoved()
         .commands { LampCommands(store: store) }
         Settings {
             SettingsView().environmentObject(store)
