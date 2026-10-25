@@ -7,8 +7,8 @@ import LampSidebarKit
 /// drawn by Lamp in a panel of its own, beside whatever is showing the wish. Beside the iPhone or iPad simulator,
 /// the Android emulator, or one of Lamp's own previews (a TV, a device's screen) it's attached to that window and
 /// follows it; where nothing on this Mac shows the wish (an app on a TV, an Xbox or the person's phone, a widget, the
-/// menu bar, the background, a wish not made yet or being found, an app that didn't build or crashed) it floats at
-/// the side of the screen, as a sidebar would.
+/// menu bar, the background, a wish not made yet or being found, an app that didn't build or crashed) it's a window
+/// of its own in the middle of the screen, wider than beside a window, since the chat is then what's being looked at.
 ///
 /// A wish's chat is in one place at a time: this panel or the extension beside its Mac app (`MagicPanel`), and moving
 /// between them keeps the draft (it's the store's) and where the person was reading (`ChatLink.readingAt`).
@@ -59,16 +59,27 @@ final class ChatPanel: NSObject, NSWindowDelegate {
     private var besideKey: String?
     private var besideFrame: CGRect?
 
-    /// The panel's own width, kept for every wish, between the chat's narrowest and widest (as `LampSidebar.width`).
+    /// The panel's width beside a window, kept for every wish, between the chat's narrowest and widest (as
+    /// `LampSidebar.width`): narrow, since the window beside it is what's being looked at.
     private static let widthKey = "chatPanelWidth"
     private static let narrowest: CGFloat = 320
     private static let widest: CGFloat = 640
     private static var width: CGFloat {
-        get {
-            let kept = CGFloat(UserDefaults.standard.double(forKey: widthKey))
-            return kept > 0 ? min(max(kept, narrowest), widest) : 380
-        }
+        get { kept(widthKey, default: 380, widest: widest) }
         set { UserDefaults.standard.set(Double(newValue), forKey: widthKey) }
+    }
+    /// Its width on its own, kept apart: with nothing beside it the chat is what's being looked at, so it's a window of
+    /// its own size rather than a strip down the side of the screen.
+    private static let aloneWidthKey = "chatPanelAloneWidth"
+    private static let aloneWidest: CGFloat = 900
+    private static var aloneWidth: CGFloat {
+        get { kept(aloneWidthKey, default: 620, widest: aloneWidest) }
+        set { UserDefaults.standard.set(Double(newValue), forKey: aloneWidthKey) }
+    }
+
+    private static func kept(_ key: String, default value: CGFloat, widest: CGFloat) -> CGFloat {
+        let kept = CGFloat(UserDefaults.standard.double(forKey: key))
+        return kept > 0 ? min(max(kept, narrowest), widest) : value
     }
 
     /// Titled for its edges and shadow, with the title bar hidden: the chat draws its own bar (`ChatBar`), with the
@@ -98,7 +109,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenAuxiliary, .managed]
         window.minSize = NSSize(width: Self.narrowest, height: 360)
-        window.maxSize = NSSize(width: Self.widest, height: .greatestFiniteMagnitude)
+        window.maxSize = NSSize(width: Self.aloneWidest, height: .greatestFiniteMagnitude)
         window.title = Store.shared.projects.first { $0.id == id }?.title ?? "Wish"
         window.delegate = self
         window.contentView = NSHostingView(rootView: PanelContent(link: link).environmentObject(Store.shared))
@@ -129,8 +140,10 @@ final class ChatPanel: NSObject, NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
-        // Only a width the person chose: a panel squeezed beside a window keeps the width they want for the next.
-        if window.inLiveResize { Self.width = window.frame.width }
+        // Only a width the person chose: a panel squeezed beside a window keeps the width they want for the next. Beside
+        // a window and on its own are kept apart.
+        guard window.inLiveResize else { return }
+        if besideKey == nil { Self.aloneWidth = window.frame.width } else { Self.width = min(window.frame.width, Self.widest) }
     }
 
     // MARK: Moving it
@@ -209,13 +222,12 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         }
         let screen = frame.flatMap { frame in NSScreen.screens.first { $0.frame.intersects(frame) } } ?? window.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
-        var placed = frame.map { Self.frame(beside: $0, in: visible, width: Self.width) } ?? Self.floating(in: visible, width: Self.width)
-        // Two chats on their own at once: each a step further in, so none hides another.
+        var placed = frame.map { Self.frame(beside: $0, in: visible, width: Self.width) } ?? Self.floating(in: visible, width: Self.aloneWidth)
+        // Two chats on their own at once: each a step down and across, as windows cascade, so none hides another.
         if frame == nil {
-            while placed.height > 400,
-                  Self.open.values.contains(where: { $0 !== self && $0.window.isVisible && $0.window.frame.minX == placed.minX }) {
-                placed.origin.x -= 28
-                placed.size.height -= 28
+            while placed.minY - 28 >= visible.minY, placed.maxX + 28 <= visible.maxX,
+                  Self.open.values.contains(where: { $0 !== self && $0.window.isVisible && $0.window.frame.origin == placed.origin }) {
+                placed = placed.offsetBy(dx: 28, dy: -28)
             }
         }
         window.setFrame(placed, display: true, animate: false)
@@ -239,10 +251,13 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    /// On its own: at the right of the screen, nearly its height, as a sidebar.
+    /// On its own: a window of its own size in the middle of the screen, as tall as a chat reads well, never taller
+    /// than the screen allows.
     nonisolated static func floating(in visible: CGRect, width: CGFloat) -> CGRect {
         let margin: CGFloat = 12
-        return CGRect(x: visible.maxX - width - margin, y: visible.minY + margin, width: width, height: visible.height - 2 * margin)
+        let width = min(width, visible.width - 2 * margin)
+        let height = min(820, visible.height - 2 * margin)
+        return CGRect(x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height).integral
     }
 
     /// The window showing the wish on this Mac, if any: Lamp's preview of it, the simulator it's open in, or Lamp's
