@@ -899,7 +899,10 @@ class PersonCrowd {
   constructor(maxCount, { farDistance = 34, castShadow = true } = {}) {
     this.farDistance = farDistance;
     this.lods = [1, 0].map((detail) => {
-      const pose = attributeArray(maxCount * STRIDE, 'vec4').toReadOnly();
+      // Lamp: on WebGL (which the game forces) three.js reads a storage buffer by index only as a "PBO", a float
+      // texture fetched by texel; without that the buffer is bound as a plain vertex attribute and every
+      // `pose.element(i)` ignores its index, so each vertex skins from whatever vec4 shares its vertex number.
+      const pose = attributeArray(maxCount * STRIDE, 'vec4').setPBO(true).toReadOnly();
       const mesh = new THREE.Mesh(buildPersonGeometry(detail), createPersonMaterial(pose));
       mesh.name = detail ? 'PeopleNear' : 'PeopleFar';
       mesh.count = 1; // one (degenerate) person until the first frame, so the pipelines compile up front
@@ -930,6 +933,8 @@ class PersonCrowd {
       attr.clearUpdateRanges();
       attr.addUpdateRange(0, l.count * STRIDE * 4);
       attr.needsUpdate = true;
+      // Lamp: on WebGL the shader reads the texture copy, which three.js refreshes only from compute shaders
+      if (attr.pbo) attr.pbo.needsUpdate = true;
     }
   }
 }
@@ -1057,6 +1062,7 @@ class PersonRig {
       foot.px = _v.x;
       foot.pz = _v.z;
       foot.py = ground(owner, _v.x, _v.z);
+      foot.lground = foot.py; // Lamp: the ground it stands on, which the next step's lift over a curb is measured from
       foot.yaw = yaw + foot.side * GAIT.toeOut;
       foot.swing = false;
       foot.pitch = foot.toe = 0;

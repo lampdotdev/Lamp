@@ -8,6 +8,7 @@ import {
   createBillboardMaterial
 } from './tsl-materials.js';
 import { batchStaticGroupMeshes } from './city-grid.js';
+import { groundUnder } from './terrain.js';
 
 let bryantParkLawn;
 
@@ -153,9 +154,12 @@ function buildLandmarks(scene) {
     }
     const tx = site.x + offset[0];
     const tz = site.z + offset[1];
+    // Lamp: the landmark stands on the lowest ground under its lot (terrain.js)
+    const g = groundUnder(tx, tz, site.w * 0.5, site.d * 0.5);
     for (const o of objs) {
-      o.position.set(tx + (o.position.x - c.x) * sx, o.position.y * sy, tz + (o.position.z - c.z) * sz);
+      o.position.set(tx + (o.position.x - c.x) * sx, g + o.position.y * sy, tz + (o.position.z - c.z) * sz);
       o.scale.multiply(new THREE.Vector3(sx, sy, sz));
+      o.userData.ground = g;
     }
     for (let i = c0; i < colliders.length; i++) {
       const k = colliders[i];
@@ -167,7 +171,8 @@ function buildLandmarks(scene) {
       k.maxX = Math.max(x0, x1);
       k.minZ = Math.min(z0, z1);
       k.maxZ = Math.max(z0, z1);
-      k.maxY *= sy;
+      k.maxY = g + k.maxY * sy;
+      k.minY = g + (k.minY ?? 0) * sy;
     }
   }
   const site = (name) => LANDMARK_SITES[name];
@@ -1052,7 +1057,10 @@ function buildLandmarks(scene) {
     const { width, height, depth } = m.geometry.parameters;
     const twin = boxLocalTwins.get(m.material);
     if (!facadeBoxes.has(twin)) facadeBoxes.set(twin, []);
-    facadeBoxes.get(twin).push({ x: partPos.x, y: partPos.y, z: partPos.z, w: width * partScale.x, h: height * partScale.y, d: depth * partScale.z });
+    // Lamp: storeys counted from the ground its landmark stands on (fitToSite)
+    let ground = 0;
+    for (let o = m; o; o = o.parent) if (o.userData.ground !== undefined) { ground = o.userData.ground; break; }
+    facadeBoxes.get(twin).push({ x: partPos.x, y: partPos.y, z: partPos.z, w: width * partScale.x, h: height * partScale.y, d: depth * partScale.z, ground });
     m.removeFromParent();
   }
   for (const [mat, boxes] of facadeBoxes) {

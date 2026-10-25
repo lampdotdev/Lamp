@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { createTreeMaterial } from './tsl-materials.js';
+import { groundHeight } from './terrain.js';
 
 // js/trees.js
 // Procedural NYC street & park trees, planted by street-details.js (section 7):
@@ -876,7 +877,9 @@ function createTreeField(scene, sites) {
     const r3 = hashPos(t.x + t.z, 3.3, 0.7);
     const variant = hashPos(t.x, 5.9, t.z) < 0.5 ? 0 : 1;
     const s = t.scale * (0.9 + r1 * 0.2);
-    dummy.position.set(t.x, t.y || 0, t.z);
+    // Lamp: a site's y is its height above the ground there (terrain.js), unless it's marked as a height in the world
+    const y = (t.y || 0) + (t.world ? 0 : groundHeight(t.x, t.z));
+    dummy.position.set(t.x, y, t.z);
     dummy.rotation.set(0, t.yaw ?? r2 * Math.PI * 2, 0);
     dummy.scale.set(s * (0.9 + r3 * 0.2) * (t.sx || 1), s * (0.88 + r1 * 0.24), s * (0.9 + r2 * 0.2) * (t.sz || 1));
     dummy.updateMatrix();
@@ -884,7 +887,7 @@ function createTreeField(scene, sites) {
     tint.setHex(SPECIES[sp].tints[Math.floor(r3 * 2.999)]).multiplyScalar(0.82 + r1 * 0.36);
     data.set([tint.r, tint.g, tint.b, sp + r2 * 0.999], i * 4);
     px[i] = t.x;
-    py[i] = (t.y || 0) + 6 * s;
+    py[i] = y + 6 * s;
     pz[i] = t.z;
     tier[i] = Math.min(2, t.tier || 0);
     const key = Math.floor(t.x / TREE_CELL_SIZE) + ',' + Math.floor(t.z / TREE_CELL_SIZE);
@@ -983,7 +986,7 @@ function createTreeField(scene, sites) {
     cam.copy(position);
     if (cam.distanceToSquared(last) < 16) return false;
     last.copy(cam);
-    const low = cam.y < 40;
+    const low = cam.y - groundHeight(cam.x, cam.z) < 40; // Lamp: above the ground
     let changed = false;
     for (let i = 0; i < N; i++) {
       const dx = px[i] - cam.x;

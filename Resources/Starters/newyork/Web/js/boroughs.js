@@ -51,6 +51,7 @@ import {
   streetZ
 } from './city-config.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { groundHeight, drapeGeometry } from './terrain.js';
 
 // js/boroughs.js
 // The rest of New York City around the simulated Manhattan grid, at true 1:1 scale on the real geography (1 unit = 1 m,
@@ -1086,9 +1087,11 @@ function buildLandGeometries() {
   const mb = polygonBounds(MANHATTAN_COASTLINE);
   const onManhattanGrid = (x, z) => x > mb.minX && x < mb.maxX && z > mb.minZ && z < mb.maxZ && pointInPolygon(MANHATTAN_COASTLINE, x, z);
 
+  let upperTris = null; // Lamp: Upper Manhattan's part of topIdx, which follows the ground (terrain.js)
   for (const land of LAND) {
     const pts = land.pts;
     const base = topPos.length / 3;
+    const firstTri = topIdx.length;
     for (const p of pts) topPos.push(p.x, land.top, p.z);
     const tris = THREE.ShapeUtils.triangulateShape(pts.map((p) => new THREE.Vector2(p.x, p.z)), []);
     for (const t of tris) {
@@ -1099,6 +1102,7 @@ function buildLandGeometries() {
       if (up) topIdx.push(base + t[0], base + t[1], base + t[2]);
       else topIdx.push(base + t[0], base + t[2], base + t[1]);
     }
+    if (land.id === 'upper') upperTris = [firstTri, topIdx.length];
     if (land.filler) continue;
 
     for (let i = 0; i < pts.length; i++) {
@@ -1138,11 +1142,28 @@ function buildLandGeometries() {
   for (let i = 1; i < topNrm.length; i += 3) topNrm[i] = 1;
   topGeo.setAttribute('normal', new THREE.BufferAttribute(topNrm, 3));
   topGeo.setIndex(topIdx);
+  const landTop = upperTris ? withUpperManhattanOnGround(topGeo, upperTris) : topGeo;
 
   const wallGeo = new THREE.BufferGeometry();
   wallGeo.setAttribute('position', new THREE.Float32BufferAttribute(wallPos, 3));
   wallGeo.setAttribute('normal', new THREE.Float32BufferAttribute(wallNrm, 3));
-  return { topGeo, wallGeo };
+  return { topGeo: landTop, wallGeo };
+}
+
+// Lamp: the land tops with Upper Manhattan's triangles (vertices [from, to) once unindexed) cut finer and laid on the
+// ground, so its hills meet the detailed island's at 129th St
+function withUpperManhattanOnGround(topGeo, [from, to]) {
+  const flat = topGeo.toNonIndexed();
+  const part = (a, b) => {
+    const g = new THREE.BufferGeometry();
+    for (const name of ['position', 'normal']) {
+      g.setAttribute(name, new THREE.BufferAttribute(flat.attributes[name].array.slice(a * 3, b * 3), 3));
+    }
+    return g;
+  };
+  const count = flat.attributes.position.count;
+  const pieces = [part(0, from), drapeGeometry(part(from, to), 0.05), part(to, count)].filter((g) => g.attributes.position.count);
+  return mergeGeometries(pieces, false);
 }
 
 // The Palisades: a heightfield ridge whose cliff foot follows the real New Jersey shore. North of Weehawken the diabase
@@ -1643,6 +1664,15 @@ function generateBlock(list, zone, land, i, j, c, dM, lu, rand) {
         if (rMax - rMin > 2.5) return null;
         if (rMax > 0.01) y0 += rMin - 0.4;
       }
+    }
+    // Lamp: in Upper Manhattan, on the lowest ground under the footprint (terrain.js)
+    if (land.id === 'upper') {
+      let low = Infinity;
+      for (let k = 0; k < 9; k++) {
+        const q = k === 8 ? p : zoneToWorld(zone, uc + [-1, 0, 1, 1, 1, 0, -1, -1][k] * w * 0.5, vc + [-1, -1, -1, 0, 1, 1, 1, 0][k] * d * 0.5);
+        low = Math.min(low, groundHeight(q.x, q.z));
+      }
+      y0 += low;
     }
     const rec = { x: p.x, y: y0, z: p.z, w, h, d, rot, tint, style, seed: rand() * 100 };
     list.push(rec);

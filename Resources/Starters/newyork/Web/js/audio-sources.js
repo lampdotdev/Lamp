@@ -1,4 +1,8 @@
 import { signalPhase, walkSignal } from './city-config.js';
+import { groundHeight } from './terrain.js';
+
+// Lamp: how high something is above the ground under it (terrain.js)
+const aboveGround = (p) => p.y - groundHeight(p.x, p.z);
 
 const MOTOR_RANGE = 180;
 const SIREN_RANGE = 220;
@@ -17,13 +21,13 @@ function driveLoad(keys, speed, cyclist) {
 function helicopterVerticalSpeed(entity) {
   const speed = Number.isFinite(entity.verticalSpeed) ? entity.verticalSpeed : 0;
   // The controller clamps altitude without clearing its stored vertical velocity.
-  return (entity.position.y <= 0.25 && speed < 0) || (entity.position.y >= 380 && speed > 0) ? 0 : speed;
+  return (aboveGround(entity.position) <= 0.25 && speed < 0) || (entity.position.y >= 380 && speed > 0) ? 0 : speed;
 }
 
 function helicopterLoad(entity, keys, verticalSpeed) {
   const forward = unit(+keys.forward) || -unit(+keys.backward);
   const collective = unit(+keys.up) || -unit(+keys.down);
-  const grounded = entity.position.y <= 0.35 && verticalSpeed <= 0.03;
+  const grounded = aboveGround(entity.position) <= 0.35 && verticalSpeed <= 0.03;
   return unit((grounded ? 0.12 : 0.45)
     + 0.28 * Math.max(collective, 0) - 0.16 * Math.max(-collective, 0)
     + 0.15 * unit(verticalSpeed / 16) - 0.08 * unit(-verticalSpeed / 16)
@@ -170,7 +174,7 @@ class CityAudioSources {
 
     for (let i = 0; i < this.players.length; i++) {
       const entity = this.players[i];
-      if (entity.mesh.visible === false || entity.position.y < -0.05) continue;
+      if (entity.mesh.visible === false || aboveGround(entity.position) < -0.05) continue;
       const { x, y, z } = entity.position;
       const player = entity === active;
       if (entity.type === 'person') {
@@ -209,7 +213,7 @@ class CityAudioSources {
       const ped = this.peds[i];
       if (!ped.placed) continue;
       const t = (ped.x - ped.ax) * ped.ux + (ped.z - ped.az) * ped.uz;
-      const y = ped.node && t > 2 && t < ped.len - 2 ? 0.012 : 0.22;
+      const y = groundHeight(ped.x, ped.z) + (ped.node && t > 2 && t < ped.len - 2 ? 0.012 : 0.22);
       this.person(ped, ped.x, y, ped.z, ped.v, true, ped.rig);
     }
     for (let i = 0; i < this.signalSites.length; i++) {

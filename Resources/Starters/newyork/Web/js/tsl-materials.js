@@ -64,6 +64,7 @@ import {
   LONG_ISLAND_POLYGONS,
   streetZ
 } from './city-config.js';
+import { groundHeightNode } from './terrain.js';
 
 // js/tsl-materials.js
 // Photorealistic TSL (Three.js Shading Language) procedural shaders for Three.js r186 WebGPURenderer
@@ -173,8 +174,10 @@ const canyonSkyAONode = Fn(() => {
   const inParkZ = smoothstep(cp.minZ - 10.0, cp.minZ + 30.0, wp.z).mul(float(1.0).sub(smoothstep(cp.maxZ - 30.0, cp.maxZ + 10.0, wp.z)));
   const inPark = inParkX.mul(inParkZ);
 
-  const heightOpenness = smoothstep(0.0, 68.0, wp.y);
-  const streetCrevice = smoothstep(0.0, 7.5, wp.y).mul(0.22).add(0.78);
+  // Lamp: heights above the ground under the point (terrain.js)
+  const above = wp.y.sub(groundHeightNode(wp.xz));
+  const heightOpenness = smoothstep(0.0, 68.0, above);
+  const streetCrevice = smoothstep(0.0, 7.5, above).mul(0.22).add(0.78);
   const canyonAO = mix(float(0.44), float(1.0), heightOpenness).mul(streetCrevice);
   return mix(canyonAO, float(1.0), inPark);
 });
@@ -446,7 +449,8 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0) {
     uCoord = gridU.mul(bayWidth);
   }
 
-  const vCoord = positionWorld.y;
+  // Lamp: storeys are counted from the ground the building stands on (a box's own, else the ground under the point)
+  const vCoord = boxLocal ? positionWorld.y.sub(attribute('ground', 'float')) : positionWorld.y.sub(groundHeightNode(positionWorld.xz));
   const gridV = vCoord.div(floorHeight);
   const cellId = vec2(floor(gridU), floor(gridV));
   const cellUV = vec2(fract(gridU), fract(gridV));
@@ -1074,8 +1078,11 @@ function createFacadeBoxes(material, boxes) {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const box = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
   const faces = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length * 4), 4);
+  // Lamp: the height of the ground its building stands on, which storeys are counted from (terrain.js)
+  const ground = new THREE.InstancedBufferAttribute(new Float32Array(boxes.length), 1);
   geometry.setAttribute('box', box);
   geometry.setAttribute('faces', faces);
+  geometry.setAttribute('ground', ground);
 
   const mesh = new THREE.InstancedMesh(geometry, material, boxes.length);
   const matrix = new THREE.Matrix4();
@@ -1088,7 +1095,9 @@ function createFacadeBoxes(material, boxes) {
     else mesh.setMatrixAt(i, matrix.makeScale(b.w, b.h, b.d).setPosition(b.x, b.y, b.z));
     box.setXYZW(i, b.w, b.h, b.d, ((i * 29) % 1000) + 0.1 + 0.8 * (b.tone ?? 0.5));
     if (b.faces) faces.setXYZW(i, b.faces[0], b.faces[1], b.faces[2], b.faces[3]);
+    ground.setX(i, b.ground ?? 0);
   });
+  mesh.userData.terrain = 'set';
   return mesh;
 }
 
@@ -1559,7 +1568,7 @@ function createTktsStepMaterial(baseY = 0.24, riserH = 0.18) {
     roughness: 0.14,
     metalness: 0.08
   });
-  const stepFract = () => fract(positionWorld.y.sub(baseY).div(riserH));
+  const stepFract = () => fract(positionWorld.y.sub(groundHeightNode(positionWorld.xz)).sub(baseY).div(riserH)); // Lamp: from the ground
   mat.colorNode = Fn(() => {
     const n = normalWorldGeometry;
     const riser = abs(n.z).mul(float(1.0).sub(abs(n.y)));
@@ -1597,7 +1606,7 @@ function createMarbleAshlarMaterial() {
     const vein = noise2D(vec2(u.mul(1.3).add(wp.y.mul(0.7)), wp.y.mul(2.1)));
     const base = mix(color(0xa9a293), color(0xc4bdae), blockTone.mul(0.55).add(vein.mul(0.45)));
     const streaks = smoothstep(0.55, 0.9, noise2D(vec2(u.mul(2.7), wp.y.mul(0.08)))).mul(0.14).mul(vertical);
-    const grime = smoothstep(3.6, 0.2, wp.y).mul(0.24);
+    const grime = smoothstep(3.6, 0.2, wp.y.sub(groundHeightNode(wp.xz))).mul(0.24); // Lamp: from the ground
     return base.mul(float(1.0).sub(streaks).sub(grime)).mul(float(1.0).sub(joints.mul(0.4)));
   })();
   return mat;
@@ -1764,6 +1773,10 @@ function createRoadPaintMaterial() {
     vertexColors: true,
     transparent: true,
     depthWrite: false,
+    // Lamp: drawn a little nearer than it is, so it stays on top of a road that follows the ground by other cuts
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
     metalness: 0.0
   });
   mat.mrtNode = _transparentEffectMRT; // SSR keeps seeing the asphalt (and its puddles) underneath

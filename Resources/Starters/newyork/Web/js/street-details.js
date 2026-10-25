@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { Fn, float, color, positionWorld, uniform, mod, fract, step, smoothstep, mix } from 'three/tsl';
+import { groundHeight, groundHeightNode } from './terrain.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   AVENUES,
@@ -55,7 +56,7 @@ function createTrafficSignalLensMaterial(isAvenueHead, clock) {
   const mat = new THREE.MeshBasicNodeMaterial();
   mat.colorNode = Fn(() => {
     const t = mod(clock, cycle);
-    const wy = positionWorld.y;
+    const wy = positionWorld.y.sub(groundHeightNode(positionWorld.xz)); // Lamp: the head's height above the ground
     const isTopRed = step(5.60, wy);
     const isBottomGreen = float(1.0).sub(step(5.24, wy));
     const isMidAmber = float(1.0).sub(isTopRed).mul(float(1.0).sub(isBottomGreen));
@@ -515,6 +516,7 @@ function buildStreetDetails(scene) {
   ];
   for (const cs of canyonShafts) {
     const shaft = new THREE.Mesh(godRayGeo, godRayMat);
+    shaft.name = 'CanyonSunShaft';
     const at = fromOldFrame(cs.x, cs.z); // (authored on the former compressed grid)
     shaft.position.set(at.x, cs.y, at.z);
     shaft.rotation.set(0.12, cs.rotY, cs.rotZ);
@@ -838,15 +840,15 @@ function buildStreetDetails(scene) {
   //    and its west end, framing the lawn the library's terrace looks out over (the lawn as fitted by landmarks.js)
   const bpl = bryantParkLawn;
   if (bpl) {
-    const ty = bpl.top - 0.2;
+    const ty = bpl.top - 0.2; // Lamp: the lawn's top is in world space already (it stands on the ground), so these sites are `world`
     for (let tx = bpl.minX - 6; tx <= bpl.maxX + 6; tx += 6.5) {
       for (const tz of [bpl.minZ - 5, bpl.minZ - 11.5, bpl.maxZ + 5, bpl.maxZ + 11.5]) {
-        treePositions.push({ x: tx, y: ty, z: tz, scale: 0.8, species: 0 });
+        treePositions.push({ x: tx, y: ty, z: tz, scale: 0.8, species: 0, world: true });
       }
     }
     for (let tz = bpl.minZ; tz <= bpl.maxZ; tz += 6.5) {
-      treePositions.push({ x: bpl.minX - 6, y: ty, z: tz, scale: 0.82, species: 0 });
-      treePositions.push({ x: bpl.minX - 12.5, y: ty, z: tz, scale: 0.76, species: 0 });
+      treePositions.push({ x: bpl.minX - 6, y: ty, z: tz, scale: 0.82, species: 0, world: true });
+      treePositions.push({ x: bpl.minX - 12.5, y: ty, z: tz, scale: 0.76, species: 0, world: true });
     }
   }
 
@@ -1125,7 +1127,7 @@ function buildStreetDetails(scene) {
     }
 
     const cx = camera.position.x;
-    const cy = camera.position.y;
+    const cy = camera.position.y - groundHeight(camera.position.x, camera.position.z); // Lamp: above the ground
     const cz = camera.position.z;
     const me = camera.matrixWorld.elements;
     const fwdX = -me[8];
@@ -1156,8 +1158,9 @@ function buildStreetDetails(scene) {
       const s = activeCobras[i];
       const fade = smoothFade(s._effDist, cobraCutoff * 0.62, cobraCutoff);
       const spot = streetlightSpotPool[i];
-      spot.position.set(s.x, s.y, s.z);
-      spot.target.position.set(s.tx, 0.0, s.tz);
+      s.g ??= groundHeight(s.x, s.z); // Lamp: the lamp's sites are heights above the ground
+      spot.position.set(s.x, s.g + s.y, s.z);
+      spot.target.position.set(s.tx, s.g, s.tz);
       spot.target.updateMatrixWorld();
       spot.intensity = 88.0 * lampScale * fade;
     }
@@ -1192,7 +1195,8 @@ function buildStreetDetails(scene) {
       const fade = smoothFade(s._effDist, ptCutoff * 0.62, ptCutoff);
       const pt = streetPointPool[i];
       pt.color.setHex(s.color);
-      pt.position.set(s.x, s.y, s.z);
+      s.g ??= groundHeight(s.x, s.z);
+      pt.position.set(s.x, s.g + s.y, s.z);
       pt.distance = s.dist;
       pt.intensity = s.intensity * lampScale * fade;
     }

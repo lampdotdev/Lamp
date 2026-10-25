@@ -40,6 +40,7 @@ import {
   WALL_KINDS
 } from './tsl-materials.js';
 import { GEO } from './nyc-geodata.js';
+import { groundHeight } from './terrain.js';
 import { fdrViaduct, pavedPlazaRects, parkTreeSites, sidewalkBlocks } from './city-grid.js';
 
 // js/buildings.js
@@ -583,6 +584,9 @@ function buildCityBlocks(scene) {
     }
   }
 
+  // The ground the building being committed stands on (commit), which its awnings hang from
+  let buildingGround = 0;
+
   // Ground-floor frontage on an avenue: storefront awnings (if it has shops), remembered for scaffolding sheds
   function avenueFront(blk, side, z0, z1, shops = true) {
     blk.avenueFronts[side].push([z0, z1]);
@@ -596,7 +600,7 @@ function buildCityBlocks(scene) {
       if (!shops) continue;
       blk.awnings.push({
         x: side === 'w' ? blk.minX - 0.9 : blk.maxX + 0.9,
-        y: 3.8,
+        y: buildingGround + 3.8,
         z: z0 + seg * (k + 0.5),
         w: 1.8,
         d: Math.min(8.5, seg - 1.6),
@@ -626,17 +630,26 @@ function buildCityBlocks(scene) {
     let shopsOn = o.shops ?? 'all';
     if (typeof shopsOn === 'number') shopsOn = tone < shopsOn ? 'all' : 'none';
     const shops = { w: shopsOn !== 'none', e: shopsOn !== 'none', n: shopsOn === 'all', s: shopsOn === 'all' };
+    // Lamp: the whole building stands on the lowest ground under it, so it's never left floating on its low side and
+    // its storeys line up from part to part
+    let g = Infinity;
+    for (const p of parts) {
+      for (const [x, z] of [[p.x0, p.z0], [p.x1, p.z0], [p.x0, p.z1], [p.x1, p.z1], [(p.x0 + p.x1) * 0.5, (p.z0 + p.z1) * 0.5]]) {
+        g = Math.min(g, groundHeight(...toWorld(x, z)));
+      }
+    }
+    buildingGround = g;
     let top = parts[0];
     for (const p of parts) {
       const w = p.x1 - p.x0;
       const d = p.z1 - p.z0;
       const h = p.y1 - p.y0;
-      const box = { x: p.x0 + w * 0.5, y: p.y0 + h * 0.5, z: p.z0 + d * 0.5, w, h, d, faces: wallKinds(b, p, shops, o), tone };
+      const box = { x: p.x0 + w * 0.5, y: g + p.y0 + h * 0.5, z: p.z0 + d * 0.5, w, h, d, ground: g, faces: wallKinds(b, p, shops, o), tone };
       buckets[mat].push(box);
       blk.facadeBoxes.push(box);
       blk.footprints.push({ x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1, h: p.y1, tone });
       if (p.y1 > blk.maxH) blk.maxH = p.y1;
-      pushCollider(p.x0, p.x1, p.z0, p.z1, p.y0, p.y1);
+      pushCollider(p.x0, p.x1, p.z0, p.z1, g + p.y0, g + p.y1);
       if (p.y1 > top.y1 + EPS || (p.y1 > top.y1 - EPS && w * d > rectW(top) * rectD(top))) top = p;
     }
 
@@ -648,7 +661,7 @@ function buildCityBlocks(scene) {
         const x1 = p.x1 + corniceReach(b, p, 'e', 0.6);
         const z0 = p.z0 - corniceReach(b, p, 'n', 0.6);
         const z1 = p.z1 + corniceReach(b, p, 's', 0.6);
-        blk.cornices.push({ x: (x0 + x1) * 0.5, y: p.y1, z: (z0 + z1) * 0.5, w: x1 - x0, h: ch, d: z1 - z0 });
+        blk.cornices.push({ x: (x0 + x1) * 0.5, y: g + p.y1, z: (z0 + z1) * 0.5, w: x1 - x0, h: ch, d: z1 - z0 });
       }
     }
 
@@ -670,7 +683,7 @@ function buildCityBlocks(scene) {
           const jz = rectD(spot) * 0.5 - 2.3;
           blk.waterTowers.push({
             x: (spot.x0 + spot.x1) * 0.5 + range(-jx, jx),
-            y: top.y1,
+            y: g + top.y1,
             z: (spot.z0 + spot.z1) * 0.5 + range(-jz, jz)
           });
           bulkheadArea = spot === top ? null : halves[1];
@@ -687,7 +700,7 @@ function buildCityBlocks(scene) {
           const jz = (ad - hd) * 0.5 - 0.6;
           blk.hvacUnits.push({
             x: (bulkheadArea.x0 + bulkheadArea.x1) * 0.5 + range(-jx, jx),
-            y: top.y1,
+            y: g + top.y1,
             z: (bulkheadArea.z0 + bulkheadArea.z1) * 0.5 + range(-jz, jz),
             w: hw,
             h: o.hvacH ?? (big ? range(3.4, 5.8) : range(2.4, 3.2)),
@@ -717,7 +730,7 @@ function buildCityBlocks(scene) {
           const count = w >= 15 ? 2 : 1;
           for (let k = 0; k < count; k++) {
             blk.fireEscapes.push({
-              x: p.x0 + (w * (k + 0.5)) / count, y: storey + 0.1, z, h, storey, landings,
+              x: p.x0 + (w * (k + 0.5)) / count, y: g + storey + 0.1, z, h, storey, landings,
               facing: side === 'n' ? Math.PI : 0
             });
           }
@@ -1874,6 +1887,8 @@ function buildCityBlocks(scene) {
 
     blockDetail.footprints.sort((a, b) => a.h - b.h);
     if (xf) placeInFrame(blockDetail, bucketMarks);
+    // Lamp: the sheds stand on the sidewalk where they are
+    for (const s of blockDetail.scaffoldSheds) s.y += groundHeight(s.x, s.z);
     quadtree.insert(blockDetail);
     allBlocks.push(blockDetail);
   }
@@ -2048,8 +2063,10 @@ function buildCityBlocks(scene) {
     for (const items of buckets) {
       for (const bx of items) {
         if (bx.z + bx.d * 0.5 < TS.zN - 40 || bx.z - bx.d * 0.5 > TS.zS + 40 || Math.abs(bx.x - TS.x7) > 280) continue;
-        const base = Math.max(7.5, bx.y - bx.h * 0.5 + 1.2);
-        const top = Math.min(bx.y + bx.h * 0.5 - 2, 62);
+        // Lamp: measured from the ground the building stands on
+        const g = bx.ground ?? 0;
+        const base = g + Math.max(7.5, bx.y - g - bx.h * 0.5 + 1.2);
+        const top = g + Math.min(bx.y - g + bx.h * 0.5 - 2, 62);
         if (top - base < 8) continue;
         DIRS.forEach(([lx, lz], f) => {
           if (bx.faces && bx.faces[f] > WALL_KINDS.entry) return; // street fronts only (not rear / lot-line walls)
@@ -2172,6 +2189,8 @@ function buildCityBlocks(scene) {
     });
     dummy.rotation.set(0, 0, 0);
     yardInst.receiveShadow = true;
+    yardInst.name = 'BlockYards';
+    yardInst.userData.terrain = 'drape'; // a whole yard, laid on the ground by setOnTerrain
     group.add(yardInst);
   }
 

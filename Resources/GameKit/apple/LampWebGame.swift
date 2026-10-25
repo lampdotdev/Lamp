@@ -132,10 +132,31 @@ final class LampGameFiles: NSObject, WKURLSchemeHandler {
 
 #if os(macOS)
 struct LampGameSurface: NSViewRepresentable {
-    func makeNSView(context: Context) -> WKWebView { LampGamePage.make() }
-    func updateNSView(_ view: WKWebView, context: Context) {
-        DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+    func makeNSView(context: Context) -> LampKeyCatcher { LampKeyCatcher(holding: LampGamePage.make()) }
+    func updateNSView(_ view: LampKeyCatcher, context: Context) {
+        DispatchQueue.main.async { view.window?.makeFirstResponder(view.page) }
     }
+}
+
+/// Holds the page and takes the keys it hands back. WebKit gives back every key the page doesn't cancel, and a game
+/// reads its keys without cancelling most of them, so each would reach the window, which beeps for a key nothing took.
+/// Shortcuts with ⌘ are the menus' and never come here.
+final class LampKeyCatcher: NSView {
+    let page: WKWebView
+
+    init(holding page: WKWebView) {
+        self.page = page
+        super.init(frame: .zero)
+        page.frame = bounds
+        page.autoresizingMask = [.width, .height]
+        addSubview(page)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func keyDown(with event: NSEvent) {}
+    override func keyUp(with event: NSEvent) {}
+    override func doCommand(by selector: Selector) {}
 }
 #else
 struct LampGameSurface: UIViewRepresentable {
