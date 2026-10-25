@@ -1,3 +1,4 @@
-three.js 0.186.1, from npm (three-0.186.1.tgz, sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==), under the MIT licence in LICENSE.
-build/three.module.js and build/three.core.js, and some of examples/jsm as addons/
-(scripts/update-three.sh says which).
+three.js at commit fae873455dff9602a916b4d2e8a985921448b62a of github.com/mrdoob/three.js (r187dev),
+under the MIT licence in LICENSE: build/three.module.js, build/three.core.js, build/three.webgpu.js and
+build/three.tsl.js, and some of examples/jsm as addons/ (scripts/update-three.sh says which), each checked against the
+git hash the commit lists for it.

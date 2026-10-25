@@ -63,10 +63,13 @@ with its tile's symbol (`- drop: Add a water counter`). The three show how far a
 it: one changes how it looks (Hot Shelf as a realistic kitchen cabinet), one what it does (ingredients on every tag),
 and one what it's about (Hot Shelf as a beer tracker), in that order. Each is something the app doesn't do already,
 that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
-are Mac apps that need no key or account, use the AI the person builds with when they use any, and come with
+are Mac apps (or a game, when starter.md says `kind: game`, made as any wish of that kind is) that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
-A starter may be a game drawn by a web page: New York is Slop New York's three.js city in a WebKit view, its page in
-`Assets/Web` served at an address of the app's own (`GameFiles`) and loaded again when its files change.
+A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
+given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
+the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
+Android or the Xbox too. It builds its whole city before the first frame, about half a minute out of sight, which is
+why the preview waits up to two minutes and keeps a page in no window running (`WebGamePreview`).
 A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.

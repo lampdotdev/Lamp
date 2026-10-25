@@ -128,8 +128,8 @@ enum Parts {
         let word = word.trimmingCharacters(in: .whitespaces).lowercased()
         return apps.first { app in
             switch word {
-            case "mac": app.platform.hasMac
-            case "iphone", "ipad", "phone", "watch": app.platform.hasIOS
+            case "mac": app.hasMac
+            case "iphone", "ipad", "phone", "watch": app.hasIOS
             default: Parts.word(for: app.platform) == word || folder(for: app.platform).lowercased() == word
             }
         }

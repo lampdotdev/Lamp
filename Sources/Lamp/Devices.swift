@@ -177,6 +177,7 @@ enum Devices {
         try fm.createDirectory(at: files, withIntermediateDirectories: true)
         try Template.writeDeviceProject(for: project, team: team, in: dir, reading: files, wishKey: wishKey)
         let names = ["Sources", Sharing.Assets.folder, Template.widgetFolder, Template.shareFolder, Template.watchFolder]
+            + (Template.showsPage(project) ? [TVTemplate.webFolder] : [])
         let copy = "cd \"$LAMP_FROM\" && for name in \(names.map(Sandbox.quoted).joined(separator: " ")); do "
             + "if [ -e \"$name\" ] || [ -L \"$name\" ]; then /bin/cp -Rp \"$name\" \"$LAMP_TO/\" || exit 1; fi; done"
         guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [files.path]) else {

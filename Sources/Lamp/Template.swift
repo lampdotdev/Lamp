@@ -41,14 +41,16 @@ enum Template {
     /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
         try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
-                                             platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
+                                             platform: project.platform, family: project.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform.choosesPlace ? project.chosen : nil,
-                                             simulator: project.platform.hasIOS ? project.simulator : nil,
+                                             places: project.platform.addsPlaces ? project.places : nil,
+                                             engine: project.platform.addsPlaces ? project.engine : nil,
+                                             simulator: project.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform.hasDevice ? project.integration : nil,
+                                             integration: project.hasDevice ? project.integration : nil,
                                              undecided: project.undecided,
                                              apps: project.apps.isEmpty ? nil : project.apps,
                                              waitsForDevice: project.waitsForDevice ? true : nil,
@@ -142,7 +144,7 @@ enum Template {
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
         // extension's beside them.
-        if project.platform.hasIOS {
+        if project.hasIOS {
             try put(Capabilities.load(project).simulatorEntitlementsPlist(for: project),
                     at: project.dir.appendingPathComponent(".lamp/entitlements.plist"), for: project)
             for (has, suffix) in [(widget, "widget"), (share, "share")] {
@@ -180,7 +182,7 @@ enum Template {
         precondition(template.contains(appSigningLine), "the build script changed")
         return template
             .replacingOccurrences(of: "swift build \"${FLAGS[@]}\" 2>&1\n", with: "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n")
-            .replacingOccurrences(of: appSigningLine, with: watchBuildSteps(complications: complications) + appSigningLine)
+            .replacingOccurrences(of: appSigningLine, with: onlyForIOS(watchBuildSteps(complications: complications)) + appSigningLine)
     }
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
@@ -220,7 +222,7 @@ enum Template {
             "sidebarPort": String(sidebarPort(for: project)),
             "sidebarTries": String(sidebarPortTries),
             "sidebarHost": sidebarHost(for: project),
-            "sidebarKey": project.platform.hasMac ? sidebarKey(for: project) : "",
+            "sidebarKey": project.hasMac ? sidebarKey(for: project) : "",
             "sidebarFramer": sidebarFramer,
         ]
     }
@@ -381,7 +383,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.iOS(.v17)],
+        platforms: [.iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -487,7 +489,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.macOS(.v14), .iOS(.v17)],
+        platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -630,10 +632,16 @@ enum Template {
     # Builds build/{{EXE}}.app for the iPhone simulator. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+    # The same app for Apple TV or Vision Pro when Try On points at one (LAMP_FAMILY), else for iPhone and iPad.
+    case "${LAMP_FAMILY:-}" in
+      appletv) SDKNAME=appletvsimulator; TRIPLE=arm64-apple-tvos17.0-simulator; FAMILIES="<integer>3</integer>"; PLATFORM=AppleTVSimulator; MINOS=17.0 ;;
+      vision) SDKNAME=xrsimulator; TRIPLE=arm64-apple-xros1.0-simulator; FAMILIES="<integer>7</integer>"; PLATFORM=XRSimulator; MINOS=1.0 ;;
+      *) SDKNAME=iphonesimulator; TRIPLE=arm64-apple-ios17.0-simulator; FAMILIES="<integer>1</integer><integer>2</integer>"; PLATFORM=iPhoneSimulator; MINOS=17.0 ;;
+    esac
+    SDK="$(xcrun --sdk "$SDKNAME" --show-sdk-path)"
     # Debug, as Xcode builds for the simulator: a release build optimizes the whole module at once, so every change
     # compiled all of it again, Lamp's own library included, and went through dsymutil too. The phone's is Xcode's.
-    FLAGS=(-c debug --triple arm64-apple-ios17.0-simulator --sdk "$SDK")
+    FLAGS=(-c debug --triple "$TRIPLE" --sdk "$SDK")
     \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
@@ -664,12 +672,12 @@ enum Template {
       <key>CFBundleShortVersionString</key><string>0.1</string>
       <key>CFBundleVersion</key><string>1</string>
       <key>LSRequiresIPhoneOS</key><true/>
-      <key>MinimumOSVersion</key><string>17.0</string>
-      <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+      <key>MinimumOSVersion</key><string>$MINOS</string>
+      <key>UIDeviceFamily</key><array>$FAMILIES</array>
       <key>UILaunchScreen</key><dict/>
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
-      <key>DTPlatformName</key><string>iphonesimulator</string>
-      <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+      <key>DTPlatformName</key><string>$SDKNAME</string>
+      <key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM</string></array>
     {{USAGE}}
     </dict></plist>
     PLIST
@@ -708,11 +716,17 @@ enum Template {
             """
         }
         script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n"
-                      + (widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : ""))
+                      + onlyForIOS((widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : "")))
         script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n",
                       "{{USAGE}}\n" + appGroupPlistLines(group: "group.{{BUNDLE}}", liveActivities: widget) + "\n</dict></plist>\nPLIST\n")
-        script = swap(script, appSigningLine, (widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "") + appSigningLine)
+        script = swap(script, appSigningLine, onlyForIOS((widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "")) + appSigningLine)
         return script
+    }
+
+    /// Steps for what only iOS has (widgets, a share extension, the watch app), left out of a build for Apple TV or
+    /// Vision Pro (LAMP_FAMILY): those are the app alone.
+    static func onlyForIOS(_ steps: String) -> String {
+        "if [[ -z \"${LAMP_FAMILY:-}\" ]]; then\n" + steps + "fi\n"
     }
 
     /// What an app with extensions says in its Info.plist: the folder it shares with them, and with a widget
@@ -959,7 +973,7 @@ enum Template {
     /// Whether the app has a watch app to build: Swift of the agent's in Watch/, outside Complications/. Only
     /// an app with an iPhone half has one. Asked before every build, as `hasWidget` is.
     static func hasWatch(_ project: LampProject) -> Bool {
-        guard project.platform.hasIOS else { return false }
+        guard project.hasIOS else { return false }
         let folder = project.dir.appendingPathComponent(watchFolder)
         let complications = folder.appendingPathComponent(complicationsFolder).path + "/"
         return swiftFiles(in: folder).contains { !$0.path.hasPrefix(complications) && $0.lastPathComponent != watchSupportFile }
@@ -1683,7 +1697,7 @@ enum Template {
         /// after the id the app is signed with, team and all: containers are global, so one named after
         /// the plain id would be taken by whichever team made an app of that name first.
         func container(for project: LampProject) -> String? {
-            icloud == true && project.platform.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
+            icloud == true && project.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
         }
 
         /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
@@ -1691,11 +1705,11 @@ enum Template {
         /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
         /// differently on each platform.
         func entitlementsPlist(for project: LampProject, platform: Destination = .ios, appGroup: String? = nil) -> String {
-            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS, appGroup: appGroup)
+            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.hasIOS, appGroup: appGroup)
         }
 
         /// Whether the app gets the weather: declared, and signed for a team (an iPhone half).
-        func weather(for project: LampProject) -> Bool { weather == true && project.platform.hasIOS }
+        func weather(for project: LampProject) -> Bool { weather == true && project.hasIOS }
 
         /// The simulator build's entitlements, which build.sh puts in the binary: the iPhone's, with the app's
         /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
@@ -1897,6 +1911,7 @@ enum Template {
         var pbxproj = universal ? universalPbxproj : devicePbxproj
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
+        if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -1947,9 +1962,9 @@ enum Template {
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
         // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
-        let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
+        let secret = folder != nil && !forSigning && project.hasIOS ? phoneSecret(in: dir) : ""
         // The wish's key, for an app with others in its wish, goes the same way and only there.
-        let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        let wish = folder != nil && !forSigning && project.hasIOS ? wishKeyPlistLines(wishKey) : ""
         // An app of a wish of several finds the others, and is found, by the wish's Bonjour type, beside any of its own.
         let background = capabilities.backgroundPlistLine(adding: !wish.isEmpty ? wishServiceType : nil)
         for (path, template) in files {
@@ -1971,6 +1986,29 @@ enum Template {
             let url = dir.appendingPathComponent(path)
             if AppFile.read(url, inFolder: root) != Data(contents.utf8) { try AppFolder.write(contents, to: url, in: root) }
         }
+    }
+
+    /// Whether the app is a page in a web view of its own (a three.js game, a screen), whose Web/ goes into the app.
+    static func showsPage(_ project: LampProject) -> Bool {
+        project.platform.target.showsPage(project)
+    }
+
+    /// The app's Web/ as a folder in the app beside Assets, where the page's host reads it (`Bundle.main…/Web`).
+    static func withWebFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000001 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000002 /* Web */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000002 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Web; path = ../../Web; sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */,",
+                    "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
     }
 
     /// The project names the app's folders by where it sits inside the app (../../Sources). Written anywhere
@@ -2672,7 +2710,7 @@ enum Template {
     static func writeWidgetSupport(for project: LampProject) throws {
         guard hasWidget(project) else { return }
         // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
-        let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
+        let contents = project.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
         try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
@@ -3213,6 +3251,10 @@ enum Template {
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
         guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
+        if GameKit.isGame(project) { return GameKit.isScaffold(project) }
+        if ScreenKit.isScreen(project) {
+            return AppFile.text(project.dir.appendingPathComponent("Web/app.js"), in: project).map { $0 == TVTemplate.appJS.replacingOccurrences(of: "{{NAME}}", with: project.name) } ?? false
+        }
         guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
         else { return false }
         return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }
@@ -3255,26 +3297,46 @@ enum Template {
     import SwiftUI
     import SQLite3
     import JavaScriptCore
+    #if canImport(EventKit)
     import EventKit
+    #endif
+    #if canImport(Contacts)
     import Contacts
+    #endif
     import CryptoKit
+    #if canImport(PDFKit)
     import PDFKit
+    #endif
     import UniformTypeIdentifiers
     import UserNotifications
+    #if canImport(CloudKit)
     import CloudKit
+    #endif
+    #if canImport(HealthKit)
     import HealthKit
+    #endif
+    #if canImport(Photos)
     import Photos
+    #endif
     import CoreLocation
+    #if canImport(WeatherKit)
     import WeatherKit
+    #endif
+    #if canImport(MusicKit)
     import MusicKit
+    #endif
+    #if canImport(CoreSpotlight)
     import CoreSpotlight
+    #endif
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
     import ExtensionKit
     import Carbon.HIToolbox
     import Network
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
     import CoreServices
     import ServiceManagement
     #if LAMP_LIVE
@@ -3285,13 +3347,23 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    #if canImport(BackgroundTasks)
     import BackgroundTasks
+    #endif
     import Network
+    #if canImport(HomeKit)
     import HomeKit
+    #endif
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
+    #if canImport(CoreMotion)
     import CoreMotion
+    #endif
     import Security
+    #if canImport(WatchConnectivity)
     import WatchConnectivity
+    #endif
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
     #endif
@@ -9524,6 +9596,8 @@ enum Template {
 
     // MARK: - Health
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's Health data (steps, heart rate, sleep, workouts, weight, what they ate and drank), read and
     /// written through HealthKit on an iPhone or iPad, once capabilities.json says `{"healthkit": true}`. A
     /// Mac has no Health data of its own (`isAvailable` is false there), so an app for both reads on the
@@ -9867,6 +9941,7 @@ enum Template {
             }
         }
     }
+    #endif
 
 
     // MARK: - Photos
@@ -10093,10 +10168,10 @@ enum Template {
             // The system's question makes the app inactive; when it's active again the person has answered,
             // even with an answer that changes nothing (keeping "While Using" when asked for Always), which
             // the location manager doesn't report.
-            #if os(iOS)
-            let active = UIApplication.didBecomeActiveNotification
-            #else
+            #if os(macOS)
             let active = NSApplication.didBecomeActiveNotification
+            #else
+            let active = UIApplication.didBecomeActiveNotification
             #endif
             NotificationCenter.default.addObserver(forName: active, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { LampLocation.shared.settle() }
@@ -10204,7 +10279,10 @@ enum Template {
             wantsMoves = true
             Task {
                 guard await Self.authorize(), wantsMoves else { return }
+                // Apple TV and Vision Pro don't follow big moves: they stay put.
+                #if os(iOS) || os(macOS)
                 manager.startMonitoringSignificantLocationChanges()
+                #endif
                 status = "Following big moves"
             }
         }
@@ -10228,7 +10306,9 @@ enum Template {
         func stop() {
             wantsMoves = false
             wantsVisits = false
+            #if os(iOS) || os(macOS)
             manager.stopMonitoringSignificantLocationChanges()
+            #endif
             #if os(iOS)
             manager.stopMonitoringVisits()
             #endif
@@ -10236,10 +10316,12 @@ enum Template {
         }
 
         private static func allowed(_ status: CLAuthorizationStatus) -> Bool {
-            #if os(iOS)
+            #if os(macOS)
+            status == .authorizedAlways || status == .authorized
+            #elseif os(iOS)
             status == .authorizedWhenInUse || status == .authorizedAlways
             #else
-            status == .authorizedAlways || status == .authorized
+            status == .authorizedWhenInUse
             #endif
         }
 
@@ -12936,7 +13018,9 @@ enum Template {
                     Section { fields } footer: { note }
                 }
                 .navigationTitle("Connect \(api.name)")
+                #if !os(tvOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel", role: .cancel) { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -16303,10 +16387,12 @@ enum Template {
                             .background(Color.accentColor.opacity(0.08)).allowsHitTesting(false)
                     }
                 }
+                #if !os(tvOS)
                 .onDrop(of: [.fileURL, .image, .url], isTargeted: $targeted) { providers in
                     LampDrop.load(providers) { urls in if !urls.isEmpty { handler(urls) } }
                     return true
                 }
+                #endif
         }
     }
 
@@ -16403,6 +16489,8 @@ enum Template {
 
     #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's calendar, reminders and contacts, through the accounts already set up on the device (iCloud,
     /// Google, Exchange: whatever the system's Internet Accounts has). No sign-in or API key: the system asks the
     /// person once, the first time an app uses each one. All on the device, instant and free.
@@ -16482,7 +16570,10 @@ enum Template {
             try store.remove(event, span: .thisEvent, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampReminders {
         struct Reminder: Identifiable {
             let id: String
@@ -16539,7 +16630,10 @@ enum Template {
             try store.save(reminder, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampContacts {
         struct Contact: Identifiable {
             let id: String
@@ -16595,6 +16689,7 @@ enum Template {
                     note: nil)
         }
     }
+    #endif
 
     #if os(macOS)
     // Mac only: Mail.
@@ -16880,6 +16975,8 @@ enum Template {
     }
     #endif
 
+    // Apple TV shows no notifications of an app's.
+    #if !os(tvOS)
     /// Notifications. Asks permission the first time.
     ///
     ///     LampNotifications.send("Export finished", body: "Saved 12 files to Documents")
@@ -17001,6 +17098,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     /// What people sent this app from another app's share sheet (a link from Safari, photos, text, files), through
     /// its share extension (the Share/ folder). The extension leaves each share in the folder the two have in
@@ -17118,6 +17216,8 @@ enum Template {
         }
     }
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The app's own things in Spotlight (notes, recipes, places, people): a search there finds them, and a tap
     /// opens the app on the one tapped.
     ///
@@ -17149,7 +17249,9 @@ enum Template {
             CSSearchableIndex.default().deleteAllSearchableItems { _ in }
         }
     }
+    #endif
 
+    #if !os(tvOS)
     extension View {
         /// Called with the id of what was tapped in Spotlight (`LampSpotlight.index`), when it opens the app or
         /// brings it to the front.
@@ -17159,6 +17261,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     #if os(macOS)
     /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry

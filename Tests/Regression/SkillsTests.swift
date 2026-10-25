@@ -156,7 +156,7 @@ final class SkillsTests: XCTestCase {
         // without first deciding that a skill applies.
         for (kind, prompt, platform) in prompts {
             XCTAssertTrue(prompt.contains("The theme follows the subject."), "\(kind) keeps the theme rule")
-            if platform.hasMac { XCTAssertTrue(prompt.contains("`LampPermissionGate(.fullDiskAccess"), "\(kind) keeps the permission rule") }
+            if platform.reaches(.mac) { XCTAssertTrue(prompt.contains("`LampPermissionGate(.fullDiskAccess"), "\(kind) keeps the permission rule") }
         }
     }
 

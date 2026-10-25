@@ -303,6 +303,13 @@ struct Device: Identifiable, Hashable {
 /// only when it changes (Try On moved, a phone's software updated), so most requests carry nothing.
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
+        let here = place(for: project, store: store)
+        // A game says every place it's played and what the slowest allows, then where Try On points.
+        return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here
+            : ScreenKit.isScreen(project) ? Agent.Rules.screenPlaces(project) + " " + here : here
+    }
+
+    @MainActor private static func place(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "device"
@@ -347,8 +354,9 @@ enum DeviceNote {
                 return "Try On points at the person's \(phone.name): \(phone.forAgent)."
             }
             let simulator = project.simulator.flatMap { udid in store.simulators.first { $0.udid == udid } }
-            var line = simulator.map { "Try On points at the \($0.name) simulator, iOS \($0.runtime.map(String.init).joined(separator: "."))." }
+            var line = simulator.map { "Try On points at the \($0.name) simulator, \($0.family.os) \($0.runtime.map(String.init).joined(separator: "."))." }
                 ?? "Try On points at the \(project.family.name) simulator."
+            if project.family.isOtherOS { line += " " + Agent.Rules.otherOS(project.family) }
             // The phones the person has, exactly, with what each still needs: the app is for one of them in the
             // end, and what it has (a Dynamic Island, say) matters before it ever goes there.
             for phone in phones {
@@ -358,7 +366,7 @@ enum DeviceNote {
             return line
         }
         let mac = store.thisMac ?? Device.thisMac()
-        return "It opens on this Mac: \(mac.forAgent)."
+        return GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent)."
     }
 
     /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's

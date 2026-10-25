@@ -41,14 +41,13 @@ struct Platform: RawRepresentable, Hashable, Codable, Sendable {
         self = target.platform
     }
 
-    var hasMac: Bool { target.places.contains(.mac) }
-    var hasIOS: Bool { target.places.contains(.ios) }
-    var hasAndroid: Bool { target.places.contains(.android) }
-    var hasTV: Bool { target.places.contains(.tv) }
-    /// Made for a device of the person's through its integration (`LampProject.integration`).
-    var hasDevice: Bool { target.places.contains(.device) }
+    /// Whether an app of this kind can open there at all. What an app has is the app's to say (`LampProject.hasMac`…):
+    /// a kind whose places are given one at a time (a game, a screen) has only those it was given.
+    func reaches(_ place: Destination) -> Bool { target.places.contains(place) }
     /// Opens in more than one place, where Try On last put it (`LampProject.chosen`).
     var choosesPlace: Bool { target.places.count > 1 }
+    /// Its places are given one at a time, so each app of the kind says which it has (`LampProject.places`).
+    var addsPlaces: Bool { target.startsAt != nil }
 }
 
 /// One kind of app, as the pieces that differ from kind to kind: how it's named and listed, what the agent is told,
@@ -65,6 +64,18 @@ struct Target {
     /// Nil for a kind that's never one of a wish's other apps.
     let part: Part?
     let setup: Setup
+    /// Where a new app of the kind opens, of its `places`, when the kind's places are given one at a time (a game, at
+    /// home on the Mac until it's put somewhere else too: `LampProject.places`). Nil for all of them from the start.
+    var startsAt: [Destination]? = nil
+    /// Its app on the Mac and iOS is Lamp's own around the agent's page (a game's, a screen's), built from Lamp's files in
+    /// release whenever they change: a change reopens it rather than going in live, and its copies always take the chat.
+    var hostedByLamp = false
+    /// A page in a web view of its own, whose Web/ goes into the app wherever it's built (the phone's Xcode project too).
+    var showsPage: (LampProject) -> Bool = { _ in false }
+    /// Its own SwiftUI builds for tvOS and visionOS too, so Try On offers the Apple TV and Vision Pro simulators.
+    var otherSystems = false
+    /// Its Mac half is built by Xcode for the person's Apple team, so it can't be built without one.
+    var macSignedForTeam = false
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {
@@ -199,7 +210,7 @@ struct SetupLater {
 /// Every kind of app Lamp makes, in the order they're listed: to the naming call, in `make_app_for`'s description, and
 /// to a wish still to be told what it's for.
 enum Targets {
-    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .device]
+    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .game, .screen, .device]
     static let named = Dictionary(uniqueKeysWithValues: all.map { ($0.platform.rawValue, $0) })
 
     /// The kind a wish is when nothing says otherwise: a Mac app needs nothing more than Lamp has.
@@ -229,7 +240,7 @@ enum Targets {
     /// `make_app_for`'s devices (`{{DEVICES}}`): the kinds that can be one wish, then those that stand alone, and last
     /// what has no word of its own.
     static var toolDevices: String {
-        let say = { (kinds: [Target]) in kinds.flatMap { $0.identity.devices.words.map(\.tool) } + kinds.compactMap(\.identity.devices.toolNote) }
+        let say = { (kinds: [Target]) in kinds.flatMap { $0.identity.devices.words.map(\.tool).filter { !$0.isEmpty } } + kinds.compactMap(\.identity.devices.toolNote) }
         let alone = say(all.filter(\.identity.devices.alone))
         return say(all.filter { !$0.identity.devices.alone }).joined(separator: ", ") + (alone.isEmpty ? "" : "; " + alone.joined(separator: ", "))
     }

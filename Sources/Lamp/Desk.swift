@@ -1175,7 +1175,7 @@ struct WishDrag: NSViewRepresentable {
         private func begin(from event: NSEvent) {
             let writer: NSPasteboardWriting
             if store.canShare(project) {
-                let installed = project.platform.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
+                let installed = project.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
                     ? project.installedURL : nil
                 let payload = Payload(project: project, app: installed) { [weak self] in self?.publish() }
                 self.payload = payload
@@ -1683,7 +1683,8 @@ extension Store {
         }
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
-            guard place == .window, project.platform == .mac else { return use(project) }
+            // A game played on this Mac opens in its window with its chat beside it, as a Mac app does.
+            guard place == .window, project.platform == .mac || (project.platform.target.hostedByLamp && project.destination == .mac) else { return use(project) }
             change(project)
         }
     }
