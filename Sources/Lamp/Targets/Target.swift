@@ -72,6 +72,9 @@ struct Target {
     var hostedByLamp = false
     /// A page in a web view of its own, whose Web/ goes into the app wherever it's built (the phone's Xcode project too).
     var showsPage: (LampProject) -> Bool = { _ in false }
+    /// The folder of the apps folder its Mac copy is installed in, when it isn't the apps folder itself: a wish's apps
+    /// are installed under its name, and a game or a screen beside its Mac app would take the Mac app's place there.
+    var installFolder: String? = nil
     /// Its own SwiftUI builds for tvOS and visionOS too, so Try On offers the Apple TV and Vision Pro simulators.
     var otherSystems = false
     /// Its Mac half is built by Xcode for the person's Apple team, so it can't be built without one.

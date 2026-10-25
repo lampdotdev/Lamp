@@ -104,10 +104,6 @@ struct LampProject: Identifiable, Hashable {
     var partOf: String?
     /// The folders of this wish's other parts, each an app of its own kind (`partOf`), beside the one at its root.
     var partFolders: [String] = []
-    /// The name a part's Mac copy is installed under, when it isn't its wish's: another app of the wish with a Mac copy
-    /// had that one when it was made (`Store.addPart`). Kept in the part's meta.json, so it stays as the wish's other
-    /// apps come and go, and changed only with the wish's name (`Store.giveName`).
-    var installName: String?
     /// A new wish that could be for more than one kind of device, and didn't say which (the naming call's
     /// candidates, most likely first): nothing is written for it until the agent has asked and given it its kinds.
     var undecided: [String]?
@@ -174,7 +170,15 @@ struct LampProject: Identifiable, Hashable {
     /// An app for both keeps a build for each place, so checking one half never replaces the other's.
     var builtURL: URL { platform.target.recipe.builtURL(self) }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
-    var installedURL: URL { Store.installDir.appendingPathComponent("\(installName ?? name).app") }
+    /// Where it's installed follows from its wish's name and its kind alone, nothing kept beside it, so a copy of the
+    /// wish, a restore and its other apps coming and going never move it or put two apps in one place: wishes' names are
+    /// unique, a wish has one app of each kind, and a game or a screen goes in a folder of its kind's (`installFolder`).
+    var installedURL: URL {
+        (platform.target.installFolder.map { Store.installDir.appendingPathComponent($0) } ?? Store.installDir)
+            .appendingPathComponent("\(name).app")
+    }
+    /// Where a game or a screen was installed before it had a folder of its own (`Store.reload` moves it).
+    var installedBeforeFolders: URL? { platform.target.installFolder.map { _ in Store.installDir.appendingPathComponent("\(name).app") } }
     /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
     /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
@@ -216,7 +220,6 @@ struct ProjectMeta: Codable {
     var apps: [WishApp]?       // LampProject.apps: the apps the wish should have, and what each waits for
     var waitsForDevice: Bool?  // LampProject.waitsForDevice
     var decided: Bool?         // LampProject.decided
-    var installName: String?   // LampProject.installName
 }
 
 struct AppUsage: Codable {
@@ -1126,6 +1129,15 @@ final class Store: ObservableObject {
             }
         }
         // Not for a wish whose apps are all in folders of their own: its name's installed copy is a Mac app of it.
+        // A game or a screen installed before its kind had a folder of its own in the apps folder moves there once: by its
+        // own id only, so a Mac app of the wish installed under the same name stays.
+        let fm = FileManager.default
+        for project in projects where project.holdsApp {
+            guard let before = project.installedBeforeFolders, !fm.fileExists(atPath: project.installedURL.path),
+                  Bundle(url: before)?.bundleIdentifier == project.bundleID else { continue }
+            try? fm.createDirectory(at: project.installedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.moveItem(at: before, to: project.installedURL)
+        }
         for project in projects { stamps[project.id] = project.holdsApp ? BuildStamp.read(project.installedURL) : nil }
         for project in projects where logs[project.id] == nil && !project.isPart {
             let lamp = project.dir.appendingPathComponent(".lamp")
@@ -1884,7 +1896,6 @@ final class Store: ObservableObject {
                 part.places = places
                 part.integration = GameKit.integration(for: part)
             }
-            part.installName = installName(for: part, in: wish)
             try Template.saveMeta(part)
             try Template.fill(part)
             if let kept {
@@ -1897,16 +1908,6 @@ final class Store: ObservableObject {
         setApps(wish, Parts.listing(kind, madeFor: wish, parts: parts(of: wish)))
         reload()
         return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil, false)
-    }
-
-    /// The name a new app of a wish is installed under, when it isn't the wish's: a wish's apps are installed under its
-    /// name, and only one can be. Another app of the wish with a Mac copy there already has it, so this one has its kind's
-    /// name after the wish's ("Party Game"), free among every wish's names and every app's own (`uniqueName`), so no
-    /// other wish is ever installed in its place. Nil for one with no Mac copy, or the first with one.
-    private func installName(for part: LampProject, in wish: LampProject) -> String? {
-        guard part.hasMac, apps(of: wish).contains(where: { $0.id != part.id && $0.hasMac && $0.installName == nil }),
-              let kind = part.platform.target.part?.menu.name else { return nil }
-        return uniqueName("\(wish.name) \(kind)", ignoring: wish.id)
     }
 
     /// Takes one of a wish's apps away, whichever it is: quit wherever it's open, what Lamp keeps for it forgotten
@@ -2409,19 +2410,9 @@ final class Store: ObservableObject {
         let renamed = current.named(name)
         try? Template.saveMeta(renamed)
         // Every app of the wish is installed under its name, so each installed copy goes with it: the wish's own app's,
-        // a Mac app's in a folder of its own, and one installed under a name of its own (`installName`), which takes the
-        // new name with its kind's after it.
-        var moves = [(current.installedURL, renamed.installedURL)]
-        if !current.isPart {
-            for part in parts(of: current) {
-                var moved = part.named(name)
-                if part.installName != nil {
-                    moved.installName = part.platform.target.part.map { uniqueName("\(name) \($0.menu.name)", ignoring: current.id) }
-                    try? Template.saveMeta(moved)
-                }
-                moves.append((part.installedURL, moved.installedURL))
-            }
-        }
+        // and each in a folder of its own's (`installedURL`).
+        let moves = [(current.installedURL, renamed.installedURL)]
+            + (current.isPart ? [] : parts(of: current).map { ($0.installedURL, $0.named(name).installedURL) })
         let fm = FileManager.default
         for (from, to) in moves where from != to && fm.fileExists(atPath: from.path) && !fm.fileExists(atPath: to.path) {
             try? fm.moveItem(at: from, to: to)
@@ -2667,9 +2658,7 @@ final class Store: ObservableObject {
     private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
         // A wish's other parts carry its name, and are no other app holding it.
         // A newer Lamp's wish keeps its name too: its installed copy is found by it.
-        // So does an app installed under a name of its own ("Party Game"): a wish of that name would be installed there.
         let taken = Set(projects.filter { $0.id != id && ($0.partOf == nil || $0.partOf != id) }.map { $0.name.lowercased() }
-                        + projects.filter { $0.partOf != id }.compactMap { $0.installName?.lowercased() }
                         + newerWishes.map { $0.name.lowercased() })
         let base = name.trimmed
         var candidate = base
@@ -8805,6 +8794,7 @@ final class Store: ObservableObject {
         if fm.fileExists(atPath: project.installedURL.path) {
             _ = try fm.replaceItemAt(project.installedURL, withItemAt: app)
         } else {
+            try fm.createDirectory(at: project.installedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.moveItem(at: app, to: project.installedURL)
         }
         swapped = true

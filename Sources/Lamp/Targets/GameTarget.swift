@@ -47,7 +47,7 @@ extension Target {
         // Nothing up front: the Mac builds it with Xcode's tools and one small download, fetched as it's first built;
         // what each further place needs is asked for when it's given (`GameKit.notReady`).
         setup: .none,
-        startsAt: [.mac], hostedByLamp: true, showsPage: { GameKit.engine($0) == .web })
+        startsAt: [.mac], hostedByLamp: true, showsPage: { GameKit.engine($0) == .web }, installFolder: "Games")
 }
 
 extension Language {

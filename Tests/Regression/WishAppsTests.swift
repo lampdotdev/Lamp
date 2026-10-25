@@ -74,31 +74,58 @@ final class WishGameAppsTests: XCTestCase {
         XCTAssertEqual(Parts.pick("game", among: [wish, mac])?.id, wish.id)
     }
 
-    /// A game made beside other apps is found in its folder, with the places its own meta.json keeps.
-    func testAGameInAFolderOfItsOwnIsOneOfTheWishsApps() throws {
+    /// A Mac wish with a game in Game/, as `make_app_for` leaves it. `gameMeta` is the game's meta.json, or nil for none
+    /// (a restore brings back a part's files, never its `.lamp/`).
+    private func partyWithGame(gameMeta: String?) throws -> LampProject {
         let wish = try Template.scaffold(name: "Party", platform: .mac, in: root)
         let dir = wish.dir.appendingPathComponent(Parts.folder(for: .game))
-        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
-        var game = LampProject(id: Parts.id(wish: wish.id, folder: "Game"), name: "Party", exe: "Party", dir: dir, platform: .game, partOf: wish.id)
-        game.places = [.mac, .ios]
-        // Made beside the Mac app, it was given a name of its own to be installed under.
-        game.installName = "Party Game"
-        try Template.saveMeta(game)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let gameMeta {
+            try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+            try gameMeta.write(to: dir.appendingPathComponent(".lamp/meta.json"), atomically: true, encoding: .utf8)
+        }
         try "A game made with Lamp.\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
-        let read = try XCTUnwrap(Store.readWish(at: wish.dir))
-        XCTAssertEqual(read.partFolders, ["Game"])
-        let parts = Parts.load(read)
+        return try XCTUnwrap(Store.readWish(at: wish.dir))
+    }
+
+    /// A game made beside other apps is found in its folder, with the places its own meta.json keeps, and is installed
+    /// apart from the wish's Mac app, which has the wish's name: in the apps folder's Games/. Where stays where it was
+    /// once the Mac app is taken away.
+    func testAGameInAFolderOfItsOwnIsOneOfTheWishsApps() throws {
+        let wish = try partyWithGame(gameMeta: #"{"name":"Party","exe":"Party","platform":"game","places":["mac","ios"]}"#)
+        XCTAssertEqual(wish.partFolders, ["Game"])
+        let parts = Parts.load(wish)
         XCTAssertEqual(parts.map(\.platform), [.game])
         XCTAssertEqual(parts.first?.openPlaces, [.mac, .ios])
-        // Both have a Mac copy, so they can't both be installed under the wish's name: each would replace the other.
-        XCTAssertEqual(read.installedURL.lastPathComponent, "Party.app")
-        XCTAssertEqual(parts.first?.installedURL.lastPathComponent, "Party Game.app")
-        // The Mac app taken away, the game is where it was installed: its install name is its own, not the wish's
-        // apps' order of the moment, so nothing installed is left behind under an old name.
+        XCTAssertEqual(wish.installedURL.lastPathComponent, "Party.app")
+        XCTAssertNotEqual(parts.first?.installedURL, wish.installedURL)
         for name in ["Sources", "Package.swift", "build.sh", "APP.md"] { try? FileManager.default.removeItem(at: wish.dir.appendingPathComponent(name)) }
         let alone = try XCTUnwrap(Store.readWish(at: wish.dir))
         XCTAssertFalse(alone.holdsApp)
-        XCTAssertEqual(Parts.load(alone).first?.installedURL.lastPathComponent, "Party Game.app")
+        XCTAssertEqual(Parts.load(alone).first?.installedURL, parts.first?.installedURL)
+    }
+
+    /// Duplicate copies each app's meta.json as it is: the copy's game was installed where the original's is, so building
+    /// either replaced the other.
+    func testADuplicatedWishsGameIsInstalledApartFromTheOriginals() throws {
+        // Whatever the game's meta.json says of where it's installed is copied with it, and isn't where it goes.
+        let wish = try partyWithGame(gameMeta: #"{"name":"Party","exe":"Party","platform":"game","installName":"Party Game"}"#)
+        let copyDir = root.appendingPathComponent("partycopy")
+        try FileManager.default.copyItem(at: wish.dir, to: copyDir)
+        try Template.saveMeta(LampProject(id: "partycopy", name: "Party copy", exe: "PartyCopy", dir: copyDir, platform: .mac))
+        let copy = try XCTUnwrap(Store.readWish(at: copyDir))
+        let original = try XCTUnwrap(Parts.load(wish).first), copied = try XCTUnwrap(Parts.load(copy).first)
+        XCTAssertNotEqual(copied.installedURL, original.installedURL)
+        XCTAssertNotEqual(copied.installedURL, copy.installedURL)
+    }
+
+    /// A restore brings a part's files back without its meta.json: the game read nothing of where it was installed, and
+    /// went where the wish's Mac app is.
+    func testARestoredGameIsInstalledApartFromTheMacApp() throws {
+        let wish = try partyWithGame(gameMeta: nil)
+        let game = try XCTUnwrap(Parts.load(wish).first)
+        XCTAssertEqual(game.platform, .game)
+        XCTAssertNotEqual(game.installedURL, wish.installedURL)
     }
 }
 

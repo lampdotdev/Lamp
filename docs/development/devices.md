@@ -280,7 +280,7 @@ TV it's staged and looked at as a TV app is. `make_app_for` with the places it's
 and the request's device line says where it's shown (`Rules.screenPlaces`).
 
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
-`hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team.
+`hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team. A game's or a screen's Mac copy is installed in Games/ or Screens/ of the apps folder (`Target.installFolder`), apart from a Mac app of its wish, which has the wish's name.
 
 **What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the

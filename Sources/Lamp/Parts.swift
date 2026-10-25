@@ -95,8 +95,6 @@ enum Parts {
                 part.engine = meta?.engine
                 part.integration = GameKit.integration(for: part)
             }
-            // Where it's installed when that isn't under the wish's name, as it was given when it was made.
-            part.installName = meta?.installName
             return part
         }
     }
