@@ -1846,6 +1846,8 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.buildFolder(for: part))
         try? fm.removeItem(at: Devices.signingFolder(for: part))
         AppSecrets.forget(app: part.instance)
+        // What its page saved in the TV preview, the values its wish's apps shared included.
+        if part.platform.hasTV || part.platform.hasDevice { TVPreview.forget(part) }
         simulatorApps[part.id] = nil
         queued[part.id] = nil
         stamps[part.id] = nil
@@ -4352,6 +4354,7 @@ final class Store: ObservableObject {
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
         AppSecrets.forget(app: project.instance)
+        if project.platform.hasTV || project.platform.hasDevice { TVPreview.forget(project) }
         WishKeys.forget(project)
         projects.removeAll { $0.id == project.id }
         logs[project.id] = nil

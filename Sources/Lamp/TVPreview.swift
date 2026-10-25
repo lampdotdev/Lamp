@@ -40,6 +40,24 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         open[project.id] = nil
     }
 
+    /// What an app's page saved in its preview (`store(for:)`), gone with the app: a part's store is named after its
+    /// instance, so it would otherwise outlive its wish for good, values the wish's apps shared included. A store a page
+    /// still has open can't be removed, and WebKit lets go of a closed page's a few seconds later, so it's tried in the
+    /// background for a while rather than holding up what deletes the app.
+    @discardableResult
+    static func forget(_ project: LampProject) -> Task<Void, Never> {
+        close(project)
+        let store = store(for: project.instance)
+        return Task { @MainActor in
+            guard let store else { return }
+            for _ in 0..<120 {
+                guard await WKWebsiteDataStore.allDataStoreIdentifiers.contains(store) else { return }
+                if (try? await WKWebsiteDataStore.remove(forIdentifier: store)) != nil { return }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
     /// Opens the staged app (again, from the start), in front or behind what the person is doing. Nil once it has loaded.
     @discardableResult
     static func show(_ project: LampProject, staged: URL, inFront: Bool, device: String = "TV") async -> String? {
