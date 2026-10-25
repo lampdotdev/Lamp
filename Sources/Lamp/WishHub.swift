@@ -128,7 +128,7 @@ final class WishClaims: @unchecked Sendable {
 enum WishRooms {
     /// What this Lamp's apps of a wish say to each other, numbered as LampSupport.swift, LampSupport.kt and lamp.js number
     /// it (`wire` in each): an app in the room that says less was built by an earlier Lamp.
-    static let wire = 2
+    static let wire = 3
 
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }
@@ -328,7 +328,7 @@ enum WishProxies {
         let proxy = Proxy(app: project.id, room: WishRooms.key(for: wish), link: links)
         proxies[project.id] = proxy
         let task = URLSession.shared.webSocketTask(with: socket)
-        task.maximumMessageSize = WishChannel.sealedLimit + 1024
+        task.maximumMessageSize = WishChannel.pieceLimit + 1024   // a file's piece, sealed
         proxy.task = task
         task.resume()
         receive(proxy, on: task)
@@ -383,7 +383,7 @@ enum WishProxies {
         var messages: [URLSessionWebSocketTask.Message] = []
         for item in body["frames"] as? [[String: Any]] ?? [] {
             if let text = item["text"] as? String, text.utf8.count <= ControllerWire.message { messages.append(.string(text)) }
-            else if let data = (item["data"] as? String).flatMap({ Data(base64Encoded: $0) }), data.count <= WishChannel.sealedLimit + 16 { messages.append(.data(data)) }
+            else if let data = (item["data"] as? String).flatMap({ Data(base64Encoded: $0) }), data.count <= max(WishChannel.sealedLimit, WishChannel.pieceLimit) + 16 { messages.append(.data(data)) }
             else { return (413, ["error": "A message between the wish's apps is at most \(ControllerWire.message) bytes as JSON."]) }
         }
         proxy.lastPoll = Date()
@@ -477,10 +477,11 @@ enum WishNote {
             if let member = present[peer] {
                 let since = (member["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened) } ?? "?"
                 line += ", in the wish's room as \"\(member["device"] as? String ?? "")\" since \(since)"
-                // Built by an earlier Lamp: its wish's other apps show it as out of date and share no values with it,
+                // Built by an earlier Lamp: its wish's other apps show it as out of date and share no values, files or game
+                // controls with it,
                 // which opening it from Lamp mends by building it again.
                 if (member["wire"] as? Int ?? 1) < WishRooms.wire {
-                    line += ", built by an earlier Lamp (the others show it as out of date and share no values with it until it's opened from Lamp, which builds it again)"
+                    line += ", built by an earlier Lamp (the others show it as out of date and share nothing new with it (values, files, game controls) until it's opened from Lamp, which builds it again)"
                 }
                 // What the app says of its own link: the apps it reaches straight, which go on with Lamp closed, and
                 // what stops it reaching them.

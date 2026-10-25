@@ -9259,42 +9259,16 @@ final class Store: ObservableObject {
         return await appRequest(request, for: project)
     }
 
-    /// Who a TV app's game is with (`Lamp.controllers` in lamp.js), asked by its page in the preview or on a TV, and by the
-    /// wish's other apps (`LampController`). Lamp only introduces them; what they say to each other never comes here:
-    ///
-    /// - The TV app's page gets its links: the relay (`ControllerRelay`), by the address the page reached Lamp at, with a
-    ///   host's credential, and each of the wish's iPhone apps listening now, with a ticket for it.
-    /// - A wish's iPhone app says where it's listening (`as: listener`) and gets the key its tickets are signed with.
-    /// - A wish's Mac app, or an iPhone app that can't listen, joins at the relay as a player (`as: player`), with a link's
-    ///   credential, as a phone following the TV's QR code has.
-    ///
-    /// Only a part of the same wish is answered for a wish, and none of it is anything of Lamp's.
+    /// Where a TV app's game meets the phones that join it (`Lamp.controllers` in lamp.js), asked by its page in the
+    /// preview or on a TV: the relay (`ControllerRelay`), by the address the page reached Lamp at, with a host's
+    /// credential. Lamp only introduces them; what they say to each other never comes here. A wish's own apps join the
+    /// game the way the wish's apps reach each other (`LampController` over `LampWish`), with nothing from Lamp, so an app
+    /// of a wish that asks here was built by an earlier Lamp. None of it is anything of Lamp's.
     private func controllerSession(_ request: Gateway.Request, for project: LampProject) async -> (Int, [String: Any]) {
         // By the name or address the app reached Lamp at, at the relay's port.
         let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
-        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
-        // One of the wish's other apps asking for its TV app, which is at the wish's root or in its TV/ folder alike: the
-        // asker may be a part of a TV wish, or the Mac app at the root of a wish whose TV app is in TV/.
-        if !project.platform.hasTV {
-            let wish = wish(of: project)
-            guard let tv = Self.tvApp(for: project, among: [wish] + parts(of: wish)) else { return (403, ["error": "This app's wish has no TV app."]) }
-            if body["as"] as? String == "listener" {
-                let token = "^[A-Za-z0-9_-]{8,64}$"
-                guard let port = (body["port"] as? Int).flatMap({ UInt16(exactly: $0) }), port > 0,
-                      let listener = body["listener"] as? String, listener.range(of: token, options: .regularExpression) != nil,
-                      let device = body["device"] as? String, device.range(of: token, options: .regularExpression) != nil else {
-                    return (400, ["error": "Say where the app is listening."])
-                }
-                guard let key = PhoneControllers.shared.register(listener: listener, wish: tv.id, device: device,
-                                                                 address: request.peerAddress ?? "127.0.0.1", port: port) else {
-                    return (409, ["error": "Another app is listening under that name."])
-                }
-                return (200, ["key": key.withUnsafeBytes { Data($0) }.base64EncodedString(), "renew": 20])
-            }
-            syncLocalNetwork()
-            guard Self.servesPhonePage(tv) else { return (409, ["error": "The TV app isn't open: open it in the TV preview or on the TV."]) }
-            guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
-            return (200, ["socket": "ws://\(host):\(port)/", "app": tv.id, "join": ControllerCredential.issue(kind: .join, app: tv.id)])
+        guard project.platform.hasTV else {
+            return (409, ["error": "This app was built by an earlier Lamp: open it from Lamp on your Mac to update it, and it joins the TV app's game again."])
         }
         guard Self.takesPlayers(project) else { return (409, ["error": "The app has no phone page yet: put one in Phone/index.html."]) }
         syncLocalNetwork()
@@ -9302,9 +9276,7 @@ final class Store: ObservableObject {
         guard let port = await ControllerRelay.ready() else { return (503, ["error": "Lamp couldn't start the link for controllers."]) }
         let relay: [String: Any] = ["kind": "relay", "socket": "ws://\(host):\(port)/", "app": project.id,
                                     "credential": PhoneControllers.shared.hostCredential(for: project, preview: request.fromPreview)]
-        let direct = PhoneControllers.shared.directLinks(for: project.id, preview: request.fromPreview,
-                                                         from: request.fromPreview ? nil : request.peerAddress)
-        return (200, ["links": [relay] + direct, "renew": 15])
+        return (200, ["links": [relay], "renew": 15])
     }
 
     /// The wish's apps seeing each other and talking (`WishRooms`): any app of a wish, by its own token, is told where its
@@ -9329,14 +9301,6 @@ final class Store: ObservableObject {
             let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
         }
-    }
-
-    /// The TV app one of a wish's apps joins as a player (`controllerSession`): its wish's, at the root or in TV/ alike,
-    /// among the wish's apps (`apps`: the wish and its parts). Nil for an app that isn't of a wish with a TV app.
-    nonisolated static func tvApp(for project: LampProject, among apps: [LampProject]) -> LampProject? {
-        guard !project.platform.hasTV else { return nil }
-        let wish = project.partOf ?? project.id
-        return apps.first { $0.platform.hasTV && ($0.id == wish || $0.partOf == wish) }
     }
 
     /// A TV app that phones or the wish's other apps join as players: one with a page for phones, or with an iPhone or

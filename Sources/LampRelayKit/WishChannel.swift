@@ -36,6 +36,32 @@ public enum WishChannel {
     public static let relayName = "lamp"
     /// The most a sealed message may hold: one message between the wish's apps, and its seal.
     public static let sealedLimit = ControllerWire.message + 1024
+    /// The most a sealed piece of a file may hold: a piece's bytes behind its header (`piece`).
+    public static let pieceLimit = ControllerWire.chunk + 64
+
+    /// A piece of a file between a wish's apps, as it goes sealed: 1, the length of a peer's name and the name (the one it's
+    /// for, from its sender to the relay; the one it's from, from the relay; none on a link straight between two apps),
+    /// the transfer's id as its sender numbers it (4 bytes, big-endian), then the bytes. A message is JSON and starts
+    /// with "{", so the first byte tells the two apart. What the file is, its acknowledgements and its end are messages
+    /// (`file`, `file-ack`, `file-refuse`, `file-cancel`), and its flow is the controllers' (`ControllerWire`).
+    public static func piece(peer: String, id: UInt32, bytes: Data) -> Data {
+        var data = Data([1, UInt8(peer.utf8.count)])
+        data.append(Data(peer.utf8))
+        data.append(contentsOf: [UInt8(id >> 24 & 0xff), UInt8(id >> 16 & 0xff), UInt8(id >> 8 & 0xff), UInt8(id & 0xff)])
+        data.append(bytes)
+        return data
+    }
+
+    /// A piece's peer, transfer and where its bytes start, when it's well formed.
+    public static func pieceHeader(_ data: Data) -> (peer: String, id: UInt32, offset: Int)? {
+        let bytes = [UInt8](data.prefix(2 + 32 + 4))
+        guard bytes.count >= 2, bytes[0] == 1, bytes[1] <= 32, bytes.count >= 2 + Int(bytes[1]) + 4 else { return nil }
+        let n = Int(bytes[1])
+        let name = String(decoding: bytes[2..<(2 + n)], as: UTF8.self)
+        guard n == 0 || isName(name) else { return nil }
+        let id = bytes[(2 + n)..<(2 + n + 4)].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        return (name, id, 2 + n + 4)
+    }
 
     /// HMAC-SHA256 under the wish's key of a label, a zero byte and what it's about: every value the channel derives.
     public static func derive(_ label: String, key: SymmetricKey, _ data: Data = Data()) -> Data {
@@ -105,7 +131,7 @@ public enum WishChannel {
 
         /// What a sealed message said, when it's the next one this way and nothing in it was changed; nil otherwise.
         public mutating func open(_ sealed: Data) -> Data? {
-            guard sealed.count >= 16, sealed.count <= sealedLimit + 16,
+            guard sealed.count >= 16, sealed.count <= max(sealedLimit, pieceLimit) + 16,
                   let box = try? AES.GCM.SealedBox(nonce: Self.nonce(count), ciphertext: sealed.dropLast(16), tag: sealed.suffix(16)),
                   let plain = try? AES.GCM.open(box, using: key) else { return nil }
             count += 1

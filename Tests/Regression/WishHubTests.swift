@@ -124,8 +124,8 @@ final class WishHubTests: XCTestCase {
         for _ in 0..<50 where WishRooms.presence(of: wish).count < 2 { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertEqual(WishRooms.presence(of: wish).compactMap { $0["peer"] as? String }.sorted(), ["android", "iphone"])
 
-        // Too big for one message, said so and not sent.
-        let (bigStatus, _) = await WishProxies.send(android, body: ["link": link, "frames": [["data": Data(count: ControllerWire.message + 2048).base64EncodedString()]]])
+        // Too big for one message or a file's piece, said so and not sent.
+        let (bigStatus, _) = await WishProxies.send(android, body: ["link": link, "frames": [["data": Data(count: WishChannel.pieceLimit + 2048).base64EncodedString()]]])
         XCTAssertEqual(bigStatus, 413)
 
         // A new link ends the old one: nothing of it reaches the new handshake.

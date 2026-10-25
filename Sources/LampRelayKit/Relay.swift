@@ -19,8 +19,11 @@ import Network
 /// (`WishChannel`), and everything after it is sealed, so what they say crosses the network unreadable. A peer names
 /// which app it is in its hello, hears who else is in the room (`welcome`, `joined`, `left`) and sends JSON messages to
 /// one peer or to all (`send` → `message`) and the values they share to one peer (`values`), under the same size and
-/// rate limits as a phone's; it keeps no values itself. The relay tells whoever
-/// runs it who is in each room (`onRoomChanged`), so Lamp can say so to the builder. Files between peers aren't carried yet.
+/// rate limits as a phone's; it keeps no values itself. Files go to one peer in pieces (`WishChannel.piece`) under the
+/// controllers' flow (`ControllerWire`: a window ahead of what's acknowledged, two at once each way between two apps),
+/// and a game's controls from a wish's app to its TV app's `Lamp.controllers` as `pad` messages; both only to an app
+/// that speaks 3 or more, since an earlier one would take a piece for a message gone wrong. The relay tells whoever
+/// runs it who is in each room (`onRoomChanged`), so Lamp can say so to the builder.
 public final class Relay: @unchecked Sendable {
     public struct Session: Equatable, Sendable {
         /// Lamp's generation of the app's session: credentials of an earlier one get nowhere.
@@ -117,6 +120,8 @@ public final class Relay: @unchecked Sendable {
         var at: [String] = []
         /// How its link stands, as it last said: its state, and the apps it reaches straight. For Lamp, not the others.
         var link: [String: Any] = [:]
+        /// Files on their way from it, by the peer each is for and its id (`sendingKey`).
+        var sending: [String: Transfer] = [:]
         init(peer: RelayPeer, kind: String, name: String, device: String, wire: Int, sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
             self.peer = peer
             self.kind = kind
@@ -185,7 +190,8 @@ public final class Relay: @unchecked Sendable {
     private func listen(_ port: UInt16, ready: @escaping @Sendable (UInt16?) -> Void) {
         let socket = NWProtocolWebSocket.Options()
         socket.autoReplyPing = true
-        socket.maximumMessageSize = ControllerWire.chunk + ControllerWire.header
+        // A piece, a game's or a wish's sealed one with its header and seal.
+        socket.maximumMessageSize = ControllerWire.chunk + 1024
         socket.setClientRequestHandler(queue) { [weak self] _, headers in
             let admitted = self?.admits(origin: headers.first { $0.name.lowercased() == "origin" }?.value) ?? false
             return NWProtocolWebSocket.Response(status: admitted ? .accept : .reject, subprotocol: nil)
@@ -421,6 +427,7 @@ public final class Relay: @unchecked Sendable {
             old.peer.onClose = {}
             old.peer.close(code: 4000)
             room.members[id] = nil
+            Self.dropFiles(to: id, in: room)
             let left = Self.json(["t": "left", "peer": id])
             for (_, each) in room.members { each.send(left) }
         }
@@ -437,11 +444,14 @@ public final class Relay: @unchecked Sendable {
             guard let self, let room, let member else { return }
             // A message that doesn't open as the next one from this app was changed, replayed or made up on the way.
             guard let plain = member.opener.open(sealed) else { return member.peer.close(code: 4003) }
+            if plain.first == 1 { return self.pieceFromMember(room, id: id, member: member, data: plain) }
+            guard plain.count <= WishChannel.sealedLimit else { return member.peer.close(code: 1009) }
             self.fromMember(room, key: key, id: id, member: member, text: String(decoding: plain, as: UTF8.self))
         }
         peer.onClose = { [weak self, weak room, weak member] in
             guard let self, let room, let member, room.members[id] === member else { return }
             room.members[id] = nil
+            Self.dropFiles(to: id, in: room)
             let left = Self.json(["t": "left", "peer": id])
             for each in room.members.values { each.send(left) }
             self.onRoomChanged(key, self.membersDescribed(room))
@@ -475,6 +485,7 @@ public final class Relay: @unchecked Sendable {
             if message["ask"] as? Bool == true { out["ask"] = true }
             return target.send(Self.json(out))
         }
+        if kind == "pad" || kind.hasPrefix("file") { return fileOrPad(room, id: id, member: member, kind: kind, message: message) }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String
         let out = Self.json(["t": "message", "from": id, "data": data, "at": Self.now])
@@ -487,6 +498,76 @@ public final class Relay: @unchecked Sendable {
         } else {
             for (other, each) in room.members where other != id && each.peer.pendingText <= Self.hostBehind { each.send(out) }
         }
+    }
+
+    /// A file's messages and a game's controls, each for one app (`to`) and passed on as from the sender (`from`), only to an
+    /// app that speaks 3 or more. A file is held to the size it was announced at and to a window ahead of what its receiver
+    /// has acknowledged, as a phone's is; its acknowledgements aren't counted against the rate, since they're what keeps it
+    /// moving.
+    private func fileOrPad(_ room: Room, id: String, member: Member, kind: String, message: [String: Any]) {
+        guard let to = message["to"] as? String, to != id else { return }
+        let target = room.members[to].flatMap { $0.wire >= 3 ? $0 : nil }
+        switch kind {
+        case "pad":
+            // A button let go is never dropped for a TV that's behind: one it thinks is still held stays held.
+            guard member.rate.allowed(member.peer), let m = message["m"] as? [String: Any], let target,
+                  target.peer.pendingText <= Self.hostBehind || (m["t"] as? String == "button" && m["down"] as? Bool != true) else { return }
+            target.send(Self.json(["t": "pad", "from": id, "m": m]))
+        case "file":
+            guard member.rate.allowed(member.peer), let fileID = ControllerWire.isID(message["id"]) else { return }
+            let refuse = { (reason: String) in member.send(Self.json(["t": "file-refuse", "from": to, "id": fileID, "reason": reason])) }
+            guard let size = message["size"] as? Int, size >= 0, size <= ControllerWire.file else { return refuse("The file is too big to send.") }
+            guard let target else { return refuse(room.members[to] == nil ? "That app isn't open." : "That app is out of date.") }
+            guard target.peer.pendingText <= Self.hostBehind else { return refuse("That app is busy; try again.") }
+            let key = Self.sendingKey(to, fileID)
+            guard member.sending[key] == nil, member.sending.keys.filter({ $0.hasPrefix(to + "\t") }).count < ControllerWire.transfers else {
+                return refuse("Another file is still on its way.")
+            }
+            member.sending[key] = Transfer(size: size)
+            target.send(Self.json(["t": "file", "from": id, "id": fileID, "name": Self.short(message["name"], 200),
+                                   "type": Self.short(message["type"], 100), "size": size, "ch": Self.short(message["ch"], 16)]))
+        case "file-cancel":
+            guard let fileID = ControllerWire.isID(message["id"]), member.sending.removeValue(forKey: Self.sendingKey(to, fileID)) != nil else { return }
+            target?.send(Self.json(["t": "file-cancel", "from": id, "id": fileID]))
+        case "file-ack":
+            // From the file's receiver, for its sender's transfer.
+            guard let fileID = ControllerWire.isID(message["id"]), let sender = room.members[to], let got = message["got"] as? Int,
+                  let transfer = sender.sending[Self.sendingKey(id, fileID)], transfer.acknowledge(got) else { return }
+            if got == transfer.size { sender.sending[Self.sendingKey(id, fileID)] = nil }
+            sender.send(Self.json(["t": "file-ack", "from": id, "id": fileID, "got": got]))
+        case "file-refuse":
+            guard let fileID = ControllerWire.isID(message["id"]), let sender = room.members[to],
+                  sender.sending.removeValue(forKey: Self.sendingKey(id, fileID)) != nil else { return }
+            sender.send(Self.json(["t": "file-refuse", "from": id, "id": fileID, "reason": Self.short(message["reason"], 200)]))
+        default:
+            break
+        }
+    }
+
+    /// A piece of a file from a member, for the peer its header names: passed on sealed for that peer, with the sender's
+    /// name in its place. A piece past the file's size, or past the window the receiver has acknowledged, is a sender
+    /// that doesn't keep to what it said: the file goes no further, and both hear so.
+    private func pieceFromMember(_ room: Room, id: String, member: Member, data: Data) {
+        guard let (to, fileID, offset) = WishChannel.pieceHeader(data), let transfer = member.sending[Self.sendingKey(to, fileID)] else { return }
+        let bytes = data.count - offset
+        guard let target = room.members[to], bytes > 0, bytes <= ControllerWire.chunk, transfer.passed + bytes <= transfer.size,
+              transfer.passed + bytes - transfer.acknowledged <= ControllerWire.window + ControllerWire.chunk,
+              target.peer.send(piece: WishChannel.piece(peer: id, id: fileID, bytes: data.dropFirst(offset)),
+                               seal: { [weak target] plain in target?.sealer.seal(plain) ?? Data() }) else {
+            member.sending[Self.sendingKey(to, fileID)] = nil
+            room.members[to]?.send(Self.json(["t": "file-cancel", "from": id, "id": fileID]))
+            member.send(Self.json(["t": "file-refuse", "from": to, "id": fileID, "reason": "The file didn't keep to its size."]))
+            return
+        }
+        transfer.passed += bytes
+        transfer.unacknowledged += 1
+    }
+
+    private static func sendingKey(_ to: String, _ id: UInt32) -> String { "\(to)\t\(id)" }
+
+    /// A member gone: the files on their way to it go with it (its own went with it), and their senders hear it left.
+    private static func dropFiles(to id: String, in room: Room) {
+        for member in room.members.values { member.sending = member.sending.filter { !$0.key.hasPrefix(id + "\t") } }
     }
 
     /// Every app the room's wish has, as a member is told it: in its welcome, and again when the list changes.

@@ -66,7 +66,7 @@ final class WishNativeTests: XCTestCase {
     static func program(main: String = harness) throws -> String {
         let support = Template.lampSupportSwift
         let start = try XCTUnwrap(support.range(of: "@MainActor final class LampWish"))
-        let end = try XCTUnwrap(support.range(of: "// MARK: - The wish's TV app", range: start.upperBound..<support.endIndex))
+        let end = try XCTUnwrap(support.range(of: "// MARK: - Mac building blocks", range: start.upperBound..<support.endIndex))
         let block = String(support[start.lowerBound..<end.lowerBound])
             .replacingOccurrences(of: "#if os(macOS)\n            return \"Mac\"", with: "#if os(macOS)\n            return \"iPhone simulator\"")
             .replacingOccurrences(of: "UserDefaults.standard", with: "UserDefaults(suiteName: ProcessInfo.processInfo.environment[\"LAMP_DEFAULTS\"] ?? \"lamp-wish-test\")!")

@@ -4,40 +4,17 @@ import LampRelayKit
 import Network
 
 /// Phones as controllers for a TV app. Lamp introduces the two sides and stays out of what they say to each other, so
-/// a game's buttons and files never wait for Lamp, nor Lamp for them:
+/// a game's buttons and files never wait for Lamp, nor Lamp for them: a phone's page in a browser can't listen, so it
+/// joins through the relay (`ControllerRelay`, a process of Lamp's own), and so does the TV page. Lamp starts the relay,
+/// opens and ends each app's session there and signs who may join it; the relay passes their messages on. A wish's own
+/// apps join the game the way they reach each other (`LampController` over `LampWish`), with nothing from Lamp.
 ///
-/// - A wish's iPhone app listens on the phone itself (`LampController` in LampSupport) and tells Lamp where
-///   (`register`); Lamp gives it a key of its own for that listener. When the TV app's page asks Lamp who its players
-///   are (`/app/controller`), Lamp gives it that address with a ticket signed with the listener's key, and the page opens
-///   its socket straight to the phone.
-/// - A phone's page in a browser can't listen, so it joins through the relay (`ControllerRelay`, a process of Lamp's
-///   own), and so does the TV page, a wish's Mac app, and an iPhone app that can't listen. Lamp starts the relay, opens
-///   and ends each app's session there and signs who may join it; the relay passes their messages on.
-///
-/// Either way Lamp hands out only short-lived credentials (`ControllerCredential`, `ticket`), and keeps no message.
+/// Lamp hands out only short-lived credentials (`ControllerCredential`), and keeps no message.
 /// The page is plain http on the local network, so a phone's browser keeps its motion sensors from it: buttons and
 /// sticks work as they are, and tilt only where the person has put https in front of the page themselves.
 @MainActor
 final class PhoneControllers {
     static let shared = PhoneControllers()
-
-    /// A wish's iPhone app listening for its TV app: where it is, and the key its tickets are signed with, for as long
-    /// as it keeps saying it's there.
-    struct Listener {
-        let wish: String
-        let device: String
-        var address: String
-        var port: UInt16
-        let key: SymmetricKey
-        var renewed: Date
-    }
-
-    /// A listener that hasn't said it's there for this long is forgotten (the app renews every 20 seconds).
-    static let listenerLife: TimeInterval = 60
-    /// A ticket only has to last until the TV page has opened its socket with it.
-    static let ticketLife: TimeInterval = 120
-
-    private var listeners: [String: Listener] = [:]
 
     // MARK: The TV app's page
 
@@ -45,59 +22,6 @@ final class PhoneControllers {
     /// preview's says so, so that a TV running the same app meanwhile waits for the preview to close.
     func hostCredential(for project: LampProject, preview: Bool) -> String {
         ControllerCredential.issue(kind: .host, app: project.id, preview: preview)
-    }
-
-    /// The wish's iPhone apps listening now, each as the page reaches it, with a ticket for it. A phone in the simulator
-    /// listens on this Mac: the preview reaches it at the loopback address it registered from, and a TV on the network
-    /// at this Mac's address on that network.
-    func directLinks(for wish: String, preview: Bool, from asker: String?) -> [[String: Any]] {
-        let now = Date()
-        listeners = listeners.filter { now.timeIntervalSince($0.value.renewed) < Self.listenerLife }
-        return listeners.filter { $0.value.wish == wish }.sorted { $0.key < $1.key }.compactMap { id, listener in
-            var address = listener.address
-            // A link-local address names its interface, which no page can say in an address: such a phone isn't offered.
-            if address.contains("%") { return nil }
-            if Self.isLoopback(address), let asker, !Self.isLoopback(asker) {
-                guard let mine = IntegrationRunner.macAddress(near: asker) else { return nil }
-                address = mine
-            }
-            let host = address.contains(":") ? "[\(address)]" : address
-            return ["kind": "direct", "socket": "ws://\(host):\(listener.port)/", "device": listener.device,
-                    "credential": Self.ticket(listener: id, key: listener.key, preview: preview)]
-        }
-    }
-
-    /// What the page shows the phone it opens a socket to: signed with the listener's own key, for that listener, so it
-    /// opens no other phone's game and is no use for long.
-    static func ticket(listener: String, key: SymmetricKey, preview: Bool, now: Date = Date()) -> String {
-        ControllerToken.issue(kind: .host, app: listener, generation: 0, preview: preview, lifetime: ticketLife, now: now, key: key)
-    }
-
-    // MARK: A wish's iPhone app
-
-    /// The iPhone app's listener, at `port` on the address its request came from: the key its tickets are signed with,
-    /// the same for as long as that listener lasts.
-    func register(listener id: String, wish: String, device: String, address: String, port: UInt16) -> SymmetricKey? {
-        let now = Date()
-        // A listener's id is its own, and a ticket names it: one another wish's app has is never taken over.
-        if let known = listeners[id], known.wish != wish, now.timeIntervalSince(known.renewed) < Self.listenerLife { return nil }
-        if var known = listeners[id], known.wish == wish, now.timeIntervalSince(known.renewed) < Self.listenerLife {
-            known.address = address
-            known.port = port
-            known.renewed = now
-            listeners[id] = known
-            return known.key
-        }
-        let key = SymmetricKey(size: .bits256)
-        // A phone that starts listening again (the app reopened) is the same phone: its old listener is gone.
-        listeners = listeners.filter { !($0.value.wish == wish && $0.value.device == device) }
-        listeners[id] = Listener(wish: wish, device: device, address: address, port: port, key: key, renewed: now)
-        return key
-    }
-
-    /// The app's game is over (its page isn't served anywhere): what Lamp handed out for it is no use any more.
-    func forgetListeners(of wish: String) {
-        listeners = listeners.filter { $0.value.wish != wish }
     }
 
     // MARK: Sessions
@@ -110,12 +34,7 @@ final class PhoneControllers {
     /// The app has stopped: its phones are let go, and their links and credentials are no use any more.
     func end(_ app: String) {
         ControllerCredential.forget(app)
-        forgetListeners(of: app)
         ControllerRelay.end(app)
-    }
-
-    static func isLoopback(_ address: String) -> Bool {
-        address == "::1" || address.hasPrefix("127.") || address == "localhost"
     }
 }
 

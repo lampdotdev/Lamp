@@ -76,22 +76,13 @@ final class WishAppsRootTests: XCTestCase {
         XCTAssertEqual(Parts.root(among: try XCTUnwrap(Parts.kinds(for: ["tv", "iphone"])), for: draft), .iphone)
     }
 
-    /// A TV app in TV/, beside the Mac app at the wish's root, takes that app as a player as a TV app at the root takes
-    /// its parts: the wish's other apps reach its TV app wherever it is. The Mac app at the root asking for its link
-    /// was told "Only TV apps take phone controllers", and the TV showed "Waiting for Tally on your Mac" for good.
+    /// A TV app in TV/, beside the Mac app at the wish's root, takes players as a TV app at the root with parts does: its
+    /// game is open for the wish's other apps wherever it is. A TV app on its own without a phone page takes none.
     func testATVAppInItsFolderTakesTheWishsOtherAppsAsPlayers() {
-        let mac = LampProject(id: "tally", name: "Tally", exe: "Tally", dir: root.appendingPathComponent("tally"), platform: .mac, partFolders: ["TV"])
         let tv = LampProject(id: "tally.tv", name: "Tally", exe: "Tally", dir: root.appendingPathComponent("tally/TV"),
                              platform: .tv, partOf: "tally")
         XCTAssertTrue(Store.takesPlayers(tv))
         XCTAssertFalse(Store.takesPlayers(LampProject(id: "slides", name: "Slides", exe: "Slides", dir: root.appendingPathComponent("slides"), platform: .tv)))
-        XCTAssertEqual(Store.tvApp(for: mac, among: [mac, tv])?.id, "tally.tv")
-        XCTAssertNil(Store.tvApp(for: tv, among: [mac, tv]))
-        // A TV wish's iPhone app still joins the TV app at the root, and never another wish's.
-        let remote = LampProject(id: "remote", name: "Remote", exe: "Remote", dir: root.appendingPathComponent("remote"), platform: .tv, partFolders: ["iPhone"])
-        let phone = LampProject(id: "remote.iphone", name: "Remote", exe: "Remote", dir: root.appendingPathComponent("remote/iPhone"), platform: .iphone, partOf: "remote")
-        XCTAssertEqual(Store.tvApp(for: phone, among: [mac, tv, remote, phone])?.id, "remote")
-        XCTAssertNil(Store.tvApp(for: mac, among: [mac, remote, phone]))
     }
 }
 

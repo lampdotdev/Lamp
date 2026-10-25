@@ -14,7 +14,9 @@ final class RelayPeer {
     /// Past its handshake: until then a close frame can't go, and only cancelling lets the socket go.
     private var ready = false
     private var queue: DispatchQueue?
-    private var pieces: [Data] = []
+    /// Pieces waiting their turn, each with what seals it as it goes, for a wish's room: sealed then, not when queued,
+    /// so it takes its number in the order things really go out, after any message sent while it waited.
+    private var pieces: [(data: Data, seal: ((Data) -> Data)?)] = []
     private var pieceBytes = 0
     private var sendingPiece = false
     var onText: (String) -> Void = { _ in }
@@ -62,12 +64,13 @@ final class RelayPeer {
         })
     }
 
-    /// Queues a piece of a file; false when the peer already has more waiting than it could ever be owed.
+    /// Queues a piece of a file; false when the peer already has more waiting than it could ever be owed. `seal`, for a
+    /// member of a wish's room, seals it as it goes.
     @discardableResult
-    func send(piece: Data) -> Bool {
+    func send(piece: Data, seal: ((Data) -> Data)? = nil) -> Bool {
         guard open else { return false }
         guard pieceBytes + piece.count <= Self.pieceLimit else { return false }
-        pieces.append(piece)
+        pieces.append((piece, seal))
         pieceBytes += piece.count
         pump()
         return true
@@ -76,10 +79,10 @@ final class RelayPeer {
     private func pump() {
         guard open, !sendingPiece, !pieces.isEmpty else { return }
         let piece = pieces.removeFirst()
-        pieceBytes -= piece.count
+        pieceBytes -= piece.data.count
         sendingPiece = true
         let context = NWConnection.ContentContext(identifier: "piece", metadata: [NWProtocolWebSocket.Metadata(opcode: .binary)])
-        connection.send(content: piece, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in
+        connection.send(content: piece.seal?(piece.data) ?? piece.data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] _ in
             self?.sendingPiece = false
             self?.pump()
         })
