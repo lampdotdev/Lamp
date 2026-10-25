@@ -127,39 +127,67 @@ extension Store {
         default: return
         }
         // Pairing puts a question on the phone; the person chooses the phone once it's done.
-        guard open, what != "pair" else { return }
-        // Where the choice points, once it's made: some choices go through a check or a device's setup first.
-        let place: (Destination, String?)? = switch what {
-        case "mac": (.mac, nil)
-        case "family", "simulator": (.ios, nil)
-        case "phone": (.ios, value)
-        case "emulator": (.android, nil)
-        case "android": (.android, value)
-        case "preview": (.tv, nil)
-        case "tv": (.tv, value)
-        case "device": (.device, value)
-        case "add": Destination(rawValue: value).map { ($0, nil) }
-        default: nil
-        }
-        if let place { openWhenThere(project, place.0, device: place.1) }
+        guard open, what != "pair", let wanted = Chosen(what, value) else { return }
+        openWhenThere(project, wanted, again: { [weak self] in
+            // A choice refused while the app was held (a build) is made again once it isn't; one with a setup isn't.
+            guard let self, let now = self.current(project), ["mac", "family", "simulator", "emulator", "preview", "add"].contains(what) else { return }
+            self.tryOn(now, id)
+        })
     }
 
-    /// Opens the app where it was just chosen to open, once it points there: at once for most choices, and after a
-    /// check or the device's setup for the rest, however long that takes (a quarter of an hour at most). A later choice
-    /// takes this one's place. Opened even when a copy is open elsewhere, since this is where the person asked for it.
-    private func openWhenThere(_ project: LampProject, _ place: Destination, device: String?) {
+    /// Exactly where a choice puts the app: its place, its device (nil for a simulator, the emulator, the preview or
+    /// the Mac), and for the simulator which one.
+    private struct Chosen {
+        let place: Destination
+        let device: String?
+        var family: DeviceFamily?
+        var simulator: String??
+
+        init?(_ what: String, _ value: String) {
+            switch what {
+            case "mac": (place, device) = (.mac, nil)
+            case "family": (place, device, family, simulator) = (.ios, nil, DeviceFamily(rawValue: value), .some(nil))
+            case "simulator": (place, device, simulator) = (.ios, nil, .some(value))
+            case "phone": (place, device) = (.ios, value)
+            case "emulator": (place, device) = (.android, nil)
+            case "android": (place, device) = (.android, value)
+            case "preview": (place, device) = (.tv, nil)
+            case "tv": (place, device) = (.tv, value)
+            case "device": (place, device) = (.device, value)
+            case "add":
+                guard let added = Destination(rawValue: value) else { return nil }
+                (place, device) = (added, nil)
+            default: return nil
+            }
+        }
+
+        func matches(_ project: LampProject) -> Bool {
+            guard project.destination == place, project.device == device || place == .mac else { return false }
+            if let family, project.family != family { return false }
+            if let simulator, project.simulator != simulator { return false }
+            return true
+        }
+    }
+
+    /// Opens the app where it was just chosen to open, once it points exactly there: at once for most choices, and after
+    /// a check or the device's setup for the rest, however long that takes (a quarter of an hour at most). A choice
+    /// refused while the app was held is made `again` once it isn't. A later choice takes this one's place. Opened even
+    /// when a copy is open elsewhere, since this is where the person asked for it.
+    private func openWhenThere(_ project: LampProject, _ wanted: Chosen, again: @escaping () -> Void) {
         let token = UUID()
         openingChosen[project.id] = token
         Task { @MainActor in
+            var triedAgain = false
             for _ in 0..<1800 {
+                try? await Task.sleep(for: .milliseconds(500))
                 guard openingChosen[project.id] == token, let now = current(project) else { return }
-                let there = now.destination == place && (device == nil || now.device == device)
-                if there, !busy.contains(now.id) {
+                guard !busy.contains(now.id) else { continue }
+                if wanted.matches(now) {
                     openingChosen[project.id] = nil
                     openPrepared(now)
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(500))
+                if !triedAgain { triedAgain = true; again() }
             }
             if openingChosen[project.id] == token { openingChosen[project.id] = nil }
         }
