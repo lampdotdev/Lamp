@@ -19,7 +19,7 @@ final class NewerWishTests: XCTestCase {
         let mac = wish.appendingPathComponent("Mac")
         try FileManager.default.createDirectory(at: wish.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: mac.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
-        try #"{"name":"Habits","exe":"Habits","instance":"a1","layout":2,"apps":[{"folder":"Mac","kind":"mac"}]}"#
+        try #"{"name":"Habits","exe":"Habits","instance":"a1","layout":3,"apps":[{"folder":"Mac","kind":"mac"}]}"#
             .write(to: wish.appendingPathComponent(".lamp/meta.json"), atomically: true, encoding: .utf8)
         try #"{"name":"Habits","exe":"Habits","platform":"mac"}"#.write(to: mac.appendingPathComponent(".lamp/meta.json"), atomically: true, encoding: .utf8)
         try #"let package = Package(name: "Habits", platforms: [.macOS(.v14)])"#

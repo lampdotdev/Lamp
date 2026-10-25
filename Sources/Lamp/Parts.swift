@@ -35,6 +35,12 @@ enum Parts {
     /// Every folder a part can be in.
     static var folders: Set<String> { Set(partKinds.map(folder(for:))) }
 
+    /// Whether an app of this kind can be in this folder: one of Lamp's part folders for the kind's family, as an app
+    /// changed in place within its family keeps the folder it was made in (an iPhone app made for the Mac too, in iPhone/).
+    static func folder(_ folder: String, canHold kind: Platform) -> Bool {
+        Targets.all.contains { $0.part?.folder == folder && $0.part?.family == kind.target.part?.family }
+    }
+
     /// Where Lamp keeps its wishes (`Store.root`): a part's folder is always one of `folders`, inside a wish's folder here.
     static let appsRoot = Edition.supportFolder.appendingPathComponent("Apps")
 

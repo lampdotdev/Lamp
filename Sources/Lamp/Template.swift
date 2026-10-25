@@ -38,6 +38,13 @@ enum Template {
         return slug
     }
 
+    /// The layout a wish's meta.json says (`NewerWish`): this Lamp's for a wish whose apps are all in folders of their own,
+    /// which a Lamp from before would read as an empty draft and write a new app into, and none for every other wish and
+    /// part, which such a Lamp reads as it always did.
+    static func layout(of project: LampProject) -> Int? {
+        project.holdsApp ? nil : NewerWish.layout
+    }
+
     /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
         try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
@@ -54,7 +61,7 @@ enum Template {
                                              undecided: project.undecided,
                                              apps: project.apps.isEmpty ? nil : project.apps,
                                              waitsForDevice: project.waitsForDevice ? true : nil,
-                                             decided: project.decided ? true : nil)),
+                                             decided: project.decided ? true : nil, layout: layout(of: project))),
                             to: project.dir.appendingPathComponent(".lamp/meta.json"), in: project.dir)
     }
 

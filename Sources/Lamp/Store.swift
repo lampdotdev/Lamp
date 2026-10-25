@@ -212,6 +212,7 @@ struct ProjectMeta: Codable {
     var apps: [WishApp]?       // LampProject.apps: the apps the wish should have, and what each waits for
     var waitsForDevice: Bool?  // LampProject.waitsForDevice
     var decided: Bool?         // LampProject.decided
+    var layout: Int?           // NewerWish.layout: said only by a wish whose own folder holds no app (`holdsApp`)
 }
 
 struct AppUsage: Codable {
@@ -1090,6 +1091,9 @@ final class Store: ObservableObject {
             try? Template.saveMeta(game)
             return game
         }
+        // The layout meta.json says follows the files, whatever took the app in the wish's own folder away or brought it
+        // back (the agent's own git, say), so a Lamp from before such wishes always leaves one alone (`NewerWish`).
+        if meta.layout != Template.layout(of: project) { try? Template.saveMeta(project) }
         return project
     }
 
@@ -1855,20 +1859,23 @@ final class Store: ObservableObject {
     /// build that kind yet or the folder can't be made.
     /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
     /// and not tried again by itself.
-    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
+    func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil, folder given: String? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
         if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
         if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem, true) }
-        let folder = Parts.folder(for: kind)
+        // Files a shared wish brought for this part while this Mac couldn't make it: they go in over the scaffold, with
+        // the family the file gave the part, unless the caller gives one.
+        let kept = Sharing.kept(in: wish.dir, for: kind).flatMap { $0.package.platform == kind ? $0 : nil }
+        // A part from a shared file is made in the folder it had there (`given`, or the one kept with its files), which
+        // is its name among the wish's apps (`WishRooms.peer`): an iPhone app made for the Mac too stays the "iphone"
+        // the others talk to, rather than coming in as the "apple" none of them knows.
+        let folder = [given, kept?.folder].compactMap { $0 }.first { Parts.folder($0, canHold: kind) } ?? Parts.folder(for: kind)
         let dir = wish.dir.appendingPathComponent(folder)
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing.
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
             return (nil, "\(folder)/ in the wish's folder isn't a folder: delete it first.", false)
         }
-        // Files a shared wish brought for this part while this Mac couldn't make it: they go in over the scaffold, with
-        // the family the file gave the part, unless the caller gives one.
-        let kept = Sharing.kept(in: wish.dir, for: kind).flatMap { $0.package.platform == kind ? $0 : nil }
         do {
             try AppFolder.createDirectory(dir.appendingPathComponent(".lamp"), in: wish.dir)
             let part = LampProject(id: Parts.id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: dir,
@@ -3037,7 +3044,7 @@ final class Store: ObservableObject {
             if let had {
                 target = had
             } else {
-                let (made, problem, setup) = await addPart(kind, to: wish, family: part.package.family)
+                let (made, problem, setup) = await addPart(kind, to: wish, family: part.package.family, folder: part.folder)
                 guard let made else {
                     do { try Sharing.keep(part, in: wish.dir) } catch {
                         log(wish, .error, "Lamp couldn't keep \(Parts.name(of: kind))'s files: \(error.localizedDescription)")
@@ -5496,12 +5503,17 @@ final class Store: ObservableObject {
         var integration = kind?.target.recipe.integration(project.dir)
         // A game's Xbox is one of its places, which meta.json keeps and no version holds: it stays across a restore.
         if let kind, kind.addsPlaces { var placed = projects[index]; placed.platform = kind; integration = GameKit.integration(for: placed) }
+        // The wish's list is the one the restore wrote with the version's files (`Versions.restoreFiles`), not the one
+        // Lamp held before it.
+        if !projects[index].isPart, let saved = Self.readWish(at: project.dir) { projects[index].apps = saved.apps }
         if let kind, projects[index].platform != kind || projects[index].integration != integration {
             let was = projects[index].platform
             projects[index].platform = kind
             projects[index].integration = integration
             if !kind.reaches(.ios) { projects[index].device = nil }
-            projects[index].apps = Parts.setting(WishApp(kind: kind), in: projects[index].apps.filter { Parts.group($0.kind) != Parts.group(was) })
+            if !projects[index].apps.contains(where: { $0.kind == kind }) {
+                projects[index].apps = Parts.setting(WishApp(kind: kind), in: projects[index].apps.filter { Parts.group($0.kind) != Parts.group(was) })
+            }
             try? Template.saveMeta(projects[index])
             refreshOpenApps()
         }
