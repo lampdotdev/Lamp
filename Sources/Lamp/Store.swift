@@ -1121,10 +1121,7 @@ final class Store: ObservableObject {
             }
         }
         // Not for a wish whose apps are all in folders of their own: its name's installed copy is a Mac app of it.
-        // An app with no Mac half has no installed copy: its stamp is on its build, which is what the simulator gets.
-        for project in projects {
-            stamps[project.id] = project.holdsApp ? BuildStamp.read(project.hasMac ? project.installedURL : project.builtURL) : nil
-        }
+        for project in projects { stamps[project.id] = project.holdsApp ? BuildStamp.of(project) : nil }
         for project in projects where logs[project.id] == nil && !project.isPart {
             let lamp = project.dir.appendingPathComponent(".lamp")
             if let saved = LogLine.readChat(lamp.appendingPathComponent("chat.json")) {
@@ -4878,7 +4875,7 @@ final class Store: ObservableObject {
             // place is part of the fingerprint), else it's built again. Whether this Lamp made it is read from that
             // build itself, not from `stamps`, which for an app for both is its Mac copy's: a build with no stamp, or
             // an older Lamp's, is built again, so the wish's other apps stop showing it as out of date.
-            if FileManager.default.fileExists(atPath: project.builtURL.path), BuildStamp.read(project.builtURL)?.isOutdated(for: project) == false,
+            if FileManager.default.fileExists(atPath: project.builtURL.path), BuildStamp.read(project.builtURL, in: project)?.isOutdated(for: project) == false,
                !(project.platform == .universal && Runtime.sourcesChanged(project)) {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -8071,7 +8068,7 @@ final class Store: ObservableObject {
             return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
         }
         refreshOpenApps()
-        stamps[project.id] = BuildStamp.read(project.builtURL)
+        stamps[project.id] = BuildStamp.read(project.builtURL, in: project)
         return nil
     }
 
