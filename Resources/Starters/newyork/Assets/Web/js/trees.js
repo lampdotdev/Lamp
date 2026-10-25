@@ -877,8 +877,8 @@ function createTreeField(scene, sites) {
     const r3 = hashPos(t.x + t.z, 3.3, 0.7);
     const variant = hashPos(t.x, 5.9, t.z) < 0.5 ? 0 : 1;
     const s = t.scale * (0.9 + r1 * 0.2);
-    // Lamp: a site's y is its height above the ground there (terrain.js)
-    const y = (t.y || 0) + groundHeight(t.x, t.z);
+    // Lamp: a site's y is its height above the ground there (terrain.js), unless it's marked as a height in the world
+    const y = (t.y || 0) + (t.world ? 0 : groundHeight(t.x, t.z));
     dummy.position.set(t.x, y, t.z);
     dummy.rotation.set(0, t.yaw ?? r2 * Math.PI * 2, 0);
     dummy.scale.set(s * (0.9 + r3 * 0.2) * (t.sx || 1), s * (0.88 + r1 * 0.24), s * (0.9 + r2 * 0.2) * (t.sz || 1));

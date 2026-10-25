@@ -840,15 +840,15 @@ function buildStreetDetails(scene) {
   //    and its west end, framing the lawn the library's terrace looks out over (the lawn as fitted by landmarks.js)
   const bpl = bryantParkLawn;
   if (bpl) {
-    const ty = bpl.top - 0.2;
+    const ty = bpl.top - 0.2; // Lamp: the lawn's top is in world space already (it stands on the ground), so these sites are `world`
     for (let tx = bpl.minX - 6; tx <= bpl.maxX + 6; tx += 6.5) {
       for (const tz of [bpl.minZ - 5, bpl.minZ - 11.5, bpl.maxZ + 5, bpl.maxZ + 11.5]) {
-        treePositions.push({ x: tx, y: ty, z: tz, scale: 0.8, species: 0 });
+        treePositions.push({ x: tx, y: ty, z: tz, scale: 0.8, species: 0, world: true });
       }
     }
     for (let tz = bpl.minZ; tz <= bpl.maxZ; tz += 6.5) {
-      treePositions.push({ x: bpl.minX - 6, y: ty, z: tz, scale: 0.82, species: 0 });
-      treePositions.push({ x: bpl.minX - 12.5, y: ty, z: tz, scale: 0.76, species: 0 });
+      treePositions.push({ x: bpl.minX - 6, y: ty, z: tz, scale: 0.82, species: 0, world: true });
+      treePositions.push({ x: bpl.minX - 12.5, y: ty, z: tz, scale: 0.76, species: 0, world: true });
     }
   }
 

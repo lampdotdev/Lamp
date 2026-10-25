@@ -107,11 +107,13 @@ async function initApp() {
   markInit('streetDetails');
   // Buildings turned along non-grid streets have oriented colliders whose world bounds reach past their lots: they stay
   // inside the property line anyway, so the road network (lanes & sidewalks) doesn't need them.
-  // Elevated building sections that clear even a bus don't obstruct ground traffic.
+  // Elevated building sections that clear even a bus don't obstruct ground traffic (Lamp: measured from the ground
+  // under them, as colliders' heights are the world's since the city stands on terrain.js's heights).
   const trafficSystem = createTrafficSystem(scene, cityGrid.sidewalks, [
     ...cityGrid.footprints,
     ...streetDetails.footprints,
-    ...allColliders.filter((c) => !c.obb && (c.minY ?? 0) < 3.5)
+    ...allColliders.filter((c) => !c.obb
+      && (c.minY ?? 0) - groundHeight((c.minX + c.maxX) * 0.5, (c.minZ + c.maxZ) * 0.5) < 3.5)
   ]);
   markInit('traffic');
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);

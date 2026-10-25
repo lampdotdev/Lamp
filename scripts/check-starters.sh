@@ -15,8 +15,9 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # A raw string of Template.swift, from its `static let <name> = #"""` line to the `"""#` that ends it, with its
-# placeholders filled by stand-ins (only their types matter here). Of the services Connectors.fill writes into
-# LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
+# placeholders filled by stand-ins (only their types matter here). A placeholder that starts a line and is followed by
+# code inserts lines of its own (`{{WISH_LEAVES_LAMP_CLOSED}}`), which are left out. Of the services Connectors.fill
+# writes into LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
 services() {
   local type=$1
   grep -rhoE "\b$type\.[a-z][A-Za-z0-9]*\b" "$here"/Resources/Starters/*/Sources 2>/dev/null | sed "s/^$type\.//" | sort -u |
@@ -30,7 +31,7 @@ extract() {
     index($0, start) { on = 1; next }
     on && /^ *"""#( \+ [A-Za-z]+)?$/ { exit }
     on { print }' "${2:-$template}" |
-    perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
+    perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/; s/^\{\{[A-Z_]+\}\}(?=\s)//' |
     sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
 # Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).

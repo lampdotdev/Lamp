@@ -222,6 +222,13 @@ class ThirdPersonControllerManager {
       }
     });
 
+    // Lamp: whatever stands on the ground starts on it (terrain.js), not only the vehicle in use, which updates its own
+    for (const key of ['person', 'car', 'cyclist']) {
+      const e = this.entities[key];
+      e.position.y = this.getGroundHeight(e.position.x, e.position.z, key);
+      e.mesh.position.copy(e.position);
+    }
+
     this.bindKeyboard();
   }
 
