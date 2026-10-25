@@ -1,5 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { bryantParkLawn } from './landmarks.js';
+import { groundHeight } from './terrain.js';
+
+// Lamp: scenic views placed at street level, which stand on the ground where they are
+const STREET_VIEWS = new Set(['centralPark', 'fifthAve', 'timesSquare', 'chryslerGCT', 'observatory']);
 
 // js/cameras.js
 // Multi-camera system supporting Third-Person Chase (with mouse/touch orbit + zoom),
@@ -197,7 +201,7 @@ class CameraSystem {
 
         desiredPos.set(
           entity.position.x - Math.sin(totalYaw) * horizDist,
-          Math.max(0.65, entity.position.y + height),
+          Math.max(groundHeight(entity.position.x - Math.sin(totalYaw) * horizDist, entity.position.z - Math.cos(totalYaw) * horizDist) + 0.65, entity.position.y + height),
           entity.position.z - Math.cos(totalYaw) * horizDist
         );
 
@@ -217,7 +221,7 @@ class CameraSystem {
 
         desiredPos.set(
           entity.position.x - Math.sin(entity.heading) * backDist + Math.cos(entity.heading) * sideOffset,
-          Math.max(0.55, lowY),
+          Math.max(groundHeight(entity.position.x, entity.position.z) + 0.55, lowY),
           entity.position.z - Math.cos(entity.heading) * backDist - Math.sin(entity.heading) * sideOffset
         );
         desiredLook.set(
@@ -327,6 +331,13 @@ class CameraSystem {
       }
     }
 
+    // Lamp: the street-level views stand on the ground where they are (terrain.js)
+    if (STREET_VIEWS.has(this.activePresetId)) {
+      const ground = groundHeight(desiredPos.x, desiredPos.z);
+      desiredPos.y += ground;
+      desiredLook.y += ground;
+    }
+
     if (!this.initialized || this.activePresetId === 'pov') {
       this.currentPos.copy(desiredPos);
       this.currentLookAt.copy(desiredLook);
@@ -351,7 +362,7 @@ class CameraSystem {
       this.followLookOffset.lerp(desiredLook.sub(entity.position), k);
       this.currentPos.set(entity.position.x, this.followBaseY, entity.position.z).add(this.followOffset);
       this.currentLookAt.set(entity.position.x, this.followBaseY, entity.position.z).add(this.followLookOffset);
-      this.currentPos.y = Math.max(0.55, this.currentPos.y);
+      this.currentPos.y = Math.max(groundHeight(this.currentPos.x, this.currentPos.z) + 0.55, this.currentPos.y);
     } else {
       this.followEntity = null;
       const k = 1 - Math.exp(-dt * 8.5);

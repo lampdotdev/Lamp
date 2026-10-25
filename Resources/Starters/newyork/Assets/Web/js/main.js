@@ -18,6 +18,7 @@ import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem } from './lighting.js';
 import { NYCMapSystem } from './nyc-map.js';
 import { setupSceneCulling, updateSceneCulling } from './scene-culling.js';
+import { loadTerrain, setOnTerrain, groundHeight } from './terrain.js';
 import { CityAudioSystem } from './audio-system.js';
 
 // js/main.js
@@ -87,6 +88,10 @@ async function initApp() {
     loadingStatus.textContent = 'Constructing Manhattan Grid, Landmarks & Streetscape...';
   }
 
+  // Lamp: the ground's real heights, which everything below is set on (terrain.js)
+  await loadTerrain();
+  markInit('terrain');
+
   // 3. Build Manhattan Geography, Iconic Landmarks, Blocks, Street Details & Traffic
   const cityGrid = buildCityGrid(scene);
   markInit('cityGrid');
@@ -110,8 +115,16 @@ async function initApp() {
   ]);
   markInit('traffic');
   const highwayTraffic = createHighwayTraffic(scene, cityGrid.highwayLanes);
-  buildRoadPaint(scene, trafficSystem.network);
+  const roadMarkings = buildRoadPaint(scene, trafficSystem.network);
   markInit('roadPaint');
+
+  // Lamp: the street level built flat at y = 0, set on the ground: buildings, landmarks and trees were placed on it as
+  // they were built
+  setOnTerrain(scene.getObjectByName('ManhattanCityGrid'));
+  setOnTerrain(scene.getObjectByName('ManhattanStreetDetails'));
+  setOnTerrain(roadMarkings, 0); // vertex by vertex: its strips come cut to length (road-paint.js)
+  setOnTerrain(scene.getObjectByName('BlockYards'));
+  markInit('ground');
 
   // 4. Initialize Third-Person Controllers (Person, Car, Cyclist, Helicopter) & Multi-Camera System
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
@@ -802,7 +815,8 @@ async function initApp() {
       const activeEnt = controllerManager.getActiveEntity();
       const mode = controllerManager.activeMode;
       const mph = Math.round(Math.abs(activeEnt.speed) * 2.237);
-      const altFt = Math.max(0, Math.round(activeEnt.position.y * 3.281));
+      // Lamp: height above the ground below (terrain.js)
+      const altFt = Math.max(0, Math.round((activeEnt.position.y - groundHeight(activeEnt.position.x, activeEnt.position.z)) * 3.281));
 
       adaptResolution(currentFps);
       if (elFps) {
