@@ -562,6 +562,14 @@ enum Sharing {
         return Package.Part(folder: folder, package: package)
     }
 
+    /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
+    static func keptFolder(in wish: URL, for kind: Platform) -> String? {
+        guard let data = try? Data(contentsOf: waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data), note.platform == kind,
+              let folder = note.folder, Parts.folder(folder, canHold: kind) else { return nil }
+        return folder
+    }
+
     static func forgetKept(in wish: URL, for kind: Platform) {
         try? FileManager.default.removeItem(at: waitingFolder(in: wish, for: kind))
     }

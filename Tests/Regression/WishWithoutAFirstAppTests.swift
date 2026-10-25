@@ -75,7 +75,7 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         XCTAssertEqual(package.parts.map(\.package.platform), [.universal])
     }
 
-    /// The same part kept for a Mac that can't build it yet is made in its folder later, not in the one its kind gets
+    /// The same part kept for a Mac that can't build it yet is named and made by its folder, not by the one its kind gets
     /// when new; a folder of another family, which a file could say, isn't taken.
     func testAPartKeptForLaterKeepsItsFolder() throws {
         let made = try Template.scaffold(name: "Remote", platform: .mac, in: try newRoot())
@@ -87,6 +87,9 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         let receiver = try Template.scaffold(name: "Remote 2", platform: .tv, in: try newRoot())
         try Sharing.keep(phone, in: receiver.dir)
         XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .universal)?.folder, "iPhone")
+        // Its name while it waits is the one it will have: what the TV app says to it then still reaches it once made.
+        XCTAssertEqual(Parts.folder(waiting: .universal, in: receiver.dir), "iPhone")
+        XCTAssertEqual(Parts.folder(waiting: .android, in: receiver.dir), "Android")
         XCTAssertTrue(Parts.folder("iPhone", canHold: .universal))
         XCTAssertTrue(Parts.folder("Mac", canHold: .universal))
         XCTAssertFalse(Parts.folder("TV", canHold: .universal))
