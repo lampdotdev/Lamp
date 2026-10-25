@@ -172,8 +172,9 @@ Undo, which stays with it: where it opens, a tick on where Play puts it, and for
 place it hasn't got. Its choices are one list, `TryOnMenu`, which the desk's menu draws as well (`SidebarState.tryOn`, a
 click sent back as `SidebarCommand.tryOn` and done by `Store.tryOn`; beside the app, where there's no Play, a place
 chosen is where it opens at once).
-Where the title and every button don't fit, Undo stays and a button for the rest takes their place, which pressed stays
-lit and puts the rest, Versions beside Undo, in the title's place. The room between the buttons moves the chat. ⌘` goes
+The bar is laid out one way at every width, beside an app and in Lamp's panel alike: Undo (with Play and Try On before
+it where they show), and a button for the rest, which pressed stays lit and puts the rest, Versions beside Undo, in the
+title's place. Play shows only once there's something to play: during a first build Lamp opens the app itself. The room between the buttons moves the chat. ⌘` goes
 through the app's windows with each open chat right after its window (`LampSidebar.watchCycling`), since macOS leaves
 panels out of its own cycle. Versions and Wish Info show as panels in place of the chat (`VersionsPanel`, a page of versions at a time with the rest a click away; `InfoPanel`; the info rows are
 `AppInfoView.sections`). An app's chat is in one place at a time: when it opens beside the app, Lamp's panel for it

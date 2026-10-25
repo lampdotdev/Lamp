@@ -329,10 +329,10 @@ final class SidebarServer {
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
-            if !Self.besideItsApp(project, place: history?.place) {
-                let open = store.isWishOpen(project)
-                toolbar.play = SidebarPlay(open: open, enabled: open || made,
-                                           help: open ? "Quit \(project.name)" : made ? "Use \(project.name)" : "Lamp opens it once it's made")
+            // Only once there's something to play: a first build opens the app itself.
+            let open = store.isWishOpen(project)
+            if !Self.besideItsApp(project, place: history?.place), open || made {
+                toolbar.play = SidebarPlay(open: open, enabled: true, help: open ? "Quit \(project.name)" : "Use \(project.name)")
             }
             state.toolbar = toolbar
             state.tryOn = tryOn(for: project, busy: busy)
@@ -460,7 +460,7 @@ final class SidebarServer {
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.
-    private var histories: [String: (key: String, value: WishHistory?)] = [:]
+    fileprivate var histories: [String: (key: String, value: WishHistory?)] = [:]
 
     private func history(for project: LampProject, busy: Bool, lines: Int) -> WishHistory? {
         let key = "\(busy) \(lines)"
@@ -1373,7 +1373,8 @@ final class LocalChat: ChatLink {
         guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
         var state = server.state(for: project)
         // A Mac app's chat has no Play beside its window; here, away from it, Play opens it, and the chat goes beside it.
-        if state.toolbar != nil, state.toolbar?.play == nil {
+        if state.toolbar != nil, state.toolbar?.play == nil,
+           Store.shared.isWishOpen(project) || server.histories[project.id]?.value?.made == true {
             let open = Store.shared.isWishOpen(project)
             state.toolbar?.play = SidebarPlay(open: open, enabled: true, help: open ? "Quit \(project.name)" : "Use \(project.name)")
         }
