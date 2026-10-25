@@ -131,8 +131,6 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
     private weak var page: WKWebView?
     private var listening = false
     private var filesHeard = false
-    /// A change the page made itself, which it has already said to its onChange.
-    private var echoing = false
     private var watching: AnyCancellable?
     private var transfers: [Int: LampTransfer] = [:]
     private var watchingTransfers: [Int: AnyCancellable] = [:]
@@ -156,9 +154,7 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
         case "set":
             guard let key = call["key"] as? String else { return }
             let value = Self.json(call["value"])
-            echoing = true
             wish.set(key, value is NSNull ? nil : value)
-            echoing = false
         case "files":
             guard !filesHeard else { return }
             filesHeard = true
@@ -190,10 +186,10 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.tellState() } }
         }
         wish.onMessage { [weak self] from, data in self?.tell(["t": "message", "from": from, "data": data]) }
+        // Who made each change; the page says to its onChange every value that differs from its copy.
         wish.onChange { [weak self] key, value, from in
-            guard let self else { return }
             let said: Any = value ?? NSNull()
-            self.tellValues([["key": key, "value": said, "from": from, "echo": self.echoing]])
+            self?.tellValues([["key": key, "value": said, "from": from]])
         }
     }
 

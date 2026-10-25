@@ -2226,16 +2226,19 @@ extension TVTemplate {
                 if (every !== lastApps) { lastApps = every; emit('apps', [allOnes()]); }
                 draw();
               } else if (m.t === 'values') {
-                var given = m.values && typeof m.values === 'object' ? m.values : {}, k;
-                for (k in entries) if (!own(given, k)) delete entries[k];
-                for (k in given) if (own(given, k) && !(entries[k] && JSON.stringify(entries[k].v) === JSON.stringify(given[k]))) entries[k] = { v: given[k], c: [0, 0, ''] };
-                // A change this page made is said to onChange as it's made, so it isn't said again when the app echoes it.
+                // Every value the app has that differs from the page's copy is said to onChange: those it kept on the
+                // device come in its first snapshot, and a page opened again finds them there, as values kept on a TV
+                // are said once the page knows its wish. A change the page made is said as it's made, so it differs
+                // from nothing when the app's copy of it comes back.
+                var given = m.values && typeof m.values === 'object' ? m.values : {}, by = {}, said = [], k;
                 var changed = m.changed instanceof Array ? m.changed : [];
-                for (var i = 0; i < changed.length; i++) {
-                  var c = changed[i];
-                  if (c.from === mine && c.echo) continue;
-                  emit('change', [c.key, copyOf(c.value), c.from]);
+                for (var i = 0; i < changed.length; i++) if (changed[i] && typeof changed[i].key === 'string') by[changed[i].key] = changed[i].from;
+                for (k in entries) if (!own(given, k)) { if (entries[k].v !== undefined) said.push([k, undefined]); delete entries[k]; }
+                for (k in given) if (own(given, k) && !(entries[k] && JSON.stringify(entries[k].v) === JSON.stringify(given[k]))) {
+                  entries[k] = { v: given[k], c: [0, 0, ''] };
+                  said.push([k, given[k]]);
                 }
+                for (var j = 0; j < said.length; j++) emit('change', [said[j][0], copyOf(said[j][1]), own(by, said[j][0]) ? by[said[j][0]] : mine]);
               } else if (m.t === 'message') {
                 emit('message', [m.from, m.data]);
               } else if (m.t === 'file') {
@@ -2287,13 +2290,22 @@ extension TVTemplate {
               api.start();
               var id = ++nextTransfer, name = String((info && info.name) || (data && data.name) || 'file');
               var type = String((info && info.type) || (data && data.type) || 'application/octet-stream');
-              var t = { watchers: [], sent: 0, size: 0 };
+              var t = { watchers: [], sent: 0, size: 0, posted: false, over: false };
+              // Cancelled while its bytes are still being read, it never starts; once it has, the app cancels it.
               var transfer = { name: name, size: 0, sent: 0, onProgress: function (fn) { t.watchers.push(fn); },
-                               cancel: function () { post({ op: 'cancel', id: id }); } };
+                               cancel: function () {
+                                 if (t.over) return;
+                                 if (t.posted) return post({ op: 'cancel', id: id });
+                                 t.over = true;
+                                 t.reject(new Error('The file was cancelled.'));
+                               } };
               transfer.done = new Promise(function (resolve, reject) { t.resolve = resolve; t.reject = reject; });
               transfer.done.catch(function () {});
+              transfer.done.then(function () { t.over = true; }, function () { t.over = true; });
               t.watchers.push(function (sent) { transfer.sent = sent; });
               bytesOf(data).then(function (b) {
+                if (t.over) return;
+                t.posted = true;
                 t.size = transfer.size = b.length;
                 transfers[id] = t;
                 post({ op: 'sendFile', id: id, to: to, name: name, type: type, data: toBase64(b) });
