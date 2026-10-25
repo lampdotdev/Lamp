@@ -445,10 +445,14 @@ public struct SidebarInfoButton: Codable, Equatable {
 public struct SidebarSharing: Codable, Equatable {
     public var id: UUID
     public var file: SidebarFile
+    /// The wish it's from (its folder's name), so each wish's chat keeps its shared file apart from every other's:
+    /// Lamp's own process draws the chats of many wishes. Missing from a Lamp before it.
+    public var wish: String?
 
-    public init(id: UUID, file: SidebarFile) {
+    public init(id: UUID, file: SidebarFile, wish: String? = nil) {
         self.id = id
         self.file = file
+        self.wish = wish
     }
 }
 
