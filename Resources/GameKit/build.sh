@@ -2,21 +2,16 @@
 # Lamp's game kit: builds the game. Lamp writes this file before every build and runs it in the app's sandbox; don't
 # edit it.
 #
-#   sh Lamp/build.sh preview   Lamp's preview, out of sight on the Mac: build/preview/lamp_preview
-#   sh Lamp/build.sh mac       the game for the Mac app: build/mac/libgame.a, which ./build.sh links into the app
-#   sh Lamp/build.sh ios-sim   the same for the iPhone and iPad simulator: build/ios-sim/libgame.a
-#   sh Lamp/build.sh ios       the same for an iPhone or iPad: build/ios/libgame.a
-#   sh Lamp/build.sh android   the same for Android, with the NDK in $ANDROID_NDK: build/android-jni/<abi>/libgame.so
 #   sh Lamp/build.sh xbox      the console's app: build/xbox/App.exe, and build/xbox.zip with it and Assets/
+#   sh Lamp/build.sh preview   the Mac preview: build/preview/lamp_preview
 #
 # The game is every .cpp and .c in Game/, and every .glsl there is a shader, compiled by sokol-shdc into
-# build/shaders/<name>.glsl.h (HLSL for the console, Metal for Apple's devices) for the game to include. $LAMP_WINDOWS
-# is where Lamp keeps the tools: sokol-shdc, which every build needs, and for the console LLVM's clang-cl and lld-link
-# and Microsoft's SDK. Apple's builds use the Mac's own clang.
+# build/shaders/<name>.glsl.h (HLSL for the console, Metal for the Mac) for the game to include. $LAMP_WINDOWS is
+# where Lamp keeps the tools for the console: LLVM's clang-cl and lld-link, Microsoft's SDK and sokol-shdc.
 set -e
 cd "$(dirname "$0")/.."
 target="${1:-xbox}"
-tools="${LAMP_WINDOWS:?Lamp gives the build the folder with the game tools}"
+tools="${LAMP_WINDOWS:?Lamp gives the build the folder with the tools for the console}"
 mkdir -p build/shaders
 
 # Shaders first: both builds include what they make.
@@ -24,8 +19,8 @@ for shader in Game/*.glsl; do
   [ -e "$shader" ] || continue
   name=$(basename "$shader")
   out="build/shaders/$name.h"
-  if [ ! -f "$out" ] || [ "$shader" -nt "$out" ] || [ "$tools/bin/sokol-shdc" -nt "$out" ] || [ Lamp/build.sh -nt "$out" ]; then
-    "$tools/bin/sokol-shdc" --input "$shader" --output "$out" --slang hlsl5:metal_macos:metal_ios:metal_sim:glsl300es >&2 || { rm -f "$out"; exit 1; }
+  if [ ! -f "$out" ] || [ "$shader" -nt "$out" ] || [ "$tools/bin/sokol-shdc" -nt "$out" ]; then
+    "$tools/bin/sokol-shdc" --input "$shader" --output "$out" --slang hlsl5:metal_macos >&2 || { rm -f "$out"; exit 1; }
   fi
 done
 
@@ -52,63 +47,6 @@ if [ "$target" = preview ]; then
   done
   clang++ $objects -o "$out/lamp_preview" -framework Foundation -framework Metal -framework QuartzCore -framework ImageIO \
     -framework CoreGraphics -framework UniformTypeIdentifiers
-  exit 0
-fi
-
-# Android: the game, the kit and its host as one shared library for each kind of processor (arm64 for phones and the
-# emulator on Apple silicon, x86_64 for the emulator on Intel), which Lamp's Android app loads.
-if [ "$target" = android ]; then
-  ndk="${ANDROID_NDK:?Lamp gives the build the NDK for a game on Android}"
-  bin="$ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin"
-  for abi in arm64-v8a x86_64; do
-    case "$abi" in arm64-v8a) triple=aarch64-linux-android26 ;; *) triple=x86_64-linux-android26 ;; esac
-    out="build/android/$abi"
-    mkdir -p "$out" "build/android-jni/$abi"
-    flags="--target=$triple -std=c++20 -O2 -g0 -fPIC -DLAMP_ANDROID=1 -DSOKOL_GLES3 -ILamp -Ibuild/shaders -IGame"
-    fresh "$out/lamp_kit.o" Lamp/lamp_kit.cpp || "$bin/clang++" $flags -w -c Lamp/lamp_kit.cpp -o "$out/lamp_kit.o"
-    fresh "$out/lamp_android.o" Lamp/lamp_android.cpp || "$bin/clang++" $flags -w -c Lamp/lamp_android.cpp -o "$out/lamp_android.o"
-    fresh "$out/lamp_sound.o" Lamp/lamp_sound.cpp || "$bin/clang++" $flags -w -c Lamp/lamp_sound.cpp -o "$out/lamp_sound.o"
-    objects="$out/lamp_kit.o $out/lamp_android.o $out/lamp_sound.o"
-    for source in Game/*.cpp Game/*.c; do
-      [ -e "$source" ] || continue
-      object="$out/$(basename "$source").o"
-      case "$source" in *.c) "$bin/clang" --target=$triple -std=c17 -O2 -g0 -fPIC -DLAMP_ANDROID=1 -ILamp -Ibuild/shaders -IGame -c "$source" -o "$object" ;;
-                        *) "$bin/clang++" $flags -c "$source" -o "$object" ;; esac
-      objects="$objects $object"
-    done
-    "$bin/clang++" --target=$triple -shared -static-libstdc++ -Wl,--no-undefined -o "build/android-jni/$abi/libgame.so" $objects \
-      -landroid -llog -lEGL -lGLESv3 -laaudio
-  done
-  exit 0
-fi
-
-# Apple's places: the game, the kit and its host as one library, which the app's Swift (Lamp's own) links. The kit
-# is compiled again only when it changed, as above; the library is made again every time, so the app is linked again.
-case "$target" in
-  mac) apple="-target $(uname -m)-apple-macos14.0 -isysroot $(xcrun --sdk macosx --show-sdk-path)" ;;
-  ios-sim) apple="-target $(uname -m)-apple-ios17.0-simulator -isysroot $(xcrun --sdk iphonesimulator --show-sdk-path)" ;;
-  ios) apple="-target arm64-apple-ios17.0 -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" ;;
-  *) apple="" ;;
-esac
-if [ -n "$apple" ]; then
-  out="build/$target"
-  mkdir -p "$out"
-  flags="$apple -std=c++20 -O2 -g0 -DLAMP_APPLE=1 -DSOKOL_METAL -ILamp -Ibuild/shaders -IGame"
-  fresh "$out/lamp_kit.o" Lamp/lamp_kit.cpp ||
-    clang++ $flags -x objective-c++ -fobjc-arc -w -c Lamp/lamp_kit.cpp -o "$out/lamp_kit.o"
-  fresh "$out/lamp_apple.o" Lamp/lamp_apple.mm ||
-    clang++ $flags -x objective-c++ -fobjc-arc -w -c Lamp/lamp_apple.mm -o "$out/lamp_apple.o"
-  fresh "$out/lamp_sound.o" Lamp/lamp_sound.cpp || clang++ $flags -w -c Lamp/lamp_sound.cpp -o "$out/lamp_sound.o"
-  objects="$out/lamp_kit.o $out/lamp_apple.o $out/lamp_sound.o"
-  for source in Game/*.cpp Game/*.c; do
-    [ -e "$source" ] || continue
-    object="$out/$(basename "$source").o"
-    case "$source" in *.c) clang $apple -std=c17 -O2 -g0 -DLAMP_APPLE=1 -ILamp -Ibuild/shaders -IGame -c "$source" -o "$object" ;;
-                      *) clang++ $flags -c "$source" -o "$object" ;; esac
-    objects="$objects $object"
-  done
-  rm -f "$out/libgame.a"
-  ar -rcs "$out/libgame.a" $objects
   exit 0
 fi
 

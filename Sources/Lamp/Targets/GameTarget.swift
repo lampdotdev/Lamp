@@ -12,21 +12,20 @@ extension Target {
         identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, Android or an Xbox", analytics: "game",
                            made: { _, _ in "a game" },
                            devices: Words(words: [("game", "\"game\" for a game (with \"mac\", \"iphone\", \"android\" and \"xbox-one\" for the places it's played on)",
-                                                   "\"game\" for a game played in real time"),
-                                                  ("native", "", "\"native\" with \"game\" for a heavy 3D game in C++")],
+                                                   "\"game\" for a game played in real time")],
                                           hint: "[\"game\"] for a game played in real time (3D, racing, a platformer, a shooter, an arcade or sports game, "
                                               + "anything played with a controller or on their Xbox), whatever device it names; with \"iphone\" when it's to "
-                                              + "be played on an iPhone or iPad too, \"android\" on an Android phone, with \"xbox-one\" when it's for their Xbox, and with \"native\" too only "
-                                              + "for a heavy 3D game the wish says needs the console's whole power (a big world, hundreds of things moving at "
-                                              + "once). A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
+                                              + "be played on an iPhone or iPad too, \"android\" on an Android phone, with \"xbox-one\" when it's for their Xbox. "
+                                              + "A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
                            tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, an Android phone or tablet, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.gamePrompt(for:), changeRules: Agent.Rules.gameChange,
                            skills: { [] },
-                           noAI: { _ in "- None: a game has none of Lamp's AI building blocks." },
+                           // A C++ game from before three.js games has none of Lamp's building blocks; a three.js game has LampAI.
+                           noAI: { GameKit.engine($0) == .native ? "- None: a game in C++ has none of Lamp's AI building blocks." : nil },
                            elsewhere: { _ in nil }),
-        recipe: Recipe(language: .cpp, fill: GameKit.fill, ownedFiles: GameKit.write(for:), support: GameKit.write(for:),
+        recipe: Recipe(language: .game, fill: GameKit.fill, ownedFiles: GameKit.write(for:), support: GameKit.write(for:),
                        isMade: GameKit.isMade, scaffolded: { dir, _ in GameKit.isMade(dir) },
                        sources: { _ in ["Game", "Assets", GameKit.webFolder, "icon.json", "capabilities.json"] },
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again.
@@ -47,7 +46,7 @@ extension Target {
 }
 
 extension Language {
-    static let cpp = Language(name: "c++", code: "the game's C++ in Game/", leftover: "the files in Game/") {
-        "Write the app again as a game in C++ in Game/ against Lamp's game kit (the scaffold is there), reading \($0) for what it does, then delete \($1) with delete_file. "
+    static let game = Language(name: "game", code: "the game's page in Web/", leftover: "the game's files in Web/") {
+        "Write the app again as a game drawn with three.js in Web/ against Lamp's game runtime (the scaffold is there), reading \($0) for what it does, then delete \($1) with delete_file. "
     }
 }

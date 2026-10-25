@@ -1,4 +1,4 @@
-// Lamp's game kit: what the hosts share, not for the game. Lamp writes this file before every build.
+// Lamp's game kit: what the two hosts share, not for the game. Lamp writes this file before every build.
 #pragma once
 #include <stdint.h>
 #include "lamp_game.h"
@@ -15,8 +15,6 @@ float lamp_host_dead_zone(float value);
 void lamp_host_mix(float* out, int frames);
 // What was played, for the preview's report: each effect's name and how often, the music, and the loudest moment.
 void lamp_host_sound_report(char* out, size_t size);
-// The buttons the touch controls show on an iPhone or iPad (`lamp_touch_buttons`); the other hosts have none.
-extern uint32_t lamp_host_touch_buttons;
 void lamp_host_sokol_log(const char* tag, uint32_t level, uint32_t item, const char* message, uint32_t line, const char* file, void* user);
 #ifdef __cplusplus
 }

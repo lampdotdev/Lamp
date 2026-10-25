@@ -2,12 +2,10 @@
 //
 // The game is two functions, game_init and game_frame, drawn with sokol_gfx (sokol_gfx.h), with sokol_shape.h for
 // boxes, spheres and the like, sokol_debugtext.h and sokol_gl.h for text and lines, HandmadeMath.h for vectors and
-// matrices, cgltf.h for glTF models and stb_image.h for pictures, and sound through the functions below. The same game
-// plays wherever it's put: on the Mac, in a window drawn with Metal and played with the keyboard or a controller; on an
-// iPhone or iPad, drawn with Metal and played with touch controls Lamp draws over it or a controller; on the Xbox, a
-// full-screen app drawn with Direct3D 11. Everywhere it's drawn at 1920x1080 (scaled to the screen) and the sound mixed
-// by the kit; on the Mac it's also played out of sight, for Lamp's preview. Nothing here or in the game may call
-// Windows or Apple APIs: everything the game needs from the machine goes through the functions below.
+// matrices, cgltf.h for glTF models and stb_image.h for pictures, and sound through the functions below. On the Xbox
+// the host is a full-screen app drawing with Direct3D 11 at 1920x1080, 60 frames a second, and playing the sound
+// through XAudio2; on the Mac the same code is drawn with Metal, out of sight, for Lamp's preview. Nothing here or in the game may call Windows or Apple APIs: everything the game needs from the
+// machine goes through the functions below.
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
@@ -44,7 +42,7 @@ typedef struct LampSetup {
 } LampSetup;
 
 typedef struct LampFrame {
-    double dt;          // seconds since the last frame: about 1/60 (the screen's pace), and always 1/60 in the preview
+    double dt;          // seconds since the last frame: 1/60 at the console's pace, and always 1/60 in the preview
     double time;        // seconds since the game started
     uint64_t number;    // frames since the game started
     int width, height;
@@ -60,7 +58,7 @@ void game_frame(const LampFrame* frame);   // draw one frame: sg_begin_pass(swap
 typedef struct LampFile { void* data; size_t size; } LampFile;   // data is NULL when there's nothing
 LampFile lamp_asset(const char* path);   // a file from the app's Assets/ folder ("models/ship.glb")
 LampFile lamp_load(const char* name);    // what the game saved under this name, or nothing
-bool lamp_save(const char* name, const void* data, size_t size);   // kept on the device between plays
+bool lamp_save(const char* name, const void* data, size_t size);   // kept on the console between plays
 void lamp_free(LampFile file);
 
 // A line in the game's log, which Lamp reads (printf's format). Keep it to what helps: a few lines, not one a frame.
@@ -74,14 +72,9 @@ float lamp_random_float(void);   // 0 up to 1
 // The controller's rumble, 0 to 1 for its two motors, until called again with zeros.
 void lamp_rumble(int pad, float low, float high);
 
-// The buttons the touch controls show on an iPhone or iPad when no controller is connected (LAMP_A | LAMP_B …), beside
-// a left stick that's always there. LAMP_A, LAMP_B and LAMP_MENU unless the game says otherwise in game_init; a
-// right-hand drag is the right stick when LAMP_RSTICK is among them. Elsewhere it does nothing.
-void lamp_touch_buttons(uint32_t buttons);
-
-// Sound: effects and music, mixed by the kit in stereo at 48 kHz on the device's speakers. Up to 32 effects play at
+// Sound: effects and music, mixed by the kit in stereo at 48 kHz on the console's speakers. Up to 32 effects play at
 // once (a 33rd takes the place of the oldest) and one piece of music beside them. Nothing here waits or takes time
-// from the frame: call these from game_init and game_frame as things happen. Lamp's preview plays silently,
+// from the frame: call these from game_init and game_frame as things happen. The preview on the Mac plays silently,
 // at the same pace as ever, and says what was played and how loud it came out.
 typedef struct LampSound { uint32_t id; } LampSound;   // id 0 is no sound (a file that didn't load): playing it does nothing
 

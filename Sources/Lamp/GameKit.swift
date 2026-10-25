@@ -2,23 +2,17 @@ import AppKit
 import CryptoKit
 import Foundation
 
-/// Games: Lamp's own kind of app (`Platform.game`), C++ written once against Lamp's game kit (`lamp_game.h`: sokol_gfx
-/// for drawing, with sokol's shapes and text, HandmadeMath, cgltf and stb_image, and the kit's own sound mix with
-/// stb_vorbis, dr_wav and dr_mp3) and played wherever the game has been put (`LampProject.places`). Its home is the
-/// Mac: a Mac app in the person's Apps like any other, the game drawn with Metal in its window by the kit's Apple host
-/// (`lamp_apple.mm`) inside a little Swift of Lamp's own (`LampGame.swift`, with LampSupport.swift, so it has the wand,
-/// the chat beside it and everything else a Lamp app does). The same code goes on an iPhone or iPad through that host,
-/// with touch controls, and on the Xbox through the console's host (`lamp_xbox.cpp`), compiled on this Mac with LLVM
-/// and Microsoft's SDK (`WindowsTools`) into an x64 app Lamp packages itself (`MSIX`) and puts on the console through
-/// its integration's bridge, as the Xbox's web apps go (the integration's `kinds.game` is that package's kind).
+/// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js and played through Lamp's game
+/// runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
+/// the person's Apps like any other, the page in a web view of the app's own inside a little Swift of Lamp's
+/// (`LampWebGame.swift` and `LampPage.swift`, with LampSupport.swift, so it has the wand, the chat beside it and LampAI).
+/// The same page goes on an iPhone or iPad through that app, on Android in Lamp's Android app (`GameAndroid`), and on the
+/// Xbox as the integration's web app, installed as a game. The agent plays it in a preview on the Mac (`WebGamePreview`,
+/// the page out of sight, from a script of the controller's moves), so its looks are the same frames every time.
 ///
-/// Wherever it's played, the agent plays it in a preview on the Mac (the same code drawn with Metal, out of sight, from
-/// a script of the controller's moves: `play`), so its looks are the same frames every time.
-///
-/// The game's folder: `Game/` (the agent's .cpp, .h and .glsl), `Assets/` (models, pictures, sounds the game reads with
-/// `lamp_asset`), and Lamp's, written before every turn and build and never the agent's: `Lamp/` (the kit and its
-/// hosts), `Sources/` (the Swift around it on Apple's devices), `build.sh`, `Package.swift` and `.lamp-game`, which
-/// marks the folder as a game's; and `build/`.
+/// A game made before three.js games is C++ against Lamp's game kit (`lamp_game.h`, sokol_gfx, the kit's own sound mix),
+/// built on this Mac with LLVM and Microsoft's SDK (`WindowsTools`) for the Xbox alone, which is the only place it has,
+/// and played in the kit's own Metal preview (`play`). New games aren't made in C++.
 enum GameKit {
     static let kind = "native-game"
     /// The size every game is drawn at, everywhere, scaled to the screen.
@@ -51,8 +45,8 @@ enum GameKit {
         return project.engine.flatMap(Engine.init(rawValue:)) ?? (DeviceApps.isScaffolded(project.dir) ? .native : .web)
     }
 
-    /// The engine a list of devices asks for: "native" with the places for C++ on the kit, else three.js.
-    static func engine(for devices: Set<String>) -> Engine { devices.contains("native") || devices.contains(xboxKind) ? .native : .web }
+    /// The engine a new game is made with: three.js. C++ on the kit is only what games made before three.js games are.
+    static func engine(for devices: Set<String>) -> Engine { .web }
 
     /// The Xbox integration's kind a game goes there as: its web app's for three.js, its game kind's for C++.
     static func xboxKind(for engine: Engine) -> String { engine == .web ? xbox : xboxKind }
@@ -61,7 +55,7 @@ enum GameKit {
 
     /// The words a game's places are given by, in the naming call's answer and `make_app_for`'s list: "game" itself,
     /// and the devices it's played on.
-    static let placeWords: [String: Destination?] = ["game": nil, "native": nil, "screen": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
+    static let placeWords: [String: Destination?] = ["game": nil, "screen": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
                                                      "android": .android, "tv": .tv, xbox: .device, xboxKind: .device, "xbox": .device]
 
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
@@ -119,7 +113,8 @@ enum GameKit {
         guard project.platform == .device, let integration = project.integration, DeviceApps.appKind(integration)?.lamp == kind else { return nil }
         var game = project
         game.platform = .game
-        game.places = [.mac, .device]
+        // On the Xbox alone, as it was: Lamp makes no app around a C++ game for other places.
+        game.places = [.device]
         game.chosen = .device
         // Its list of apps named the device app it was: that one app is the game now, not another still to be made.
         game.apps = game.apps.map { $0.kind == .device ? WishApp(kind: .game) : $0 }
@@ -145,12 +140,6 @@ enum GameKit {
         }
         return found.sorted { $0.0 < $1.0 }
     }()
-
-    /// The Swift around the game on Apple's devices, and the C declarations it calls the host by, as written in the
-    /// game's folder.
-    static let appleFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampGame.swift"),
-                                                                   ("\(folder)/host/include/lamp_apple.h", "apple/host/include/lamp_apple.h"),
-                                                                   ("\(folder)/host/lamp_bridge.c", "apple/host/lamp_bridge.c")])
 
     /// A three.js game's: the Swift around its page, and Lamp's runtime the page plays through.
     static let webFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampWebGame.swift"),
@@ -194,17 +183,16 @@ enum GameKit {
         var hasher = SHA256()
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
-        for file in appleFiles + webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
-        hasher.update(data: Data((nativeBuildSh + packageSwift + webBuildSh + webPackageSwift).utf8))
+        for file in webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
+        hasher.update(data: Data((webBuildSh + webPackageSwift).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }()
 
     /// Every path Lamp owns in a game, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
-        guard engine(project) == .web else {
-            return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp"] + appleFiles.map(\.path) + common + GameAndroid.paths(for: project)
-        }
+        // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
+        guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
         return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
             + GameAndroid.paths(for: project)
     }
@@ -213,8 +201,8 @@ enum GameKit {
     /// changed), and the stamp after them; then the Swift around it and what builds it on Apple's devices.
     static func write(for project: LampProject) throws {
         let engine = engine(project)
-        try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         if engine == .web {
+            try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
             guard webFiles.count == 2, !DeviceSupport.threeFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
             for file in webFiles { try Template.write(file.text, to: file.path, for: project) }
             try writePage(for: project)
@@ -236,15 +224,12 @@ enum GameKit {
             try Template.write("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n", to: marker, for: project)
             return
         }
-        guard !files.isEmpty, appleFiles.count == 3 else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
+        // A C++ game: the kit, as Lamp had it before three.js games, for the Xbox and the preview.
+        guard !files.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
         for file in files {
             try Template.put(file.data, at: project.dir.appendingPathComponent("\(folder)/\(file.name)"), for: project)
         }
         try Template.put(stamp, at: project.dir.appendingPathComponent("\(folder)/kit.stamp"), for: project)
-        for file in appleFiles { try Template.write(file.text, to: file.path, for: project) }
-        if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
-        try Template.write(nativeBuildSh, to: "build.sh", for: project, executable: true)
-        try Template.write(packageSwift, to: "Package.swift", for: project)
         try Template.write("A game made with Lamp: C++ in Game/ against Lamp's game kit in Lamp/.\nengine: native\n", to: marker, for: project)
         // A game made before games were a kind of their own was marked as a device app's.
         if DeviceApps.isScaffolded(project.dir) { AppFolder.remove(project.dir.appendingPathComponent(DeviceApps.marker), in: project.dir) }
@@ -309,26 +294,6 @@ enum GameKit {
 
     """
 
-    /// Package.swift: the Swift around the game, for the Mac and for iOS, with the host's C declarations as a module of
-    /// its own. The game itself is the library build.sh makes and links in.
-    static let packageSwift = """
-    // swift-tools-version:5.9
-    import PackageDescription
-
-    let package = Package(
-        name: "{{EXE}}",
-        platforms: [.macOS(.v14), .iOS(.v17)],
-        targets: [
-            .target(name: "LampGameHost", path: "Lamp/host"),
-            .executableTarget(name: "{{EXE}}", dependencies: ["LampGameHost"], path: "Sources", sources: ["LampGame.swift", "LampSupport.swift"],
-                              linkerSettings: [.linkedLibrary("c++"), .linkedFramework("Metal"), .linkedFramework("QuartzCore"),
-                                               .linkedFramework("AVFoundation"), .linkedFramework("GameController"),
-                                               .linkedFramework("CoreHaptics", .when(platforms: [.iOS]))]),
-        ]
-    )
-
-    """
-
     /// A three.js game's Package.swift: the Swift around its page, with no library of the game's.
     static let webPackageSwift = """
     // swift-tools-version:5.9
@@ -342,45 +307,15 @@ enum GameKit {
 
     """
 
-    /// A C++ game's build.sh: `buildSh` with Android's place first, its build Gradle's around the NDK's library.
-    static var nativeBuildSh: String {
-        buildSh.replacingOccurrences(of: "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n",
-                                     with: GameAndroid.buildSteps(.native) + "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n")
-    }
+    /// A three.js game's build.sh: the Swift around its page for the Mac or the iPhone and iPad simulator, its page copied
+    /// into the app (Contents/Resources/Web on the Mac, Web/ at an iOS bundle's top), where the app's web view reads it;
+    /// for Android, Lamp's Android app around the page, built by Gradle (`GameAndroid.buildSteps`).
+    static var webBuildSh: String { webBuildTemplate.replacingOccurrences(of: "@@ANDROID@@\n", with: GameAndroid.buildSteps()) }
 
-    /// A three.js game's build.sh: the C++ game's, with nothing compiled of the game's own and its page copied into the
-    /// app (Contents/Resources/Web on the Mac, Web/ at an iOS bundle's top), where the app's web view reads it.
-    static var webBuildSh: String {
-        func swap(_ script: String, _ old: String, _ new: String) -> String {
-            precondition(script.contains(old), "GameKit.buildSh changed: \(old)")
-            return script.replacingOccurrences(of: old, with: new)
-        }
-        var script = buildSh
-        // Android first: its build is Gradle's, with nothing of Swift's.
-        script = swap(script, "if [[ \"$PLACE\" == \"ios\" ]]; then\n  sh Lamp/build.sh ios-sim\n", GameAndroid.buildSteps(.web) + "if [[ \"$PLACE\" == \"ios\" ]]; then\n")
-        script = swap(script, "  sh Lamp/build.sh mac\n", "")
-        script = swap(script, " -Xlinker \"$PWD/build/ios-sim/libgame.a\")", ")")
-        script = swap(script, " -Xlinker \"$PWD/build/mac/libgame.a\")", ")")
-        script = swap(script, "LIB=\"build/$([[ \"$PLACE\" == \"ios\" ]] && echo ios-sim || echo mac)/libgame.a\"\n", "")
-        script = swap(script, "# SwiftPM links again only for its own inputs: the game's library is new, so the program is linked again.\nif [ -f \"$BIN\" ] && [ \"$LIB\" -nt \"$BIN\" ]; then rm -f \"$BIN\"; fi\n", "")
-        script = swap(script, "codesign --force -s - \"$APP\"\n", """
-            # The page, its files only: a link in it would bring what it leads to into the app.
-            if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
-            if [[ "$PLACE" == "ios" ]]; then WEB="$APP/Web"; else WEB="$APP/Contents/Resources/Web"; mkdir -p "$APP/Contents/Resources"; fi
-            rm -rf "$WEB"
-            cp -R Web "$WEB"
-            codesign --force -s - "$APP"
-
-            """)
-        return script
-    }
-
-    /// build.sh: the game for the Mac (`./build.sh mac`, build/{{EXE}}.app) or the iPhone and iPad simulator
-    /// (`./build.sh ios`, build/iOS/{{EXE}}.app). The game, the kit and its host are compiled into one library first
-    /// (Lamp/build.sh), then the Swift around it is built and linked with it, and wrapped as an app.
-    static let buildSh = """
+    private static let webBuildTemplate = """
     #!/bin/zsh
-    # Builds build/{{EXE}}.app for this Mac (./build.sh mac) or build/iOS/{{EXE}}.app for the iPhone and iPad simulator (./build.sh ios).
+    # Builds the game for this Mac (./build.sh mac, build/{{EXE}}.app), the iPhone and iPad simulator (./build.sh ios,
+    # build/iOS/{{EXE}}.app) or Android (./build.sh android): the Swift around the page, with the page copied in.
     set -euo pipefail
     cd "$(dirname "$0")"
     PLACE="${1:-mac}"
@@ -389,20 +324,16 @@ enum GameKit {
     mkdir -p .build
     : > .build/restrict
     RESTRICT=(-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PWD/.build/restrict")
+    @@ANDROID@@
     if [[ "$PLACE" == "ios" ]]; then
-      sh Lamp/build.sh ios-sim
       SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-      FLAGS=(-c debug --triple "$(uname -m)-apple-ios17.0-simulator" --sdk "$SDK" --scratch-path .build/ios -Xlinker "$PWD/build/ios-sim/libgame.a")
+      FLAGS=(-c debug --triple "$(uname -m)-apple-ios17.0-simulator" --sdk "$SDK" --scratch-path .build/ios)
       APP="build/iOS/{{EXE}}.app"
     else
-      sh Lamp/build.sh mac
-      FLAGS=(-c release "${RESTRICT[@]}" -Xlinker "$PWD/build/mac/libgame.a")
+      FLAGS=(-c release "${RESTRICT[@]}")
       APP="build/{{EXE}}.app"
     fi
-    LIB="build/$([[ "$PLACE" == "ios" ]] && echo ios-sim || echo mac)/libgame.a"
     BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
-    # SwiftPM links again only for its own inputs: the game's library is new, so the program is linked again.
-    if [ -f "$BIN" ] && [ "$LIB" -nt "$BIN" ]; then rm -f "$BIN"; fi
     swift build "${FLAGS[@]}" 2>&1
     rm -rf "$APP"
     if [[ "$PLACE" == "ios" ]]; then
@@ -461,6 +392,11 @@ enum GameKit {
     </dict></plist>
     PLIST
     fi
+    # The page, its files only: a link in it would bring what it leads to into the app.
+    if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
+    if [[ "$PLACE" == "ios" ]]; then WEB="$APP/Web"; else WEB="$APP/Contents/Resources/Web"; mkdir -p "$APP/Contents/Resources"; fi
+    rm -rf "$WEB"
+    cp -R Web "$WEB"
     codesign --force -s - "$APP"
     echo "Built $APP"
 
@@ -769,13 +705,10 @@ extension Agent.Rules {
 
     static let gameEdit = """
     - Make the change the user asks for by editing the game's files: its C++ (.cpp and .h) and shaders (.glsl) in \
-    Game/, and what it loads in Assets/. Every .cpp and .glsl in Game/ is built. Lamp/, Sources/, build.sh and \
-    Package.swift are Lamp's (the kit and the app around the game, written before every build): read Lamp/, never \
-    edit or delete any of them. Lamp builds by itself when you look and, at the end of your turn, opens the game \
-    where Try On points (the Mac, a simulator, the Android emulator or the Xbox), so don't run the build or reach a \
-    device yourself, and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it on \
-    their iPhone, iPad, Android phone or Xbox, call make_app_for with every place it's to be played (["mac", \
-    "iphone"], ["mac", "android"], ["mac", "xbox-one"]…); it stays the same game.
+    Game/, and what it loads in Assets/. Every .cpp and .glsl in Game/ is built. Lamp/ is Lamp's (the kit, written \
+    before every build): read it, never edit or delete it. Lamp builds by itself when you look and, at the end of \
+    your turn, puts the game on the Xbox, so don't run the build or reach the console yourself, and leave .lamp/ \
+    alone. A game in C++ is played on the Xbox alone: it can't be put anywhere else.
     """
 
     static let gameKit = """

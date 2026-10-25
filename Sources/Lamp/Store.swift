@@ -2133,6 +2133,10 @@ final class Store: ObservableObject {
     func setPlaces(_ project: LampProject, _ wanted: [Destination], family: DeviceFamily? = nil) async -> String {
         guard let current = current(project), current.platform.addsPlaces else { return "Lamp can't find the game." }
         let target = current.platform.target
+        // A game in C++, made before three.js games, is played on the Xbox alone.
+        if GameKit.isGame(current), GameKit.engine(current) == .native, wanted.filter({ $0 != .mac }) != [.device] {
+            return "This game is written in C++ for the Xbox, and is played there alone. A three.js game, a new wish, plays everywhere."
+        }
         // A game's home is the Mac, kept whatever's asked; a screen is where it's put.
         let places = target.places.filter { ($0 == .mac && current.platform == .game) || wanted.contains($0) }
         guard !places.isEmpty else { return "It has to be shown somewhere: name at least one place." }
@@ -2171,6 +2175,12 @@ final class Store: ObservableObject {
         log(changed, .status, said.joined(separator: " "))
         if added.contains(.device), DeviceApps.device(for: changed, among: devices) == nil { refreshDevices() }
         return said.joined(separator: " ")
+    }
+
+    /// The places an app could be given and hasn't yet, for Try On's "… Too": none for a C++ game, which is the Xbox's.
+    static func placesToAdd(_ project: LampProject) -> [Destination] {
+        guard project.platform.addsPlaces, !(GameKit.isGame(project) && GameKit.engine(project) == .native) else { return [] }
+        return project.platform.target.places.filter { !project.openPlaces.contains($0) }
     }
 
     func setMac(_ project: LampProject) {
@@ -5485,7 +5495,7 @@ final class Store: ObservableObject {
     /// `make_app_for` on a game or a screen: the places it's played or shown from now on, the same code everywhere, with
     /// what each place asks of it (for a game, the budget of the weakest, which the request's device line carries from now on).
     private func kindPlaces(_ devices: Set<String>, for game: LampProject) async -> (Int, [String: Any]) {
-        let words = devices.subtracting(["game", "screen", "native"])
+        let words = devices.subtracting(["game", "screen"])
         let kind = game.platform
         let allowed = Set(GameKit.placeWords.filter { $0.value.map(kind.target.places.contains) ?? false }.keys)
         guard words.allSatisfy(allowed.contains) else {
@@ -6407,15 +6417,6 @@ final class Store: ObservableObject {
         let game = GameKit.isGame(project)
         // A game's shaders are compiled with a tool Lamp fetches the first time, a small download with nothing to accept.
         if game, GameKit.engine(project) == .native {
-            // A C++ game on Android is built with Google's NDK, fetched the first time one goes there (about 1 GB).
-            if project.onAndroid, AndroidTools.isReady, !AndroidTools.hasNDK {
-                note("Getting Android's tools for games in C++…", for: project)
-                log(project, .status, "Getting Android's tools for games in C++, about 1 GB. This happens once.")
-                do { try await AndroidTools.installNDK() } catch {
-                    log(project, .error, error.localizedDescription)
-                    return error.localizedDescription
-                }
-            }
             do { try await GameKit.toolsForApple() } catch {
                 log(project, .error, error.localizedDescription)
                 return error.localizedDescription

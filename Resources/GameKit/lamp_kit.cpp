@@ -1,6 +1,5 @@
 // Lamp's game kit: the sokol libraries' code and what both hosts share. Lamp writes this file before every build.
-// Compiled once per host, with SOKOL_D3D11 for the Xbox or SOKOL_METAL (as Objective-C++) for the Mac, the iPhone and
-// the iPad, and the preview.
+// Compiled once per host, with SOKOL_D3D11 for the Xbox or SOKOL_METAL (as Objective-C++) for the Mac preview.
 #if defined(SOKOL_D3D11)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -41,10 +40,6 @@ uint32_t lamp_random(void) {
 float lamp_random_float(void) { return (float)(lamp_random() >> 8) / 16777216.0f; }
 
 void lamp_free(LampFile file) { free(file.data); }
-
-uint32_t lamp_host_touch_buttons = LAMP_A | LAMP_B | LAMP_MENU;
-
-void lamp_touch_buttons(uint32_t buttons) { lamp_host_touch_buttons = buttons & 0x3FFF; }
 
 void lamp_host_edges(LampPad* pad, uint32_t before) {
     pad->pressed = pad->down & ~before;

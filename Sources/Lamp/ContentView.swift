@@ -1867,7 +1867,7 @@ private struct TryOnChoices: View {
             deviceChoices
         }
         // The places the kind can have and this one hasn't yet, each a click away.
-        let missing = project.platform.target.places.filter { !places.contains($0) }
+        let missing = Store.placesToAdd(project)
         if !missing.isEmpty {
             Divider()
             let verb = project.platform == .tv ? "Show" : "Play"
@@ -1940,7 +1940,7 @@ private struct TryOnChoices: View {
                 .pickerStyle(.inline)
             }
         }
-        // A C++ game goes on the simulators: Lamp doesn't build its library for the person's own iPhone or iPad yet.
+        // The person's own phones, for every kind but a C++ game, which is the Xbox's alone.
         if !(GameKit.isGame(project) && GameKit.engine(project) == .native) {
         do {
             // The person's phones, each by its exact model, and what it still needs before Play can put the app
