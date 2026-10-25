@@ -178,6 +178,10 @@ public final class Relay: @unchecked Sendable {
     nonisolated(unsafe) static var hostBehind = 128
     private var ticker: DispatchSourceTimer?
 
+    /// The largest message a socket takes: a file's piece, a game's or a wish's sealed one with its header and seal. A
+    /// browser and an Android app send each as one frame, never split, so the whole piece must fit in one.
+    public static let messageLimit = ControllerWire.chunk + 1024
+
     public init(key: SymmetricKey) {
         self.key = key
     }
@@ -193,8 +197,7 @@ public final class Relay: @unchecked Sendable {
     private func listen(_ port: UInt16, ready: @escaping @Sendable (UInt16?) -> Void) {
         let socket = NWProtocolWebSocket.Options()
         socket.autoReplyPing = true
-        // A piece, a game's or a wish's sealed one with its header and seal.
-        socket.maximumMessageSize = ControllerWire.chunk + 1024
+        socket.maximumMessageSize = Self.messageLimit
         socket.setClientRequestHandler(queue) { [weak self] _, headers in
             let admitted = self?.admits(origin: headers.first { $0.name.lowercased() == "origin" }?.value) ?? false
             return NWProtocolWebSocket.Response(status: admitted ? .accept : .reject, subprotocol: nil)

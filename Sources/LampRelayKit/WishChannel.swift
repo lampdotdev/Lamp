@@ -36,8 +36,10 @@ public enum WishChannel {
     public static let relayName = "lamp"
     /// The most a sealed message may hold: one message between the wish's apps, and its seal.
     public static let sealedLimit = ControllerWire.message + 1024
+    /// The bytes of a file in one piece between a wish's apps.
+    public static let pieceSize = ControllerWire.chunk
     /// The most a sealed piece of a file may hold: a piece's bytes behind its header (`piece`).
-    public static let pieceLimit = ControllerWire.chunk + 64
+    public static let pieceLimit = pieceSize + 64
 
     /// A piece of a file between a wish's apps, as it goes sealed: 1, the length of a peer's name and the name (the one it's
     /// for, from its sender to the relay; the one it's from, from the relay; none on a link straight between two apps),
