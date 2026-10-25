@@ -52,10 +52,13 @@ failed=0
 for starter in $starters; do
   name="${starter:t}"
   library=("$work/LampSupport.swift") macos=14.0
-  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' "$starter"/Sources/**/*.swift(N); then
+  sources=("$starter"/Sources/**/*.swift(N))
+  # A game's starter has no Swift of its own (Lamp writes the app around its page): nothing to check.
+  if (( ! $#sources )); then print -- "○ $name: no Swift to check"; continue; fi
+  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' $sources; then
     library+=("$work/LampScene.swift") macos=15.0
   fi
-  if check $macos $library "$starter"/Sources/**/*.swift(N) 2>"$work/$name.log"; then
+  if check $macos $library $sources 2>"$work/$name.log"; then
     print "✓ $name"
   else
     print "✗ $name"; cat "$work/$name.log"; failed=1
