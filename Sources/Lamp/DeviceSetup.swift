@@ -491,22 +491,10 @@ struct DeviceCommandCard: View {
 
 // MARK: - In the chat
 
-/// The device's next step in a wish's chat, when the wish needs it set up: the same card as the setup window, sharing
-/// its state. Once the device is set up it folds to one line.
-struct DeviceStepLine: View {
-    let deviceID: String
-    @EnvironmentObject private var store: Store
-
-    var body: some View {
-        if let device = store.devices.first(where: { $0.id == deviceID }), device.integration != nil {
-            DeviceStepChat(model: DeviceSetupModel.for(device))
-        } else {
-            Label(Integrations.kept(deviceID).map { "\($0.name) isn't on the network now." } ?? "That device isn't on the network now.",
-                  systemImage: "dot.radiowaves.left.and.right").foregroundStyle(.secondary)
-        }
-    }
-
-    /// The line the sidebar's chat shows for it, where the card's own controls can't go: setup happens in Lamp's window.
+/// The device's next step in a wish's chat, when the wish needs it set up: a line with Set Up…, which opens the setup
+/// window (`DeviceSetupWindow`) with the step's card. Once the device is set up it says so.
+enum DeviceStepLine {
+    /// The line the chat shows for it: the card's own controls are in the setup window.
     @MainActor static func text(_ deviceID: String) -> (text: String, done: Bool) {
         guard let device = Store.shared.devices.first(where: { $0.id == deviceID }) ?? Integrations.kept(deviceID).map({ Integrations.device(from: $0, onNetwork: false) }) else {
             return ("Set up the device", false)
@@ -516,23 +504,3 @@ struct DeviceStepLine: View {
     }
 }
 
-private struct DeviceStepChat: View {
-    @ObservedObject var model: DeviceSetupModel
-
-    var body: some View {
-        Group {
-            if model.certificateChanged {
-                DeviceReconnectCard(device: model.device.name, reconnect: { model.reconnect() })
-            } else if let approval = model.approval {
-                DeviceCommandCard(approval: approval, allow: { model.decide(true) }, deny: { model.decide(false) })
-            } else if let content = model.content {
-                DeviceStepCard(content: content, typed: $model.typed, act: model.act)
-            } else {
-                // Folded, it's one of the chat's status lines, drawn and indented as they are.
-                ChatLook.StatusLine("\(model.device.name) is set up.", running: false)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .onAppear { model.watch() }
-    }
-}

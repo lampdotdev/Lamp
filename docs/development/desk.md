@@ -2,7 +2,8 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
-Lamp's window opens on the desk (`WishDesk`, `Desk.swift`): the person's wishes as icons, first, since using one and
+Lamp's window is the desk and only the desk (`WishDesk`, `Desk.swift`): no wish's chat is ever drawn in it. It shows the
+person's wishes as icons, first, since using one and
 changing it is where most wishes start, and under them the one place to make a new one. A click's hint says it
 opens to use and change (`DeskIcon`). Wishes are dragged into the order the person wants (`DeskArrangement`, kept by
 instance so a rename keeps a wish's place; name order until the first drag, and a new wish goes at the end after it);
@@ -12,9 +13,11 @@ be made of an app, a widget, a menu bar item, a watch app, so "app" stays where 
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
 setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
-change at once (`Store.open(fromDesk:)`): a Mac app with windows opens with
-its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens no window is used (`Store.use`), and one still coming
-true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way, or in Lamp's window. Under each icon is its
+change at once (`Store.open(fromDesk:)`), always with its chat beside whatever shows it: a Mac app with windows opens with
+its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens
+no Mac window is used (`Store.use`) with its chat in Lamp's panel, beside the simulator, the emulator or Lamp's preview
+that shows it, or on its own where nothing on this Mac does (`ChatPanel`, "The chat's one screen" in the chat guide); one
+still coming true, or waiting on an answer, opens its chat. Change… on its menu changes it the same way. Under each icon is its
 name, and a dot says it's ready. The one wait the desk shows is a starter clicked before Lamp has built it, since
 nothing else on screen says the click did anything until it opens by itself (`openWhenReady`): its icon glows, the light
 Lamp puts round an app's windows going round it, and "Getting it ready…" is under its name, a sheen crossing it so the
@@ -25,7 +28,7 @@ starter, "Coming true…" or "Changing…" for a wish being worked on, and where
 from its files). While the pointer is on a wish, its picture and what it is take the place where a new wish is made
 (`WishStage`), which steps back and fades. When it's used where nothing comes
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
-large translucent square like macOS's old volume display. Its chat has a back button (⌘[) to the desk.
+large translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in front (⌘[).
 
 "Help me find one" (`Store.findWish`) is the site's wizard in the app, held in the ordinary chat: a new wish
 marked `finding` whose first request is `Agent.findingRequest`. The agent asks about the person's days in

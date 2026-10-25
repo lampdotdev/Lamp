@@ -513,8 +513,14 @@ extension Simulator {
             return matches
         }
 
+        /// The process showing simulators on screen, for the chat beside it (`ChatPanel`).
+        nonisolated static func viewerProcess() -> pid_t? { viewer()?.pid }
+
+        /// The title of a device's window, for the chat to find the one it goes beside.
+        nonisolated static func windowTitle(_ udid: String) -> String? { deviceTitle(udid) }
+
         /// The process showing simulators on screen (Simulator.viewers), if it's running.
-        private static func viewer() -> (pid: pid_t, oneAtATime: Bool)? {
+        private nonisolated static func viewer() -> (pid: pid_t, oneAtATime: Bool)? {
             for id in Simulator.viewers {
                 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: id).first else { continue }
                 let oneAtATime = id != Simulator.viewers[0]
@@ -1281,7 +1287,7 @@ extension Simulator {
         }
 
         /// The Simulator window's title for a device: "iPhone 16 – iOS 18.6", from its name and runtime.
-        private static func deviceTitle(_ udid: String) -> String? {
+        private nonisolated static func deviceTitle(_ udid: String) -> String? {
             let listing = Subprocess.runBlocking(DeveloperTools.path("simctl"), ["list", "devices", "-j"], mergeErrors: false, timeout: 30).output
             guard let data = listing.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -1,83 +1,19 @@
 import SwiftUI
 import AppKit
 
-/// Lamp's windows, as a document app has them: the desk, and one window for each wish's chat, listed in the
-/// Window menu. `Store.selection` is the wish whose window is in front (nil for the desk), so what acts on
-/// "this wish" (the menu bar's commands, the dialogs) acts on the window being looked at.
+/// Lamp's window: the desk. Each wish's chat is beside whatever shows it (`ChatPanel`). `Store.selection` is the wish
+/// whose chat is in front (nil for the desk), so what acts on "this wish" (the menu bar's commands, the dialogs) acts
+/// on the chat being looked at.
 @MainActor
 enum LampWindows {
     /// SwiftUI's way to open a window, handed over by the first window to appear. It opens any of the app's
     /// scenes, so the one kept serves after its window has closed.
     static var open: OpenWindowAction?
 
-    /// A wish's chat in its own window, or that window brought to the front when it's open already.
-    static func showChat(_ id: String) {
-        open?(id: "wish", value: id)
-    }
-
     /// The desk's window, opened again if it was closed or put away for an app's sidebar.
     static func showDesk() {
         if let main = MagicPanel.mainWindow, !main.isVisible { main.makeKeyAndOrderFront(nil) }
         open?(id: "main")
-    }
-}
-
-/// One wish's chat, alone in its window. It follows the wish when its first request moves it to a new folder,
-/// and closes when the wish is deleted.
-struct WishWindow: View {
-    @EnvironmentObject private var store: Store
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
-    @Binding var id: String?
-
-    private var project: LampProject? { id.flatMap(store.project(following:)) }
-
-    var body: some View {
-        Group {
-            if let project {
-                VStack(spacing: 0) {
-                    if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
-                    ProjectView(project: project).id(project.id)
-                }
-                .modifier(StoreDialogs(active: store.selection == project.id))
-            } else {
-                Color.clear
-            }
-        }
-        .frame(minWidth: 760, minHeight: 480)
-        .background(WindowKeyWatcher { if let project { store.selection = project.id } })
-        .onAppear { LampWindows.open = LampWindows.open ?? openWindow }
-        .onChange(of: project?.id, initial: true) { old, now in
-            if let old { store.chatWindows.remove(old) }
-            if let now { store.chatWindows.insert(now) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            store.markRead()
-        }
-        // Rescaffolded under a new id: the window's value follows, so it's still the one brought forward.
-        .onChange(of: project?.id) { _, now in
-            if let now, now != id { id = now }
-        }
-        // Its chat moved into the app's own window (`MagicPanel.handOff`).
-        .onChange(of: store.chatsHandedOff) { _, handed in
-            guard let id = project?.id, handed.contains(id) else { return }
-            store.chatsHandedOff.remove(id)
-            dismiss()
-        }
-        // Gone (deleted, or an empty wish discarded): the window goes too. Looked at again a moment later, so a
-        // wish caught between its old folder and its new one isn't taken for gone.
-        .task(id: project == nil) {
-            guard project == nil else { return }
-            try? await Task.sleep(for: .milliseconds(300))
-            if project == nil { dismiss() }
-        }
-        .onDisappear {
-            if let project { store.chatWindows.remove(project.id) }
-            guard let id else { return }
-            if store.selection == id { store.selection = nil }
-            // An empty new wish goes with its window, as it went when the person left its chat.
-            store.closedChat(id)
-        }
     }
 }
 
@@ -118,6 +54,7 @@ struct WindowKeyWatcher: NSViewRepresentable {
 /// moves an open one there rather than answering it.
 struct StoreDialogs: ViewModifier {
     @EnvironmentObject private var store: Store
+    @ObservedObject private var setupSheet = SetupSheet.shared
     let active: Bool
     @State private var newName = ""
     @State private var versionName = ""
@@ -127,7 +64,8 @@ struct StoreDialogs: ViewModifier {
         .sheet(item: Binding(get: { active ? store.pendingImport : nil }, set: { if active { store.pendingImport = $0 } })) { pending in
             ImportReviewView(pending: pending)
         }
-        .modifier(PlaygroundIconSheet(active: active))
+        // Not while a chat's setup sheet is up: Image Playground opens over that (`SetupSheet`).
+        .modifier(PlaygroundIconSheet(active: active && !setupSheet.isShowing))
         .alert("Rename “\(store.renaming?.name ?? "")”", isPresented: Binding(
             get: { active && store.renaming != nil }, set: { if active, !$0 { store.renaming = nil } })) {
             TextField("Name", text: $newName)

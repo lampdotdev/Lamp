@@ -140,11 +140,14 @@ final class SidebarServer {
 
     private var listener: Listener?
     private var connections: [ObjectIdentifier: Connection] = [:]
+    /// The chats Lamp draws itself, in its own panel (`ChatPanel`), by wish: the same screen fed the same way, with no
+    /// socket between.
+    private var locals: [String: LocalChat] = [:]
     private var watching: AnyCancellable?
     private var pending = false
 
-    /// Some app's chat is showing beside it: Lamp keeps running when its own window closes.
-    var isInUse: Bool { !connections.isEmpty }
+    /// Some wish's chat is showing, beside its app or in Lamp's panel: Lamp keeps running when its own window closes.
+    var isInUse: Bool { !connections.isEmpty || !locals.isEmpty }
 
     /// This app's chat is showing beside it.
     func isConnected(_ projectID: String) -> Bool { connections.values.contains { $0.projectID == projectID } }
@@ -186,16 +189,52 @@ final class SidebarServer {
         if !connections.values.contains(where: { $0.projectID == id }) {
             dictations.removeValue(forKey: id)?.cancel()
             listening[id] = nil
+            // The app went in the middle of a turn (the person quit it, or it crashed): the turn's progress, its
+            // questions and Stop come up in Lamp's panel rather than nowhere. A reopen for a change brings its chat
+            // back beside the new copy before then.
+            if Store.shared.busy.contains(id), let project = Store.shared.projects.first(where: { $0.id == id }) {
+                MagicPanel.shared.showChatAfterQuit(project)
+            }
         }
     }
 
+    /// The chat Lamp draws for this wish in its own panel, made when the panel opens and let go when it closes.
+    func local(for projectID: String) -> LocalChat {
+        if let local = locals[projectID] { return local }
+        let local = LocalChat(projectID: projectID, server: self)
+        locals[projectID] = local
+        local.push()
+        // A starter's first chat: what it offers to change arrives once the chat is there to see.
+        Store.shared.offerStarterChanges(projectID, after: 0.9)
+        return local
+    }
+
+    func letGo(_ local: LocalChat) {
+        if locals[local.projectID] === local { locals[local.projectID] = nil }
+        let id = local.projectID
+        if !connections.values.contains(where: { $0.projectID == id }) {
+            dictations.removeValue(forKey: id)?.cancel()
+            listening[id] = nil
+        }
+    }
+
+    /// A wish's folder moved (its first request named it): its panel's chat follows it there.
+    func follow(_ local: LocalChat, to projectID: String) {
+        guard local.projectID != projectID else { return }
+        if locals[local.projectID] === local { locals[local.projectID] = nil }
+        local.projectID = projectID
+        locals[projectID] = local
+        local.push()
+    }
+
     private func scheduleUpdate() {
-        guard !pending, !connections.isEmpty else { return }
+        guard !pending, !connections.isEmpty || !locals.isEmpty else { return }
         pending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self else { return }
             pending = false
             connections.values.forEach { $0.push(force: false) }
+            locals.values.forEach { $0.push() }
         }
     }
 
@@ -208,6 +247,7 @@ final class SidebarServer {
 
     private func pushNow() {
         connections.values.forEach { $0.push(force: false) }
+        locals.values.forEach { $0.push() }
     }
 
     // MARK: What the sidebar shows
@@ -234,7 +274,7 @@ final class SidebarServer {
         var state = SidebarState(app: project.name, lines: Self.lines(log, project: project, busy: busy, progressShown: progress != nil,
                                                                                          reach: reach[project.id] ?? LogLine.recentCount,
                                                                                          canSendAgain: !busy && !store.pendingSubmissions.contains(project.id),
-                                                                                         details: details),
+                                                                                         details: details, progress: store.progress[project.id]),
                                  working: progress?.activity, workingSince: progress?.started, empty: log.isEmpty, busy: busy,
                                  draft: draft.text, draftVersion: draftVersions[project.id] ?? 0,
                                  attachments: draft.attachments.map { Self.attachment($0) })
@@ -281,15 +321,28 @@ final class SidebarServer {
         // As Lamp's window offers it: not while anything waits to go after the change.
         state.undoChange = busy || !(store.queued[project.id] ?? []).isEmpty ? nil : store.undoOffers[project.id]
         let history = history(for: project, busy: busy, lines: log.count)
-        state.toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && (history?.made ?? false),
-                                       hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
-        state.tryOn = TryOnMenu.make(for: project, store: store).map { menu in
-            SidebarTryOn(sections: menu.sections.map { section in
-                SidebarTryOn.Section(title: section.title, items: section.items.map {
-                    SidebarTryOn.Item(id: $0.id, title: $0.title, symbol: $0.symbol, checked: $0.checked, disabled: $0.disabled)
-                }, submenu: section.submenu ? true : nil)
-            }, symbol: menu.symbol, current: menu.sections.flatMap(\.items).first(where: \.checked)?.title)
+        // A wish not yet told, or still being found, has nothing to open, undo, share or look into: only the chat's
+        // close button and its name, until it does.
+        let untold = !project.scaffolded && log.isEmpty && !busy
+        if !untold && !project.makesNoApp {
+            let made = history?.made ?? false
+            var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
+                                         hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
+            // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
+            if !Self.besideItsApp(project, place: history?.place) {
+                let open = store.isWishOpen(project)
+                toolbar.play = SidebarPlay(open: open, enabled: open || made,
+                                           help: open ? "Quit \(project.name)" : made ? "Use \(project.name)" : "Lamp opens it once it's made")
+            }
+            state.toolbar = toolbar
+            state.tryOn = tryOn(for: project, busy: busy)
         }
+        state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
+        if store.setup.checked && !store.setup.hasBuildTools {
+            state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
+                                         button: store.setup.installRequested ? "Show Installer" : "Install…")
+        }
+        state.readingAt = readingAt[project.id]
         state.panel = panels[project.id]
         switch state.panel {
         case .versions:
@@ -302,6 +355,76 @@ final class SidebarServer {
         state.sharing = sharing.removeValue(forKey: project.id)
         if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
         return state
+    }
+
+    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window.
+    static func besideItsApp(_ project: LampProject, place: WishPlace?) -> Bool {
+        project.destination == .mac && project.hasMac && (place ?? .window) == .window
+    }
+
+    /// Where each chat was being read, the first line in view, or none at its end (`SidebarCommand.scrolled`).
+    private var readingAt: [String: UUID] = [:]
+
+    /// Try On's choices for the bar, with each of the wish's other apps (a TV app beside an iPhone app) to use or quit
+    /// on its own after them.
+    private func tryOn(for project: LampProject, busy: Bool) -> SidebarTryOn? {
+        let store = Store.shared
+        var sections = TryOnMenu.make(for: project, store: store)?.sections ?? []
+        let parts = store.parts(of: project)
+        if !parts.isEmpty {
+            sections.append(TryOnMenu.Section(title: "Its Other Apps", items: parts.map { part in
+                let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
+                let open = store.isOpen(part)
+                return TryOnMenu.Item(id: (open ? "part-quit:" : "part-use:") + part.id, title: (open ? "Quit the " : "Use the ") + name,
+                                      symbol: symbol, disabled: busy)
+            }))
+        }
+        guard !sections.isEmpty else { return nil }
+        let symbol = TryOnMenu.make(for: project, store: store)?.symbol ?? "laptopcomputer"
+        return SidebarTryOn(sections: sections.map { section in
+            SidebarTryOn.Section(title: section.title, items: section.items.map {
+                SidebarTryOn.Item(id: $0.id, title: $0.title, symbol: $0.symbol, checked: $0.checked, disabled: $0.disabled || busy)
+            }, submenu: section.submenu ? true : nil)
+        }, symbol: symbol, current: sections.flatMap(\.items).first(where: \.checked)?.title)
+    }
+
+    /// The ideas each new wish's empty chat offers, drawn once when it's first shown and changed only when asked.
+    private var ideaDecks: [String: IdeaDeck] = [:]
+    private var ideaWatches: [String: AnyCancellable] = [:]
+    /// Whether each new wish is still Lamp's empty app: read once, when its chat first shows it.
+    private var fresh: [String: Bool] = [:]
+    private var introIcons: [String: (key: ObjectIdentifier?, data: Data?)] = [:]
+
+    /// A new wish's empty chat: its icon, its name to change (or, not named yet, what would make the day easier), what to
+    /// do, and ideas to start from while nothing's typed.
+    private func intro(for project: LampProject, busy: Bool, draft: String) -> SidebarIntro {
+        let store = Store.shared
+        let key = store.icons[project.id].map(ObjectIdentifier.init)
+        if introIcons[project.id] == nil || introIcons[project.id]?.key != key {
+            let image = store.iconImage(for: project)
+            introIcons[project.id] = (key, image.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) })
+        }
+        if fresh[project.id] == nil { fresh[project.id] = Template.isScaffold(project) }
+        if ideaDecks[project.id] == nil {
+            let others = store.wishes.filter { $0.id != project.id && !$0.untitled }
+            let deck = IdeaDeck(first: Ideas.starters(made: others.map(\.name)))
+            ideaDecks[project.id] = deck
+            ideaWatches[project.id] = deck.objectWillChange.sink { [weak self] _ in
+                DispatchQueue.main.async { self?.scheduleUpdate() }
+            }
+            deck.prefetch()
+        }
+        let ideas = fresh[project.id] == true && draft.trimmed.isEmpty
+            ? (ideaDecks[project.id]?.ideas ?? []).map { SidebarIdea(id: $0.title, symbol: $0.symbol, hue: $0.hue, text: $0.blurb) } : []
+        let asks = project.untitled && !project.fromWish
+        return SidebarIntro(
+            icon: introIcons[project.id]?.data,
+            name: asks ? nil : project.untitled ? "" : project.name,
+            namePrompt: !project.untitled ? project.name : project.fromWish ? project.title : "Name it, or Lamp will",
+            line: project.untitled && project.fromWish ? "Here's your wish. Change anything you like."
+                : project.untitled ? "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."
+                : "Describe what \(project.name) should do. Lamp builds it and opens it for you.",
+            ideas: ideas, canRename: !busy)
     }
 
     /// The Share Link card as the chat beside the app draws it, its picture made small once for each picture.
@@ -335,15 +458,15 @@ final class SidebarServer {
 
     /// What the toolbar knows of each app's history, read again as Lamp's window reads it: when a turn starts or ends
     /// and when the chat changes.
-    private var histories: [String: (key: String, value: ProjectView.History?)] = [:]
+    private var histories: [String: (key: String, value: WishHistory?)] = [:]
 
-    private func history(for project: LampProject, busy: Bool, lines: Int) -> ProjectView.History? {
+    private func history(for project: LampProject, busy: Bool, lines: Int) -> WishHistory? {
         let key = "\(busy) \(lines)"
         if histories[project.id]?.key != key {
             let known = histories[project.id]?.value
             histories[project.id] = (key, known)
             Task { [weak self] in
-                let read = await ProjectView.History.read(project)
+                let read = await WishHistory.read(project)
                 guard let self, self.histories[project.id]?.key == key else { return }
                 self.histories[project.id] = (key, read)
                 self.scheduleUpdate()
@@ -468,20 +591,88 @@ final class SidebarServer {
         return steps.isEmpty ? nil : stepLines(steps)
     }
 
+    /// What every part of the chat is drawn knowing: the wish, which card waits, and the latest request.
+    private struct Context {
+        let project: LampProject
+        let canSendAgain: Bool
+        let openAsk: UUID?
+        let latestRequest: UUID?
+        let details: Bool
+    }
+
+    /// The chat as both chats show it: the lines gathered and spaced, a new app's first build as its parts
+    /// (`Chapters`), and with Agent Details every line as it came.
     static func lines(_ log: [LogLine], project: LampProject, busy: Bool, progressShown: Bool,
-                      reach: Int = LogLine.recentCount, canSendAgain: Bool = false, details: Bool = false) -> [SidebarLine] {
-        let dir = project.dir
-        // Offers with nothing left to offer (an icon drawn, a widget gone) are left out, as in Lamp's window.
-        let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: details), dir: dir)
-        let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
-        let openAsk = Talk.open(in: lines)?.id
-        // Only the end of a long chat, as Lamp's window opens on it; the rest is a click away in Lamp.
+                      reach: Int = LogLine.recentCount, canSendAgain: Bool = false, details: Bool = false,
+                      progress: TurnProgress? = nil) -> [SidebarLine] {
+        // Offers with nothing left to offer (an icon drawn, a widget gone) are left out.
+        let lines = Transcript.withoutSpentOffers(LogLine.visible(log, details: details), dir: project.dir)
+        // Only the end of a long chat, until more is asked for (`earlier`).
         let start = LogLine.recentStart(in: lines, atLeast: reach)
-        let latestRequest = lines.last { $0.kind == .user }?.id
         let shown = Array(lines[start...])
-        // While the turn goes on, its steps since it last said something are in the line that says what it's doing (`liveSteps`).
-        let items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(shown) : ChatItem.live(shown, dir: dir).shown) : shown,
+        let context = Context(project: project, canSendAgain: canSendAgain, openAsk: Talk.open(in: lines)?.id,
+                              latestRequest: lines.last { $0.kind == .user }?.id, details: details)
+        let segments = details ? [Chapters.Segment.lines(shown)] : Chapters.segments(shown, progress: progress)
+        var out: [SidebarLine] = []
+        for (index, segment) in segments.enumerated() {
+            switch segment {
+            case .lines(let part):
+                let last = index == segments.count - 1
+                out += convert(part, busy: last && busy, progressShown: last && progressShown, chapterOf: nil, context)
+            case .build(let build):
+                out.append(buildLine(build, busy: busy, progress: build.live ? progress : nil, gap: out.isEmpty ? 0 : 12, context))
+            }
+        }
+        return out
+    }
+
+    /// A first build as its parts, each with what was said and done in it.
+    private static func buildLine(_ build: Chapters.Build, busy: Bool, progress: TurnProgress?, gap: Double, _ context: Context) -> SidebarLine {
+        let waiting = Talk.open(in: build.chat) != nil
+        func state(_ state: Chapters.Build.State) -> SidebarBuild.State {
+            switch state { case .done: .done; case .now: .now; case .later: .later }
+        }
+        func part(_ index: Int, title: String?, now: Bool, state partState: SidebarBuild.State) -> SidebarBuild.Part {
+            let lines = build.parts[index]
+            let live = now && busy && !waiting && progress != nil
+            let shown: [SidebarLine] = partState == .later ? []
+                : now ? convert(lines, busy: busy, progressShown: live, chapterOf: nil, context)
+                : convert(lines, busy: false, progressShown: false, chapterOf: build.chat, context)
+            let steps = live ? ChatItem.live(lines, dir: context.project.dir, doing: progress?.activity, looking: progress?.looking == true).steps : []
+            return SidebarBuild.Part(title: title, state: partState, time: build.seconds(of: index).map(ChatItem.duration), lines: shown, live: live,
+                                     steps: steps.isEmpty ? nil : stepLines(steps))
+        }
+        let parts: [SidebarBuild.Part] = build.titles.isEmpty
+            ? [part(0, title: nil, now: build.live, state: .now)]
+            : build.titles.enumerated().map { index, title in
+                part(index, title: title, now: build.live && build.summary == nil && index == build.current, state: state(build.state(of: index)))
+            }
+        var line = SidebarLine(id: build.id, kind: .build, text: build.foldTitle, gap: gap)
+        line.build = SidebarBuild(
+            parts: parts, sketch: build.titles.isEmpty && progress?.asking == false ? progress?.sketch ?? [] : [],
+            finishing: build.live && !build.titles.isEmpty ? (build.summary == nil ? .later : .now) : nil,
+            finishingActivity: build.summary != nil ? progress?.activity : nil, finishingSince: progress?.activitySince,
+            folded: build.folded, foldTitle: build.foldTitle, time: build.time, answer: build.answer?.text)
+        return line
+    }
+
+    /// A stretch of the chat as its lines: a finished turn's steps folded where they came, the turn going on with its
+    /// steps since it last said something left to its live line, and a done part of a first build (`chapterOf`, the
+    /// whole chat) folded as a part's steps fold.
+    private static func convert(_ lines: [LogLine], busy: Bool, progressShown: Bool, chapterOf chat: [LogLine]?, _ context: Context) -> [SidebarLine] {
+        let project = context.project
+        let dir = project.dir
+        let details = context.details
+        let finalAnswers = Transcript.finalAnswers(in: lines, busy: busy)
+        let items: [ChatItem]
+        if let chat, !details {
+            // A part's last stretch of steps took until what came after the part.
+            let ended = lines.last.flatMap { last in chat.firstIndex { $0.id == last.id } }.flatMap { $0 + 1 < chat.count ? chat[$0 + 1].at : nil }
+            items = ChatItem.chapter(lines, waiting: context.openAsk, ended: ended)
+        } else {
+            items = ChatItem.items(progressShown ? (details ? Transcript.withoutStepInProgress(lines) : ChatItem.live(lines, dir: dir).shown) : lines,
                                    gather: !details)
+        }
         var out: [SidebarLine] = []
         for (index, item) in items.enumerated() {
             let isLast = index == items.count - 1
@@ -509,8 +700,8 @@ final class SidebarServer {
                                               attachments: files.isEmpty ? nil : files.map { attachment($0) })
                     request.pointed = pointed.map { Self.pointed($0) }
                     request.canGoBack = line.version != nil
-                    request.canSendAgain = canSendAgain && line.canSendAgain
-                    request.isLatest = line.id == latestRequest
+                    request.canSendAgain = context.canSendAgain && line.canSendAgain
+                    request.isLatest = line.id == context.latestRequest
                     out.append(request)
                 case .agent:
                     out.append(SidebarLine(id: line.id, kind: .agent, text: line.text, gap: gap, growing: busy))
@@ -519,10 +710,15 @@ final class SidebarServer {
                 case .summary:
                     out.append(SidebarLine(id: line.id, kind: .summary, text: line.text, gap: gap))
                 case .error:
-                    out.append(SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap))
+                    var error = SidebarLine(id: line.id, kind: .error, text: line.text, gap: gap)
+                    // A phone that didn't take the app: tried again from here (`SidebarCommand.offer`).
+                    if line.retryPhone != nil { error.button = "Retry" }
+                    out.append(error)
+                case .detail:
+                    out.append(SidebarLine(id: line.id, kind: .detail, text: line.text, gap: gap))
                 case .ask:
                     guard let ask = line.ask else { continue }
-                    let open = line.id == openAsk
+                    let open = line.id == context.openAsk
                     // What a sidebar from before the shared card reads: the questions while they wait, else what
                     // was chosen, folded.
                     var card = SidebarLine(id: line.id, kind: .ask, text: open ? ask.text : (ask.folded ?? ask.text), gap: gap,
@@ -546,7 +742,7 @@ final class SidebarServer {
                     card.symbol = SetupCard.symbol(offer)
                     card.status = header.status
                     card.done = header.done
-                    card.button = header.done || offer.declined(in: project) ? nil : "Set Up in Lamp…"
+                    card.button = header.done || offer.declined(in: project) ? nil : "Set Up…"
                     out.append(card)
                 case .widget:
                     let placed = Store.shared.placedWidgets.contains(project.id)
@@ -582,7 +778,7 @@ final class SidebarServer {
                     var card = SidebarLine(id: line.id, kind: .offer, text: step.text, gap: gap)
                     card.symbol = "dot.radiowaves.left.and.right"
                     card.done = step.done
-                    card.button = step.done ? nil : "Set Up in Lamp…"
+                    card.button = step.done ? nil : "Set Up…"
                     out.append(card)
                 case .noted:
                     guard let receipt = line.noted else { continue }
@@ -658,8 +854,11 @@ final class SidebarServer {
         scheduleUpdate()
     }
 
-    /// Sends what's in the message box the way Lamp's window does (`ProjectView.send`): held while setup is
-    /// needed, sent again in place of a request taken back, and the box left with whatever came after.
+    /// What's in the wish's message box, sent as if from its chat: a wish made on the desk, which goes to its chat.
+    func send(_ project: LampProject) { submit(project) }
+
+    /// Sends what's in the message box: held while setup is needed, sent again in place of a request taken back,
+    /// and the box left with whatever came after.
     private func submit(_ project: LampProject) {
         let store = Store.shared
         let submitted = store.draft(for: project)
@@ -734,7 +933,7 @@ final class SidebarServer {
 
     // MARK: What the person did
 
-    fileprivate func handle(_ command: SidebarCommand, from projectID: String) {
+    func handle(_ command: SidebarCommand, from projectID: String) {
         let store = Store.shared
         guard let project = store.projects.first(where: { $0.id == projectID }) else { return }
         switch command {
@@ -822,17 +1021,24 @@ final class SidebarServer {
             store.attach(urls, to: project)
         case .offer(let id):
             guard let line = store.logs[project.id]?.first(where: { $0.id == id }) else { return }
-            // Reload is done where the person is, beside the app: nothing to show in Lamp's window.
+            // Reload is done where the person is, beside the app.
             if line.kind == .reload { return store.reloadWaiting(project.id) }
-            // A device's setup has a window of its own.
+            if line.kind == .error, let udid = line.retryPhone {
+                Task { await store.retryPhone(project, udid: udid) }
+                return
+            }
+            // A device's setup has a window of its own, and so has a kind's (the iPhone's tools, Android's).
             if line.kind == .deviceStep, let device = store.devices.first(where: { $0.id == line.text && $0.integration != nil }) {
                 return DeviceSetupWindow.show(device)
             }
-            // In Lamp's window: where the card's keys, downloads and sign-ins are, and what Image Playground
-            // opens over, which Lamp may have put away for the sidebar.
-            NSApp.activate(ignoringOtherApps: true)
-            store.showChat(project.id)
-            if line.kind == .drawIcon { store.iconFromPlayground(project) }
+            if line.kind == .iphoneSetup {
+                let (kind, part) = IPhoneSetupLine.wanted(from: line.text)
+                NSApp.activate(ignoringOtherApps: true)
+                return IPhoneSetupLine.follow(project, wanted: kind, part: part)
+            }
+            // A card's keys, downloads and sign-ins, and Image Playground: Lamp's own sheet, since the chat beside an
+            // app can't hold them (nothing typed there may reach the app), as Share hands over the file it makes.
+            SetupSheet.shared.show(project, line: line)
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
@@ -924,8 +1130,33 @@ final class SidebarServer {
             }
             scheduleUpdate()
         case .tryOn(let id):
-            store.tryOn(project, id, open: true)
+            if id.hasPrefix("part-use:") || id.hasPrefix("part-quit:"), let part = store.parts(of: project).first(where: { id.hasSuffix(":" + $0.id) }) {
+                if id.hasPrefix("part-use:") { store.openPrepared(part) } else { Task { await store.quitApp(part) } }
+                return
+            }
+            // Beside its Mac app the chat has no Play: a place chosen there is where it opens at once.
+            store.tryOn(project, id, open: Self.besideItsApp(project, place: histories[project.id]?.value?.place))
             scheduleUpdate()
+        case .play:
+            // A Mac app opens with its chat beside it (asked from Lamp's panel, which then closes); anything else is used.
+            if Self.besideItsApp(project, place: histories[project.id]?.value?.place) { return store.change(project) }
+            store.openWish(project)
+        case .quit:
+            Task { await store.quitWish(project) }
+        case .rename(let name):
+            guard !store.busy.contains(project.id) else { return }
+            Task { await store.rename(project, to: name) }
+        case .idea(let text):
+            var draft = store.draft(for: project)
+            draft.text = text
+            draftsFromSidebar[project.id] = nil
+            store.updateDraft(draft, for: project)
+        case .moreIdeas:
+            ideaDecks[project.id]?.more()
+        case .banner:
+            if store.setup.installRequested { SetupCheck.showInstaller() } else { store.requestBuildTools() }
+        case .scrolled(let line):
+            readingAt[project.id] = line
         case .hello:
             break   // answered by the connection
         }
@@ -1031,6 +1262,19 @@ final class SidebarServer {
             guard !outbox.isHolding else { waiting = true; return }
             guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
             var state = server.state(for: project)
+            // A sidebar from before first builds were drawn as their parts, and before Agent Details' output, can read
+            // neither, and would drop the whole chat: it gets each part's lines as lines, as it showed them.
+            if version < 11 {
+                state.lines = state.lines.flatMap { line -> [SidebarLine] in
+                    guard line.kind == .build, let build = line.build else { return [line] }
+                    var lines = build.parts.flatMap(\.lines)
+                    if !lines.isEmpty { lines[0].gap = line.gap }
+                    if let answer = build.answer { lines.append(SidebarLine(id: UUID(), kind: .agent, text: answer, gap: 12)) }
+                    return lines
+                }
+                state.lines.removeAll { $0.kind == .detail }
+                state.toolbar?.play = nil
+            }
             // A sidebar from before a turn's steps were folded can't read the fold, and would drop the whole chat: it
             // gets the steps as lines, as it showed them.
             if version < 7 {
@@ -1088,5 +1332,81 @@ final class SidebarServer {
             close(fd)
             server?.closed(self)
         }
+    }
+}
+
+/// A wish's chat as Lamp's own panel shows it (`ChatPanel`): the screen the extension beside a Mac app draws
+/// (`ChatScreen`), given the same state and passing what's done to the same handler, in Lamp's own process.
+@MainActor
+final class LocalChat: ChatLink {
+    fileprivate(set) var projectID: String
+    private weak var server: SidebarServer?
+    /// The panel it's drawn in, for what only the panel can do: close, and move with the pointer.
+    weak var panel: ChatPanel?
+    /// The draft as last given to the screen, and its version: as with the extension, words typed here aren't
+    /// given back to it while they're the newest (`SidebarState.draftVersion`).
+    private var givenDraft = ""
+    private var givenDraftVersion = -1
+
+    fileprivate init(projectID: String, server: SidebarServer) {
+        self.projectID = projectID
+        self.server = server
+        super.init()
+        connected = true
+    }
+
+    func push() {
+        guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
+        var state = server.state(for: project)
+        // A Mac app's chat has no Play beside its window; here, away from it, Play opens it, and the chat goes beside it.
+        if state.toolbar != nil, state.toolbar?.play == nil {
+            let open = Store.shared.isWishOpen(project)
+            state.toolbar?.play = SidebarPlay(open: open, enabled: true, help: open ? "Quit \(project.name)" : "Use \(project.name)")
+        }
+        if let sharing = state.sharing { self.sharing = sharing }
+        state.sharing = nil
+        if state.draftVersion == givenDraftVersion {
+            state.draft = givenDraft
+        } else {
+            givenDraft = state.draft
+            givenDraftVersion = state.draftVersion
+        }
+        if self.state != state { self.state = state }
+    }
+
+    override func send(_ command: SidebarCommand) {
+        // Pointed at from Lamp's panel, Lamp comes back in front once the person has pointed.
+        if case .point = command, let project = Store.shared.projects.first(where: { $0.id == projectID }) {
+            return MagicPanel.shared.point(in: project, fromLamp: true)
+        }
+        server?.handle(command, from: projectID)
+    }
+
+    override func closeChat() { panel?.close() }
+    override func startMove() { panel?.startMove() }
+    override func openLamp() { Store.shared.showDesk() }
+}
+
+/// What a wish's chat bar knows of its history, for which of its buttons can do anything.
+struct WishHistory: Equatable {
+    /// Undo has a version to go back to, or a stopped turn's changes to discard.
+    var undoable: Bool
+    /// Something has been made: the app is no longer the empty one Lamp starts with. Until then there's
+    /// nothing to open, share or look back on. Read from the app's files, not its versions' messages: a
+    /// request is saved in its own words, which can look like one of Lamp's own notes ("Rename to …").
+    var made: Bool
+    /// There's more saved than the version the app started as. Apart from `made`: an Undo back to the
+    /// empty app keeps the build it undid, and Versions is how to get it back.
+    var saved: Bool
+    /// Where the wish shows itself, read from its files: a Mac app with a window has the chat beside it, and no Play.
+    var place: WishPlace
+
+    static func read(_ project: LampProject) async -> WishHistory {
+        let versions = await Versions.list(project)
+        let made = !Template.isScaffold(project)
+        let undoable = Versions.undoTarget(in: versions) != nil
+        let place = await Task.detached { WishPlace.of(project) }.value
+        return WishHistory(undoable: undoable ? true : await Versions.hasUnsavedChanges(project), made: made,
+                           saved: made || versions.count > 1, place: place)
     }
 }

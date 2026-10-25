@@ -1644,7 +1644,7 @@ enum WishHUD {
 extension Store {
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with
     /// windows that has been made; anything else (a wish still being found, a menu bar app, a widget, an iPhone
-    /// app) in Lamp's window.
+    /// app) in Lamp's panel, beside whatever shows it or on its own (`ChatPanel`).
     func change(_ project: LampProject) {
         Task {
             guard !project.finding, FileManager.default.fileExists(atPath: project.installedURL.path),
@@ -1663,16 +1663,17 @@ extension Store {
     }
 
     /// An app's chat where it lives: beside the app when it has a window to be beside (`change`, which opens the app
-    /// when it's closed), else in Lamp's window.
+    /// when it's closed), else in Lamp's panel.
     func openChat(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }) else { return showChat(id) }
         change(project)
     }
 
     /// A wish clicked on the desk: it opens with its chat beside it, to use
-    /// and to change at once, as a document opens ready to edit (`change`). A wish that opens no window (the menu
-    /// bar, a widget, the background, a phone) is used instead (`use`), and the desk says where it is. A wish Lamp
-    /// came with that isn't built yet spins and opens when it's ready.
+    /// and to change at once, as a document opens ready to edit (`change`). A wish that opens no Mac window (the menu
+    /// bar, a widget, the background, a simulator, a phone) is used (`use`), the desk says where it is, and its chat
+    /// comes up in Lamp's panel, beside what shows it or on its own. A wish Lamp came with that isn't built yet spins
+    /// and opens when it's ready.
     func open(fromDesk project: LampProject) {
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
@@ -1684,7 +1685,10 @@ extension Store {
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             // A game played on this Mac opens in its window with its chat beside it, as a Mac app does.
-            guard place == .window, project.platform == .mac || (project.platform.target.hostedByLamp && project.destination == .mac) else { return use(project) }
+            guard place == .window, project.platform == .mac || (project.platform.target.hostedByLamp && project.destination == .mac) else {
+                use(project)
+                return showChat(project.id)
+            }
             change(project)
         }
     }
@@ -1711,8 +1715,8 @@ extension Store {
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             let icon = icons[project.id]
-            // A window's chat opens beside it (`MagicPanel.startWithChat`); anything else has its chat opened here, behind
-            // the app, the first time it's used.
+            // A window's chat opens beside it (`MagicPanel.startWithChat`); anything else has its chat opened in Lamp's
+            // panel the first time it's used.
             if firstUse, place != .window { showChat(project.id) }
             switch place {
             case .widget:

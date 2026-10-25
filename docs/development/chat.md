@@ -15,7 +15,7 @@ A capability given to one engine must be given to all of them that can take it, 
   request came to is the agent's last message, in a sentence or two (`Agent.Rules.finish`), under the line that says
   the app is ready or updated; a card for it said no more than that message did and hid what it said beyond it.
   While longer work goes on, the agent says how it's going with `progress`: a line of 12 words at most, shown at once
-  in both chats as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
+  in the chat as a message like any other, which stays one when the turn ends. The chat is one timeline: messages,
   steps and Reload in the order they happened, the newest at the bottom, so steps never collect below what was said
   after them. A turn's steps since it last said something belong to its one live line (`ChatLook.ActivityLine`,
   `ChatItem.live`, the sidebar's `SidebarState.workingSteps`), which says what it's doing now and changes in place;
@@ -56,8 +56,8 @@ A capability given to one engine must be given to all of them that can take it, 
   scaffold ("Lamp is making this app.") is built and opened as its first turn starts, with the chat beside it
   (`Store.showEarly`, `Store.present`), so the person watches every pass go in; an iPhone app's simulator comes
   forward at the agent's first look. When no chat comes back beside the app after a pass reopens it (the reopen
-  failed, it crashed, or the pass made it an app with no window), the chat goes back to Lamp's window
-  (`MagicPanel.keepChatInSight`). The early build is settled before the turn lets go of the app, however it ends.
+  failed, it crashed, or the pass made it an app with no window), the chat comes up in Lamp's panel, on its own
+  (`MagicPanel.keepChatInSight`, `ChatPanel`). The early build is settled before the turn lets go of the app, however it ends.
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first build is drawn as the
   chat's chapters (`Chapters`, `BuildChapters`), not as a card over it: each part of the agent's plan is a heading with
   its tick and how long it took, with what the agent said during it and its steps, folded, under it; the part going
@@ -72,8 +72,10 @@ A capability given to one engine must be given to all of them that can take it, 
   else (a read, a command, a look, a fix to an earlier part's file) stays with the part the build is on. The part is
   kept on the line (`LogLine.part`) and the plan's parts on the run's summary (`LogLine.plan`), so the chat reads the
   same after the turn and a relaunch; a line with no part (before the plan came) goes with the line before it, the
-  first part at the start. Agent Details shows the lines as they came, with no chapters. The chat beside the app
-  has the live line only. What each piece
+  first part at the start. Agent Details shows the lines as they came, with no chapters. Lamp sends the build as
+  one line of its own (`SidebarLine.Kind.build`, `SidebarBuild`), worked out from the same segments
+  (`SidebarServer.lines`), and the chat draws it (`ChatLook.BuildChapters`), so it reads the same beside a Mac app
+  and in Lamp's panel. What each piece
   is for is in its tool's description; `Agent.talkRules` says only that a piece comes before prose. Neither
   tool waits for the person: it returns at once, the agent ends its reply, and a click is sent as the
   person's next message (`Store.answer`), so a click and a typed answer reach every engine the same way and
@@ -95,3 +97,38 @@ A capability given to one engine must be given to all of them that can take it, 
   runaway one is (`Store.endIfOver`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
   doesn't ask about layout, colours or names (`Agent.Rules.ask`).
+
+## The chat's one screen
+
+A wish's chat is one screen, drawn the same wherever it is (`ChatScreen`, in Sources/LampSidebarKit): its bar, the chat
+or a panel in its place (Versions, Wish Info, Share Link), the message box, every card and line. It's drawn from the
+state Lamp makes for the wish (`SidebarState`, made by `SidebarServer.state(for:)`) and hands every click and word back
+as a command (`SidebarCommand`, done by `SidebarServer.handle`), through a `ChatLink`: the extension beside a Mac app
+talks to Lamp over its socket (`Link`), and Lamp's own panel (`ChatPanel`) calls Lamp directly (`LocalChat`). Nothing
+about the chat is decided where it's drawn, so a change to what the chat shows or does is made once, in the state and
+the screen, and reaches both. Where the chat is, and how it moves, is in "Generated apps" (beside a Mac app) and below.
+
+The chat is in one place at a time, always beside whatever is showing the wish (`ChatPanel.beside`): a Mac app's own
+chat beside its window (the extension, from the first build on); beside the iPhone or iPad simulator, Lamp's Android
+emulator, or one of Lamp's own previews (a TV, a device's screen) Lamp's panel, attached to that window and following
+it (its own windows as their child; another app's found through Accessibility, by its title, or else the window list,
+and looked for again a few times a second); and where nothing on this Mac shows the wish (an app on a TV, an Xbox or the
+person's phone, a widget, the menu bar, the background, a wish not made yet or being found, an app that didn't build or
+crashed) the same panel on its own, at the side of the screen. Moving between these (the app opens or quits, a preview
+closes) keeps the draft (it's the store's, `Store.updateDraft`) and where the person was reading: each chat says which
+line is first in view as the scrolling settles (`SidebarCommand.scrolled`), and a chat drawn again opens there
+(`SidebarState.readingAt`). The panel's bar has what the chat beside a Mac app has, and for a wish that isn't a Mac
+window beside it Play and Stop (`SidebarToolbar.play`) and Try On's one list for every kind (`TryOnMenu`, with the
+wish's other apps to use or quit after it). In Lamp's panel a Mac app's chat has Play too, which opens the app with its chat beside it;
+and whenever a wish's Mac app opens while its chat is in Lamp's panel (Play, a reopen for a change, the person opening
+it), the app is asked to take the chat (`ChatPanel.place`, `MagicPanel.openChat`), and the panel closes once it has.
+Chats on their own are stepped in from one another so none hides another. Lamp's mark at the start of the bar brings
+the desk forward (⌘[).
+
+What only Lamp could hold is handed to it, as Share hands over the file it makes: a setup card's header is in the chat,
+with Set Up…, and its keys, downloads and sign-ins, and Image Playground for a hand-drawn icon, are in Lamp's sheet
+(`SetupSheet`), over Lamp's panel when the chat is there and in front on its own when it's beside the app. A device's
+step opens its setup window, and an iPhone or Android setup line its kind's setup. A new wish's empty chat shows its
+intro (`SidebarIntro`, `ChatLook.Intro`: its icon, its name to change, what to do, and ideas that go into the message
+box), and Apple's tools installing shows above every chat (`SidebarBanner`). A sidebar built by an earlier Lamp reads
+an older shape of the state, and Lamp sends it what it can read (`Connection.push`, by the version it says in `hello`).

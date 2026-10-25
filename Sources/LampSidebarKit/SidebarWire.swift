@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 10
+    public static let version = 11
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -92,9 +92,16 @@ public struct SidebarState: Codable, Equatable {
     public var sharing: SidebarSharing?
     /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
     public var wishLink: SidebarWishLink?
-    /// Try On's choices, for a wish played or shown in more places than one (a game, a screen): the bar's device button
-    /// opens them, and a click is `SidebarCommand.tryOn`. Nil for every other wish, which has no such button.
+    /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
+    /// the bar's device button opens them, and a click is `SidebarCommand.tryOn`. Nil for a Mac app, which has none.
     public var tryOn: SidebarTryOn?
+    /// A wish nothing has been asked of yet: what its empty chat shows (`ChatLook.Intro`).
+    public var intro: SidebarIntro?
+    /// Something every chat waits on, above the chat (Apple's tools installing), and its button.
+    public var banner: SidebarBanner?
+    /// Where the person was reading when this chat was last drawn anywhere: the first line in view, or nil at the end.
+    /// A chat drawn again elsewhere (beside the app, in Lamp's panel) opens there (`SidebarCommand.scrolled`).
+    public var readingAt: UUID?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -111,7 +118,7 @@ public struct SidebarState: Codable, Equatable {
 }
 
 public struct SidebarLine: Codable, Equatable, Identifiable {
-    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work }
+    public enum Kind: String, Codable { case user, agent, status, error, ask, result, summary, note, offer, action, tools, work, build, detail }
     public var id: UUID
     public var kind: Kind
     public var text: String
@@ -167,6 +174,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var calls: [SidebarToolCall]?
     /// A finished turn's steps (`work`, its line "Worked for 2 min 3 s" is `text`): status lines and runs of tool calls.
     public var steps: [SidebarLine]?
+    /// A new app's first build, drawn as its plan's parts (`build`).
+    public var build: SidebarBuild?
 
     public init(id: UUID, kind: Kind, text: String, gap: Double = 0, running: Bool = false, attachments: [SidebarAttachment]? = nil,
                 growing: Bool = false, questions: [SidebarQuestion]? = nil) {
@@ -205,6 +214,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var details: Bool
     /// What the app's AI has cost ("AI: 3 calls · $0.02"), when it has used any.
     public var usage: String?
+    /// Play and Stop, for a wish that doesn't run as a Mac window beside this chat: nil beside a Mac app, which is open.
+    public var play: SidebarPlay?
 
     public init(canUndo: Bool, canShare: Bool, hasVersions: Bool, details: Bool, usage: String?) {
         self.canUndo = canUndo
@@ -216,6 +227,121 @@ public struct SidebarToolbar: Codable, Equatable {
 }
 
 public enum SidebarPanel: String, Codable { case versions, info }
+
+/// The bar's Play, or its Stop while the wish is open where Try On points.
+public struct SidebarPlay: Codable, Equatable {
+    public var open: Bool
+    /// Play can't open it yet: there's nothing made.
+    public var enabled: Bool
+    public var help: String
+
+    public init(open: Bool, enabled: Bool, help: String) {
+        self.open = open
+        self.enabled = enabled
+        self.help = help
+    }
+}
+
+/// A new wish's empty chat: its icon, what to call it (or the question asked of a wish with no name yet), a line on
+/// what to do, and ideas to start from, each put in the message box when clicked (`SidebarCommand.idea`).
+public struct SidebarIntro: Codable, Equatable {
+    public var icon: Data?
+    /// The wish's name, to change in place (`SidebarCommand.rename`); nil for a wish not named yet, which is asked
+    /// what would make the person's day easier instead.
+    public var name: String?
+    /// What the name field shows while it's empty.
+    public var namePrompt: String
+    public var line: String
+    public var ideas: [SidebarIdea]
+    /// The name can be changed now (not while a turn is going).
+    public var canRename: Bool
+
+    public init(icon: Data?, name: String?, namePrompt: String, line: String, ideas: [SidebarIdea], canRename: Bool) {
+        self.icon = icon
+        self.name = name
+        self.namePrompt = namePrompt
+        self.line = line
+        self.ideas = ideas
+        self.canRename = canRename
+    }
+}
+
+public struct SidebarIdea: Codable, Equatable, Identifiable {
+    public var id: String
+    public var symbol: String
+    public var hue: Double
+    public var text: String
+
+    public init(id: String, symbol: String, hue: Double, text: String) {
+        self.id = id
+        self.symbol = symbol
+        self.hue = hue
+        self.text = text
+    }
+}
+
+public struct SidebarBanner: Codable, Equatable {
+    public var text: String
+    public var button: String?
+
+    public init(text: String, button: String?) {
+        self.text = text
+        self.button = button
+    }
+}
+
+/// A new app's first build, as its plan's parts: each a heading with its mark and how long it took, with what was said
+/// and done in it under it, the part going on with the turn's live line at its foot, the parts to come greyed, and
+/// Lamp's own last part (building and opening it). Once the app is made it folds to one line, with the answer under it.
+public struct SidebarBuild: Codable, Equatable {
+    public enum State: String, Codable { case done, now, later }
+
+    public struct Part: Codable, Equatable {
+        /// Nil for what came before the agent gave a plan.
+        public var title: String?
+        public var state: State
+        public var time: String?
+        public var lines: [SidebarLine]
+        /// The part being built now: the live line goes at its foot, with these steps under it.
+        public var live: Bool
+        public var steps: [SidebarLine]?
+
+        public init(title: String?, state: State, time: String?, lines: [SidebarLine], live: Bool, steps: [SidebarLine]?) {
+            self.title = title
+            self.state = state
+            self.time = time
+            self.lines = lines
+            self.live = live
+            self.steps = steps
+        }
+    }
+
+    public var parts: [Part]
+    /// Lamp's guess at the parts to come, before the agent has given its plan.
+    public var sketch: [String]
+    /// Lamp's own last part while the build is live: still to come, or going on (with what it's doing).
+    public var finishing: State?
+    public var finishingActivity: String?
+    public var finishingSince: Date?
+    /// Made: one line ("Built it in 3 parts"), its time, and the agent's answer under it.
+    public var folded: Bool
+    public var foldTitle: String
+    public var time: String?
+    public var answer: String?
+
+    public init(parts: [Part], sketch: [String], finishing: State?, finishingActivity: String?, finishingSince: Date?, folded: Bool,
+                foldTitle: String, time: String?, answer: String?) {
+        self.parts = parts
+        self.sketch = sketch
+        self.finishing = finishing
+        self.finishingActivity = finishingActivity
+        self.finishingSince = finishingSince
+        self.folded = folded
+        self.foldTitle = foldTitle
+        self.time = time
+        self.answer = answer
+    }
+}
 
 /// Try On's choices as Lamp's window has them (`TryOnMenu` in Lamp): sections of places, a tick on where Play puts the
 /// wish, and the symbol of that place for the button.
@@ -409,7 +535,8 @@ public enum SidebarCommand: Codable, Equatable {
     /// The first thing a sidebar says: which shape of `SidebarState` it reads. One that says nothing is from
     /// before the summary line, which it can't read; one before 3, from before the notes receipt; one before 4, from before offers;
     /// one before 5, from before what was pointed at had a pill of its own; one before 6, from before the agent's
-    /// steps (`SidebarLine.Kind.tools`) could be shown.
+    /// steps (`SidebarLine.Kind.tools`) could be shown; one before 11, from before a first build's parts (`build`) and
+    /// Agent Details' output (`detail`).
     case hello(Int)
     /// The message box's words, and how many of the box's messages Lamp had taken when it last said
     /// (`SidebarState.sends`): a Return pressed again before the sidebar hears that they were sent is for words Lamp
@@ -479,6 +606,18 @@ public enum SidebarCommand: Codable, Equatable {
     case wishLink(SidebarWishLinkCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
+    /// Play, and Stop.
+    case play
+    case quit
+    /// The new wish's name, typed on its intro.
+    case rename(String)
+    /// An idea on the intro, into the message box; and other ideas.
+    case idea(String)
+    case moreIdeas
+    /// The banner's button.
+    case banner
+    /// Where the person is reading: the first line in view, or nil at the end (`SidebarState.readingAt`).
+    case scrolled(UUID?)
 }
 
 public struct SidebarFile: Codable, Equatable {
