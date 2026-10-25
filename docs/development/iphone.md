@@ -103,8 +103,7 @@ frameworks beside it rather than in its developer folder, which `DeveloperTools.
 `devicectl`): paired ones to choose, and plugged-in ones that haven't trusted the Mac yet, which it offers
 to pair (`Devices.pair`, `devicectl manage pair`, which puts the Trust prompt on the phone) before telling
 the person about Developer Mode. `LampProject.device` remembers the chosen one. Play and the end of a turn then go through
-`Store.installOnDevice`, which first writes Lamp's own files afresh as every build does (an app opened straight onto the
-phone after Lamp was updated still holds the older support code), and then `Devices.stage` puts together what Xcode builds from in Lamp's own folder
+`Store.installOnDevice`: `Devices.stage` puts together what Xcode builds from in Lamp's own folder
 (`Devices.buildFolder`, under `Phone Builds`): `Template.writeDeviceProject` writes a small Xcode project there (one
 app target over the package's Sources as a synchronized group, the icon in an asset catalog, the attachments as a
 folder reference, a real Info.plist), and the app's Sources, Assets, Widget, Share and Watch are copied beside it, in

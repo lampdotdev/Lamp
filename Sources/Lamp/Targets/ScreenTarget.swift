@@ -39,7 +39,11 @@ extension Target {
                        // Its folder holds a TV app's page and script: it's asked whether it's a screen first.
                        refines: .tv,
                        shareRefusal: "Lamp doesn't share screens yet."),
-        part: nil,
+        part: Part(folder: "Screen", family: "screen", word: "screen", menu: ("Screen", "tv.inset.filled"), rules: { Agent.screenPrompt(part: $0, alone: $1) },
+                   // How its places are given beside the wish's other apps.
+                   wishRule: Agent.Rules.placesAmongApps("screen", verb: "shown")) { dir, wish in
+            AppFile.read(dir.appendingPathComponent(ScreenKit.marker), inFolder: wish, last: 1) != nil
+        },
         setup: .none,
         startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true })
 }

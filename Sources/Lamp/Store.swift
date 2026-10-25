@@ -104,6 +104,9 @@ struct LampProject: Identifiable, Hashable {
     var partOf: String?
     /// The folders of this wish's other parts, each an app of its own kind (`partOf`), beside the one at its root.
     var partFolders: [String] = []
+    /// The name a part's Mac copy is installed under, when it isn't its wish's (`Parts.load`): another app of the wish
+    /// with a Mac copy already has that one.
+    var installName: String?
     /// A new wish that could be for more than one kind of device, and didn't say which (the naming call's
     /// candidates, most likely first): nothing is written for it until the agent has asked and given it its kinds.
     var undecided: [String]?
@@ -170,7 +173,7 @@ struct LampProject: Identifiable, Hashable {
     /// An app for both keeps a build for each place, so checking one half never replaces the other's.
     var builtURL: URL { platform.target.recipe.builtURL(self) }
     /// Every successful build is copied here so it shows up in Spotlight and Launchpad.
-    var installedURL: URL { Store.installDir.appendingPathComponent("\(name).app") }
+    var installedURL: URL { Store.installDir.appendingPathComponent("\(installName ?? name).app") }
     /// What the app is called on screen. An unnamed one has only a stand-in name on disk ("Untitled", which
     /// its folder and everything that asks `untitled` go by), so the screen says what it is instead: a wish,
     /// theirs from the site or one still to be told. Nothing is an app until Lamp has made something; the
@@ -1106,7 +1109,7 @@ final class Store: ObservableObject {
         // A part whose files are gone (a restore, a folder the agent took away) that's still open on this Mac, kept by the
         // person over unsaved work, stays listed so its wish's menu can still quit it; it goes at the first read after
         // it's closed. Only taking a part away, deleting its wish or a restore that closed it forgets what Lamp keeps for
-        // it (`forgetPart`): a part's files missing for a moment mustn't cost its sign-ins.
+        // it (`forget`): a part's files missing for a moment mustn't cost its sign-ins.
         let kept = projects.filter { part in
             part.isPart && !found.contains { $0.id == part.id } && (part.partOf.map { id in found.contains { $0.id == id } } ?? false) && isRunning(part)
         }
@@ -1121,7 +1124,7 @@ final class Store: ObservableObject {
             }
         }
         // Not for a wish whose apps are all in folders of their own: its name's installed copy is a Mac app of it.
-        for project in projects { stamps[project.id] = project.holdsApp ? BuildStamp.of(project) : nil }
+        for project in projects { stamps[project.id] = project.holdsApp ? BuildStamp.read(project.installedURL) : nil }
         for project in projects where logs[project.id] == nil && !project.isPart {
             let lamp = project.dir.appendingPathComponent(".lamp")
             if let saved = LogLine.readChat(lamp.appendingPathComponent("chat.json")) {
@@ -1888,80 +1891,70 @@ final class Store: ObservableObject {
         return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil, false)
     }
 
-    /// Takes a part away from a wish: quit wherever it's open, and its folder gone (the wish's versions still have it).
-    private func removePart(_ part: LampProject) async -> Bool {
-        guard let part = current(part), let wishID = part.partOf, let wish = projects.first(where: { $0.id == wishID }),
-              await quit(part, for: turns[wishID]) else { return false }
-        await forgetPart(part)
-        AppFolder.remove(part.dir, in: wish.dir)
-        reload()
-        return true
-    }
-
-    /// Takes away the app in a wish's own folder, as `removePart` takes one in a folder of its own: quit wherever it's open,
-    /// what Lamp keeps for it forgotten, and its files gone from the wish's folder (the wish's versions still have them).
-    /// What's the wish's stays: its chat, meta.json and the rest of `.lamp/` but the app's runtime, its history, icon,
-    /// description and attachments, and its other apps' folders. From then on every app of the wish is in a folder of its
-    /// own (`holdsApp`). Only for a wish with another app, so a wish always has one.
-    private func removeOwnApp(of project: LampProject) async -> Bool {
-        guard let wish = current(project), !wish.isPart, wish.holdsApp, !parts(of: wish).isEmpty,
-              await quit(wish, for: turns[wish.id]) else { return false }
-        let fm = FileManager.default
+    /// Takes one of a wish's apps away, whichever it is: quit wherever it's open, what Lamp keeps for it forgotten
+    /// (`forget`), and its files gone from the wish's folder (the wish's versions still have them). An app in a folder of
+    /// its own goes with its folder. The one in the wish's own folder takes its files with it and leaves what's the
+    /// wish's: its chat, meta.json and the rest of `.lamp/` but the app's runtime, its history, icon, description and
+    /// attachments, and its other apps' folders; from then on every app of the wish is in a folder of its own
+    /// (`holdsApp`). Never the last app, so a wish always has one.
+    private func takeAway(_ app: LampProject) async -> Bool {
+        guard let app = current(app), let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }),
+              apps(of: wish).count > 1, await quit(app, for: turns[wish.id]) else { return false }
         await settleFiles(wish)
-        // The wish no longer should have it, so it isn't made again in a folder of its own at the next turn
-        // (`makeWaitingParts`), as a part taken away isn't (`forgetPart`).
-        setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(wish.platform) })
-        if wish.hasMac {
-            await WidgetProcess.end(for: wish)
-            if fm.fileExists(atPath: wish.installedURL.path) { try? fm.trashItem(at: wish.installedURL, resultingItemURL: nil) }
+        await forget(app)
+        if app.isPart {
+            AppFolder.remove(app.dir, in: wish.dir)
+        } else {
+            let fm = FileManager.default
+            let kept = Set([".lamp", ".git", ".gitignore", "icon.json", AppDescription.file, Attachments.folder] + Parts.folders(in: wish.dir))
+            for name in (try? fm.contentsOfDirectory(atPath: wish.dir.path)) ?? [] where !kept.contains(name) {
+                AppFolder.remove(wish.dir.appendingPathComponent(name), in: wish.dir)
+            }
+            for name in ["runtime", "live"] { AppFolder.remove(wish.dir.appendingPathComponent(".lamp/" + name), in: wish.dir) }
         }
-        if wish.onDevice {
-            while installingApps.contains(wish.id) { try? await Task.sleep(for: .milliseconds(300)) }
-            await DeviceApps.removeEverywhere(wish, among: devices)
-            try? fm.removeItem(at: DeviceApps.buildFolder(for: wish))
-        }
-        try? fm.removeItem(at: Devices.buildFolder(for: wish))
-        try? fm.removeItem(at: Devices.signingFolder(for: wish))
-        AppSecrets.forget(app: wish.instance)
-        if wish.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(wish) }
-        simulatorApps[wish.id] = nil
-        stamps[wish.id] = nil
-        let kept = Set([".lamp", ".git", ".gitignore", "icon.json", AppDescription.file, Attachments.folder] + Parts.folders(in: wish.dir))
-        for name in (try? fm.contentsOfDirectory(atPath: wish.dir.path)) ?? [] where !kept.contains(name) {
-            AppFolder.remove(wish.dir.appendingPathComponent(name), in: wish.dir)
-        }
-        for name in ["runtime", "live"] { AppFolder.remove(wish.dir.appendingPathComponent(".lamp/" + name), in: wish.dir) }
         reload()
         refreshOpenApps()
         return true
     }
 
-    /// What Lamp keeps for a part that's gone (taken away, Undone, or its wish deleted), beyond its folder: its installed
-    /// copy and widget's process, its phone build and signing folders, its sign-ins, and its place in Lamp's lists. Its
-    /// data goes with its wish's (`trashData`, whose id it starts with); its folder is its wish's to remove.
-    private func forgetPart(_ part: LampProject) async {
+    /// What Lamp keeps for an app of a wish that's gone (taken away, Undone, or its wish deleted), beyond its files: its
+    /// place on the wish's list, its installed copy and widget's process, its copies on the person's devices, its phone
+    /// build and signing folders, its sign-ins, and, for one in a folder of its own, its place in Lamp's lists. The same
+    /// for every app of a wish, the one in its own folder too. Its data goes with its wish's (`trashData`, whose id it
+    /// starts with); its files are the caller's to remove.
+    private func forget(_ app: LampProject) async {
         let fm = FileManager.default
-        // The wish no longer should have it: taken away, or Undone, it isn't made again at the next turn. Not for a wish
-        // being deleted, whose folder is gone: writing its list would make the folder again.
-        if let wish = part.partOf.flatMap({ id in projects.first { $0.id == id } }), fm.fileExists(atPath: wish.dir.path) {
-            setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(part.platform) })
+        // The wish no longer should have it: taken away, or Undone, it isn't made again at the next turn
+        // (`makeWaitingParts`). Not for a wish being deleted, whose folder is gone: writing its list would make it again.
+        if let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }), fm.fileExists(atPath: wish.dir.path) {
+            setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(app.platform) })
         }
-        if part.hasMac {
-            await WidgetProcess.end(for: part)
-            // Installed under the wish's name, which the wish's own app could only share were it a Mac app too.
-            let shared = projects.contains { $0.id != part.id && $0.hasMac && $0.installedURL == part.installedURL }
-            if !shared, fm.fileExists(atPath: part.installedURL.path) { try? fm.trashItem(at: part.installedURL, resultingItemURL: nil) }
+        // A build of it that waited for it to close goes in no more: quitting it to take it away would put it back.
+        heldInstalls.installed(app.id)
+        Runtime.releaseBuild(app)
+        if app.hasMac {
+            await WidgetProcess.end(for: app)
+            // A wish's apps are installed under its name, so another of its Mac apps may be there: one of the apps it
+            // has now (`everyApp`), never what a wish whose first app went still says of it.
+            let shared = everyApp.contains { $0.id != app.id && $0.hasMac && $0.installedURL == app.installedURL }
+            if !shared, fm.fileExists(atPath: app.installedURL.path) { try? fm.trashItem(at: app.installedURL, resultingItemURL: nil) }
         }
-        try? fm.removeItem(at: Devices.buildFolder(for: part))
-        try? fm.removeItem(at: Devices.signingFolder(for: part))
-        AppSecrets.forget(app: part.instance)
+        if app.hasDevice {
+            while installingApps.contains(app.id) { try? await Task.sleep(for: .milliseconds(300)) }
+            await DeviceApps.removeEverywhere(app, among: devices)
+            try? fm.removeItem(at: DeviceApps.buildFolder(for: app))
+        }
+        try? fm.removeItem(at: Devices.buildFolder(for: app))
+        try? fm.removeItem(at: Devices.signingFolder(for: app))
+        AppSecrets.forget(app: app.instance)
         // What its page saved in the TV preview, the values its wish's apps shared included.
-        if part.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(part) }
-        simulatorApps[part.id] = nil
-        queued[part.id] = nil
-        stamps[part.id] = nil
-        projects.removeAll { $0.id == part.id }
-        tokens = tokens.filter { $0.value != part.id }
+        if app.platform.target.places.contains(where: [.tv, .device].contains) { TVPreview.forget(app) }
+        simulatorApps[app.id] = nil
+        stamps[app.id] = nil
+        guard app.isPart else { return }
+        queued[app.id] = nil
+        projects.removeAll { $0.id == app.id }
+        tokens = tokens.filter { $0.value != app.id }
     }
 
     /// A draft's kind: a draft only says what it will be, so this is a change to that, made while its first
@@ -2454,9 +2447,11 @@ final class Store: ObservableObject {
         let name = uniqueName("\(project.name) copy")
         let exe = Template.identifier(from: name)
         let slug = Template.freeSlug(for: exe, in: root)
-        let copy = LampProject(id: slug, name: name, exe: exe, dir: root.appendingPathComponent(slug),
-                               instance: UUID().uuidString, platform: project.platform, integration: project.integration, family: project.family,
-                               device: project.device, chosen: project.chosen, simulator: project.simulator)
+        // Everything it is comes along (its kind, where it opens, a game's places and engine, the apps the wish should
+        // have and what each waits for): the copy is the same wish under another name and identity.
+        var copy = project.named(name, id: slug, exe: exe, dir: root.appendingPathComponent(slug))
+        copy.instance = UUID().uuidString
+        copy.decided = false
         do {
             try fm.createDirectory(at: copy.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
             // Everything at the top but what a build makes again (Lamp's own files are rewritten before it).
@@ -3528,13 +3523,12 @@ final class Store: ObservableObject {
     /// start, or for an app of the same name since deleted). It's still in the way: replacing its files under it
     /// is what `HeldInstalls` never does, and macOS brings it forward instead of opening the new one.
     func macCopies(of project: LampProject) -> [NSRunningApplication] {
-        // A wish whose apps are all in folders of their own has no copy: a Mac app of it is installed under its name.
-        guard project.holdsApp else { return [] }
         let place = project.installedURL.standardizedFileURL.resolvingSymlinksInPath()
-        // By its place only for an app that has a Mac copy there: a TV wish's Mac app is installed under the wish's name.
+        // By its place only for an app that has a Mac copy there: a wish's Mac app in a folder of its own is installed
+        // under the wish's name too, which a wish whose first app went still has. Its own id is its alone.
         return NSWorkspace.shared.runningApplications.filter { app in
             !app.isTerminated && (app.bundleIdentifier == project.bundleID
-                || project.hasMac && app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
+                || project.holdsApp && project.hasMac && app.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == place)
         }
     }
 
@@ -4493,11 +4487,13 @@ final class Store: ObservableObject {
     /// are all in folders (`Agent.wishPrompt`), and Claude Code and Codex keep the one they began with. Once that's
     /// changed (its first app taken away, or brought back by a restore), they're forgotten as a request starts, and it
     /// starts one with the prompt that fits, told the chat so far (`CatchUp`), as a wish given its kinds is (`decided`).
-    /// Conversations from before this was kept began with the app's.
+    /// The wish's prompt for one app holds that app's rules, so it's told by that app's kind too: a TV app replaced by an
+    /// Android app is a prompt of its own. Conversations from before this was kept began with the app's.
     private func followPromptShape(_ project: LampProject) {
         guard !project.isPart, !project.makesNoApp else { return }
         let file = project.dir.appendingPathComponent(".lamp/prompt-for")
-        let now = project.holdsApp ? "app" : "wish"
+        let parts = parts(of: project)
+        let now = project.holdsApp ? "app" : parts.count == 1 ? "wish " + parts[0].platform.rawValue : "wish"
         guard (AppFile.text(file, in: project)?.trimmed ?? "app") != now else { return }
         for engine in Engine.allCases { Self.forgetConversation(of: project, engine: engine) }
         try? now.write(to: file, atomically: true, encoding: .utf8)
@@ -4578,7 +4574,7 @@ final class Store: ObservableObject {
             return
         }
         Self.trashData(of: project)
-        for part in parts { await forgetPart(part) }
+        for part in parts { await forget(part) }
         try? fm.removeItem(at: Devices.buildFolder(for: project))
         try? fm.removeItem(at: Devices.signingFolder(for: project))
         // Its sign-ins too: an app made later under the same name is another app, and starts disconnected.
@@ -4872,10 +4868,8 @@ final class Store: ObservableObject {
             let toSimulator = project.device == nil
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
             // An app for both reuses a build only when it was made for this place from this code (the
-            // place is part of the fingerprint), else it's built again. Whether this Lamp made it is read from that
-            // build itself, not from `stamps`, which for an app for both is its Mac copy's: a build with no stamp, or
-            // an older Lamp's, is built again, so the wish's other apps stop showing it as out of date.
-            if FileManager.default.fileExists(atPath: project.builtURL.path), BuildStamp.read(project.builtURL, in: project)?.isOutdated(for: project) == false,
+            // place is part of the fingerprint), else it's built again.
+            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated(for: project) != true,
                !(project.platform == .universal && Runtime.sourcesChanged(project)) {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -5459,18 +5453,20 @@ final class Store: ObservableObject {
 
     /// What an app is after its files were put back to a version: its kind (`followRestoredKind`), and for a wish
     /// its other parts, which come and go with their files. One the version doesn't have is quit and forgotten
-    /// (`forgetPart`); one it brings back is taken in again, with its toolbar menu and its `part` for the tools.
+    /// (`forget`); one it brings back is taken in again, with its toolbar menu and its `part` for the tools.
     @discardableResult
     private func followRestored(_ project: LampProject) async -> LampProject {
+        // The app in the wish's own folder as it was before the restore, which is what's open and installed.
+        let before = current(project) ?? project
         let wish = followRestoredKind(project)
         guard !wish.isPart else { return wish }
         // A version whose apps are all in folders of their own takes the app in the wish's own folder away, as
-        // `make_app_for` does: its open copy is asked to quit, and its installed copy goes unless a Mac app of the wish
-        // is installed there under the same name. Lamp knew it as an app until now by its installed copy (`stamps`).
+        // `make_app_for` does: quit as any app is, then forgotten, whether or not the person kept it open (its files are
+        // gone, so it can't be built again). Lamp knew it as an app until now by its installed copy (`stamps`).
         if !wish.holdsApp, stamps[wish.id] != nil {
-            for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == wish.bundleID { app.terminate() }
-            if !parts(of: wish).contains(where: \.hasMac) { try? FileManager.default.trashItem(at: wish.installedURL, resultingItemURL: nil) }
-            stamps[wish.id] = nil
+            let closed = await quit(before, for: turns[wish.id])
+            await forget(before)
+            if !closed { log(wish, .status, "T\(Parts.name(of: before.platform).dropFirst()) is still open. It's no longer one of the wish's apps.") }
         }
         guard !Parts.match(parts(of: wish), filesOf: wish.dir) else { return wish }
         let found = Parts.folders(in: wish.dir)
@@ -5478,7 +5474,7 @@ final class Store: ObservableObject {
         for part in parts(of: wish) where !found.contains(part.dir.lastPathComponent) {
             // Forgotten only once it's closed: one the person kept open (unsaved work) stays listed, with its menu to
             // quit it from (`reload`).
-            if await quit(part, for: turns[wish.id]) { await forgetPart(part) } else { keptOpen.append(part) }
+            if await quit(part, for: turns[wish.id]) { await forget(part) } else { keptOpen.append(part) }
         }
         reload()
         for part in keptOpen { log(wish, .status, "T\(Parts.name(of: part.platform).dropFirst()) is still open. It goes once it's closed.") }
@@ -5518,21 +5514,24 @@ final class Store: ObservableObject {
     /// setup. An app is never taken away while nothing would be left: it stays until what replaces it is made.
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let devices = Set((arguments["devices"] as? [String] ?? []).map { $0.trimmed.lowercased() })
-        // A game stays a game: what's listed are the places it's played (the Mac always, its home), which aren't kinds.
-        if let wish = current(project), !wish.isPart, wish.holdsApp, wish.hasScaffold, wish.platform.addsPlaces { return await kindPlaces(devices, for: wish) }
-        guard let kinds = Parts.kinds(for: devices) else {
+        guard var wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
+        // A game or a screen the wish has keeps the words of its places ("iphone": played on the iPhone too), unless one
+        // has "app" after it ("iphone app": an app of its own beside it).
+        guard let asked = Parts.asked(devices, has: apps(of: wish).map(\.platform)) else {
             let others = DeviceApps.kinds().map(\.id)
             return (400, ["error": "`devices` must list one or more of \(Targets.toolWords)"
                           + (others.isEmpty ? "." : ", or one of \(others.joined(separator: ", ")) alone.")])
         }
-        guard var wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
+        let kinds = asked.kinds
+        // The words each app is made from: a game's or a screen's own and its places', every other app's the list's.
+        let words = { (kind: Platform) in kind.addsPlaces ? (asked.places[kind] ?? []).union([kind.rawValue]) : devices }
         var said: [String] = []
         // A wish with nothing made yet (still to be told what it's for, or held for its device) is made as a new wish
         // is: its first app in its own folder, the first of its kinds this Mac can build now, so answered "TV and iPhone"
         // on a Mac without Xcode it's made as the TV app and the iPhone app waits with its setup.
         if !wish.scaffolded {
             guard let first = await firstKind(among: kinds, integration: devices.first) else { return (400, ["error": "`devices` lists nothing Lamp can make."]) }
-            let (status, answer) = await changeKind(arguments, devices: devices, kind: first, for: wish)
+            let (status, answer) = await changeKind(arguments, devices: words(first), kind: first, for: wish)
             guard status == 200, let text = answer["text"] as? String, !text.hasPrefix("Not yet"), !text.hasPrefix("Nothing changed"),
                   let made = current(wish) else { return (status, answer) }
             wish = made
@@ -5545,7 +5544,15 @@ final class Store: ObservableObject {
         // Each app that stays as another kind of its family is changed in place.
         for app in apps {
             guard let kind = plan.keep[app.id] else { continue }
-            let (status, answer) = await changeKind(arguments, devices: devices, kind: kind, for: app)
+            // A game stays a game, a screen a screen: what's listed for it are its places.
+            if kind == app.platform, kind.addsPlaces {
+                let (status, answer) = await kindPlaces(words(kind), for: app)
+                let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
+                if status == 200, text.hasPrefix("It's already") { continue }
+                said.append(apps.count > 1 || !plan.add.isEmpty ? "For \(Parts.name(of: kind)) in \(folderWords(app)): " + text : text)
+                continue
+            }
+            let (status, answer) = await changeKind(arguments, devices: words(kind), kind: kind, for: app)
             let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
             if status == 200, Parts.saysNothingNew(text) { continue }
             said.append(app.isPart || !parts(of: wish).isEmpty || !plan.add.isEmpty ? "For \(Parts.name(of: app.platform)) in \(folderWords(app)): " + text : text)
@@ -5563,6 +5570,11 @@ final class Store: ObservableObject {
             }
             added += 1
             log(wish, .status, "\(wish.name) has \(Parts.name(of: kind)) now.")
+            // A game or a screen is at home on the Mac, and goes wherever else it was listed for.
+            if kind.addsPlaces {
+                let placed = await setPlaces(part, GameKit.places(for: words(kind), of: kind))
+                if !placed.hasPrefix("It's already"), current(part) != nil { said.append(placed) }
+            }
             said.append("Done: the wish has \(Parts.name(of: kind)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. Build it in this " +
                         "request, made to work with the rest. `look_at_app` and `use_app` reach it with `part` \"\(Parts.word(for: kind))\". " +
                         "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n" + Parts.pack(for: kind))
@@ -5578,7 +5590,7 @@ final class Store: ObservableObject {
                             "and Lamp takes it away then if you ask again with make_app_for. Tell the person in a sentence.")
                 continue
             }
-            let gone = app.isPart ? await removePart(app) : await removeOwnApp(of: app)
+            let gone = await takeAway(app)
             if gone { log(wish, .status, "\(wish.name) no longer has \(name).") }
             // The rules this conversation began with were that app's, when it was the one in the wish's own folder.
             let rules = app.isPart ? "" : " What your instructions said about it no longer applies: every app of the wish is in a folder of its own now, with its own rules."
@@ -5602,7 +5614,7 @@ final class Store: ObservableObject {
             let list = kind == .screen ? "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"tv\" and \"xbox-one\""
                 : "\"mac\" (always: its home), \"iphone\" or \"ipad\", \"android\" and \"xbox-one\""
             return (400, ["error": "\(kind == .screen ? "A screen is shown" : "A game is played") on \(list); list those it's to be on. " +
-                          "It can't be made for anything else: tell the person in a sentence that a new wish can be."])
+                          "An app of its own beside it is listed with \"app\" after its device (\"mac app\")."])
         }
         if kind == .screen {
             let said = await setPlaces(game, GameKit.places(for: words, of: kind), family: words.contains("ipad") && !words.contains("iphone") ? .ipad : nil)
@@ -8068,7 +8080,7 @@ final class Store: ObservableObject {
             return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
         }
         refreshOpenApps()
-        stamps[project.id] = BuildStamp.read(project.builtURL, in: project)
+        stamps[project.id] = BuildStamp.read(project.builtURL)
         return nil
     }
 
@@ -8135,15 +8147,6 @@ final class Store: ObservableObject {
         if progress[project.id]?.finished != nil { progress[project.id]?.failed = true }
         clearPhoneRetry(project)
         let team = Devices.team
-        // Lamp's own files first, as before any build: Xcode compiles the phone's copy from the app's Sources, which
-        // still hold an older Lamp's support code when the app was opened straight onto the phone after an update.
-        do {
-            try await writeOwnFiles(project, all: true)
-        } catch {
-            failed("Lamp couldn't write the app's build files: \(error.localizedDescription)")
-            return nil
-        }
-        guard stillOwns() else { return nil }
         // The code as it's staged, kept once it's on the phone, so a turn that changes nothing doesn't put it there again.
         let build = Runtime.fingerprint(project)
         // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.
@@ -9347,8 +9350,6 @@ final class Store: ObservableObject {
     /// `only` quits the copy in one place (an app for both can be open on this Mac and in a simulator at once);
     /// without it every copy is quit, as deleting or renaming the app needs.
     private func quit(_ project: LampProject, for owner: Turn? = nil, only place: Destination? = nil) async -> Bool {
-        // Only the wish, its apps all in folders of their own: nothing of its own is open.
-        guard project.holdsApp else { return true }
         // Lamp closing it isn't the app dying on launch.
         retireLaunches(of: project)
         if project.onDevice {

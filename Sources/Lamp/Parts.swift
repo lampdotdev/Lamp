@@ -77,34 +77,97 @@ enum Parts {
     /// part whose file is gone (its folder brought back by a restore, which keeps no `.lamp`) is still the part.
     static func load(_ wish: LampProject) -> [LampProject] {
         guard !wish.isPart else { return [] }
-        return wish.partFolders.compactMap { folder in
+        // A wish's apps are installed under its name, and only one can be: the app in its own folder first, then the
+        // first in Lamp's order. Each other with a Mac copy (a game beside a Mac app) has its kind's name after it.
+        var nameTaken = wish.holdsApp && wish.hasMac
+        return wish.partFolders.compactMap { folder -> LampProject? in
             let dir = wish.dir.appendingPathComponent(folder)
             guard let kind = kindOfScaffold(in: dir, wish: wish.dir), partKinds.contains(kind) else { return nil }
             let meta = AppFile.read(dir.appendingPathComponent(".lamp/meta.json"), in: wish)
                 .flatMap { try? JSONDecoder().decode(ProjectMeta.self, from: $0) }
                 .flatMap { $0.platform == kind ? $0 : nil }
-            return LampProject(id: id(wish: wish.id, folder: folder), name: wish.name, exe: meta?.exe ?? wish.exe, dir: dir,
-                               instance: instance(wish: wish, folder: folder),
-                               platform: kind, family: meta?.family ?? .iphone,
-                               device: meta?.device, chosen: meta?.target ?? .mac, simulator: meta?.simulator, partOf: wish.id)
+            var part = LampProject(id: id(wish: wish.id, folder: folder), name: wish.name, exe: meta?.exe ?? wish.exe, dir: dir,
+                                   instance: instance(wish: wish, folder: folder),
+                                   platform: kind, family: meta?.family ?? .iphone,
+                                   device: meta?.device, chosen: meta?.target ?? .mac, simulator: meta?.simulator, partOf: wish.id)
+            // A game's or a screen's places are its own, kept in its meta.json, and its Xbox follows from them.
+            if kind.addsPlaces {
+                part.places = meta?.places
+                part.engine = meta?.engine
+                part.integration = GameKit.integration(for: part)
+            }
+            if part.hasMac {
+                if nameTaken, let menu = kind.target.part?.menu.name { part.installName = wish.name + " " + menu }
+                nameTaken = true
+            }
+            return part
         }
     }
 
-    /// The kinds a wish for these devices is made of, in Lamp's order: the devices of one part family are one kind between
-    /// them (Apple's: `Platform(devices:)`); a TV app and an Android app are each a kind of their own. No kind leads:
-    /// what a wish does with the list is `plan`. A device with an
-    /// integration that declares its apps still stands alone (`Target.Words.alone`). Nil for a list Lamp can't make.
-    static func kinds(for devices: Set<String>) -> [Platform]? {
-        if let one = Platform(devices: devices) { return [one] }
+    /// The kinds a wish for these devices is made of, in Lamp's order (`asked`). Nil for a list Lamp can't make.
+    static func kinds(for devices: Set<String>, has: [Platform] = []) -> [Platform]? { asked(devices, has: has)?.kinds }
+
+    /// What a list of device words asks for: the kinds, one per family, and for a game or a screen the words of the places
+    /// it's played or shown (`GameKit.placeWords`).
+    struct Asked: Equatable {
+        var kinds: [Platform]
+        var places: [Platform: Set<String>] = [:]
+    }
+
+    /// The apps a list of device words asks for, in Lamp's order. The devices of one part family are one kind between them
+    /// (Apple's: `Platform(devices:)`); a TV app, an Android app, a game and a screen are each a kind of their own. No
+    /// kind leads: what a wish does with the list is `plan`. A game or a screen, listed or already one of the wish's
+    /// apps (`has`), takes each word of a place it can be on ("iphone" is a game played on the iPhone too, as it always
+    /// was); a word with "app" after it ("iphone app") is an app of its own beside it. A device with an integration that
+    /// declares its apps still stands alone. Nil for a list Lamp can't make.
+    static func asked(_ devices: Set<String>, has: [Platform] = []) -> Asked? {
+        var words: Set<String> = [], apps: Set<String> = []
+        for word in devices {
+            let plain = appWord(word)
+            if plain != word { apps.insert(plain) } else { words.insert(word) }
+        }
+        // A game's or a screen's own word, or one it has: those keep the words of their places.
+        let hosts = [Platform.game, .screen].filter { words.contains($0.rawValue) || (has.contains($0) && !words.isDisjoint(with: placeWords(of: $0))) }
+        var asked = Asked(kinds: [])
+        for host in hosts {
+            asked.places[host] = words.intersection(placeWords(of: host))
+        }
+        apps.formUnion(words.subtracting(hosts.map(\.rawValue)).filter { word in !hosts.contains { placeWords(of: $0).contains(word) } })
+        var kinds = hosts
+        if !apps.isEmpty {
+            guard let others = otherKinds(for: apps) else { return nil }
+            kinds += others
+        }
+        guard !kinds.isEmpty else { return nil }
+        // One app of a kind that stands alone is the whole list.
+        if kinds.count > 1, !kinds.allSatisfy({ $0.target.part != nil }) { return nil }
+        asked.kinds = Targets.all.map(\.platform).filter(kinds.contains)
+        return asked
+    }
+
+    /// "iphone app", "iphone-app": the device word of an app of its own, not a game's or a screen's place.
+    private static func appWord(_ word: String) -> String {
+        for suffix in [" app", "-app", "_app"] where word.hasSuffix(suffix) && word.count > suffix.count { return String(word.dropLast(suffix.count)) }
+        return word
+    }
+
+    /// The words of the places a game or a screen can be on, beside its own word.
+    private static func placeWords(of kind: Platform) -> Set<String> {
+        Set(GameKit.placeWords.compactMap { word, place in place.map(kind.reaches) == true ? word : nil })
+    }
+
+    /// The kinds for the device words of apps other than a game or a screen, as a list of devices was always read.
+    private static func otherKinds(for devices: Set<String>) -> [Platform]? {
+        if let one = Platform(devices: devices), !one.addsPlaces { return [one] }
         var byFamily: [String: Set<String>] = [:]
         for word in devices {
-            guard let owner = Targets.owner(of: word) else { return nil }
+            guard let owner = Targets.owner(of: word), !owner.platform.addsPlaces else { return nil }
             byFamily[group(owner.platform), default: []].insert(word)
         }
         let kinds = byFamily.values.map { Platform(devices: $0) }
-        guard kinds.count > 1, !kinds.contains(nil) else { return nil }
+        guard !kinds.contains(nil) else { return nil }
         let all = Targets.all.map(\.platform).filter { kinds.contains($0) }
-        guard all.allSatisfy({ !$0.target.identity.devices.alone && $0.target.part != nil }) else { return nil }
+        guard all.count == 1 || all.allSatisfy({ !$0.target.identity.devices.alone && $0.target.part != nil }) else { return nil }
         return all
     }
 
@@ -234,7 +297,9 @@ enum Parts {
         return skills
     }
 
-    static func pack(for kind: Platform, in folder: String? = nil) -> String { kind.target.part?.rules(folder ?? self.folder(for: kind)) ?? "" }
+    static func pack(for kind: Platform, in folder: String? = nil, alone: Bool = false) -> String {
+        kind.target.part?.rules(folder ?? self.folder(for: kind), alone) ?? ""
+    }
 
     /// The rule the wish's prompt gets when it's more than one app: what each is, where, how to reach each with the tools,
     /// and to open the rules of each in a folder of its own before changing it. The app in the wish's own folder, while

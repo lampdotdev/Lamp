@@ -24,6 +24,69 @@ final class WishAppsTests: XCTestCase {
     }
 }
 
+/// A game and a screen are apps of a wish like any other: listed with other apps, each is an app of its own, and the
+/// devices it can be on stay its places unless "app" follows one.
+final class WishGameAppsTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("wish-game-apps-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
+
+    /// "Make a fun TV party game": the agent of a Mac wish asked for ["game", "mac"], which is a game played on the Mac,
+    /// and Lamp said it couldn't make a game as a part of another wish. The game replaces the Mac app, in a folder of its own.
+    func testAGameReplacesTheMacAppOfAWish() throws {
+        let wish = try Template.scaffold(name: "Party", platform: .mac, in: root)
+        let asked = try XCTUnwrap(Parts.asked(["game", "mac"], has: [.mac]))
+        XCTAssertEqual(asked, Parts.Asked(kinds: [.game], places: [.game: ["mac"]]))
+        XCTAssertEqual(Parts.plan(asked.kinds, for: [wish]), Parts.Plan(keep: [:], add: [.game], remove: [wish.id]))
+        XCTAssertTrue(Parts.partKinds.contains(.game))
+        XCTAssertTrue(Parts.partKinds.contains(.screen))
+    }
+
+    /// A game with the phones' own apps beside it: three apps. Without "app", the same words are where the game is played.
+    func testAppAfterADeviceIsAnAppOfItsOwnBesideAGame() throws {
+        XCTAssertEqual(Parts.asked(["game", "iphone app", "android app"]), Parts.Asked(kinds: [.iphone, .android, .game], places: [.game: []]))
+        XCTAssertEqual(Parts.asked(["game", "iphone", "android"]), Parts.Asked(kinds: [.game], places: [.game: ["iphone", "android"]]))
+        XCTAssertEqual(Parts.asked(["game", "iphone", "mac app"]), Parts.Asked(kinds: [.mac, .game], places: [.game: ["iphone"]]))
+        // A TV isn't somewhere a game is played: a TV app goes beside it.
+        XCTAssertEqual(Parts.kinds(for: ["game", "tv"]), [.tv, .game])
+        // A TV is somewhere a screen is shown, unless it's a TV app of its own.
+        XCTAssertEqual(Parts.asked(["screen", "tv"]), Parts.Asked(kinds: [.screen], places: [.screen: ["tv"]]))
+        XCTAssertEqual(Parts.kinds(for: ["screen", "tv app"]), [.tv, .screen])
+    }
+
+    /// A wish whose game is its own app keeps its places as they were always given ("mac", "iphone"), and a list that
+    /// leaves the game nothing replaces it.
+    func testAWishsGameKeepsItsPlacesUntilItsLeftOut() throws {
+        XCTAssertEqual(Parts.asked(["mac", "iphone"], has: [.game]), Parts.Asked(kinds: [.game], places: [.game: ["mac", "iphone"]]))
+        XCTAssertEqual(Parts.kinds(for: ["mac app"], has: [.game]), [.mac])
+        XCTAssertEqual(Parts.kinds(for: ["tv"], has: [.game]), [.tv])
+    }
+
+    /// A game made beside other apps is found in its folder, with the places its own meta.json keeps.
+    func testAGameInAFolderOfItsOwnIsOneOfTheWishsApps() throws {
+        let wish = try Template.scaffold(name: "Party", platform: .mac, in: root)
+        let dir = wish.dir.appendingPathComponent(Parts.folder(for: .game))
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        var game = LampProject(id: Parts.id(wish: wish.id, folder: "Game"), name: "Party", exe: "Party", dir: dir, platform: .game, partOf: wish.id)
+        game.places = [.mac, .ios]
+        try Template.saveMeta(game)
+        try "A game made with Lamp.\n".write(to: dir.appendingPathComponent(GameKit.marker), atomically: true, encoding: .utf8)
+        let read = try XCTUnwrap(Store.readWish(at: wish.dir))
+        XCTAssertEqual(read.partFolders, ["Game"])
+        let parts = Parts.load(read)
+        XCTAssertEqual(parts.map(\.platform), [.game])
+        XCTAssertEqual(parts.first?.openPlaces, [.mac, .ios])
+        // Both have a Mac copy, so they can't both be installed under the wish's name: each would replace the other.
+        XCTAssertEqual(read.installedURL.lastPathComponent, "Party.app")
+        XCTAssertEqual(parts.first?.installedURL.lastPathComponent, "Party Game.app")
+    }
+}
+
 /// `make_app_for` makes a wish the apps listed, every app of it treated alike: kept, changed in place inside its family,
 /// added in a folder of its own, or taken away, the app in the wish's own folder as much as any other.
 final class WishAppsRootTests: XCTestCase {
@@ -120,6 +183,16 @@ final class WishWithoutItsFirstAppTests: XCTestCase {
             try FileManager.default.removeItem(at: wish.dir.appendingPathComponent(name))
         }
         return try XCTUnwrap(Store.readWish(at: wish.dir))
+    }
+
+    /// A wish whose one app is in a folder of its own gets no code for reaching other apps, so its prompt says nothing
+    /// of them either: it had the TV app's rules for talking to the wish's phones and Macs.
+    func testTheOnlyAppIsToldNothingOfOtherApps() throws {
+        let wish = try replacedWish()
+        let prompt = Agent.wishPrompt(for: wish, parts: Parts.load(wish))
+        XCTAssertTrue(prompt.contains("the part of the wish in TV/"))
+        XCTAssertFalse(prompt.contains("wish-links"), "the rules for reaching the wish's other apps")
+        XCTAssertFalse(prompt.contains("LampController"))
     }
 
     func testItIsStillTheWishWithItsAppInAFolder() throws {

@@ -615,9 +615,38 @@ extension Agent {
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
     }
+
+    /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
+    /// without those about the wish as a whole. A game made beside other apps is three.js, as every new game is.
+    static func gamePrompt(part folder: String, alone: Bool = false) -> String {
+        let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
+                     Rules.gameTry, alone ? "" : Rules.gameAmongApps]
+        return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
+                + "\n\nRules:\n" + rules.joined())
+            // Beside other apps the list names the game too, and the apps it keeps (`placesAmongApps`).
+            .replacingOccurrences(of: #"(["mac", "iphone"], ["mac", "android"], ["mac", "xbox-one"]…)"#, with: #"(["game", "iphone"], with the wish's other apps)"#)
+            .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again where Try On points")
+    }
 }
 
 extension Agent.Rules {
+    /// How a game's or a screen's places are given while the wish has other apps too: its own word with them, and the
+    /// other apps the person keeps, named apart where they're for a device it's also on.
+    static func placesAmongApps(_ word: String, verb: String) -> String {
+        """
+
+        - This wish has other apps beside the \(word). Where the \(word) is \(verb) and which apps the wish has are         both given with make_app_for, in one list: "\(word)" with its places, and every other app the person keeps.         A device it's \(verb) on that has an app of its own too is written with "app" after it ("mac app",         "iphone app", "android app"), so ["\(word)", "iphone", "mac app"] is the \(word) \(verb) on the Mac and the         iPhone with the Mac app beside it. An app left out of the list is taken away.
+        """
+    }
+
+    /// For a wish with a game beside other apps: how its places are given, and what its other apps can't do with it.
+    static let gameAmongApps = placesAmongApps("game", verb: "played") + """
+
+    - The wish's game doesn't send or get messages from its other apps yet: it has no `Lamp.wish` and no     `Lamp.controllers`, and its players use a controller, the keyboard or the touch controls Lamp draws. Don't write     another app of the wish to steer it or share data with it; say so if the person asks for that.
+    """
+
     static let gameHeader = """
     You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
     or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone or \

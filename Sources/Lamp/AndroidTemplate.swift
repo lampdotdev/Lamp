@@ -396,7 +396,7 @@ extension Agent {
     /// Lamp's building blocks (LampAI, LampStore, LampAssets) under the names they have in Swift.
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the kind's rules alone, without the ones about
     /// the wish as a whole, which the wish's own prompt has.
-    static func androidPrompt(part: String? = nil) -> String {
+    static func androidPrompt(part: String? = nil, alone: Bool = false) -> String {
         let rules = part == nil
             ? [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
                Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
@@ -404,7 +404,7 @@ extension Agent {
                Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
             : [Rules.androidEdit, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
                Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.androidLogs, Rules.androidTry,
-               Rules.androidPartTalk, Skills.index(Skills.offered(.android))]
+               alone ? "" : Rules.androidPartTalk, Skills.index(Skills.offered(.android))]
         let header = part.map { Rules.partHeader("an Android app (Kotlin and Jetpack Compose, a Gradle project, Android 8.0 and later, Material 3, no Android Studio)", folder: $0) }
             ?? Rules.androidHeader
         return (header + "\n\nRules:\n" + rules.joined())

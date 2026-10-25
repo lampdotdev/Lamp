@@ -11,9 +11,13 @@ it's taken away or replaced; each other app is an app of its own kind in a folde
 (`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. A wish whose folder holds no app of its own (its apps all in
 folders, `LampProject.holdsApp` false, read off its files each time so an Undo that brings the first app back has it
-again) is only the wish: it's no draft (`scaffolded`), and nothing builds, installs, opens, quits or writes Lamp's own
+again) is only the wish: it's no draft (`scaffolded`), and nothing builds, installs, opens or writes Lamp's own
 files for it (`Template.writeOwnedFiles`, `fill`, `writeSupport`, `Runtime.sourcesChanged`, `buildNow`, `installNow`,
-`quit`, `macCopies`, `run`), so nothing puts an app back in its folder; Play, Open and Use open its apps (`openWish`),
+`run`), so nothing puts an app back in its folder. Quitting it (`quit`) finds only a copy of the app it held by that
+app's own id (`macCopies`, never by the install place its name shares with a Mac app of the wish), so a restore past
+that app quits it as any app is quit. A wish's apps are installed under its name; when two of them have a Mac copy (a
+game beside a Mac app), the app in its own folder, else the first in Lamp's order, has that name and each other has its
+kind's after it (`LampProject.installName`, set by `Parts.load`); Play, Open and Use open its apps (`openWish`),
 the desk captions it with where they are (`WishPlace.of`), and `Store.everyApp` is every app without it. Moving existing
 first apps into folders of their own, and a shared file's layout for such a wish, are a later change: until then a file
 carries its first app in the file's root (`Sharing.export`), and opening it makes a new wish rather than an update. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
@@ -36,7 +40,7 @@ rename and every restore write them for every app of the wish, under the name th
 saved (`Versions.restoreFiles(name:)`): written after, the next build left the app unsaved and Undo could never get past
 it. A part's quit is judged by its
 wish's turn, which is the only one it has. Deleting a wish closes each part first (a Mac part may be kept open
-over unsaved work, which stops the delete) and forgets what Lamp keeps for it (`Store.forgetPart`: its installed copy,
+over unsaved work, which stops the delete) and forgets what Lamp keeps for it (`Store.forget`: its installed copy,
 build folders, sign-ins and place in the lists), as taking a part away does; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's
 game. A part never has a turn of its own: Lamp's own requests for it (carrying on after its Reload, fixing its crash) are
 its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by (whose turn has the app, whether the
@@ -59,7 +63,14 @@ waiting), else the first; one read as a kind this Mac can't build yet is made a 
 its list, so a missing tool holds back only the app that needs it.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
-stands alone.
+stands alone. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
+its meta.json (`Parts.load` reads them): in a list of devices (`Parts.asked`), a game or a screen, listed by its own word
+or one the wish already has, takes each device it can be on as one of its places ("game" with "iphone" is a game played
+on the iPhone too, and a game's own wish asked for "mac" and "iphone" keeps its game, as it always did), and a device
+with "app" after it ("mac app", "iphone app") is an app of its own beside it; a list that gives the game none of its
+words leaves it out, so it's taken away like any other app ("tv" for a game's wish replaces the game with a TV app).
+A game has no `Lamp.wish` (its page's lamp.js is the device kit's), so the agent is told its other apps can't steer it
+or share with it (`Rules.gameAmongApps`); a screen's page is a TV app's, with the TV app's lamp.js.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
 and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, the first of them)
 as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
@@ -82,7 +93,7 @@ opens its setup window: one this Mac can't build yet keeps what stops it and get
 (`IPhoneSetupLine` with `part`, `LogLine.text` "iphone part"), whose setup, once done, clears it and sends the request
 that adds it (`Store.retryWaitingApp`, `Parts.request`); the agent is told what waits at the end of each request
 (`Parts.brief`, once per conversation and when it changes) and never makes one itself. The list follows every change:
-`make_app_for` writes what it asked for, a part taken away or Undone leaves it (`forgetPart`), and an app
+`make_app_for` writes what it asked for, an app taken away or Undone leaves it (`forget`), and an app
 changing kind (`convert`, a restore) takes its place in it, whichever folder it's in. A wish for a device Lamp can't make apps for yet
 (`waitsForDevice`) and one given its kinds in a turn begun without any (`decided`, whose engines' conversations are
 forgotten when that turn ends, or at Lamp's next start) are kept in the meta.json too.
@@ -100,9 +111,11 @@ left out only when the wish has one app (`Store.target`: no app is the one meant
 wish's turn (`Store.underTurn`). `make_app_for` takes the whole list and treats every app alike (`Parts.plan`): one whose
 family is listed stays, changed by `convert` only inside its family (an iPhone app that's to be for the Mac too); a
 family it has no app of is added in its own folder (`Store.addPart`); one left out is taken away, the app in the wish's
-own folder as much as any other (`removePart`, `removeOwnApp`, which removes that app's files from the wish's folder and
-keeps the wish's: `.lamp/` but the app's runtime, the history, icon.json, about.json, Attachments/ and the other apps'
-folders). So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/, and "tv" alone replaces the
+own folder as much as any other (`takeAway`, one path for every app: quit as any app is, forgotten by `forget`, and its
+files removed, for the app in the wish's own folder its files only, keeping the wish's: `.lamp/` but the app's runtime, the history, icon.json, about.json, Attachments/ and the other apps'
+folders). A restore to a version without that app quits and forgets it the same way. Whether another app shares an
+installed copy (a wish's Mac apps are installed under its name) is read from the apps the wish has now (`Store.everyApp`),
+never from the kind a wish whose first app went still names. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/, and "tv" alone replaces the
 Mac app with a TV app in TV/. What this Mac can't build yet holds back only that app: the others are made, and it waits
 on the list with its setup; an app is never taken away while nothing would be left, so it stays until what replaces it
 is made. A wish still to be told what it's for has nothing written, so its first app is the first kind listed this Mac

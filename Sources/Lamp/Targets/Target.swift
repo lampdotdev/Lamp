@@ -105,7 +105,8 @@ struct Target {
         let claims: (Set<String>) -> Bool
         /// A word of its own beyond `words` (an integration's id).
         var owns: (String) -> Bool = { _ in false }
-        /// Never one wish with other kinds: a device app stands alone.
+        /// Listed apart from the kinds of a wish's apps, its hint before theirs: a device app, which is never one wish with
+        /// other kinds, and a game and a screen, which are one wish with others only through their own word (`Parts.asked`).
         let alone: Bool
         /// How a wish still to be told what it's for asks about it ("for the TV"), and how it hears what Lamp makes
         /// ("for Samsung and LG TVs"). Nil when it's never asked about.
@@ -163,7 +164,8 @@ struct Target {
         /// `part` in `look_at_app` and `use_app`.
         let word: String
         let menu: (name: String, symbol: String)
-        let rules: (_ folder: String) -> String
+        /// Its rules for the files in its folder; `alone` when it's its wish's only app, so nothing about the others.
+        let rules: (_ folder: String, _ alone: Bool) -> String
         /// One more rule for a wish that has it, at its root or as a part.
         var wishRule: String? = nil
         /// Whether a part's folder holds this kind, read without following a link.

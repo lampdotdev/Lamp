@@ -254,6 +254,8 @@ enum Versions {
         // Attachments and Lamp's own folder are left alone: a version from before the rename ignores .forge/,
         // not .lamp/, and clean would otherwise take the chat, token and sessions with it.
         let keep = "':!\(Attachments.folder)' ':!.lamp'"
+        // What the wish has made before the restore, to tell which of its apps the restore takes away.
+        let madeBefore = project.isPart ? [] : Parts.made(in: project, parts: Parts.load(project)).map(Parts.group)
         let ok = await git("git restore --source=\"$LAMP_VERSION\" --staged --worktree -- . \(keep) && git clean -fdq -e .lamp -- . \(keep)",
                                  cwd: project.dir, env: ["LAMP_VERSION": version.id]) { _ in } == 0
         // A version from before the rename calls the support library by its old names.
@@ -270,12 +272,24 @@ enum Versions {
                 project.integration = kind.target.recipe.integration(project.dir)
                 try? Template.saveMeta(project)
             }
+            // An app the restore takes away leaves the wish's list now, as it would once it's forgotten
+            // (`Store.forget`): Lamp's own files say whether an app links to others from that list, so written with the
+            // app still on it they'd change at the next build and leave the restore unsaved, which every Undo then
+            // discards and the build makes again.
+            if !project.isPart {
+                project.partFolders = Parts.folders(in: project.dir)
+                let madeAfter = Set(Parts.made(in: project, parts: Parts.load(project)).map(Parts.group))
+                let gone = Set(madeBefore).subtracting(madeAfter)
+                if !gone.isEmpty {
+                    project.apps = project.apps.filter { !gone.contains(Parts.group($0.kind)) }
+                    try? Template.saveMeta(project)
+                }
+            }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
             // Every other app of the wish too, as the restore left them: they carry the wish's name and what the wish's
             // list makes of their building blocks, and no app of it comes first. Left to their next build, they'd leave
             // the restore unsaved, and the next Undo would only discard that.
             if !project.isPart {
-                project.partFolders = Parts.folders(in: project.dir)
                 for part in Parts.load(project) { try? Template.writeOwnedFiles(for: part) }
             }
         }

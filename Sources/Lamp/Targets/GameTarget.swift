@@ -39,7 +39,11 @@ extension Target {
                        // A game from before games were a kind of their own carries the device app's marker.
                        refines: .device,
                        shareRefusal: "Lamp doesn't share games yet."),
-        part: nil,
+        part: Part(folder: "Game", family: "game", word: "game", menu: ("Game", "gamecontroller"), rules: { Agent.gamePrompt(part: $0, alone: $1) },
+                   // What the wish's other apps can't do with it.
+                   wishRule: Agent.Rules.gameAmongApps) { dir, wish in
+            AppFile.read(dir.appendingPathComponent(GameKit.marker), inFolder: wish, last: 1) != nil
+        },
         // Nothing up front: the Mac builds it with Xcode's tools and one small download, fetched as it's first built;
         // what each further place needs is asked for when it's given (`GameKit.notReady`).
         setup: .none,

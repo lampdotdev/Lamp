@@ -173,7 +173,9 @@ the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp
 like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
 to the page's `lampNativePad`) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
 app, installed as a game). `make_app_for` on
-a game sets its places (`Store.gamePlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind;
+a game sets its places (`Store.kindPlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
+and a list that leaves the game none of its words takes it away like any app of a wish (the "Wishes" guide; a game
+can also be added beside a wish's other apps, in Game/);
 Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
 first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox

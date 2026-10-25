@@ -22,9 +22,7 @@ way: a build can leave one where any of them goes. Writes that aren't part of a 
 `Sources/Lamp/Template.swift` holds `LampSupport.swift`, the support code copied into every generated
 app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_app`). It is a Swift
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
-an outdated app (`Store.open` rebuilds apps built by an older Lamp). The stamp is read where the app runs from: a Mac
-app's installed copy, an iPhone app's own build (what the simulator gets), and never a Mac copy for the iPhone half of
-an app for both.
+an outdated app (`Store.open` rebuilds apps built by an older Lamp).
 
 A Mac app's reasons for its permissions are one list, `Template.macUsageDescriptions`, written by build.sh, the
 Mac half of an app for both (`universalMacInfoPlist`) and `Store.deploy`: macOS kills an app that asks for

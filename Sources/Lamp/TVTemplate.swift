@@ -2381,13 +2381,13 @@ extension TVTemplate {
 extension Agent {
     /// The rules for a TV app, in the same shape as the others' and said for the web on a TV, offering `skills`.
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`), as `prompt(platform:…)` takes it.
-    static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil) -> String {
+    static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil, alone: Bool = false) -> String {
         let rules = part == nil
             ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound,
                Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
             : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound, Rules.tvLogs, Rules.tvTry,
-               Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
+               alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
         let header = part.map { Rules.partHeader("a TV app (HTML, CSS and JavaScript in Web/, the same files for Samsung and LG TVs, with no build step)", folder: $0) }
             ?? Rules.tvHeader
         return (header + "\n\nRules:\n" + rules.joined())

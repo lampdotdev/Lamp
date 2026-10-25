@@ -29,7 +29,7 @@ extension Target {
                        builtURL: { $0.dir.appendingPathComponent("app/build/outputs/apk/debug/app-debug.apk") },
                        shareRefusal: nil),
         // Beside another kind's app (a Mac app's Android app, a TV app's), in a Gradle project of its own.
-        part: Part(folder: "Android", family: "android", word: "android", menu: ("Android App", "smartphone"), rules: { Agent.androidPrompt(part: $0) }) { dir, wish in
+        part: Part(folder: "Android", family: "android", word: "android", menu: ("Android App", "smartphone"), rules: { Agent.androidPrompt(part: $0, alone: $1) }) { dir, wish in
             AppFile.read(dir.appendingPathComponent(Template.androidSettingsFile), inFolder: wish, last: 1) != nil
         },
         setup: Setup(

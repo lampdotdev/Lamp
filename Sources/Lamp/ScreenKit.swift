@@ -107,6 +107,20 @@ extension Agent {
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again in the TV preview")
     }
+
+    /// The rules for a screen that's one of a wish's apps, in a folder of its own: the screen's own, for the files
+    /// there, without those about the wish as a whole.
+    static func screenPrompt(part folder: String, alone: Bool = false) -> String {
+        let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
+                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.placesAmongApps("screen", verb: "shown")]
+        return (Rules.partHeader("a screen, a page in Web/ shown full screen and glanced at from across a room, at home on the Mac and shown on an iPhone or iPad, a TV and an Xbox too once it's put there", folder: folder)
+                + "\n\nRules:\n" + rules.joined())
+            // Beside other apps the list names the screen too, and the apps it keeps (`placesAmongApps`).
+            .replacingOccurrences(of: #"(["mac", "ipad"], ["mac", "tv"]…)"#, with: #"(["screen", "ipad"], with the wish's other apps)"#)
+            .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "opens it again in the TV preview")
+    }
 }
 
 extension Agent.Rules {
