@@ -8719,6 +8719,8 @@ final class Store: ObservableObject {
                     offerDrawing(project, spec: spec)
                     return await artworkWontCome(project, spec: spec, failed: false)
                 }
+                // Deleted while these were being drawn: saving would make its folder again, outside the Trash.
+                guard exists(project) else { return }
                 // A picture picked in Image Playground while these were being drawn is the person's choice: it stays.
                 guard Icons.artwork(project, spec: spec) == nil else { return }
                 switch art {
