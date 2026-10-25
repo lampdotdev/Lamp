@@ -94,10 +94,11 @@ enum Skills {
     /// app (still Lamp's placeholder) is about to be given its kind, so it's told how the kinds look.
     /// A wish's other parts (`parts`) each bring their kind's rules, which apply as long as the wish has the part.
     static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
-        let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.platform.hasMac) + named(project.platform)
+        let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.hasMac) + named(project.platform)
         var found: [(name: String, because: String)] = parts.map { part in
             (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part.platform)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(for: part.platform))\" in look_at_app and use_app)")
         }
+        if Template.talksToOtherApps(project) { found.append(("wish-links", "this wish is more than one app: the ways its apps can share data")) }
         if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }
         if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }
         if offered.contains("menu-bar"), appSwift(of: project, matches: #"\bLampMenuBar\b"#) { found.append(("menu-bar", "its code uses LampMenuBar")) }

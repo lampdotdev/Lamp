@@ -79,4 +79,4 @@ what happened, what each option is, and what it costs.
 - **Don't:** use "provider", "route", "endpoint", "API" (except a product's own name for it), "LLM",
   "inference"; blame the person; say "just" about anything they have to do; repeat in the status line what a
   row already says.
-- **Keep it short in Settings,** where the person went on purpose and the menus already say what answers. Settings speaks only when nothing answers (see Interface in CLAUDE.md).
+- **Keep it short in Settings,** where the person went on purpose and the menus already say what answers. Settings speaks only when nothing answers (see `docs/development/interface.md`).

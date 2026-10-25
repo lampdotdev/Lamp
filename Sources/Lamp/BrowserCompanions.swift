@@ -153,7 +153,7 @@ final class BrowserCompanions {
                   let surface = try? decoder.decode(Surface.self, from: data), surface.valid else { return nil }
             return surface
         }
-        guard app.platform.hasMac, let boot = body["boot"] as? String, UUID(uuidString: boot) != nil,
+        guard app.hasMac, let boot = body["boot"] as? String, UUID(uuidString: boot) != nil,
               let main = surface(body["surface"]) else {
             return (400, ["error": "This sidebar couldn't be drawn."])
         }
@@ -215,7 +215,7 @@ final class BrowserCompanions {
     /// The apps with a sidebar: every installed Mac app that declares one, open or not.
     func listed(_ projects: [LampProject]) -> [(project: LampProject, declaration: Declaration)] {
         projects.compactMap { project in
-            guard project.platform.hasMac, FileManager.default.fileExists(atPath: project.installedURL.path),
+            guard project.hasMac, FileManager.default.fileExists(atPath: project.installedURL.path),
                   let declaration = Declaration.load(project) else { return nil }
             return (project, declaration)
         }.sorted { $0.project.name.localizedStandardCompare($1.project.name) == .orderedAscending }
@@ -260,7 +260,7 @@ final class BrowserCompanions {
                  }] as [String: Any]
             }]
         }
-        guard let id = body["app"] as? String, let project = projects.first(where: { $0.id == id && $0.platform.hasMac }) else {
+        guard let id = body["app"] as? String, let project = projects.first(where: { $0.id == id && $0.hasMac }) else {
             return ["error": "That app isn't on this Mac any more."]
         }
         if op == "surface-open" {

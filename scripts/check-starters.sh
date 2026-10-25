@@ -15,9 +15,8 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # A raw string of Template.swift, from its `static let <name> = #"""` line to the `"""#` that ends it, with its
-# placeholders filled by stand-ins (only their types matter here). A placeholder that starts a line and is followed by
-# code inserts lines of its own (`{{WISH_LEAVES_LAMP_CLOSED}}`), which are left out. Of the services Connectors.fill
-# writes into LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
+# placeholders filled by stand-ins (only their types matter here), and the code Lamp puts in for a wish's apps left out. Of the services Connectors.fill writes into
+# LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
 services() {
   local type=$1
   grep -rhoE "\b$type\.[a-z][A-Za-z0-9]*\b" "$here"/Resources/Starters/*/Sources 2>/dev/null | sed "s/^$type\.//" | sort -u |
@@ -31,8 +30,8 @@ extract() {
     index($0, start) { on = 1; next }
     on && /^ *"""#( \+ [A-Za-z]+)?$/ { exit }
     on { print }' "${2:-$template}" |
-    perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/; s/^\{\{[A-Z_]+\}\}(?=\s)//' |
-    sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
+    perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
+    sed -E 's/\{\{WISH_LEAVES_LAMP_CLOSED\}\}//g; s/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
 # Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
 { extract lampSupportTemplate; print "#if os(macOS)"; extract lampGlyphSwift; print "#endif" } > "$work/LampSupport.swift"
@@ -53,10 +52,13 @@ failed=0
 for starter in $starters; do
   name="${starter:t}"
   library=("$work/LampSupport.swift") macos=14.0
-  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' "$starter"/Sources/**/*.swift(N); then
+  sources=("$starter"/Sources/**/*.swift(N))
+  # A game's starter has no Swift of its own (Lamp writes the app around its page): nothing to check.
+  if (( ! $#sources )); then print -- "○ $name: no Swift to check"; continue; fi
+  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' $sources; then
     library+=("$work/LampScene.swift") macos=15.0
   fi
-  if check $macos $library "$starter"/Sources/**/*.swift(N) 2>"$work/$name.log"; then
+  if check $macos $library $sources 2>"$work/$name.log"; then
     print "✓ $name"
   else
     print "✗ $name"; cat "$work/$name.log"; failed=1

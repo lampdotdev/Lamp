@@ -18,7 +18,8 @@ import Network
 /// apps join it as peers by proving they hold the key, over a handshake that sends nothing anyone could use again
 /// (`WishChannel`), and everything after it is sealed, so what they say crosses the network unreadable. A peer names
 /// which app it is in its hello, hears who else is in the room (`welcome`, `joined`, `left`) and sends JSON messages to
-/// one peer or to all (`send` → `message`), under the same size and rate limits as a phone's. The relay tells whoever
+/// one peer or to all (`send` → `message`) and the values they share to one peer (`values`), under the same size and
+/// rate limits as a phone's; it keeps no values itself. The relay tells whoever
 /// runs it who is in each room (`onRoomChanged`), so Lamp can say so to the builder. Files between peers aren't carried yet.
 public final class Relay: @unchecked Sendable {
     public struct Session: Equatable, Sendable {
@@ -106,21 +107,26 @@ public final class Relay: @unchecked Sendable {
         let kind: String
         let name: String
         let device: String
+        /// What it speaks, as it said in its join: 1 for an app from before values, which said nothing of it.
+        let wire: Int
         let since = Date()
         let rate = Rate()
         var sealer: WishChannel.Sealer
         var opener: WishChannel.Sealer
         /// Where the app listens for the wish's other apps, as it said: what they keep for when Lamp is closed.
         var at: [String] = []
-        init(peer: RelayPeer, kind: String, name: String, device: String, sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
+        /// How its link stands, as it last said: its state, and the apps it reaches straight. For Lamp, not the others.
+        var link: [String: Any] = [:]
+        init(peer: RelayPeer, kind: String, name: String, device: String, wire: Int, sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
             self.peer = peer
             self.kind = kind
             self.name = name
             self.device = device
+            self.wire = wire
             self.sealer = sealer
             self.opener = opener
         }
-        var described: [String: Any] { ["kind": kind, "name": name, "device": device, "since": Int(since.timeIntervalSince1970 * 1000), "at": at] }
+        var described: [String: Any] { ["kind": kind, "name": name, "device": device, "wire": wire, "since": Int(since.timeIntervalSince1970 * 1000), "at": at] }
         /// Everything to a member goes sealed, in the order it's said, on the relay's queue.
         func send(_ text: String) { peer.send(sealed: sealer.seal(Data(text.utf8))) }
     }
@@ -131,6 +137,7 @@ public final class Relay: @unchecked Sendable {
         let keyData: Data
         let tag: Data
         var apps: [String: (kind: String, name: String)]
+        var waiting: Set<String> = []
         var members: [String: Member] = [:]
         init(key: Data, apps: [String: (kind: String, name: String)]) {
             self.keyData = key
@@ -271,14 +278,16 @@ public final class Relay: @unchecked Sendable {
 
     /// Opens a wish's room, or brings it up to date (an app added or taken away). `key`: the wish's key, which every app
     /// of the wish holds and proves it does to get in; `apps`: each app the wish may have, by its peer id, with its kind
-    /// and name; a peer whose id isn't among them is turned away. A new key ends the old room first, letting its members go.
-    public func configureRoom(_ room: String, key: Data, apps: [String: (kind: String, name: String)]) {
+    /// and name; a peer whose id isn't among them is turned away. `waiting`: those of them Lamp hasn't made yet, so the
+    /// others can say so. A new key ends the old room first, letting its members go.
+    public func configureRoom(_ room: String, key: Data, apps: [String: (kind: String, name: String)], waiting: Set<String> = []) {
         queue.async {
             if let known = self.rooms[room], known.keyData != key { self.closeRoom(room) }
             if let known = self.rooms[room] {
                 let changed = Set(known.apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
-                    != Set(apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" })
+                    != Set(apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" }) || known.waiting != waiting
                 known.apps = apps
+                known.waiting = waiting
                 for (id, member) in known.members where apps[id] == nil { member.peer.close(code: 4005); known.members[id] = nil }
                 // An app added to the wish or taken from it, while the others are in the room: they hear the list again,
                 // so the one not open yet is known to them, and the one gone isn't.
@@ -288,6 +297,7 @@ public final class Relay: @unchecked Sendable {
                 }
             } else {
                 let made = Room(key: key, apps: apps)
+                made.waiting = waiting
                 self.rooms[room] = made
                 self.tags[made.tag] = room
                 self.startTicking()
@@ -392,7 +402,7 @@ public final class Relay: @unchecked Sendable {
                       self.rooms[roomKey] === room, let named = room.apps[id] else { return peer.close(code: 4003) }
                 self.proving[handle] = nil
                 self.joinRoom(peer, room: room, key: roomKey, id: id, kind: named.kind, name: named.name, device: Self.short(join["device"], 40),
-                              sealer: WishChannel.Sealer(key: keys.server), opener: opener)
+                              wire: (join["wire"] as? Int).map { min(max($0, 1), 999) } ?? 1, sealer: WishChannel.Sealer(key: keys.server), opener: opener)
             }
         }
         peer.onBinary = { [weak peer] _ in peer?.close(code: 4003) }
@@ -403,15 +413,18 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
-    private func joinRoom(_ peer: RelayPeer, room: Room, key: String, id: String, kind: String, name: String, device: String,
+    private func joinRoom(_ peer: RelayPeer, room: Room, key: String, id: String, kind: String, name: String, device: String, wire: Int,
                           sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
-        // The same app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it.
+        // The same app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it. The others
+        // hear that it left before they hear it join, so they see it arrive again and can catch it up on what it missed.
         if let old = room.members[id] {
             old.peer.onClose = {}
             old.peer.close(code: 4000)
             room.members[id] = nil
+            let left = Self.json(["t": "left", "peer": id])
+            for (_, each) in room.members { each.send(left) }
         }
-        let member = Member(peer: peer, kind: kind, name: name, device: device, sealer: sealer, opener: opener)
+        let member = Member(peer: peer, kind: kind, name: name, device: device, wire: wire, sealer: sealer, opener: opener)
         let others = room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
         room.members[id] = member
         member.send(Self.json(["t": "welcome", "role": "peer", "peer": id, "peers": others, "apps": Self.roster(room), "now": Self.now]))
@@ -424,7 +437,7 @@ public final class Relay: @unchecked Sendable {
             guard let self, let room, let member else { return }
             // A message that doesn't open as the next one from this app was changed, replayed or made up on the way.
             guard let plain = member.opener.open(sealed) else { return member.peer.close(code: 4003) }
-            self.fromMember(room, id: id, member: member, text: String(decoding: plain, as: UTF8.self))
+            self.fromMember(room, key: key, id: id, member: member, text: String(decoding: plain, as: UTF8.self))
         }
         peer.onClose = { [weak self, weak room, weak member] in
             guard let self, let room, let member, room.members[id] === member else { return }
@@ -436,15 +449,31 @@ public final class Relay: @unchecked Sendable {
         onRoomChanged(key, membersDescribed(room))
     }
 
-    private func fromMember(_ room: Room, id: String, member: Member, text: String) {
+    private func fromMember(_ room: Room, key: String, id: String, member: Member, text: String) {
         guard let message = Self.parse(text) else { return }
         let kind = message["t"] as? String ?? ""
+        // How the app's link stands, for whoever builds the wish to see; said only when it changes.
+        if kind == "status", member.rate.allowed(member.peer) {
+            let direct = (message["direct"] as? [String] ?? []).filter { room.apps[$0] != nil }.prefix(8)
+            member.link = ["state": Self.short(message["state"], 32), "direct": Array(direct)]
+            return onRoomChanged(key, membersDescribed(room))
+        }
         // Where the app listens: a few addresses, each host:port, passed to the others to keep.
         if kind == "at", member.rate.allowed(member.peer), let given = message["addresses"] as? [String] {
             member.at = Array(given.filter { $0.utf8.count <= 64 && !$0.contains(where: { $0.isWhitespace }) }.prefix(8))
             let said = Self.json(["t": "at", "peer": id, "addresses": member.at])
             for (other, each) in room.members where other != id { each.send(said) }
             return
+        }
+        // The values the wish's apps share, for one app: passed on as they are, since each app keeps and merges its own.
+        if kind == "values", member.rate.allowed(member.peer), let values = message["values"] as? [String: Any],
+           let to = message["to"] as? String, let target = room.members[to], target.peer.pendingText <= Self.hostBehind {
+            // With what the sender's values add up to, or its request for all of the other's, so a setting lost on the
+            // way is made up.
+            var out: [String: Any] = ["t": "values", "from": id, "values": values]
+            if let sum = message["sum"] as? String, sum.utf8.count <= 64 { out["sum"] = sum }
+            if message["ask"] as? Bool == true { out["ask"] = true }
+            return target.send(Self.json(out))
         }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String
@@ -462,7 +491,11 @@ public final class Relay: @unchecked Sendable {
 
     /// Every app the room's wish has, as a member is told it: in its welcome, and again when the list changes.
     private static func roster(_ room: Room) -> [[String: Any]] {
-        room.apps.sorted { $0.key < $1.key }.map { ["peer": $0.key, "kind": $0.value.kind, "name": $0.value.name] }
+        room.apps.sorted { $0.key < $1.key }.map { id, app in
+            var described: [String: Any] = ["peer": id, "kind": app.kind, "name": app.name]
+            if room.waiting.contains(id) { described["waiting"] = true }
+            return described
+        }
     }
 
     private static func described(_ id: String, _ member: Member) -> [String: Any] {
@@ -472,7 +505,11 @@ public final class Relay: @unchecked Sendable {
     }
 
     private func membersDescribed(_ room: Room) -> [[String: Any]] {
-        room.members.sorted { $0.key < $1.key }.map { Self.described($0.key, $0.value) }
+        room.members.sorted { $0.key < $1.key }.map { id, member in
+            var described = Self.described(id, member)
+            if !member.link.isEmpty { described["link"] = member.link }
+            return described
+        }
     }
 
     private func joinAsHost(_ peer: RelayPeer, game: Game, app: String, preview: Bool) {
@@ -774,6 +811,7 @@ public final class Relay: @unchecked Sendable {
         return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
     }
     static func json(_ value: [String: Any]) -> String {
-        String(decoding: (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8), as: UTF8.self)
+        // Slashes as they came: escaped, a message heavy with them could grow past what the apps take.
+        String(decoding: (try? JSONSerialization.data(withJSONObject: value, options: .withoutEscapingSlashes)) ?? Data("{}".utf8), as: UTF8.self)
     }
 }

@@ -19,8 +19,8 @@ final class WishRoomTests: XCTestCase {
         return (relay, try XCTUnwrap(URL(string: "ws://127.0.0.1:\(port)/")))
     }
 
-    private func join(_ address: URL, as peer: String, device: String, key: Data? = nil) async throws -> WishPeer {
-        try await WishPeer.join(address, as: peer, device: device, key: key ?? self.key)
+    private func join(_ address: URL, as peer: String, device: String, key: Data? = nil, wire: Int? = nil) async throws -> WishPeer {
+        try await WishPeer.join(address, as: peer, device: device, key: key ?? self.key, wire: wire)
     }
 
     func testTheAppsOfAWishSeeEachOtherAndExchangeMessages() async throws {
@@ -220,13 +220,21 @@ final class WishRoomTests: XCTestCase {
     func testTheSameAppBackOnANewSocketTakesItsPlace() async throws {
         let (relay, address) = try await start()
         defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV")
+        _ = try await tv.next()
         let first = try await join(address, as: "iphone", device: "iPhone")
         _ = try await first.next()
+        let arrived = try await tv.next()
+        XCTAssertEqual(arrived["t"] as? String, "joined")
         let second = try await join(address, as: "iphone", device: "iPhone")
         let welcomed = try await second.next()
         XCTAssertEqual(welcomed["t"] as? String, "welcome")
         try await Self.closed(first.socket, code: 4000)
-        XCTAssertEqual(relay.members(of: room), ["iphone"])
+        XCTAssertEqual(relay.members(of: room), ["iphone", "tv"])
+        // The others see it leave and arrive again, so they can catch it up on what it missed while it was away.
+        let left = try await tv.next(), joined = try await tv.next()
+        XCTAssertEqual("\(left["t"] ?? "") \(left["peer"] ?? "")", "left iphone")
+        XCTAssertEqual(joined["t"] as? String, "joined")
     }
 
     /// An app added to the wish, or taken from it, while others are in the room: they're told the list again, so the new
@@ -247,6 +255,86 @@ final class WishRoomTests: XCTestCase {
         relay.configureRoom(room, key: key, apps: ["tv": ("tv", "the TV app"), "mac": ("mac", "the Mac app")])
         let taken = try await tv.next()
         XCTAssertEqual((taken["apps"] as? [[String: Any]])?.compactMap { $0["peer"] as? String }, ["mac", "tv"])
+    }
+
+    /// An app the wish asks for and Lamp hasn't made is marked so in the list the others hear, so they say it isn't ready
+    /// rather than ask the person to open it; once it's made, they hear the list again without the mark.
+    func testAnAppNotMadeYetIsMarkedInTheList() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        relay.configureRoom(room, key: key, apps: apps, waiting: ["android"])
+        let tv = try await join(address, as: "tv", device: "TV")
+        let welcome = try await tv.next()
+        let listed = (welcome["apps"] as? [[String: Any]] ?? []).map { "\($0["peer"] as? String ?? ""):\($0["waiting"] as? Bool ?? false)" }
+        XCTAssertEqual(listed, ["android:true", "iphone:false", "tv:false"])
+        relay.configureRoom(room, key: key, apps: apps)
+        let made = try await tv.next()
+        XCTAssertEqual(made["t"] as? String, "apps")
+        XCTAssertEqual((made["apps"] as? [[String: Any]])?.compactMap { $0["waiting"] }.count, 0)
+    }
+
+    /// What an app says of its own link (its state, and the apps it reaches straight) is kept for Lamp, which tells the
+    /// builder, and isn't passed to the others.
+    func testWhatAnAppSaysOfItsLinkReachesLampAlone() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let said = Said()
+        relay.onRoomChanged = { _, members in said.add(members) }
+        let tv = try await join(address, as: "tv", device: "TV")
+        _ = try await tv.next()
+        let phone = try await join(address, as: "iphone", device: "iPhone")
+        _ = try await phone.next()
+        _ = try await tv.next()   // joined
+        try await phone.send(["t": "status", "state": "localNetworkDenied", "direct": ["tv", "roku"]])
+        try await phone.send(["t": "send", "to": "tv", "data": 1])
+        let next = try await tv.next()
+        XCTAssertEqual(next["t"] as? String, "message", "the others hear nothing of it: \(next)")
+        let phoneSaid = try XCTUnwrap(said.last?.first { $0["peer"] as? String == "iphone" })
+        let link = try XCTUnwrap(phoneSaid["link"] as? [String: Any])
+        XCTAssertEqual(link["state"] as? String, "localNetworkDenied")
+        XCTAssertEqual(link["direct"] as? [String], ["tv"], "only apps the wish has")
+        tv.socket.cancel(with: .goingAway, reason: nil)
+        phone.socket.cancel(with: .goingAway, reason: nil)
+    }
+
+    /// Values go to the one app they're for, with who sent them, and the relay keeps none of them; each member says what
+    /// it speaks in its join, which the others hear with it (1 for an app from before that says nothing).
+    func testValuesGoToTheAppTheyreForAndEachSaysWhatItSpeaks() async throws {
+        let (relay, address) = try await start()
+        defer { relay.stop() }
+        let tv = try await join(address, as: "tv", device: "TV", wire: 2)
+        _ = try await tv.next()
+        let phone = try await join(address, as: "iphone", device: "iPhone")
+        let welcome = try await phone.next()
+        XCTAssertEqual((welcome["peers"] as? [[String: Any]])?.first?["wire"] as? Int, 2)
+        let joined = try await tv.next()
+        XCTAssertEqual((joined["peer"] as? [String: Any])?["wire"] as? Int, 1, "an app from before says nothing of it")
+        let android = try await join(address, as: "android", device: "Android", wire: 2)
+        _ = try await android.next()
+        _ = try await tv.next()
+        _ = try await phone.next()
+
+        let values: [String: Any] = ["list": ["v": ["milk"], "c": [5, 0, "tv"]]]
+        try await tv.send(["t": "values", "to": "android", "values": values])
+        try await tv.send(["t": "values", "to": "mac", "values": values])   // no such member: nothing comes back
+        try await tv.send(["t": "send", "data": "after"])
+        let got = try await android.next()
+        XCTAssertEqual(got["t"] as? String, "values")
+        XCTAssertEqual(got["from"] as? String, "tv")
+        XCTAssertEqual(((got["values"] as? [String: Any])?["list"] as? [String: Any])?["v"] as? [String], ["milk"])
+        let onPhone = try await phone.next()
+        XCTAssertEqual(onPhone["data"] as? String, "after", "the other app heard none of it: \(onPhone)")
+        _ = try await android.next()
+        tv.socket.cancel(with: .goingAway, reason: nil)
+        phone.socket.cancel(with: .goingAway, reason: nil)
+        android.socket.cancel(with: .goingAway, reason: nil)
+    }
+
+    private final class Said: @unchecked Sendable {
+        private let lock = NSLock()
+        private var lists: [[[String: Any]]] = []
+        func add(_ members: [[String: Any]]) { lock.lock(); lists.append(members); lock.unlock() }
+        var last: [[String: Any]]? { lock.lock(); defer { lock.unlock() }; return lists.last }
     }
 
     // MARK: Helpers
@@ -306,7 +394,7 @@ final class WishPeer {
         }
     }
 
-    static func join(_ address: URL, as peer: String, device: String, key: Data) async throws -> WishPeer {
+    static func join(_ address: URL, as peer: String, device: String, key: Data, wire: Int? = nil) async throws -> WishPeer {
         let joined = WishPeer(URLSession.shared.webSocketTask(with: address))
         joined.socket.maximumMessageSize = 1 << 20
         joined.socket.resume()
@@ -323,7 +411,7 @@ final class WishPeer {
         let keys = WishChannel.keys(key: key, transcript: transcript)
         joined.sealer = WishChannel.Sealer(key: keys.client)
         joined.opener = WishChannel.Sealer(key: keys.server)
-        try await joined.send(["t": "join", "device": device])
+        try await joined.send(wire.map { ["t": "join", "device": device, "wire": $0] } ?? ["t": "join", "device": device])
         return joined
     }
 }

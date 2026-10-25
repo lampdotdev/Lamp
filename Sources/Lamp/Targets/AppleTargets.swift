@@ -53,7 +53,7 @@ extension Target {
         part: .swift(.iphone, folder: "iPhone", word: "iphone", menu: ("iPhone App", "iphone")) {
             Agent.prompt(platform: .iphone, device: DeviceFamily.iphone.name, sidebar: false, part: $0)
         },
-        setup: .phone(both: false, made: "iPhone and iPad"))
+        setup: .phone(both: false, made: "iPhone and iPad"), otherSystems: true)
 
     static let universal = Target(
         platform: .universal, places: [.mac, .ios],
@@ -75,7 +75,7 @@ extension Target {
             try Template.writeDeviceProject(for: project, team: Devices.team)
         },
         part: .swift(.universal, folder: "Apple", word: "iphone", menu: ("iPhone App", "iphone")) { Agent.universalPrompt(for: .iphone, part: $0) },
-        setup: .phone(both: true, made: "the Mac, iPhone and iPad"))
+        setup: .phone(both: true, made: "the Mac, iPhone and iPad"), otherSystems: true, macSignedForTeam: true)
 }
 
 extension Target.Recipe {

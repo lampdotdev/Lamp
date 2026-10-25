@@ -138,6 +138,45 @@ final class WishHubTests: XCTestCase {
         XCTAssertEqual(staleSend, 409)
     }
 
+    /// An Android app that stops polling (force-stopped, closed) is let go of within seconds, so the wish's other apps see
+    /// it leave while it's gone, and arrive again when it's back, rather than taking it as open the whole time.
+    func testAnAppThatStopsPollingIsSeenToLeave() async throws {
+        let parts = [wish, phone, android]
+        let key = SymmetricKey(data: WishKeys.key(for: wish))
+        let (wait, grace) = (WishProxies.wait, WishProxies.grace)
+        WishProxies.wait = 1
+        WishProxies.grace = 1
+        defer { WishProxies.wait = wait; WishProxies.grace = grace }
+        let (_, opened) = await WishProxies.open(android, wish: wish, apps: parts)
+        let link = try XCTUnwrap(opened["link"] as? Int)
+        let tag = WishChannel.tag(for: key), nonce = WishChannel.random(16)
+        _ = await WishProxies.send(android, body: ["link": link, "frames": [["text": Self.json(["t": "hello", "tag": tag.base64EncodedString(), "peer": "android", "nonce": nonce.base64EncodedString()])]]])
+        let first = try await poll(link)
+        let challenge = try XCTUnwrap((first.first?["text"] as? String).flatMap(Self.parse))
+        let transcript = WishChannel.transcript(tag: tag, client: "android", server: challenge["peer"] as? String ?? "", clientNonce: nonce,
+                                                serverNonce: Data(base64Encoded: challenge["nonce"] as? String ?? "")!)
+        var sealer = WishChannel.Sealer(key: WishChannel.keys(key: key, transcript: transcript).client)
+        _ = await WishProxies.send(android, body: ["link": link, "frames": [
+            ["text": Self.json(["t": "proof", "proof": WishChannel.clientProof(key: key, transcript: transcript).base64EncodedString()])],
+            ["data": sealer.seal(try JSONSerialization.data(withJSONObject: ["t": "join", "device": "Android emulator"])).base64EncodedString()]]])
+        _ = try await poll(link)
+
+        let (_, told) = await WishRooms.answer(for: phone, wish: wish, apps: parts, host: "127.0.0.1")
+        let socket = try XCTUnwrap(URL(string: try XCTUnwrap(told["socket"] as? String)))
+        let iphone = try await WishPeer.join(socket, as: "iphone", device: "iPhone simulator", key: WishKeys.key(for: wish))
+        defer { iphone.socket.cancel(with: .goingAway, reason: nil) }
+        let welcome = try await iphone.next()
+        let present = (welcome["peers"] as? [[String: Any]])?.first?["peer"] as? String
+        XCTAssertEqual(present, "android", "\(welcome)")
+
+        // The Android app stops: no more polls. Within a few seconds the iPhone app hears it left.
+        let started = Date()
+        var heard: [String: Any] = [:]
+        while heard["t"] as? String != "left", Date().timeIntervalSince(started) < 8 { heard = try await iphone.next() }
+        XCTAssertEqual("\(heard["t"] ?? "") \(heard["peer"] ?? "")", "left android")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 6, "within seconds of its last poll")
+    }
+
     private func poll(_ link: Int) async throws -> [[String: Any]] {
         for _ in 0..<5 {
             let (status, polled) = await WishProxies.poll(android, link: link)

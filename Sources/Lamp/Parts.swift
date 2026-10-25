@@ -128,8 +128,8 @@ enum Parts {
         let word = word.trimmingCharacters(in: .whitespaces).lowercased()
         return apps.first { app in
             switch word {
-            case "mac": app.platform.hasMac
-            case "iphone", "ipad", "phone", "watch": app.platform.hasIOS
+            case "mac": app.hasMac
+            case "iphone", "ipad", "phone", "watch": app.hasIOS
             default: Parts.word(for: app.platform) == word || folder(for: app.platform).lowercased() == word
             }
         }
@@ -212,7 +212,9 @@ enum Parts {
     /// The rule the wish's own prompt gets when it has other parts: what they are, where, how to reach each with the
     /// tools, and to open each one's rules before changing it.
     static func rule(for wish: LampProject, parts: [LampProject]) -> String {
-        guard !parts.isEmpty else { return "" }
+        // A wish that asks for apps it doesn't have yet is told how they'll share data from its first request, since its
+        // first app is written to talk to them (`Template.talksToOtherApps`).
+        guard !parts.isEmpty else { return Template.talksToOtherApps(wish) ? Agent.Rules.wishTalk : "" }
         let listed = parts.map { "\(name(of: $0.platform)) in \($0.dir.lastPathComponent)/ (part \"\(word(for: $0.platform))\", its rules in the \(skill(for: $0.platform)) skill)" }
         return """
 

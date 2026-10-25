@@ -1098,9 +1098,13 @@ extension TVTemplate {
          * Lamp.wish.peers()                  the wish's other apps open now: [{ peer: 'iphone', kind, name, device, status }]
          * Lamp.wish.apps()                   every other app of the wish, open or not
          * Lamp.wish.peer('iphone')           that app, open or not ({ ..., open, status }); null when the wish has none
-         * Lamp.wish.peer('iphone').status    { state: 'connected' or 'notOpen', reason, lastSeen }: show reason as it is
-         *                                     ("The iPhone app isn't open."); lastSeen is ms since 1970, or null
+         * Lamp.wish.peer('iphone').status    { state: 'connected', 'outOfDate' or 'notOpen', reason, lastSeen }: show reason as it is
+         *                                     ("Open the iPhone app on your iPhone.", "The iPhone app was last open 5 min
+         *                                     ago. Open it on your iPhone."); lastSeen is when it was last open on this
+         *                                     device, or since when while it is, in ms since 1970, or null
          * Lamp.wish.onPeers(fn(list))        fn now and whenever any app's status changes (the open ones)
+         * Lamp.wish.onApps(fn(list))         fn now and whenever any app's status changes, open or not, its reason
+         *                                     included ("5 min ago" becoming "6 min ago"): every app, as apps() gives them
          * Lamp.wish.send(data, 'iphone')     JSON to one app; false (with why in the console) when it wasn't sent
          * Lamp.wish.send(data)               to every other app of the wish
          * Lamp.wish.onMessage(fn(from, data))   what another app sent: its peer name and its JSON
@@ -1109,21 +1113,35 @@ extension TVTemplate {
          *                                     status() is { state, reason }
          * Lamp.wish.onState(fn(state, status))   fn now and whenever this app's link changes
          * Lamp.wish.me()                     this app's own peer name
+         * Lamp.wish.values()                 the values the wish's apps share, kept on each device: { list: [...], ... };
+         *                                     those kept here come once the page knows its wish, with onChange
+         * Lamp.wish.set('list', value)       sets one here and in every other app, now or when they next meet; null
+         *                                     removes it; false (with why in the console) when it wasn't set
+         * Lamp.wish.onChange(fn(key, value, from))   a value changed, here (from is me()) or in another app
          * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; files aren't carried yet
+         * Lamp.wish.valueLimit, valuesLimit  8192 and 65536: the most bytes one value, and all of them, take as JSON
+         * Lamp.wish.statusView('iphone')     a ready-made element of all that, kept up to date (the same one each time): a line for each other app
+         *                                     ("TV app connected"), or that app's alone; it takes the page's font and colour
          * Lamp.wish.stop()
          *
-         * More states may come: compare with the names above and treat any other as not connected. Show a reason as it
-         * is rather than words of your own, and keep the app usable while an app isn't open. A phone steering this app as
+         * More states may come: compare with the names above and treat any other as not connected. An open app built by
+         * an older Lamp is 'outOfDate', still open, with a reason saying to open it from Lamp. Show a reason as it
+         * is rather than words of your own (it changes as time goes by: "5 min ago"), and keep the app usable while an app
+         * isn't open. A message is for apps open now; values are for what must outlast an app being closed, and where two
+         * apps set one while apart, the later setting wins in both. A phone steering this app as
          * a game controller is Lamp.controllers (above), not this.
          */
         (function () {
           'use strict';
-          var MESSAGE = 16384;
+          var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
+          // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
+          // 2 brought values; an app from before says none, which counts as 1.
+          var WIRE = 2;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
           var C = /*LAMP_WISH_CRYPTO*/;
-          var on = { peers: [], message: [], state: [] };
+          var on = { peers: [], apps: [], message: [], state: [], change: [] };
           var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
           var address = null, mine = '', state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
           // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
@@ -1142,6 +1160,12 @@ extension TVTemplate {
           var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
           var directs = {}, dialing = {}, nextDial = {}, told = {}, openSince = {}, lastSeen = {}, devices = {};
           var apps = [], lastOpen = '[]', swept = 0, here = null, pending = [], epoch = 0;
+          // The apps Lamp hasn't made yet, what this page last told Lamp's room of its link, and the status views to draw.
+          var waiting = {}, reported = '', beats = 0, views = [], lastDrawn = '', lastApps = '[]';
+          // Each value as it was last set, here or by another app, and when ({ v, c: [ms, n, peer] }; a removed one keeps
+          // its c, so an older setting from an app that was away doesn't bring it back), and this page's clock for them:
+          // the latest it has set or heard of, so what it sets next is later than anything it knows of.
+          var entries = Object.create(null), clock = [0, 0];
 
           function emit(name, args) {
             var list = on[name];
@@ -1153,12 +1177,35 @@ extension TVTemplate {
             if (state === next && reason === said) return;
             state = next; reason = said;
             emit('state', [state, status()]);
+            draw();
           }
           function copy(p) { return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open,
                                       status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } }; }
+          function allOnes() { var list = []; for (var i = 0; i < apps.length; i++) list.push(copy(apps[i])); return list; }
           function openOnes() { var list = []; for (var i = 0; i < apps.length; i++) if (apps[i].open) list.push(copy(apps[i])); return list; }
           function find(id) { for (var i = 0; i < apps.length; i++) if (apps[i].peer === id) return apps[i]; return null; }
-          function notOpen(name) { return name.charAt(0).toUpperCase() + name.slice(1) + " isn't open."; }
+          // Why another app isn't there, in the same words in every language Lamp's apps are written in: where to open
+          // it, and when it was last open here when it has been.
+          var PLACES = { tv: 'your TV', mac: 'your Mac', iphone: 'your iPhone', android: 'your Android device' };
+          function notOpen(name, kind, seen, notYet, now) {
+            var title = name.charAt(0).toUpperCase() + name.slice(1), place = PLACES[kind] || 'its device';
+            // Having been open here outranks a list that still says it isn't made.
+            if (notYet && !seen) return title + " isn't ready yet.";
+            if (!seen) return 'Open ' + name + ' on ' + place + '.';
+            return title + ' was last open ' + ago(now - seen) + '. Open it on ' + place + '.';
+          }
+          function ago(ms) {
+            var minutes = Math.floor(Math.max(0, ms) / 60000), hours = Math.floor(minutes / 60), days = Math.floor(hours / 24);
+            if (minutes < 1) return 'a moment ago';
+            if (minutes < 60) return minutes + ' min ago';
+            if (hours < 24) return hours === 1 ? 'an hour ago' : hours + ' hours ago';
+            return days === 1 ? 'yesterday' : days + ' days ago';
+          }
+          function outOfDate(name, older) {
+            return older ? name.charAt(0).toUpperCase() + name.slice(1) + ' is out of date. Open it from Lamp on your Mac to update it.'
+                         : 'This app is older than ' + name + '. Open it from Lamp on your Mac to update it.';
+          }
+          function connected(name) { return (name.indexOf('the ') === 0 ? name.slice(4) : name) + ' connected'; }
           function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
           function say(line) { if (window.console) console.error('Lamp.wish: ' + line); }
           function isName(n) { return typeof n === 'string' && /^[a-z0-9-]{1,32}$/.test(n); }
@@ -1166,29 +1213,95 @@ extension TVTemplate {
 
           // The state and the list of apps, from what each way says now.
           function rebuild() {
-            var now = Date.now(), next = [], any = false;
+            var now = Date.now(), next = [], any = false, arrived = [], named = false;
+            // Values set before this page knew its own name take it now, so two apps' settings never tie.
+            if (mine) for (var k in entries) if (entries[k].c[2] === '') { entries[k].c = [entries[k].c[0], entries[k].c[1], mine]; named = true; }
+            if (named) keepValues();
             for (var i = 0; i < roster.length; i++) {
               var a = roster[i];
               if (a.peer === mine) continue;
               var d = directs[a.peer] && directs[a.peer].ready ? directs[a.peer] : null, r = relayPresent[a.peer];
               var open = started && (!!d || !!r);
               if (open) {
-                if (!openSince[a.peer]) openSince[a.peer] = r && r.since || now;
+                // Open, so made, whatever a list kept from before said.
+                delete waiting[a.peer];
+                if (!openSince[a.peer]) { openSince[a.peer] = r && r.since || now; arrived.push(a.peer); }
                 var dev = d ? d.device : r.device;
                 if (dev) devices[a.peer] = dev;
-              } else if (openSince[a.peer]) { delete openSince[a.peer]; lastSeen[a.peer] = now; }
+              } else if (openSince[a.peer]) { delete openSince[a.peer]; lastSeen[a.peer] = now; keep(); }
+              var w = d ? d.wire : r ? r.wire : WIRE;
               next.push({ peer: a.peer, kind: a.kind, name: a.name, device: devices[a.peer] || '', open: open,
-                          status: open ? { state: 'connected', reason: '', lastSeen: openSince[a.peer] }
-                                       : { state: 'notOpen', reason: notOpen(a.name), lastSeen: lastSeen[a.peer] || null } });
+                          status: open && w !== WIRE ? { state: 'outOfDate', reason: outOfDate(a.name, w < WIRE), lastSeen: openSince[a.peer] }
+                                : open ? { state: 'connected', reason: '', lastSeen: openSince[a.peer] }
+                                       : { state: 'notOpen', reason: notOpen(a.name, a.kind, lastSeen[a.peer], waiting[a.peer], now), lastSeen: lastSeen[a.peer] || null } });
             }
             apps = next;
             for (var id in directs) if (directs[id].ready) any = true;
+            // This page's own state first: code that hears an app arrive in peers sends to it at once, and must find this
+            // page connected when it does.
+            if (started) {
+              var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
+              if (s === 'connected') away = false;
+              if (s !== state || reason !== null) setState(s);
+            }
             var said = JSON.stringify(openOnes());
             if (said !== lastOpen) { lastOpen = said; emit('peers', [openOnes()]); }
-            if (!started) return;
-            var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
-            if (s === 'connected') away = false;
-            if (s !== state || reason !== null) setState(s);
+            var every = JSON.stringify(apps);
+            if (every !== lastApps) { lastApps = every; emit('apps', [allOnes()]); }
+            draw();
+            report();
+            // An app that has just come is told every value this page has, and tells this page its own, so the two agree
+            // again whichever was open meanwhile.
+            for (var j = 0; j < arrived.length; j++) if (wireOf(arrived[j]) >= 2) share(entries, arrived[j]);
+          }
+          // What another open app speaks: 1 for an app from before values, which says nothing of it.
+          function wireOf(id) {
+            var d = directs[id];
+            if (d && d.ready) return d.wire;
+            return relayPresent[id] ? relayPresent[id].wire : 1;
+          }
+          // Tells Lamp's room how this page's link stands (its state, and which apps it reaches straight), only when that
+          // changes, so the builder can tell an app that can't reach the others on the network from one that does.
+          function report() {
+            if (!relayIn || !sendKey || !socket) return;
+            var direct = [];
+            for (var id in directs) if (directs[id].ready) direct.push(id);
+            direct.sort();
+            var now = state + ' ' + direct.join(',');
+            if (now === reported) return;
+            reported = now;
+            seal(JSON.stringify({ t: 'status', state: state, direct: direct }));
+          }
+          // The status views (statusView), drawn again when what they show has changed.
+          function lines(only) {
+            var list = [], s = status();
+            // Stopped: it no longer knows who is open.
+            if (state === 'ended') return list;
+            if (state !== 'connected' && s.reason) return [['#f59e0b', s.reason]];
+            for (var i = 0; i < apps.length; i++) {
+              var a = apps[i];
+              if (!only || a.peer === only) list.push(a.status.state === 'connected' ? ['#22c55e', connected(a.name)]
+                                                       : a.status.state === 'outOfDate' ? ['#f59e0b', a.status.reason] : ['#9ca3af', a.status.reason]);
+            }
+            return list;
+          }
+          function draw(force) {
+            if (!views.length) return;
+            var drawn = JSON.stringify([state, status().reason, apps]);
+            if (drawn === lastDrawn && !force) return;
+            lastDrawn = drawn;
+            for (var v = 0; v < views.length; v++) {
+              var el = views[v].el, list = lines(views[v].only);
+              while (el.firstChild) el.removeChild(el.firstChild);
+              for (var i = 0; i < list.length; i++) {
+                var row = document.createElement('div'), dot = document.createElement('span'), text = document.createElement('span');
+                row.style.margin = '0.2em 0';
+                dot.style.cssText = 'display:inline-block;width:0.5em;height:0.5em;border-radius:50%;margin-right:0.45em;vertical-align:middle;background:' + list[i][0];
+                text.textContent = list[i][1];
+                row.appendChild(dot); row.appendChild(text);
+                el.appendChild(row);
+              }
+            }
           }
           function setRoster(list) {
             var given = [];
@@ -1198,11 +1311,172 @@ extension TVTemplate {
             }
             if (!given.length) return;
             roster = given;
+            waiting = {};
+            for (var w = 0; list && w < list.length; w++) if (list[w] && list[w].waiting === true && isName(list[w].peer)) waiting[list[w].peer] = true;
             for (var id in directs) if (!inRoster(id)) drop(directs[id]);
             keep();
             rebuild();
           }
           function inRoster(id) { for (var i = 0; i < roster.length; i++) if (roster[i].peer === id) return true; return false; }
+
+          // The values: every app orders two settings the same way, by the clock of the app that set it, then the count
+          // within that millisecond, then that app's name. Times within 2^50 ms and counts within a million, whole.
+          var LATEST = 1125899906842624, COUNTS = 1000000, REMOVALS_KEPT = 30 * 24 * 3600 * 1000;
+          function later(a, b) { return a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]; }
+          function whole(x, most) { return typeof x === 'number' && x >= 0 && x % 1 === 0 && x <= most; }
+          function stampOk(c) {
+            return c instanceof Array && c.length === 3 && whole(c[0], LATEST) && whole(c[1], COUNTS) && typeof c[2] === 'string' && bytes(c[2]) <= 32;
+          }
+          // A name every app can keep a value under: 1 to 64 bytes, and not the one that changes what a page's object is.
+          function nameOk(k) { return typeof k === 'string' && k.length > 0 && bytes(k) <= 64 && k !== '__proto__'; }
+          function own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+          function names(o) { var list = []; for (var k in o) if (own(o, k)) list.push(k); list.sort(); return list; }
+          function copyOf(v) { return v === undefined ? null : JSON.parse(JSON.stringify(v)); }
+          // What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+          // removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+          // make, removals included, fits in what the others take from it.
+          function heldBy(key, v) { return bytes(key) + (v === undefined ? 32 : Math.max(32, bytes(JSON.stringify(v)))); }
+          // What the store takes, removals kept included, leaving one name out.
+          function sizeWithout(key) {
+            var total = 0;
+            for (var k in entries) if (k !== key) total += heldBy(k, entries[k].v);
+            return total;
+          }
+          function valuesNow() { var o = {}; for (var k in entries) if (entries[k].v !== undefined) o[k] = entries[k].v; return o; }
+          function valuesChanged(changed, from) {
+            keepValues();
+            // Each handler gets a copy, so changing it changes nothing kept.
+            for (var i = 0; i < changed.length; i++) emit('change', [changed[i][0], copyOf(changed[i][1]), from]);
+          }
+          // What every setting this page has adds up to, sealed with the wish's key: two apps with the same say the same.
+          function digest() {
+            if (!key) return '';
+            var parts = [], list = names(entries);
+            for (var i = 0; i < list.length; i++) {
+              var c = entries[list[i]].c;
+              parts.push(C.utf8(list[i]), new Uint8Array([0]), C.utf8(String(c[0])), new Uint8Array([0]), C.utf8(String(c[1])), new Uint8Array([0]), C.utf8(c[2]), new Uint8Array([0]));
+            }
+            return C.toBase64(C.derive('lamp-wish values', key, C.concat(parts)).subarray(0, 8));
+          }
+          // What another app sent of the values: settings, taken when later than this page's; what all of its add up to
+          // (sum), answered with all of this page's and a request for all of its when they differ; and that request (ask),
+          // answered with all of this page's. So a setting lost on the way is made up within a minute.
+          function heardValues(m, from) {
+            merge(m.values, from);
+            if (typeof m.sum === 'string' && m.sum !== digest()) share(entries, from, { ask: true });
+            else if (m.ask === true) share(entries, from);
+          }
+          // Settings another app sent: each taken when it's later than what this page has, so whichever order they come
+          // in, every app ends with the same.
+          function merge(given, from) {
+            if (!given || typeof given !== 'object') return;
+            var changed = [], list = names(given);
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits, so
+            // they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            dropExpired();
+            var most = VALUES * 2 * Math.max(2, roster.length), held = 0, removals = null, next = 0;
+            for (var h in entries) held += heldBy(h, entries[h].v);
+            // The oldest removal kept, other than this name's: let go first when something needs room, since a removal
+            // only outvotes an older copy of what it removed, and the oldest matter least.
+            function oldestRemoval(except) {
+              if (!removals) {
+                removals = [];
+                for (var r in entries) if (entries[r].v === undefined) removals.push(r);
+                removals.sort(function (a, b) { return later(entries[a].c, entries[b].c) ? 1 : later(entries[b].c, entries[a].c) ? -1 : 0; });
+              }
+              while (next < removals.length) {
+                var k = removals[next++];
+                if (k !== except && entries[k] && entries[k].v === undefined) return k;
+              }
+              return null;
+            }
+            for (var i = 0; i < list.length; i++) {
+              var key = list[i], e = given[key];
+              if (!nameOk(key) || !e || typeof e !== 'object' || !stampOk(e.c)) continue;
+              if (e.c[0] > clock[0] || (e.c[0] === clock[0] && e.c[1] > clock[1])) clock = [e.c[0], e.c[1]];
+              if (entries[key] && !later(e.c, entries[key].c)) continue;
+              var v = e.v === null ? undefined : e.v;
+              // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps apart
+              // may each have filled it, and taking every app's values whatever the order is what makes them agree.
+              if (v !== undefined && bytes(JSON.stringify(v)) > VALUE * 2) continue;
+              var old = entries[key] ? heldBy(key, entries[key].v) : 0, need = heldBy(key, v), gone;
+              while (held - old + need > most && (gone = oldestRemoval(key))) { held -= heldBy(gone, undefined); delete entries[gone]; }
+              if (held - old + need > most) {
+                // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                // keeping it, so a value removed is never left behind.
+                if (v !== undefined || !entries[key]) continue;
+                var had = entries[key].v;
+                held -= old;
+                delete entries[key];
+                if (had !== undefined) changed.push([key, undefined]);
+                continue;
+              }
+              held = held - old + need;
+              entries[key] = { v: v, c: e.c };
+              changed.push([key, v]);
+            }
+            if (changed.length) valuesChanged(changed, from);
+          }
+          // Sends settings to another open app, the straight way when there is one, else through Lamp's room, a few at a
+          // time so each message stays within what a message may be; extra goes with the last.
+          function share(list, id, extra) {
+            var batch = {}, size = 0, any = false;
+            function flush(last) {
+              if (!any && !(last && extra)) return;
+              var frame = { t: 'values', values: batch };
+              if (last && extra) for (var x in extra) frame[x] = extra[x];
+              var d = directs[id];
+              if (d && d.ready) directSeal(d, JSON.stringify(frame));
+              else if (relayPresent[id] && socket && socket.readyState === 1 && sendKey) { frame.to = id; seal(JSON.stringify(frame)); }
+              batch = {}; size = 0; any = false;
+            }
+            var keys = names(list);
+            for (var i = 0; i < keys.length; i++) {
+              var e = list[keys[i]], json = { c: e.c };
+              if (e.v !== undefined) json.v = e.v;
+              // The name as JSON writes it, escapes included.
+              var b = bytes(JSON.stringify(json)) + bytes(JSON.stringify(keys[i])) + 2;
+              if (size + b > 12288) flush(false);
+              batch[keys[i]] = json; size += b; any = true;
+            }
+            flush(true);
+          }
+          // A removal is kept for a month, then let go: before anything is weighed against a limit, and before what's
+          // kept is written, so an app whose removals filled it can set values again once the month is over.
+          function dropExpired() {
+            var old = Date.now() - REMOVALS_KEPT;
+            for (var k in entries) if (entries[k].v === undefined && entries[k].c[0] <= old) delete entries[k];
+          }
+          function keepValues() {
+            dropExpired();
+            var n = keptName();
+            if (!n) return;
+            var kept = {};
+            for (var k in entries) {
+              kept[k] = { c: entries[k].c };
+              if (entries[k].v !== undefined) kept[k].v = entries[k].v;
+            }
+            storage(n + '.values', { values: kept, clock: clock });
+          }
+          // What was kept on this TV, once the wish's key is known: taken in beside anything set before then, and said to
+          // onChange, since a page may have looked at values() before it was there.
+          function restoreValues() {
+            var k = storage(keptName() + '.values');
+            if (!k || typeof k !== 'object') return;
+            if (k.clock instanceof Array && k.clock.length === 2 && whole(k.clock[0], LATEST) && whole(k.clock[1], COUNTS)
+                && (k.clock[0] > clock[0] || (k.clock[0] === clock[0] && k.clock[1] > clock[1]))) clock = [k.clock[0], k.clock[1]];
+            var kept = k.values && typeof k.values === 'object' ? k.values : {}, list = names(kept), changed = [];
+            for (var i = 0; i < list.length; i++) {
+              var key = list[i], e = kept[key];
+              if (!nameOk(key) || !e || !stampOk(e.c)) continue;
+              if (entries[key] && !later(e.c, entries[key].c)) continue;
+              entries[key] = { v: e.v === null ? undefined : e.v, c: e.c };
+              changed.push([key, entries[key].v]);
+            }
+            keepValues();
+            for (var j = 0; j < changed.length; j++) emit('change', [changed[j][0], copyOf(changed[j][1]), mine]);
+          }
 
           // What the page keeps on the TV, beside LampAI's own: the routes it was told and the wish's key it claimed, and
           // by the wish's tag who it is, the wish's apps and where each was last reached, so it finds them with Lamp closed.
@@ -1214,14 +1488,25 @@ extension TVTemplate {
             return null;
           }
           function keptName() { return key ? 'wish.' + hex(C.derive('lamp-wish tag', key).subarray(0, 8)) : null; }
-          function keep() { var n = keptName(); if (n) storage(n, { me: mine, apps: roster, at: told }); }
+          function keep() {
+            var n = keptName(), list = [];
+            if (!n) return;
+            for (var i = 0; i < roster.length; i++) {
+              var a = roster[i], kept = { peer: a.peer, kind: a.kind, name: a.name };
+              if (waiting[a.peer]) kept.waiting = true;
+              list.push(kept);
+            }
+            storage(n, { me: mine, apps: list, at: told, seen: lastSeen });
+          }
           function restore() {
             if (restored || !key) return;
             restored = true;
+            restoreValues();
             var k = storage(keptName());
             if (!k) return;
             if (!mine && isName(k.me)) mine = k.me;
             if (k.at && typeof k.at === 'object') for (var id in k.at) if (isName(id) && k.at[id] instanceof Array) told[id] = k.at[id].slice(0, 6);
+            if (k.seen && typeof k.seen === 'object') for (var p in k.seen) if (isName(p) && typeof k.seen[p] === 'number') lastSeen[p] = k.seen[p];
             if (!roster.length && k.apps instanceof Array) { setRoster(k.apps); alone = roster.length < 2 && roster.length > 0; }
           }
           function remember(id, places) {
@@ -1287,7 +1572,7 @@ extension TVTemplate {
           function hear(m) {
             var i;
             if (m.t === 'welcome') {
-              retry = 0; undeliveredSaid = {}; lampAway = false; relayIn = true; alone = false;
+              retry = 0; undeliveredSaid = {}; lampAway = false; relayIn = true; alone = false; reported = '';
               if (isName(m.peer)) mine = m.peer;
               setRoster(m.apps || []);
               relayPresent = {};
@@ -1306,13 +1591,16 @@ extension TVTemplate {
               setRoster(m.apps || []);
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
               emit('message', [m.from, m.data]);
+            } else if (m.t === 'values' && isName(m.from)) {
+              heardValues(m, m.from);
             } else if (m.t === 'undelivered' && typeof m.to === 'string') {
               if (!undeliveredSaid[m.to]) { undeliveredSaid[m.to] = true; say('a message to "' + m.to + '" did not arrive: ' + (m.reason || 'it is not in the room') + '.'); }
             }
           }
           function present(p) {
             if (!p || !isName(p.peer)) return;
-            relayPresent[p.peer] = { device: typeof p.device === 'string' ? p.device : '', since: typeof p.since === 'number' ? p.since : Date.now() };
+            relayPresent[p.peer] = { device: typeof p.device === 'string' ? p.device : '', since: typeof p.since === 'number' ? p.since : Date.now(),
+                                     wire: typeof p.wire === 'number' ? p.wire : 1 };
             if (p.at instanceof Array && p.at.length) remember(p.peer, p.at);
           }
           // Seals a message with the next number this way and sends it.
@@ -1335,7 +1623,7 @@ extension TVTemplate {
             socket.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
             sendKey = C.derive('lamp-wish c2s', key, transcript); openKey = C.derive('lamp-wish s2c', key, transcript);
             sent = 0; opened = 0;
-            seal(JSON.stringify({ t: 'join', device: device }));
+            seal(JSON.stringify({ t: 'join', device: device, wire: WIRE }));
             return true;
           }
           // Before the handshake is done only its challenge is heard, in clear; after it, only sealed messages and beats.
@@ -1471,7 +1759,7 @@ extension TVTemplate {
                   d.hello = null;
                   d.ws.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
                   d.sendKey = C.derive('lamp-wish c2s', key, transcript); d.openKey = C.derive('lamp-wish s2c', key, transcript);
-                  directSeal(d, JSON.stringify({ t: 'join', device: device }));
+                  directSeal(d, JSON.stringify({ t: 'join', device: device, wire: WIRE }));
                   return;
                 }
               }
@@ -1480,6 +1768,7 @@ extension TVTemplate {
               if (plain) { d.opened++; try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
               if (said && said.t === 'welcome' && !d.ready) return ready(d, said);
               if (said && said.t === 'message' && d.ready && said.data !== undefined) return emit('message', [d.peer, said.data]);
+              if (said && said.t === 'values' && d.ready) return heardValues(said, d.peer);
               if (said && typeof said === 'object') return;
             }
             d.end();
@@ -1499,6 +1788,7 @@ extension TVTemplate {
             if (had && had !== d && had.ready) { d.ready = true; d.over = true; try { d.ws.close(); } catch (e) {} return; }
             d.ready = true;
             d.device = typeof welcome.device === 'string' ? welcome.device.slice(0, 40) : '';
+            d.wire = typeof welcome.wire === 'number' ? welcome.wire : 1;
             directs[d.peer] = d;
             delete dialing[d.peer]; delete nextDial[d.peer];
             if (/^[0-9.]+:\d+$/.test(d.place)) remember(d.peer, [d.place]);
@@ -1599,6 +1889,16 @@ extension TVTemplate {
               if (Date.now() - d.heard > 15000) d.end();
               else try { d.ws.send('{"t":"beat"}'); } catch (e) { d.end(); }
             }
+            // When each open app was last seen is kept every minute, so it's known even when this page is closed while
+            // the other is open; and the reasons are worked out again, since they say how long ago.
+            var now = Date.now();
+            for (var i = 0; i < apps.length; i++) if (apps[i].open) lastSeen[apps[i].peer] = now;
+            beats++;
+            if (beats % 12 === 0 && openOnes().length) keep();
+            // Once a minute each open app is told what this page's values add up to, so one that missed a setting asks.
+            if (beats % 12 === 0) for (var j = 0; j < apps.length; j++) if (apps[j].open && wireOf(apps[j].peer) >= 2) share({}, apps[j].peer, { sum: digest() });
+            // A page without the wish's key keeps saying why (open, claim) rather than "Connecting…".
+            if (key) rebuild();
             reach();
           }
           function adder(name) {
@@ -1606,6 +1906,7 @@ extension TVTemplate {
               on[name].push(fn);
               api.start();
               if (name === 'peers') fn(openOnes());
+              if (name === 'apps') fn(allOnes());
               if (name === 'state') fn(state, status());
               return function () { var i = on[name].indexOf(fn); if (i >= 0) on[name].splice(i, 1); };
             };
@@ -1633,12 +1934,46 @@ extension TVTemplate {
               setState('ended');
             },
             peers: function () { api.start(); return openOnes(); },
-            apps: function () { api.start(); var list = []; for (var i = 0; i < apps.length; i++) list.push(copy(apps[i])); return list; },
+            apps: function () { api.start(); return allOnes(); },
             peer: function (id) { api.start(); var p = find(id); return p ? copy(p) : null; },
             me: function () { api.start(); return mine; },
             state: function () { api.start(); return state; },
             status: function () { api.start(); return status(); },
-            messageLimit: MESSAGE,
+            messageLimit: MESSAGE, valueLimit: VALUE, valuesLimit: VALUES,
+            values: function () { api.start(); return JSON.parse(JSON.stringify(valuesNow())); },
+            set: function (key, value) {
+              api.start();
+              var what = 'the value "' + key + '"', text = null;
+              if (!nameOk(key)) { say(what + ' was not set: a value\'s name is 1 to 64 bytes, and not __proto__.'); return false; }
+              dropExpired();
+              if (value !== null && value !== undefined) {
+                try { text = JSON.stringify(value); } catch (e) { text = undefined; }
+                if (text === undefined) { say(what + ' was not set: it holds nothing JSON can.'); return false; }
+                var b = bytes(text);
+                if (b > VALUE) { say(what + ' of ' + b + ' bytes was not set: a value is at most ' + VALUE + ' bytes as JSON.'); return false; }
+                if (sizeWithout(key) + bytes(key) + Math.max(32, b) > VALUES) { say(what + ' was not set: the wish\'s values would pass ' + VALUES + ' bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.'); return false; }
+              }
+              // Kept as it reads back from JSON, so this page sees what the others will (NaN reads back as null, and
+              // so removes it, as it does everywhere).
+              var v = text === null ? undefined : JSON.parse(text), now = Date.now();
+              if (v === null) v = undefined;
+              clock = now > clock[0] ? [now, 0] : clock[1] < COUNTS ? [clock[0], clock[1] + 1] : [clock[0] + 1, 0];
+              var one = {};
+              entries[key] = one[key] = { v: v, c: [clock[0], clock[1], mine] };
+              valuesChanged([[key, v]], mine);
+              for (var i = 0; i < apps.length; i++) if (apps[i].open && wireOf(apps[i].peer) >= 2) share(one, apps[i].peer);
+              return true;
+            },
+            statusView: function (only) {
+              // The same element each time it's asked for the same line, so a page drawn again doesn't pile them up.
+              for (var i = 0; i < views.length; i++) if (views[i].only === (only || null)) return views[i].el;
+              var el = document.createElement('div');
+              el.className = 'lamp-wish-status';
+              views.push({ el: el, only: only || null });
+              api.start();
+              draw(true);
+              return el;
+            },
             send: function (data, to) {
               api.start();
               var what = to ? 'a message to "' + to + '"' : 'a message to the wish\'s apps';
@@ -1669,7 +2004,7 @@ extension TVTemplate {
               }
               return true;
             },
-            onMessage: adder('message'), onPeers: adder('peers'), onState: adder('state')
+            onMessage: adder('message'), onPeers: adder('peers'), onApps: adder('apps'), onState: adder('state'), onChange: adder('change')
           };
           if (window.Lamp) window.Lamp.wish = api;
         })();

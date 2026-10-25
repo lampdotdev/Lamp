@@ -41,14 +41,16 @@ enum Template {
     /// Written without following a link on the way (`AppFolder`): `.lamp` is in the app's folder, which the agent writes.
     static func saveMeta(_ project: LampProject) throws {
         try AppFolder.write(JSONEncoder().encode(ProjectMeta(name: project.name, exe: project.exe, untitled: project.untitled ? true : nil,
-                                             platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
+                                             platform: project.platform, family: project.hasIOS ? project.family : nil,
                                              device: project.device, target: project.platform.choosesPlace ? project.chosen : nil,
-                                             simulator: project.platform.hasIOS ? project.simulator : nil,
+                                             places: project.platform.addsPlaces ? project.places : nil,
+                                             engine: project.platform.addsPlaces ? project.engine : nil,
+                                             simulator: project.hasIOS ? project.simulator : nil,
                                              instance: project.instance.isEmpty ? nil : project.instance,
                                              wish: project.untitled && project.fromWish ? true : nil,
                                              finding: project.untitled && project.finding ? true : nil,
                                              deviceSetup: project.deviceSetup,
-                                             integration: project.platform.hasDevice ? project.integration : nil,
+                                             integration: project.hasDevice ? project.integration : nil,
                                              undecided: project.undecided,
                                              apps: project.apps.isEmpty ? nil : project.apps,
                                              waitsForDevice: project.waitsForDevice ? true : nil,
@@ -142,7 +144,7 @@ enum Template {
         let share = hasShare(project)
         // The simulator build's entitlements, for build.sh to put in the binary (see iPhoneBuildSh), and each
         // extension's beside them.
-        if project.platform.hasIOS {
+        if project.hasIOS {
             try put(Capabilities.load(project).simulatorEntitlementsPlist(for: project),
                     at: project.dir.appendingPathComponent(".lamp/entitlements.plist"), for: project)
             for (has, suffix) in [(widget, "widget"), (share, "share")] {
@@ -180,7 +182,7 @@ enum Template {
         precondition(template.contains(appSigningLine), "the build script changed")
         return template
             .replacingOccurrences(of: "swift build \"${FLAGS[@]}\" 2>&1\n", with: "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n")
-            .replacingOccurrences(of: appSigningLine, with: watchBuildSteps(complications: complications) + appSigningLine)
+            .replacingOccurrences(of: appSigningLine, with: onlyForIOS(watchBuildSteps(complications: complications)) + appSigningLine)
     }
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
@@ -220,7 +222,7 @@ enum Template {
             "sidebarPort": String(sidebarPort(for: project)),
             "sidebarTries": String(sidebarPortTries),
             "sidebarHost": sidebarHost(for: project),
-            "sidebarKey": project.platform.hasMac ? sidebarKey(for: project) : "",
+            "sidebarKey": project.hasMac ? sidebarKey(for: project) : "",
             "sidebarFramer": sidebarFramer,
         ]
     }
@@ -253,11 +255,18 @@ enum Template {
     /// wish's key makes. iOS lets an app advertise and browse only the types its Info.plist names.
     static let wishServiceType = "_lampwish._tcp"
 
-    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. An app on
-    /// its own (most apps, and every starter) gets none of it: its building blocks are written as if the wish's apps
-    /// couldn't talk at all, so it carries no code, size, rule or permission for something it can't use. A wish that gains
-    /// a second app has its blocks written again before its next turn and build, as they always are.
-    static func talksToOtherApps(_ project: LampProject) -> Bool { project.partOf != nil || !project.partFolders.isEmpty }
+    /// Whether an app is one of several in its wish, and so gets `LampWish`, the block for reaching the others. That's
+    /// decided by the apps the wish asks for (`LampProject.apps`), not only those made: the first app of a wish meant to
+    /// be a Mac app and an Android app has the block from its first build, while the other waits for this Mac to be able
+    /// to build it, so it's written to talk to it from the start. Apps are counted, not devices: an app for the Mac and
+    /// the iPhone is one. An app on its own (most apps, and every starter) gets none of it: its building blocks are written
+    /// as if the wish's apps couldn't talk at all, so it carries no code, size, rule or permission for something it can't
+    /// use. A wish that comes to ask for a second app has its blocks written again before its next turn and build, as
+    /// they always are.
+    static func talksToOtherApps(_ project: LampProject) -> Bool {
+        project.partOf != nil || !project.partFolders.isEmpty
+            || Set(project.apps.map { Parts.group($0.kind) } + [Parts.group(project.platform)]).count >= 2
+    }
 
     /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
     static func lampSupportSwift(for project: LampProject) -> String {
@@ -374,7 +383,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.iOS(.v17)],
+        platforms: [.iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -480,7 +489,7 @@ enum Template {
 
     let package = Package(
         name: "{{EXE}}",
-        platforms: [.macOS(.v14), .iOS(.v17)],
+        platforms: [.macOS(.v14), .iOS(.v17), .tvOS(.v17), .visionOS(.v1)],
         targets: [.executableTarget(name: "{{EXE}}", path: "Sources")]
     )
 
@@ -623,10 +632,16 @@ enum Template {
     # Builds build/{{EXE}}.app for the iPhone simulator. Run after every change.
     set -euo pipefail
     cd "$(dirname "$0")"
-    SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+    # The same app for Apple TV or Vision Pro when Try On points at one (LAMP_FAMILY), else for iPhone and iPad.
+    case "${LAMP_FAMILY:-}" in
+      appletv) SDKNAME=appletvsimulator; TRIPLE=arm64-apple-tvos17.0-simulator; FAMILIES="<integer>3</integer>"; PLATFORM=AppleTVSimulator; MINOS=17.0 ;;
+      vision) SDKNAME=xrsimulator; TRIPLE=arm64-apple-xros1.0-simulator; FAMILIES="<integer>7</integer>"; PLATFORM=XRSimulator; MINOS=1.0 ;;
+      *) SDKNAME=iphonesimulator; TRIPLE=arm64-apple-ios17.0-simulator; FAMILIES="<integer>1</integer><integer>2</integer>"; PLATFORM=iPhoneSimulator; MINOS=17.0 ;;
+    esac
+    SDK="$(xcrun --sdk "$SDKNAME" --show-sdk-path)"
     # Debug, as Xcode builds for the simulator: a release build optimizes the whole module at once, so every change
     # compiled all of it again, Lamp's own library included, and went through dsymutil too. The phone's is Xcode's.
-    FLAGS=(-c debug --triple arm64-apple-ios17.0-simulator --sdk "$SDK")
+    FLAGS=(-c debug --triple "$TRIPLE" --sdk "$SDK")
     \(appIntentsSetup(ios: true))
     # The simulator takes an app's entitlements (Health, iCloud) from a section of its binary, as Xcode puts
     # them, and refuses an app whose signature claims them without a provisioning profile. Lamp writes the file.
@@ -657,12 +672,12 @@ enum Template {
       <key>CFBundleShortVersionString</key><string>0.1</string>
       <key>CFBundleVersion</key><string>1</string>
       <key>LSRequiresIPhoneOS</key><true/>
-      <key>MinimumOSVersion</key><string>17.0</string>
-      <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+      <key>MinimumOSVersion</key><string>$MINOS</string>
+      <key>UIDeviceFamily</key><array>$FAMILIES</array>
       <key>UILaunchScreen</key><dict/>
       <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
-      <key>DTPlatformName</key><string>iphonesimulator</string>
-      <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
+      <key>DTPlatformName</key><string>$SDKNAME</string>
+      <key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM</string></array>
     {{USAGE}}
     </dict></plist>
     PLIST
@@ -701,11 +716,17 @@ enum Template {
             """
         }
         script = swap(script, "swift build \"${FLAGS[@]}\" 2>&1\n", "swift build \"${FLAGS[@]}\" --product {{EXE}} 2>&1\n"
-                      + (widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : ""))
+                      + onlyForIOS((widget ? extensionBuild("Widget", "widget") : "") + (share ? extensionBuild("Share", "share") : "")))
         script = swap(script, "{{USAGE}}\n</dict></plist>\nPLIST\n",
                       "{{USAGE}}\n" + appGroupPlistLines(group: "group.{{BUNDLE}}", liveActivities: widget) + "\n</dict></plist>\nPLIST\n")
-        script = swap(script, appSigningLine, (widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "") + appSigningLine)
+        script = swap(script, appSigningLine, onlyForIOS((widget ? iPhoneWidgetBuildSteps : "") + (share ? iPhoneShareBuildSteps : "")) + appSigningLine)
         return script
+    }
+
+    /// Steps for what only iOS has (widgets, a share extension, the watch app), left out of a build for Apple TV or
+    /// Vision Pro (LAMP_FAMILY): those are the app alone.
+    static func onlyForIOS(_ steps: String) -> String {
+        "if [[ -z \"${LAMP_FAMILY:-}\" ]]; then\n" + steps + "fi\n"
     }
 
     /// What an app with extensions says in its Info.plist: the folder it shares with them, and with a widget
@@ -952,7 +973,7 @@ enum Template {
     /// Whether the app has a watch app to build: Swift of the agent's in Watch/, outside Complications/. Only
     /// an app with an iPhone half has one. Asked before every build, as `hasWidget` is.
     static func hasWatch(_ project: LampProject) -> Bool {
-        guard project.platform.hasIOS else { return false }
+        guard project.hasIOS else { return false }
         let folder = project.dir.appendingPathComponent(watchFolder)
         let complications = folder.appendingPathComponent(complicationsFolder).path + "/"
         return swiftFiles(in: folder).contains { !$0.path.hasPrefix(complications) && $0.lastPathComponent != watchSupportFile }
@@ -1676,7 +1697,7 @@ enum Template {
         /// after the id the app is signed with, team and all: containers are global, so one named after
         /// the plain id would be taken by whichever team made an app of that name first.
         func container(for project: LampProject) -> String? {
-            icloud == true && project.platform.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
+            icloud == true && project.hasIOS ? "iCloud." + project.deviceBundleID(team: Devices.team) : nil
         }
 
         /// The entitlements plist for codesign and for Xcode's automatic signing, which registers each
@@ -1684,11 +1705,11 @@ enum Template {
         /// sync engine hears of changes made elsewhere through notifications, whose entitlement is spelled
         /// differently on each platform.
         func entitlementsPlist(for project: LampProject, platform: Destination = .ios, appGroup: String? = nil) -> String {
-            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.platform.hasIOS, appGroup: appGroup)
+            entitlementsPlist(container: container(for: project), platform: platform, teamSigned: project.hasIOS, appGroup: appGroup)
         }
 
         /// Whether the app gets the weather: declared, and signed for a team (an iPhone half).
-        func weather(for project: LampProject) -> Bool { weather == true && project.platform.hasIOS }
+        func weather(for project: LampProject) -> Bool { weather == true && project.hasIOS }
 
         /// The simulator build's entitlements, which build.sh puts in the binary: the iPhone's, with the app's
         /// identity as Xcode writes it, which HealthKit and iCloud look for before they do anything. Empty when
@@ -1890,6 +1911,7 @@ enum Template {
         var pbxproj = universal ? universalPbxproj : devicePbxproj
         if widget { pbxproj = withWidgetTarget(pbxproj) }
         if share { pbxproj = withShareTarget(pbxproj) }
+        if showsPage(project) { pbxproj = withWebFolder(pbxproj) }
         if watch {
             let complicationsDir = sources.appendingPathComponent(watchFolder).appendingPathComponent(complicationsFolder)
             let inComplications = (fm.enumerator(at: complicationsDir, includingPropertiesForKeys: [.isRegularFileKey])?.compactMap { $0 as? URL } ?? [])
@@ -1940,9 +1962,9 @@ enum Template {
         let widgetPlist = widget || share ? appGroupPlistLines(group: group, liveActivities: widget) : ""
         // Only the phone's project, in Lamp's own folder, carries the secret its keys are sealed with; the one an
         // app for both keeps under .lamp/device for its Mac half is in the app's folder and never goes to a phone.
-        let secret = folder != nil && !forSigning && project.platform.hasIOS ? phoneSecret(in: dir) : ""
+        let secret = folder != nil && !forSigning && project.hasIOS ? phoneSecret(in: dir) : ""
         // The wish's key, for an app with others in its wish, goes the same way and only there.
-        let wish = folder != nil && !forSigning && project.platform.hasIOS ? wishKeyPlistLines(wishKey) : ""
+        let wish = folder != nil && !forSigning && project.hasIOS ? wishKeyPlistLines(wishKey) : ""
         // An app of a wish of several finds the others, and is found, by the wish's Bonjour type, beside any of its own.
         let background = capabilities.backgroundPlistLine(adding: !wish.isEmpty ? wishServiceType : nil)
         for (path, template) in files {
@@ -1964,6 +1986,29 @@ enum Template {
             let url = dir.appendingPathComponent(path)
             if AppFile.read(url, inFolder: root) != Data(contents.utf8) { try AppFolder.write(contents, to: url, in: root) }
         }
+    }
+
+    /// Whether the app is a page in a web view of its own (a three.js game, a screen), whose Web/ goes into the app.
+    static func showsPage(_ project: LampProject) -> Bool {
+        project.platform.target.showsPage(project)
+    }
+
+    /// The app's Web/ as a folder in the app beside Assets, where the page's host reads it (`Bundle.main…/Web`).
+    static func withWebFolder(_ pbxproj: String) -> String {
+        func swap(_ text: String, _ old: String, _ new: String) -> String {
+            precondition(text.contains(old), "the device project changed: \(old)")
+            return text.replacingOccurrences(of: old, with: new)
+        }
+        var text = pbxproj
+        let assetsFile = "A00000000000000000000001 /* Assets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* Assets */; };"
+        text = swap(text, assetsFile, assetsFile + "\n\t\tE00000000000000000000001 /* Web in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000002 /* Web */; };")
+        let assetsRef = "A00000000000000000000002 /* Assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Assets; path = ../../Assets; sourceTree = \"<group>\"; };"
+        text = swap(text, assetsRef, assetsRef + "\n\t\tE00000000000000000000002 /* Web */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Web; path = ../../Web; sourceTree = \"<group>\"; };")
+        text = swap(text, "A00000000000000000000002 /* Assets */, A00000000000000000000004 /* Assets.xcassets */,",
+                    "A00000000000000000000002 /* Assets */, E00000000000000000000002 /* Web */, A00000000000000000000004 /* Assets.xcassets */,")
+        text = swap(text, "files = (A00000000000000000000001 /* Assets in Resources */,",
+                    "files = (A00000000000000000000001 /* Assets in Resources */, E00000000000000000000001 /* Web in Resources */,")
+        return text
     }
 
     /// The project names the app's folders by where it sits inside the app (../../Sources). Written anywhere
@@ -2665,7 +2710,7 @@ enum Template {
     static func writeWidgetSupport(for project: LampProject) throws {
         guard hasWidget(project) else { return }
         // An iPhone widget reads the folder it shares with its app; a Mac widget asks the app (WidgetSharing).
-        let contents = project.platform.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
+        let contents = project.hasIOS ? lampWidgetSupportIOSSwift : lampWidgetSupportSwift
         try put(contents, at: project.dir.appendingPathComponent(widgetFolder).appendingPathComponent(widgetSupportFile), for: project)
     }
 
@@ -3206,6 +3251,10 @@ enum Template {
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
         guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
+        if GameKit.isGame(project) { return GameKit.isScaffold(project) }
+        if ScreenKit.isScreen(project) {
+            return AppFile.text(project.dir.appendingPathComponent("Web/app.js"), in: project).map { $0 == TVTemplate.appJS.replacingOccurrences(of: "{{NAME}}", with: project.name) } ?? false
+        }
         guard let view = try? String(contentsOf: project.dir.appendingPathComponent("Sources/ContentView.swift"), encoding: .utf8)
         else { return false }
         return ([scaffoldHint] + earlierScaffoldHints).contains { view.contains($0) }
@@ -3248,26 +3297,46 @@ enum Template {
     import SwiftUI
     import SQLite3
     import JavaScriptCore
+    #if canImport(EventKit)
     import EventKit
+    #endif
+    #if canImport(Contacts)
     import Contacts
+    #endif
     import CryptoKit
+    #if canImport(PDFKit)
     import PDFKit
+    #endif
     import UniformTypeIdentifiers
     import UserNotifications
+    #if canImport(CloudKit)
     import CloudKit
+    #endif
+    #if canImport(HealthKit)
     import HealthKit
+    #endif
+    #if canImport(Photos)
     import Photos
+    #endif
     import CoreLocation
+    #if canImport(WeatherKit)
     import WeatherKit
+    #endif
+    #if canImport(MusicKit)
     import MusicKit
+    #endif
+    #if canImport(CoreSpotlight)
     import CoreSpotlight
+    #endif
     @preconcurrency import Vision
     #if os(macOS)
     import AppKit
     import ExtensionKit
     import Carbon.HIToolbox
     import Network
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
     import CoreServices
     import ServiceManagement
     #if LAMP_LIVE
@@ -3278,13 +3347,23 @@ enum Template {
     typealias LampImage = NSImage
     #else
     import UIKit
+    #if canImport(BackgroundTasks)
     import BackgroundTasks
+    #endif
     import Network
+    #if canImport(HomeKit)
     import HomeKit
+    #endif
+    #if canImport(WidgetKit)
     import WidgetKit
+    #endif
+    #if canImport(CoreMotion)
     import CoreMotion
+    #endif
     import Security
+    #if canImport(WatchConnectivity)
     import WatchConnectivity
+    #endif
     /// A picture: NSImage on the Mac, UIImage on iPhone and iPad.
     typealias LampImage = UIImage
     #endif
@@ -9517,6 +9596,8 @@ enum Template {
 
     // MARK: - Health
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's Health data (steps, heart rate, sleep, workouts, weight, what they ate and drank), read and
     /// written through HealthKit on an iPhone or iPad, once capabilities.json says `{"healthkit": true}`. A
     /// Mac has no Health data of its own (`isAvailable` is false there), so an app for both reads on the
@@ -9860,6 +9941,7 @@ enum Template {
             }
         }
     }
+    #endif
 
 
     // MARK: - Photos
@@ -10086,10 +10168,10 @@ enum Template {
             // The system's question makes the app inactive; when it's active again the person has answered,
             // even with an answer that changes nothing (keeping "While Using" when asked for Always), which
             // the location manager doesn't report.
-            #if os(iOS)
-            let active = UIApplication.didBecomeActiveNotification
-            #else
+            #if os(macOS)
             let active = NSApplication.didBecomeActiveNotification
+            #else
+            let active = UIApplication.didBecomeActiveNotification
             #endif
             NotificationCenter.default.addObserver(forName: active, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { LampLocation.shared.settle() }
@@ -10197,7 +10279,10 @@ enum Template {
             wantsMoves = true
             Task {
                 guard await Self.authorize(), wantsMoves else { return }
+                // Apple TV and Vision Pro don't follow big moves: they stay put.
+                #if os(iOS) || os(macOS)
                 manager.startMonitoringSignificantLocationChanges()
+                #endif
                 status = "Following big moves"
             }
         }
@@ -10221,7 +10306,9 @@ enum Template {
         func stop() {
             wantsMoves = false
             wantsVisits = false
+            #if os(iOS) || os(macOS)
             manager.stopMonitoringSignificantLocationChanges()
+            #endif
             #if os(iOS)
             manager.stopMonitoringVisits()
             #endif
@@ -10229,10 +10316,12 @@ enum Template {
         }
 
         private static func allowed(_ status: CLAuthorizationStatus) -> Bool {
-            #if os(iOS)
+            #if os(macOS)
+            status == .authorizedAlways || status == .authorized
+            #elseif os(iOS)
             status == .authorizedWhenInUse || status == .authorizedAlways
             #else
-            status == .authorizedAlways || status == .authorized
+            status == .authorizedWhenInUse
             #endif
         }
 
@@ -12929,7 +13018,9 @@ enum Template {
                     Section { fields } footer: { note }
                 }
                 .navigationTitle("Connect \(api.name)")
+                #if !os(tvOS)
                 .navigationBarTitleDisplayMode(.inline)
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel", role: .cancel) { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -13625,18 +13716,30 @@ enum Template {
     ///     @ObservedObject var wish = LampWish.shared
     ///     wish.peers                                    // the wish's other apps open now
     ///     wish.peer("tv")?.isOpen                       // whether the TV app is open; nil when the wish has no "tv"
-    ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "The TV app isn't open."
+    ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "Open the TV app on your TV.",
+    ///                                                   // "The TV app was last open 5 min ago. Open it on your TV."
+    ///     wish.peer("tv")?.status.lastSeen              // when it was last open on this device, or since when while it is
     ///     wish.send(["score": 3], to: "tv")             // JSON to one app; false (with why in the app's log) when it wasn't sent
     ///     wish.send(["round": 2])                       // to every other app of the wish
     ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
-    ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable), .ended
+    ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable),
+    ///                                                   // .localNetworkDenied (the person turned off Local Network for this app), .ended
     ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
+    ///     wish.values["list"]                           // a value the wish's apps share, kept on each device (@Published)
+    ///     wish.set("list", ["milk", "eggs"])            // sets it here and in every other app, now or when they next meet;
+    ///                                                   // nil removes it; false (with why in the app's log) when it wasn't set
+    ///     wish.onChange { key, value, from in … }       // a value changed, here (from == me) or in another app
+    ///     LampWishStatus()                              // a ready-made view of all that: one line for each other app
+    ///     LampWishStatus("tv")                          // the TV app's line alone
     ///
     /// A `State` is one of the values above, and more may come: switch on it with a `default`. Show a `reason` as it is
-    /// rather than words of your own. Each message, as the JSON that goes out, is at most `messageLimit` (16 KB); files
-    /// between the wish's apps aren't carried yet. Keep every control usable while an app isn't open. A TV app's game
-    /// controls (buttons, sticks, files to the TV) go with `LampController`, below.
+    /// rather than words of your own; it changes as time goes by ("5 min ago"). An open app built by an older Lamp is
+    /// `.outOfDate`, still open, with a reason saying to open it from Lamp. Each message, as the JSON that goes out, is at
+    /// most `messageLimit` (16 KB); files between the wish's apps aren't carried yet. A message is for apps open now;
+    /// `values` are for what must outlast an app being closed: each is JSON of at most `valueLimit` (8 KB), all of them
+    /// `valuesLimit` (64 KB), and where two apps set one while apart, the later setting wins in both. Keep every control
+    /// usable while an app isn't open. A TV app's game controls (buttons, sticks, files to the TV) go with `LampController`, below.
     @MainActor final class LampWish: ObservableObject {
         /// Where this app's link stands, or another app's. More values may come.
         struct State: RawRepresentable, Hashable, Sendable {
@@ -13652,14 +13755,19 @@ enum Template {
             static let away = State(rawValue: "away")
             /// This app called `stop()`.
             static let ended = State(rawValue: "ended")
+            /// The person turned off Local Network for this app, so it can't reach the others on the home network.
+            static let localNetworkDenied = State(rawValue: "localNetworkDenied")
             /// Another app isn't open now.
             static let notOpen = State(rawValue: "notOpen")
+            /// Another app is open but was built by another Lamp than this one: it's to be opened from Lamp to be updated.
+            static let outOfDate = State(rawValue: "outOfDate")
         }
         /// A state with what it means to the person, in words to show as they are ("" when there's nothing to say).
         struct Status: Equatable, Sendable {
             var state: State
             var reason: String
-            /// Another app's: when it was last open, or since when while it is; nil if it hasn't been since this app joined.
+            /// Another app's: when it was last open, or since when while it is; nil if it never was while this app was,
+            /// on this device.
             var lastSeen: Date?
         }
         struct Peer: Identifiable, Equatable {
@@ -13672,15 +13780,23 @@ enum Template {
             /// Where it runs, in its own words, once it has been open: "TV preview", "iPhone simulator", "Android emulator", "Mac"…
             var device: String
             var status: Status
-            var isOpen: Bool { status.state == .connected }
+            var isOpen: Bool { status.state == .connected || status.state == .outOfDate }
         }
         static let messageLimit = 16 * 1024
+        static let valueLimit = 8 * 1024
+        static let valuesLimit = 64 * 1024
         static let shared = LampWish()
 
         /// Every other app of the wish, open or not.
         @Published private(set) var apps: [Peer] = []
         @Published private(set) var status = Status(state: .connecting, reason: LampWish.reason(.connecting), lastSeen: nil)
         @Published private(set) var me = ""
+        /// The values the wish's apps share, by name: the same in every app once they've met.
+        @Published private(set) var values: [String: Any] = [:]
+
+        /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
+        /// 2 brought values; an app from before says none, which counts as 1.
+        private static let wire = 2
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
@@ -13698,8 +13814,15 @@ enum Template {
         private var relayIn = false
         private var lampAway = false
         private var alone = false
-        /// The apps in Lamp's room now, by peer name: the device they said and since when.
-        private var relayPresent: [String: (device: String, since: Date)] = [:]
+        /// The apps in Lamp's room now, by peer name: the device they said, since when, and what they speak (`wire`).
+        private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
+        /// Each value as it was last set, here or by another app, and when: a removed one is kept, without its value, so
+        /// an older setting from an app that was away doesn't bring it back.
+        private var entries: [String: Entry] = [:]
+        /// This app's clock for values: the latest time it has set or heard of, and a count within the same millisecond, so
+        /// what it sets next is later than anything it knows of, whatever the device's own clock says.
+        private var clock: (ms: Int64, n: Int64) = (0, 0)
+        private var changeListeners: [(String, Any?, String) -> Void] = []
         /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
         private var roster: [(id: String, kind: String, name: String)] = []
         private var directs: [String: Direct] = [:]
@@ -13713,7 +13836,14 @@ enum Template {
         private var dialing: Set<String> = []
         private var nextDial: [String: (at: Date, tries: Int)] = [:]
         private var openSince: [String: Date] = [:]
+        /// When each app was last open, kept on the device so it's still known after this app was closed.
         private var lastSeen: [String: Date] = [:]
+        /// The apps the wish asks for that Lamp hasn't made yet.
+        private var waiting: Set<String> = []
+        private var localNetworkDenied = false
+        /// What this app last told Lamp's room of its link, for the builder to see.
+        private var reported = ""
+        private var beats = 0
         private var devices: [String: String] = [:]
         private var monitor: NWPathMonitor?
         private var listeners: [(String, Any) -> Void] = []
@@ -13736,6 +13866,7 @@ enum Template {
             var ready = false
             var heard = Date()
             var device = ""
+            var wire = 1
             var done: ((Bool) -> Void)?
             init(connection: NWConnection, dialled: Bool, peer: String) {
                 self.connection = connection
@@ -13745,6 +13876,7 @@ enum Template {
         }
 
         private init() {
+            restoreValues()
             restore()
             open()
             reach()
@@ -13833,16 +13965,91 @@ enum Template {
         /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
         func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { listeners.append(handler) }
 
+        /// Sets a value the wish's apps share (anything JSON can hold; nil removes it), here at once and in each other app
+        /// now if it's open, else when they next meet. False, with the reason in the app's log, when it wasn't set.
+        @discardableResult
+        func set(_ key: String, _ value: Any?) -> Bool {
+            let what = "The value \"\(key)\""
+            guard Self.isValueName(key) else {
+                fputs("LampWish: \(what) wasn't set: a value's name is 1 to 64 bytes, and not __proto__.\n", stderr)
+                return false
+            }
+            dropExpired()
+            var kept: Any?
+            if let value, !(value is NSNull) {
+                guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value]) else {
+                    fputs("LampWish: \(what) wasn't set: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
+                    return false
+                }
+                let bytes = Self.size(of: value)
+                guard bytes <= Self.valueLimit else {
+                    fputs("LampWish: \(what) of \(bytes) bytes wasn't set: a value is at most \(Self.valueLimit) bytes as JSON.\n", stderr)
+                    return false
+                }
+                guard size(without: key) + key.utf8.count + max(32, bytes) <= Self.valuesLimit else {
+                    fputs("LampWish: \(what) wasn't set: the wish's values would pass \(Self.valuesLimit) bytes (each name counts 32 bytes at least, and a removed one for a month). Keep to fewer names, and reuse them.\n", stderr)
+                    return false
+                }
+                // Kept as it reads back from JSON, so this app sees what the others will.
+                kept = ((try? JSONSerialization.jsonObject(with: data)) as? [Any])?.first
+            }
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
+            let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: me)
+            entries[key] = entry
+            valuesChanged([(key, kept)], from: me)
+            for app in apps where app.isOpen && wire(of: app.id) >= 2 { share([key: entry], to: app.id) }
+            return true
+        }
+
+        /// Hears every change to the wish's values: its name, the new value (nil when removed), and the peer name of the
+        /// app that set it, this one's own (`me`) for a change made here.
+        func onChange(_ handler: @escaping (_ key: String, _ value: Any?, _ from: String) -> Void) { changeListeners.append(handler) }
+
         /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
         static func reason(_ state: State) -> String {
             switch state {
             case .connecting: "Connecting to the wish's other apps…"
             case .away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them."
+            #if os(macOS)
+            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in System Settings, Privacy & Security."
+            #else
+            case .localNetworkDenied: "To reach the wish's other apps, allow Local Network for this app in Settings."
+            #endif
             default: ""
             }
         }
 
-        private static func notOpen(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + " isn't open." }
+        /// Why another app isn't there, in the same words in every language Lamp's apps are written in: where to open it,
+        /// and when it was last open here when it has been.
+        static func notOpen(name: String, kind: String, lastSeen: Date?, waiting: Bool = false, now: Date = Date()) -> String {
+            let title = name.prefix(1).uppercased() + name.dropFirst()
+            // Having been open here outranks a list that still says it isn't made.
+            if waiting, lastSeen == nil { return "\(title) isn't ready yet." }
+            let place = ["tv": "your TV", "mac": "your Mac", "iphone": "your iPhone", "android": "your Android device"][kind] ?? "its device"
+            guard let lastSeen else { return "Open \(name) on \(place)." }
+            return "\(title) was last open \(ago(now.timeIntervalSince(lastSeen))). Open it on \(place)."
+        }
+
+        /// What to do about an open app built by another Lamp, in the same words in every language: the older of the two
+        /// is opened from Lamp, which builds it again.
+        static func outOfDate(name: String, older: Bool) -> String {
+            older ? "\(name.prefix(1).uppercased() + name.dropFirst()) is out of date. Open it from Lamp on your Mac to update it."
+                : "This app is older than \(name). Open it from Lamp on your Mac to update it."
+        }
+
+        static func ago(_ seconds: TimeInterval) -> String {
+            let minutes = Int(max(0, seconds) / 60), hours = minutes / 60, days = hours / 24
+            switch true {
+            case minutes < 1: return "a moment ago"
+            case minutes < 60: return "\(minutes) min ago"
+            case hours < 24: return hours == 1 ? "an hour ago" : "\(hours) hours ago"
+            default: return days == 1 ? "yesterday" : "\(days) days ago"
+            }
+        }
+
+        /// What `LampWishStatus` says of an app that's open: "TV app connected", "iPhone app connected".
+        static func connected(_ name: String) -> String { (name.hasPrefix("the ") ? String(name.dropFirst(4)) : name) + " connected" }
 
         /// Where this copy runs, for the others to show.
         private static var device: String {
@@ -13871,25 +14078,252 @@ enum Template {
         /// The state and the list of apps, from what each way says now.
         private func rebuild() {
             let now = Date()
-            apps = roster.filter { $0.id != me }.map { app in
+            var arrived: [String] = []
+            // Values set before this app knew its own name take it now, so two apps' settings never tie.
+            if !me.isEmpty, entries.values.contains(where: { $0.peer.isEmpty }) {
+                for (key, entry) in entries where entry.peer.isEmpty { entries[key]?.peer = me }
+                keepValues()
+            }
+            let list = roster.filter { $0.id != me }.map { app in
                 let direct = directs[app.id].flatMap { $0.ready ? $0 : nil }
                 let relayed = relayPresent[app.id]
                 let open = !closed && (direct != nil || relayed != nil)
                 if open {
-                    if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now }
+                    // Open, so made, whatever a list kept from before said.
+                    waiting.remove(app.id)
+                    if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now; arrived.append(app.id) }
                     if let device = direct?.device ?? relayed?.device, !device.isEmpty { devices[app.id] = device }
                 } else if openSince[app.id] != nil {
                     openSince[app.id] = nil
                     lastSeen[app.id] = now
+                    keep()
                 }
-                let status = open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
-                                  : Status(state: .notOpen, reason: Self.notOpen(app.name), lastSeen: lastSeen[app.id])
+                let wire = direct?.wire ?? relayed?.wire ?? Self.wire
+                let status = open && wire != Self.wire
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: app.name, older: wire < Self.wire), lastSeen: openSince[app.id])
+                    : open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
+                    : Status(state: .notOpen, reason: Self.notOpen(name: app.name, kind: app.kind, lastSeen: lastSeen[app.id],
+                                                                   waiting: waiting.contains(app.id), now: now),
+                             lastSeen: lastSeen[app.id])
                 return Peer(id: app.id, kind: app.kind, name: app.name, device: devices[app.id] ?? "", status: status)
             }
             let next: State = closed ? .ended : alone ? .alone
-                : (relayIn || directs.values.contains { $0.ready }) ? .connected : lampAway ? .away : .connecting
+                : (relayIn || directs.values.contains { $0.ready }) ? .connected
+                : localNetworkDenied ? .localNetworkDenied : lampAway ? .away : .connecting
+            // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
+            // this one connected when it does.
             if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
             if next == .connected { saidAway = false }
+            // Set only when something changed, since a reason is worked out again on every beat ("5 min ago").
+            if list != apps { apps = list }
+            report()
+            // An app that has just come is told every value this one has, and tells this one its own, so the two agree
+            // again whichever was open meanwhile.
+            for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
+        }
+
+        /// What another open app speaks: 1 for an app from before values, which says nothing of it.
+        private func wire(of peer: String) -> Int {
+            directs[peer].flatMap { $0.ready ? $0.wire : nil } ?? relayPresent[peer]?.wire ?? 1
+        }
+
+        // MARK: Values
+
+        /// A value as it was last set, and when: by the clock of the app that set it, then the count within that
+        /// millisecond, then that app's name, so every app orders two settings the same way.
+        private struct Entry {
+            var value: Any?
+            var ms: Int64
+            var n: Int
+            var peer: String
+            func isLater(than other: Entry) -> Bool { (ms, n, peer) > (other.ms, other.n, other.peer) }
+            var json: [String: Any] {
+                var json: [String: Any] = ["c": [ms, n, peer]]
+                if let value { json["v"] = value }
+                return json
+            }
+            init(value: Any?, ms: Int64, n: Int, peer: String) { self.value = value; self.ms = ms; self.n = n; self.peer = peer }
+            /// One another app sent, or this one kept: whole numbers in range only, as every language reads them.
+            init?(_ json: Any?) {
+                guard let json = json as? [String: Any], let c = json["c"] as? [Any], c.count == 3,
+                      let ms = LampWish.whole(c[0]), let n = LampWish.whole(c[1]), let peer = c[2] as? String,
+                      ms <= LampWish.latest, n <= LampWish.counts, peer.utf8.count <= 32 else { return nil }
+                self.init(value: json["v"].flatMap { $0 is NSNull ? nil : $0 }, ms: ms, n: Int(n), peer: peer)
+            }
+        }
+
+        /// The bounds every app holds a setting's time to: a millisecond clock within 2^50, a count within a million.
+        nonisolated private static let latest: Int64 = 1 << 50
+        nonisolated private static let counts: Int64 = 1_000_000
+        /// How long a removal is kept, so an app away longer than this may bring the value back.
+        private static let removalsKept: Int64 = 30 * 24 * 3600 * 1000
+
+        nonisolated private static func whole(_ value: Any) -> Int64? {
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), !CFNumberIsFloatType(number),
+                  number.int64Value >= 0 else { return nil }
+            return number.int64Value
+        }
+
+        /// A name the wish's apps can all keep a value under: 1 to 64 bytes, and not one a web page's objects hold already.
+        private static func isValueName(_ key: String) -> Bool { (1...64).contains(key.utf8.count) && key != "__proto__" }
+
+        /// A value's size as JSON, slashes as they are, the same as the TV page's and the Android app's measure.
+        private static func size(of value: Any) -> Int {
+            ((try? JSONSerialization.data(withJSONObject: [value], options: .withoutEscapingSlashes)).map(\.count) ?? 2) - 2
+        }
+
+        private static func json(_ object: Any) -> Data? { try? JSONSerialization.data(withJSONObject: object, options: .withoutEscapingSlashes) }
+
+        /// What a setting takes in the store: its name, and its value as JSON or at least 32 bytes, which is what its
+        /// removal takes while kept. Counted the same when an app sets and when it takes from others, so all an app can
+        /// make, removals included, fits in what the others take from it.
+        private static func held(_ key: String, _ entry: Entry) -> Int { key.utf8.count + max(32, entry.value.map(size(of:)) ?? 32) }
+
+        /// What the store takes, removals kept included, leaving one name out.
+        private func size(without key: String) -> Int {
+            entries.reduce(0) { $1.key == key ? $0 : $0 + Self.held($1.key, $1.value) }
+        }
+
+        /// What every setting this app has adds up to, sealed with the wish's key: two apps with the same say the same.
+        private func digest() -> String {
+            guard let key = Self.key else { return "" }
+            var data = Data()
+            for (name, entry) in entries.sorted(by: { $0.key < $1.key }) {
+                for part in [name, String(entry.ms), String(entry.n), entry.peer] { data.append(Data(part.utf8)); data.append(0) }
+            }
+            return Self.derive("lamp-wish values", key, data).prefix(8).base64EncodedString()
+        }
+
+        /// What another app sent of the values: settings, taken when they're later than what this app has; what all of
+        /// its add up to (`sum`), answered with all of this app's and a request for all of its when they differ; and that
+        /// request (`ask`), answered with all of this app's. So a setting lost on the way is made up within a minute.
+        private func heardValues(_ m: [String: Any], from peer: String) {
+            merge(m["values"] as? [String: Any] ?? [:], from: peer)
+            if let sum = m["sum"] as? String, sum != digest() { share(entries, to: peer, extra: ["ask": true]) }
+            else if m["ask"] as? Bool == true { share(entries, to: peer) }
+        }
+
+        /// Settings another app sent: each taken when it's later than what this app has, so whichever order they come
+        /// in, every app ends with the same.
+        private func merge(_ given: [String: Any], from peer: String) {
+            var changed: [(String, Any?)] = []
+            // What the store holds may grow, from other apps, to what every app of the wish could have set between them
+            // (each sets at most the limit of the whole), twice over for how apps measure: everything they set fits,
+            // so they still agree, and an app gone wrong or hostile that floods the others gets no further.
+            dropExpired()
+            let most = Self.valuesLimit * 2 * max(2, roster.count)
+            var held = entries.reduce(0) { $0 + Self.held($1.key, $1.value) }
+            // The removals kept, oldest first: let go first when something needs room, since a removal only outvotes an
+            // older copy of what it removed, and the oldest matter least.
+            var removals: [String]? = nil, next = 0
+            func oldestRemoval(except key: String) -> String? {
+                if removals == nil {
+                    removals = entries.filter { $0.value.value == nil }.sorted { $1.value.isLater(than: $0.value) }.map(\.key)
+                }
+                while let list = removals, next < list.count {
+                    let name = list[next]
+                    next += 1
+                    if name != key, let entry = entries[name], entry.value == nil { return name }
+                }
+                return nil
+            }
+            for (key, json) in given.sorted(by: { $0.key < $1.key }) {
+                guard Self.isValueName(key), let entry = Entry(json) else { continue }
+                if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
+                if let had = entries[key], !entry.isLater(than: had) { continue }
+                // Held to twice a value's limit, since apps measure a little differently, and not to the whole: apps
+                // apart may each have filled it, and taking every app's values whatever the order is what makes them agree.
+                if let value = entry.value, Self.size(of: value) > Self.valueLimit * 2 { continue }
+                let old = entries[key].map { Self.held(key, $0) } ?? 0, need = Self.held(key, entry)
+                while held - old + need > most, let gone = oldestRemoval(except: key), let removal = entries.removeValue(forKey: gone) {
+                    held -= Self.held(gone, removal)
+                }
+                if held - old + need > most {
+                    // A value that doesn't fit beside the others' values is left; a removal goes all the same, without
+                    // keeping it, so a value removed is never left behind.
+                    guard entry.value == nil, let had = entries.removeValue(forKey: key) else { continue }
+                    held -= old
+                    if had.value != nil { changed.append((key, nil)) }
+                    continue
+                }
+                held = held - old + need
+                entries[key] = entry
+                changed.append((key, entry.value))
+            }
+            if !changed.isEmpty { valuesChanged(changed, from: peer) }
+        }
+
+        private func valuesChanged(_ changed: [(String, Any?)], from peer: String) {
+            values = entries.compactMapValues(\.value)
+            keepValues()
+            for (key, value) in changed { for listener in changeListeners { listener(key, value, peer) } }
+        }
+
+        /// Sends settings to another open app, the straight way when there is one, else through Lamp's room, a few at a
+        /// time so each message stays within what a message may be; `extra` goes with the last.
+        private func share(_ list: [String: Entry], to peer: String, extra: [String: Any] = [:]) {
+            var batch: [String: Any] = [:], size = 0
+            func flush(last: Bool) {
+                guard !batch.isEmpty || (last && !extra.isEmpty) else { return }
+                var frame: [String: Any] = ["t": "values", "values": batch]
+                if last { frame.merge(extra) { $1 } }
+                if let direct = directs[peer], direct.ready {
+                    if let json = Self.json(frame) { sealed(json, on: direct) }
+                } else if relayPresent[peer] != nil {
+                    frame["to"] = peer
+                    if let json = Self.json(frame) { say(json) }
+                }
+                batch = [:]
+                size = 0
+            }
+            for (key, entry) in list.sorted(by: { $0.key < $1.key }) {
+                let json = entry.json
+                let bytes = Self.json([key: json])?.count ?? 0
+                if size + bytes > 12 * 1024 { flush(last: false) }
+                batch[key] = json
+                size += bytes
+            }
+            flush(last: true)
+        }
+
+        private var valuesKey: String? { Self.keptKey.map { $0 + ".values" } }
+
+        /// A removal is kept for a month, then let go: before anything is weighed against a limit, on restore, and before
+        /// what's kept is written, so an app whose removals filled it can set values again once the month is over.
+        private func dropExpired() {
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            entries = entries.filter { $0.value.value != nil || $0.value.ms > old }
+        }
+
+        private func keepValues() {
+            dropExpired()
+            guard let valuesKey else { return }
+            let kept: [String: Any] = ["values": entries.mapValues(\.json), "clock": [clock.ms, clock.n]]
+            UserDefaults.standard.set(Self.json(kept), forKey: valuesKey)
+        }
+
+        private func restoreValues() {
+            guard let valuesKey, let data = UserDefaults.standard.data(forKey: valuesKey),
+                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+            for (key, json) in kept["values"] as? [String: Any] ?? [:] where Self.isValueName(key) { if let entry = Entry(json) { entries[key] = entry } }
+            if let c = kept["clock"] as? [Any], c.count == 2, let ms = Self.whole(c[0]), let n = Self.whole(c[1]), ms <= Self.latest, n <= Self.counts {
+                clock = (ms, n)
+            }
+            dropExpired()
+            values = entries.compactMapValues(\.value)
+        }
+
+        /// Tells Lamp's room how this app's link stands (its state, and which apps it reaches straight), only when that
+        /// changes, so the builder can tell an app that can't reach the others on the network from one that does.
+        private func report() {
+            guard relayIn else { return }
+            let direct = directs.values.filter(\.ready).map(\.peer).sorted()
+            let now = status.state.rawValue + (localNetworkDenied ? " localNetworkDenied" : "") + " " + direct.joined(separator: ",")
+            guard now != reported,
+                  let json = try? JSONSerialization.data(withJSONObject: ["t": "status", "state": localNetworkDenied ? State.localNetworkDenied.rawValue : status.state.rawValue,
+                                                                         "direct": direct]) else { return }
+            reported = now
+            say(json)
         }
 
         private func setRoster(_ list: [[String: Any]]) {
@@ -13900,6 +14334,7 @@ enum Template {
             guard !given.isEmpty else { return }
             let changed = given.map(\.id).sorted() != roster.map(\.id).sorted()
             roster = given
+            waiting = Set(list.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
             for id in Array(directs.keys) where !given.contains(where: { $0.id == id }) { directs[id].map(drop) }
             keep()
             // Where each app listens follows its place in the list: a changed list moves this one's.
@@ -13913,7 +14348,13 @@ enum Template {
 
         private func keep() {
             guard let keptKey = Self.keptKey else { return }
-            let kept: [String: Any] = ["me": me, "apps": roster.map { ["peer": $0.id, "kind": $0.kind, "name": $0.name] }, "at": told]
+            let apps = roster.map { app -> [String: Any] in
+                var kept: [String: Any] = ["peer": app.id, "kind": app.kind, "name": app.name]
+                if waiting.contains(app.id) { kept["waiting"] = true }
+                return kept
+            }
+            let seen = lastSeen.mapValues { Int($0.timeIntervalSince1970 * 1000) }
+            let kept: [String: Any] = ["me": me, "apps": apps, "at": told, "seen": seen]
             UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: kept), forKey: keptKey)
         }
 
@@ -13922,7 +14363,10 @@ enum Template {
                   let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
             me = kept["me"] as? String ?? ""
             told = kept["at"] as? [String: [String]] ?? [:]
-            roster = (kept["apps"] as? [[String: Any]] ?? []).compactMap { app in
+            lastSeen = (kept["seen"] as? [String: Int] ?? [:]).mapValues { Date(timeIntervalSince1970: Double($0) / 1000) }
+            let apps = kept["apps"] as? [[String: Any]] ?? []
+            waiting = Set(apps.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
+            roster = apps.compactMap { app in
                 (app["peer"] as? String).map { ($0, app["kind"] as? String ?? "", app["name"] as? String ?? $0) }
             }
             alone = roster.count < 2 && !roster.isEmpty
@@ -14044,7 +14488,7 @@ enum Template {
             task.send(.string(String(decoding: mine ?? Data(), as: UTF8.self))) { _ in }
             sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
             opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
-            if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device]) { say(join) }
+            if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device, "wire": Self.wire]) { say(join) }
             return true
         }
 
@@ -14071,6 +14515,7 @@ enum Template {
                 undeliveredSaid = []
                 lampAway = false
                 relayIn = true
+                reported = ""
                 if let name = m["peer"] as? String { me = name }
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
                 relayPresent = [:]
@@ -14091,6 +14536,9 @@ enum Template {
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
                 for listener in listeners { listener(from, data) }
+            case "values":
+                guard let from = m["from"] as? String, Self.isName(from) else { return }
+                heardValues(m, from: from)
             case "undelivered":
                 // Said once for each app until the room changes: the code that sent it can't tell otherwise.
                 guard let to = m["to"] as? String, undeliveredSaid.insert(to).inserted else { return }
@@ -14103,7 +14551,7 @@ enum Template {
         private func present(_ json: [String: Any]) {
             guard let id = json["peer"] as? String else { return }
             let since = (json["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? Date()
-            relayPresent[id] = (json["device"] as? String ?? "", since)
+            relayPresent[id] = (json["device"] as? String ?? "", since, json["wire"] as? Int ?? 1)
             if let places = json["at"] as? [String], !places.isEmpty { remember(id, at: places); lookAgain() }
         }
 
@@ -14147,6 +14595,16 @@ enum Template {
                 if Date().timeIntervalSince(direct.heard) > 15 { drop(direct); continue }
                 frame(Data(#"{"t":"beat"}"#.utf8), text: true, on: direct)
             }
+            // When each open app was last seen is kept every minute, so it's known even when this app is closed while
+            // the other is open; and the reasons are worked out again, since they say how long ago.
+            let now = Date()
+            for app in apps where app.isOpen { lastSeen[app.id] = now }
+            beats += 1
+            if beats % 12 == 0, !peers.isEmpty { keep() }
+            // Once a minute each open app is told what this one's values add up to, so one that missed a setting asks.
+            if beats % 12 == 0 { for app in apps where app.isOpen && wire(of: app.id) >= 2 { share([:], to: app.id, extra: ["sum": digest()]) } }
+            // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
+            if Self.key != nil { rebuild() }
             reach()
         }
 
@@ -14217,6 +14675,8 @@ enum Template {
                     case .ready:
                         self.listenerPort = made.port?.rawValue
                         self.tellWhereIListen()
+                    case .waiting(let error) where Self.isDenied(error):
+                        self.denied(true)
                     case .failed:
                         made.cancel()
                         self.listener = nil
@@ -14252,11 +14712,35 @@ enum Template {
             }
             browser.stateUpdateHandler = { [weak self, weak browser] state in
                 MainActor.assumeIsolated {
-                    if case .failed = state, let self, self.browser === browser { self.browser?.cancel(); self.browser = nil }
+                    guard let self, self.browser === browser else { return }
+                    // Looking on the network is what macOS and iOS ask the person about: turned down, it waits saying so,
+                    // and goes on by itself once they allow it.
+                    switch state {
+                    case .ready: self.denied(false)
+                    case .waiting(let error): self.denied(Self.isDenied(error))
+                    case .failed(let error):
+                        self.denied(Self.isDenied(error))
+                        self.browser?.cancel()
+                        self.browser = nil
+                    default: break
+                    }
                 }
             }
             self.browser = browser
             browser.start(queue: .main)
+        }
+
+        /// Whether the system turned the network down because the person didn't allow Local Network for this app.
+        private static func isDenied(_ error: NWError) -> Bool {
+            if case .dns(let code) = error { return code == -65570 }   // kDNSServiceErr_PolicyDenied
+            return false
+        }
+
+        private func denied(_ now: Bool) {
+            guard now != localNetworkDenied else { return }
+            localNetworkDenied = now
+            if !now { lookAgain() }
+            rebuild()
         }
 
         /// Where to reach another app: found by its name now, else where it was last reached or said it listens.
@@ -14455,7 +14939,7 @@ enum Template {
                 }
                 direct.sealer = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish c2s", key, transcript)))
                 direct.opener = Sealer(key: SymmetricKey(data: Self.derive("lamp-wish s2c", key, transcript)))
-                if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device]) { sealed(join, on: direct) }
+                if let join = try? JSONSerialization.data(withJSONObject: ["t": "join", "device": Self.device, "wire": Self.wire]) { sealed(join, on: direct) }
                 return
             }
             if !direct.dialled, direct.transcript == nil, kind == "hello",
@@ -14489,14 +14973,18 @@ enum Template {
             switch m["t"] as? String {
             case "join" where !direct.dialled && !direct.ready:
                 direct.device = String((m["device"] as? String ?? "").prefix(40))
-                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": me, "device": Self.device]) { sealed(welcome, on: direct) }
+                direct.wire = m["wire"] as? Int ?? 1
+                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": me, "device": Self.device, "wire": Self.wire]) { sealed(welcome, on: direct) }
                 ready(direct)
             case "welcome" where direct.dialled && !direct.ready:
                 direct.device = String((m["device"] as? String ?? "").prefix(40))
+                direct.wire = m["wire"] as? Int ?? 1
                 ready(direct)
             case "message" where direct.ready:
                 guard let data = m["data"] else { return }
                 for listener in listeners { listener(direct.peer, data) }
+            case "values" where direct.ready:
+                heardValues(m, from: direct.peer)
             default:
                 break
             }
@@ -14598,6 +15086,44 @@ enum Template {
                 count += 1
                 return plain
             }
+        }
+    }
+
+    /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
+    /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
+    /// dot of its colour. Nothing while this app is alone in its wish. Give a peer name for that app's line alone. It
+    /// takes the font and colours of where it's put, so style it as the rest of the app; or show `LampWish`'s own
+    /// `status` and `peer(_:)?.status` in a view of your own.
+    struct LampWishStatus: View {
+        @ObservedObject private var wish = LampWish.shared
+        private let only: String?
+
+        init(_ peer: String? = nil) { only = peer }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                if wish.state == .ended {
+                    // Stopped: it no longer knows who is open.
+                } else if wish.state != .connected, !wish.status.reason.isEmpty {
+                    line(.orange, wish.status.reason)
+                } else {
+                    ForEach(wish.apps.filter { only == nil || $0.id == only }) { app in
+                        switch app.status.state {
+                        case .connected: line(.green, LampWish.connected(app.name))
+                        case .outOfDate: line(.orange, app.status.reason)
+                        default: line(.secondary, app.status.reason)
+                        }
+                    }
+                }
+            }
+        }
+
+        private func line(_ colour: Color, _ text: String) -> some View {
+            HStack(spacing: 6) {
+                Circle().fill(colour).frame(width: 7, height: 7)
+                Text(text).fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -15861,10 +16387,12 @@ enum Template {
                             .background(Color.accentColor.opacity(0.08)).allowsHitTesting(false)
                     }
                 }
+                #if !os(tvOS)
                 .onDrop(of: [.fileURL, .image, .url], isTargeted: $targeted) { providers in
                     LampDrop.load(providers) { urls in if !urls.isEmpty { handler(urls) } }
                     return true
                 }
+                #endif
         }
     }
 
@@ -15961,6 +16489,8 @@ enum Template {
 
     #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The person's calendar, reminders and contacts, through the accounts already set up on the device (iCloud,
     /// Google, Exchange: whatever the system's Internet Accounts has). No sign-in or API key: the system asks the
     /// person once, the first time an app uses each one. All on the device, instant and free.
@@ -16040,7 +16570,10 @@ enum Template {
             try store.remove(event, span: .thisEvent, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampReminders {
         struct Reminder: Identifiable {
             let id: String
@@ -16097,7 +16630,10 @@ enum Template {
             try store.save(reminder, commit: true)
         }
     }
+    #endif
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     enum LampContacts {
         struct Contact: Identifiable {
             let id: String
@@ -16153,6 +16689,7 @@ enum Template {
                     note: nil)
         }
     }
+    #endif
 
     #if os(macOS)
     // Mac only: Mail.
@@ -16438,6 +16975,8 @@ enum Template {
     }
     #endif
 
+    // Apple TV shows no notifications of an app's.
+    #if !os(tvOS)
     /// Notifications. Asks permission the first time.
     ///
     ///     LampNotifications.send("Export finished", body: "Saved 12 files to Documents")
@@ -16559,6 +17098,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     /// What people sent this app from another app's share sheet (a link from Safari, photos, text, files), through
     /// its share extension (the Share/ folder). The extension leaves each share in the folder the two have in
@@ -16676,6 +17216,8 @@ enum Template {
         }
     }
 
+    // Apple TV hasn't this framework.
+    #if !os(tvOS)
     /// The app's own things in Spotlight (notes, recipes, places, people): a search there finds them, and a tap
     /// opens the app on the one tapped.
     ///
@@ -16707,7 +17249,9 @@ enum Template {
             CSSearchableIndex.default().deleteAllSearchableItems { _ in }
         }
     }
+    #endif
 
+    #if !os(tvOS)
     extension View {
         /// Called with the id of what was tapped in Spotlight (`LampSpotlight.index`), when it opens the app or
         /// brings it to the front.
@@ -16717,6 +17261,7 @@ enum Template {
             }
         }
     }
+    #endif
 
     #if os(macOS)
     /// The whole app, when a widget is all the person asked for. macOS has no widget without an app to carry

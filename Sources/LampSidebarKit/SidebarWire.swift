@@ -6,7 +6,7 @@ import Foundation
 /// the chat and passes on clicks and words, so all of what the chat does stays in Lamp.
 public enum SidebarWire {
     /// What this side reads and writes; see `SidebarCommand.hello`.
-    public static let version = 9
+    public static let version = 10
 
     public static func encode<T: Encodable>(_ value: T) -> Data? {
         guard var data = try? JSONEncoder().encode(value) else { return nil }
@@ -92,6 +92,9 @@ public struct SidebarState: Codable, Equatable {
     public var sharing: SidebarSharing?
     /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
     public var wishLink: SidebarWishLink?
+    /// Try On's choices, for a wish played or shown in more places than one (a game, a screen): the bar's device button
+    /// opens them, and a click is `SidebarCommand.tryOn`. Nil for every other wish, which has no such button.
+    public var tryOn: SidebarTryOn?
 
     public init(app: String, lines: [SidebarLine], working: String?, workingSince: Date?, empty: Bool, busy: Bool,
                 draft: String, draftVersion: Int, attachments: [SidebarAttachment]) {
@@ -213,6 +216,50 @@ public struct SidebarToolbar: Codable, Equatable {
 }
 
 public enum SidebarPanel: String, Codable { case versions, info }
+
+/// Try On's choices as Lamp's window has them (`TryOnMenu` in Lamp): sections of places, a tick on where Play puts the
+/// wish, and the symbol of that place for the button.
+public struct SidebarTryOn: Codable, Equatable {
+    public struct Item: Codable, Equatable, Identifiable {
+        public var id: String
+        public var title: String
+        public var symbol: String
+        public var checked: Bool
+        public var disabled: Bool
+
+        public init(id: String, title: String, symbol: String, checked: Bool, disabled: Bool) {
+            self.id = id
+            self.title = title
+            self.symbol = symbol
+            self.checked = checked
+            self.disabled = disabled
+        }
+    }
+
+    public struct Section: Codable, Equatable {
+        public var title: String?
+        public var items: [Item]
+        /// Drawn as a submenu under its title.
+        public var submenu: Bool?
+
+        public init(title: String?, items: [Item], submenu: Bool? = nil) {
+            self.title = title
+            self.items = items
+            self.submenu = submenu
+        }
+    }
+
+    public var sections: [Section]
+    public var symbol: String
+    /// Where Play puts it now, for the button's help ("Playing on My Mac").
+    public var current: String?
+
+    public init(sections: [Section], symbol: String, current: String?) {
+        self.sections = sections
+        self.symbol = symbol
+        self.current = current
+    }
+}
 
 /// A saved version, as the Versions panel lists it: newest first, with a small picture of how the app looked.
 public struct SidebarVersion: Codable, Equatable, Identifiable {
@@ -430,6 +477,8 @@ public enum SidebarCommand: Codable, Equatable {
     case infoAction(String)
     /// The Share Link card: open it, or what was done on it.
     case wishLink(SidebarWishLinkCommand)
+    /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
+    case tryOn(String)
 }
 
 public struct SidebarFile: Codable, Equatable {

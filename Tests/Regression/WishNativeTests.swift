@@ -51,8 +51,12 @@ final class WishNativeTests: XCTestCase {
         XCTAssertTrue(phoneSaid.contains("refused false"), "a message to an app that isn't open isn't sent: \(phoneSaid)")
         XCTAssertTrue(phoneSaid.contains("isn't open now"), phoneSaid)
         XCTAssertTrue(phoneSaid.contains("status connected reason []"), "connected, nothing to say: \(phoneSaid)")
-        XCTAssertTrue(phoneSaid.contains("mac now notOpen: The Mac app isn't open. seen true"),
+        XCTAssertTrue(phoneSaid.contains("mac now notOpen: The Mac app was last open a moment ago. Open it on your Mac. seen true"),
                       "the Mac app that left is still known, with why and when it was last seen: \(phoneSaid)")
+
+        // The iPhone app opened again, with the Mac app closed: it still knows when that was last open, kept on the device.
+        let recalled = await Task.detached { TestShell.run("\(common) LAMP_DEFAULTS=\(suite)-phone LAMP_PEER=iphone LAMP_ROLE=recall ./wish 2>&1", in: work).output }.value
+        XCTAssertTrue(recalled.contains("recall mac notOpen: The Mac app was last open a moment ago. Open it on your Mac."), recalled)
     }
 
     /// LampWish out of the support library, with a stand-in for LampAI.post that answers as Lamp's `/app/wish` does,
@@ -81,7 +85,9 @@ final class WishNativeTests: XCTestCase {
                 guard let live = env["LAMP_SOCKET"] else { throw Failure(message: "Couldn't reach Lamp.") }
                 let socket = asked == 1 ? (env["LAMP_DEAD_SOCKET"] ?? live) : live
                 // The wish's apps, as Lamp would say them: a Mac app and an iPhone app, unless the test says others.
-                let apps = (env["LAMP_APPS"] ?? "mac,iphone").split(separator: ",").map { ["peer": String($0), "kind": String($0), "name": "the " + String($0) + " app"] }
+                // Named as Lamp names them, so what the relay says of an app and what this says agree.
+                let names = ["mac": "the Mac app", "iphone": "the iPhone app", "tv": "the TV app", "android": "the Android app"]
+                let apps = (env["LAMP_APPS"] ?? "mac,iphone").split(separator: ",").map { ["peer": String($0), "kind": String($0), "name": names[String($0)] ?? String($0)] }
                 return ["socket": socket, "peer": env["LAMP_PEER"]!, "apps": apps]
             }
         }
@@ -107,7 +113,9 @@ final class WishNativeTests: XCTestCase {
                 }
                 spin(10) { wish.state == .connected }
                 print("me \\(wish.me) state \\(wish.state.rawValue)")
-                if role == "stranger" {
+                if role == "recall" {
+                    if let mac = wish.peer("mac") { print("recall mac \\(mac.status.state.rawValue): \\(mac.status.reason)") }
+                } else if role == "stranger" {
                     spin(4) { false }
                     print("stranger state \\(wish.state.rawValue)")
                     for line in heard { print(line) }

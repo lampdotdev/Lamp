@@ -28,7 +28,7 @@ enum AppTransition {
 
     /// Whether the app is open on this Mac, with a window to show it on, and understands the request.
     static func canShow(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
+        project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
             && !Store.shared.macCopies(of: project).isEmpty && Store.binary(of: project, contains: marker)
     }
 

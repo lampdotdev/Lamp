@@ -1,4 +1,4 @@
-// Builds Assets/Web/data/elevation.bin.gz: the height of the ground over Manhattan, which js/terrain.js reads.
+// Builds Web/data/elevation.bin.gz: the height of the ground over Manhattan, which js/terrain.js reads.
 // Run from the app's folder with Node 22 or later (it fetches about 100 map tiles once, kept in the cache folder, by default in the temporary folder):
 //
 //   node Assets/Tools/build-elevation.mjs [cacheFolder]
@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { GEO } from '../Web/js/nyc-geodata.js';
+import { GEO } from '../../Web/js/nyc-geodata.js';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 // Outside the app's folder: everything in Assets ships inside the app
@@ -199,7 +199,7 @@ for (let i = 0; i < data.length; i++) {
 }
 console.log(`highest ${top.toFixed(1)} m`);
 
-const out = path.join(here, '../Web/data/elevation.bin.gz');
+const out = path.join(here, '../../Web/data/elevation.bin.gz');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 const header = Buffer.from(new Float32Array([x0, z0, STEP, cols, rows, 0]).buffer);
 fs.writeFileSync(out, zlib.gzipSync(Buffer.concat([Buffer.from('ELV2'), header, Buffer.from(data.buffer)]), { level: 9 }));

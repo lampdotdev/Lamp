@@ -26,7 +26,7 @@ enum WidgetCard {
     /// A card stays in the chat's record, but is only shown while the app has a widget: once the widget is
     /// taken away there's nothing to add, and saying how would send the person looking for it.
     static func isShown(for project: LampProject) -> Bool {
-        project.platform.hasIOS ? Template.hasHomeScreenWidget(project) : Template.hasWidget(project)
+        project.hasIOS ? Template.hasHomeScreenWidget(project) : Template.hasWidget(project)
     }
 
     /// Whether to run a widget-only app out of sight to ask if its widget is placed, on coming back to Lamp.
@@ -56,7 +56,7 @@ struct WidgetCardView: View {
         if let project = store.projects.first(where: { $0.dir == dir }) {
             let placed = store.placedWidgets.contains(project.id)
             ChatLook.OfferCard(symbol: "widget.small", title: WidgetCard.title(project.name),
-                               status: project.platform.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed),
+                               status: project.hasIOS ? WidgetCard.phoneStatus(project.name) : WidgetCard.status(project.name, placed: placed),
                                done: placed)
         }
     }

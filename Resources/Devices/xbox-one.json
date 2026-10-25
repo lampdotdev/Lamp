@@ -18,7 +18,7 @@
       "wrap": "msix",
       "preview": "Web"
     },
-    "purpose": "an app or a game, 3D games included: what nearly every Xbox wish is"
+    "purpose": "an app, or a game played through menus (a quiz, a board or card game)"
   },
   "bridge": {
     "install": [
@@ -316,7 +316,7 @@
   "kinds": {
     "game": {
       "lamp": "native-game",
-      "purpose": "only a heavy 3D game the wish says needs the console's full power (a big world, many things moving at once, fast action) or native code; it needs a 2 GB download first"
+      "purpose": "a game of Lamp's own (C++ on its game kit) when it's played on the Xbox: the package it goes there as"
     }
   },
   "certificateRoot": "/config/rootcertificate"

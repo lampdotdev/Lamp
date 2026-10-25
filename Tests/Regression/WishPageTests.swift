@@ -129,8 +129,9 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').name")?.toString(), "the Android app")
         // Every app of the wish is known, open or not, with why in words to show and when it was last seen.
         XCTAssertEqual(context.evaluateScript("androidBefore.status.state + '|' + androidBefore.status.reason")?.toString(),
-                       "notOpen|The Android app isn't open.")
-        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(), "The iPhone app isn't open.")
+                       "notOpen|Open the Android app on your Android device.")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(),
+                       "The iPhone app was last open a moment ago. Open it on your iPhone.")
         XCTAssertEqual(context.evaluateScript("typeof Lamp.wish.peer('iphone').status.lastSeen")?.toString(), "number")
         XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('roku')")?.isNull == true, "no such app in the wish")
         XCTAssertEqual(context.evaluateScript("Lamp.wish.status().state + '|' + Lamp.wish.status().reason")?.toString(), "connected|")
@@ -144,9 +145,9 @@ final class WishPageTests: XCTestCase {
         settle(context)
         context.evaluateScript("var early = Lamp.wish.send({ hi: 1 }, 'iphone');")
         try handshake(context)
+        let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
                           "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1]]])
-        let before = sentItems(context).count
         context.evaluateScript("""
             var toOne = Lamp.wish.send({ score: 3 }, 'iphone');
             var toAll = Lamp.wish.send('round 2');
@@ -158,7 +159,12 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("toAll")?.toBool(), true)
         XCTAssertEqual(context.evaluateScript("toAbsent")?.toBool(), false, "the Android app isn't open")
         XCTAssertEqual(context.evaluateScript("big")?.toBool(), false)
-        let frames = try sentItems(context).dropFirst(before).map(opened)
+        let said = try sentItems(context).dropFirst(before).map(opened)
+        // Once in the room the page tells it how its link stands, for the builder: connected, straight to no app yet.
+        XCTAssertEqual(said.first?["t"] as? String, "status")
+        XCTAssertEqual(said.first?["state"] as? String, "connected")
+        XCTAssertEqual(said.first?["direct"] as? [String], [])
+        let frames = Array(said.dropFirst())
         XCTAssertEqual(frames.count, 2, "only the two that could go went: \(frames)")
         XCTAssertEqual(frames.first?["to"] as? String, "iphone")
         XCTAssertEqual((frames.first?["data"] as? [String: Any])?["score"] as? Int, 3)
@@ -213,14 +219,377 @@ final class WishPageTests: XCTestCase {
         settle(context)
         try handshake(context)
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv",
-                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1]],
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 2]],
                           "apps": [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
                                    ["peer": "mac", "kind": "mac", "name": "the Mac app"]]])
         deliver(context, ["t": "apps", "apps": roster])
         XCTAssertEqual(context.evaluateScript("Lamp.wish.apps().map(function (p) { return p.peer + ':' + p.status.state; }).join(',')")?.toString(),
                        "iphone:connected,android:notOpen")
-        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't open.")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "Open the Android app on your Android device.")
         XCTAssertTrue(context.evaluateScript("Lamp.wish.peer('mac')")?.isNull == true, "taken from the wish")
+    }
+
+    /// An app the wish asks for and Lamp hasn't made says it isn't ready; when another app was last open is kept on the
+    /// device, so a page opened again later still says how long ago; and the status view shows each app's line and follows
+    /// as they change.
+    func testThePageSaysWhatsMissingAndKeepsWhenAnAppWasLastOpen() throws {
+        let context = try page(before: Self.document)
+        context.evaluateScript("var view = Lamp.wish.statusView(); Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
+                                     ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 2]]])
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't ready yet.")
+        XCTAssertEqual(context.evaluateScript("view.text()")?.toString(), "iPhone app connected|The Android app isn't ready yet.")
+        deliver(context, ["t": "left", "peer": "iphone"])
+        XCTAssertEqual(context.evaluateScript("view.text()")?.toString(),
+                       "The iPhone app was last open a moment ago. Open it on your iPhone.|The Android app isn't ready yet.")
+
+        // Opened again later: what was kept says when the iPhone app was last open, 5 minutes before now.
+        let kept = try XCTUnwrap(context.evaluateScript("""
+            (function () { for (var k in store) if (k.indexOf('lamp:wish.') === 0) {
+              var v = JSON.parse(store[k]); v.seen.iphone = Date.now() - 5 * 60000 - 1000; store[k] = JSON.stringify(v); }
+              return JSON.stringify(store); })()
+            """)?.toString())
+        let again = try page(before: { $0.evaluateScript("store = \(kept);") })
+        again.evaluateScript("Lamp.wish.start();")
+        settle(again)
+        XCTAssertEqual(again.evaluateScript("Lamp.wish.peer('iphone').status.reason")?.toString(),
+                       "The iPhone app was last open 5 min ago. Open it on your iPhone.")
+        XCTAssertEqual(again.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't ready yet.")
+    }
+
+    /// What a page says stays right as the beats go by: a copy that wasn't opened from Lamp keeps saying so, and an app
+    /// once marked not made yet, then open, is never called not ready again.
+    func testWhatThePageSaysStaysRightAsTheBeatsGoBy() throws {
+        let beats = "var beaters = []; setInterval = function (fn) { beaters.push(fn); return 1; };"
+        let stray = try page(installed: "null", before: { $0.evaluateScript(beats) })
+        stray.evaluateScript("Lamp.wish.start(); beaters[0](); beaters[0]();")
+        XCTAssertEqual(stray.evaluateScript("Lamp.wish.status().reason")?.toString(),
+                       "This copy wasn't opened from Lamp, so it can't reach the wish's other apps. Open it from Lamp on your Mac.")
+
+        let context = try page(before: { $0.evaluateScript(beats) })
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": []])
+        // Made and open now, though the list hasn't said so yet (Lamp closed, the apps meeting straight).
+        deliver(context, ["t": "joined", "peer": ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 2]])
+        deliver(context, ["t": "left", "peer": "android"])
+        context.evaluateScript("beaters[0]();")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
+                       "The Android app was last open a moment ago. Open it on your Android device.")
+    }
+
+    /// A page's own view of every app hears a closed app's reason age as the beats go by, and an app once open is never
+    /// called not ready again by a list that still marks it so.
+    func testEveryAppsReasonIsHeardAsItChangesAndBeingSeenOutranksAWaitingMark() throws {
+        let context = try page(before: { $0.evaluateScript("""
+            var beaters = []; setInterval = function (fn) { beaters.push(fn); return 1; };
+            var clock = Date.now(); Date.now = function () { return clock; };
+            """) })
+        context.evaluateScript("var heardApps = []; Lamp.wish.onApps(function (list) { heardApps.push(list.map(function (p) { return p.peer + ':' + p.status.reason; }).join('|')); }); Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps, "peers": []])
+        deliver(context, ["t": "joined", "peer": ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 2]])
+        deliver(context, ["t": "left", "peer": "android"])
+        // Lamp's list comes again still marking it not made (sent before it knew).
+        deliver(context, ["t": "apps", "apps": apps])
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
+                       "The Android app was last open a moment ago. Open it on your Android device.")
+        context.evaluateScript("clock += 5 * 60000 + 1000; beaters[0]();")
+        XCTAssertEqual(context.evaluateScript("heardApps[heardApps.length - 1]")?.toString(),
+                       "android:The Android app was last open 5 min ago. Open it on your Android device.")
+    }
+
+    /// Values set before any other app is there are kept and go to each app as it comes, with this page's name in when
+    /// they were set; what another app sends is taken only when it's later than what the page has, a removal included;
+    /// what the page sets after hearing a later one is later still; and it's all still there when the page opens again.
+    func testValuesGoToEachAppAsItComesAndTheLaterSettingWins() throws {
+        let context = try page()
+        context.evaluateScript("""
+            var changes = [];
+            Lamp.wish.onChange(function (key, value, from) { changes.push(key + '=' + JSON.stringify(value) + ' from ' + from); });
+            var early = Lamp.wish.set('list', ['milk']);
+            var odd = Lamp.wish.set('odd', function () {});
+            var big = Lamp.wish.set('big', new Array(9000).join('a'));
+            var unnamed = Lamp.wish.set('', 1);
+            Lamp.wish.start();
+            """)
+        settle(context)
+        XCTAssertEqual(context.evaluateScript("[early, odd, big, unnamed].join(',')")?.toString(), "true,false,false,false",
+                       "set with nobody there, and refused when it can't be a value")
+        let join = try handshake(context)
+        XCTAssertEqual(join["wire"] as? Int, 2, "the page says what it speaks")
+        let before = sentItems(context).count
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 2]]])
+        let pushed = try XCTUnwrap(try sentItems(context).dropFirst(before).map(opened).first { $0["t"] as? String == "values" })
+        XCTAssertEqual(pushed["to"] as? String, "iphone")
+        let list = try XCTUnwrap((pushed["values"] as? [String: Any])?["list"] as? [String: Any])
+        XCTAssertEqual(list["v"] as? [String], ["milk"])
+        XCTAssertEqual((list["c"] as? [Any])?.last as? String, "tv")
+
+        let later = Int(Date().timeIntervalSince1970 * 1000) + 60_000
+        deliver(context, ["t": "values", "from": "iphone", "values": ["list": ["v": ["eggs"], "c": [1, 0, "iphone"]],
+                                                                      "score": ["v": 3, "c": [later, 0, "iphone"]]]])
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(Lamp.wish.values())")?.toString(), #"{"list":["milk"],"score":3}"#,
+                       "an older setting is left, a later one taken")
+        deliver(context, ["t": "values", "from": "iphone", "values": ["list": ["c": [later, 1, "iphone"]]]])
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(Lamp.wish.values())")?.toString(), #"{"score":3}"#, "removed")
+        let sentBefore = sentItems(context).count
+        context.evaluateScript("Lamp.wish.set('score', 4);")
+        let mine = try XCTUnwrap(try sentItems(context).dropFirst(sentBefore).map(opened).first)
+        let stamp = try XCTUnwrap(((mine["values"] as? [String: Any])?["score"] as? [String: Any])?["c"] as? [Any])
+        XCTAssertGreaterThanOrEqual(stamp.first as? Int ?? 0, later, "later than the latest it heard of, whatever this device's clock says")
+        XCTAssertEqual(context.evaluateScript("changes.join('|')")?.toString(),
+                       #"list=["milk"] from |score=3 from iphone|list=null from iphone|score=4 from tv"#,
+                       "a change made here is from this page's name, none yet before it first joined")
+
+        let kept = try XCTUnwrap(context.evaluateScript("JSON.stringify(store)")?.toString())
+        let again = try page(before: { $0.evaluateScript("store = \(kept);") })
+        again.evaluateScript("Lamp.wish.start();")
+        settle(again)
+        XCTAssertEqual(again.evaluateScript("JSON.stringify(Lamp.wish.values())")?.toString(), #"{"score":4}"#)
+    }
+
+    /// A setting lost on the way is made up: an app whose values add up differently is sent all of the page's and asked
+    /// for all of its, and an app that asks is sent all. Names a page's objects already hold are only values here, and
+    /// one called `__proto__` is refused; NaN removes, as it reads back as null everywhere.
+    func testALostSettingIsMadeUpAndOddNamesAreJustNames() throws {
+        let context = try page()
+        context.evaluateScript("""
+            var changes = [];
+            Lamp.wish.onChange(function (key, value, from) { changes.push(key + '=' + JSON.stringify(value)); });
+            Lamp.wish.set('list', ['milk']);
+            var proto = Lamp.wish.set('__proto__', 1);
+            Lamp.wish.start();
+            """)
+        settle(context)
+        try handshake(context)
+        var seen = sentItems(context).count
+        func said() throws -> [[String: Any]] {
+            let items = try sentItems(context).dropFirst(seen).map(opened)
+            seen = sentItems(context).count
+            return items
+        }
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 2]]])
+        _ = try said()
+        XCTAssertEqual(context.evaluateScript("proto")?.toBool(), false)
+        let later = Int(Date().timeIntervalSince1970 * 1000) + 60_000
+        deliver(context, ["t": "values", "from": "iphone", "values": ["constructor": ["v": 1, "c": [later, 0, "iphone"]],
+                                                                      "toString": ["v": "x", "c": [later, 0, "iphone"]]]])
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(Lamp.wish.values())")?.toString(), #"{"list":["milk"],"constructor":1,"toString":"x"}"#)
+        context.evaluateScript("Lamp.wish.set('constructor', NaN);")
+        _ = try said()
+        XCTAssertEqual(context.evaluateScript("JSON.stringify(Lamp.wish.values())")?.toString(), #"{"list":["milk"],"toString":"x"}"#)
+
+        deliver(context, ["t": "values", "from": "iphone", "values": [:], "sum": "AAAAAAAAAAA="])
+        let answer = try said()
+        XCTAssertEqual(answer.count, 1)
+        XCTAssertEqual(answer.first?["ask"] as? Bool, true, "asked for all of the other app's")
+        XCTAssertEqual(Set((answer.first?["values"] as? [String: Any])?.keys ?? [:].keys), ["list", "constructor", "toString"], "and sent all of its own")
+        deliver(context, ["t": "values", "from": "iphone", "values": [:], "ask": true])
+        let all = try said()
+        XCTAssertEqual(all.count, 1)
+        XCTAssertNil(all.first?["ask"], "an answer to a request asks nothing back")
+        XCTAssertEqual((all.first?["values"] as? [String: Any])?.count, 3)
+        XCTAssertTrue((context.evaluateScript("errors.join('|')")?.toString() ?? "").contains("not __proto__"))
+    }
+
+    /// A catch-up is cut into messages by their size as they go, names escaped as JSON included, so none passes what a
+    /// message may be, even when every name is made of characters JSON writes six bytes for.
+    func testCatchUpMessagesStayWithinAMessageWhateverTheNames() throws {
+        let context = try page()
+        context.evaluateScript("""
+            var odd = new Array(61).join(String.fromCharCode(1));
+            for (var i = 100; i < 200; i++) Lamp.wish.set(odd + i, 1);
+            Lamp.wish.start();
+            """)
+        settle(context)
+        try handshake(context)
+        let before = sentItems(context).count
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 2]]])
+        let frames = sentItems(context).dropFirst(before)
+        let values = try frames.map(opened).filter { $0["t"] as? String == "values" }
+        XCTAssertEqual(values.reduce(0) { $0 + (($1["values"] as? [String: Any])?.count ?? 0) }, 100, "every value went")
+        for frame in frames { XCTAssertLessThanOrEqual((frame.count - "sealed:".count) / 2 - 16, 16384, "a message within the limit") }
+    }
+
+    /// Three apps that each filled the values while apart end with the same values whichever order the others' arrive
+    /// in: what another app set is held only to the limit of one value.
+    func testAppsThatEachFilledTheValuesApartAgreeWhateverTheOrder() throws {
+        func filled(_ peer: String) -> [String: Any] {
+            Dictionary(uniqueKeysWithValues: (0..<7).map { ("\(peer)\($0)", ["v": String(repeating: "x", count: 8190), "c": [1000 + $0, 0, peer]] as [String: Any]) })
+        }
+        var ends: [String] = []
+        for order in [["iphone", "android"], ["android", "iphone"]] {
+            let context = try page()
+            context.evaluateScript("for (var i = 0; i < 7; i++) Lamp.wish.set('tv' + i, new Array(8191).join('x')); Lamp.wish.start();")
+            settle(context)
+            try handshake(context)
+            deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster, "peers": []])
+            for peer in order { deliver(context, ["t": "values", "from": peer, "values": filled(peer)]) }
+            ends.append(context.evaluateScript("Object.keys(Lamp.wish.values()).sort().join(',')")?.toString() ?? "")
+        }
+        XCTAssertEqual(ends[0], ends[1])
+        XCTAssertEqual(ends[0].split(separator: ",").count, 21, "all of each app's values: \(ends[0])")
+    }
+
+    /// An app of the wish that floods another with values (hostile, or wrong) gets no further than what every app of the
+    /// wish could have set between them: the wish's apps times the limit of the whole, with room to spare.
+    func testAFloodOfValuesPastWhatTheWishsAppsCouldSetIsDropped() throws {
+        let context = try page()
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster, "peers": []])
+        let later = Int(Date().timeIntervalSince1970 * 1000) + 60_000
+        for batch in 0..<100 {
+            deliver(context, ["t": "values", "from": "iphone",
+                              "values": ["flood\(batch)": ["v": String(repeating: "x", count: 8190), "c": [later + batch, 0, "iphone"]]]])
+        }
+        let held = context.evaluateScript("var o = Lamp.wish.values(), b = 0, n = 0; for (var k in o) { n++; b += k.length + JSON.stringify(o[k]).length; } [n, b]")?.toArray() as? [Int] ?? []
+        XCTAssertGreaterThan(held.first ?? 0, 0, "values within the bound are taken")
+        XCTAssertLessThan(held.first ?? 100, 100, "the flood past it is dropped: \(held)")
+        XCTAssertLessThanOrEqual(held.last ?? .max, 3 * 2 * 65536, "three apps' worth of the whole, twice over")
+    }
+
+    /// Removals never stop at the bound: an app that removes thousands of small values it set, more than the bound holds
+    /// as removals, still leaves every other app without them; and a value set after removals filled the bound is taken,
+    /// the oldest removals letting it in.
+    func testRemovalsAlwaysGoAndAValueOutranksOldRemovalsAtTheBound() throws {
+        let two: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"]]
+        let start = Int(Date().timeIntervalSince1970 * 1000)
+        func names(_ prefix: String) -> [String] { (0..<8000).map { String(format: "\(prefix)%04d", $0) } }
+        func send(_ context: JSContext, _ list: [String], stamp: Int, value: Any?) {
+            for chunk in stride(from: 0, to: list.count, by: 1000) {
+                var values: [String: Any] = [:]
+                for (i, name) in list[chunk..<min(chunk + 1000, list.count)].enumerated() {
+                    values[name] = value.map { ["v": $0, "c": [stamp, chunk + i, "iphone"]] } ?? ["c": [stamp, chunk + i, "iphone"]]
+                }
+                deliver(context, ["t": "values", "from": "iphone", "values": values])
+            }
+        }
+        func joined() throws -> JSContext {
+            let context = try page()
+            context.evaluateScript("Lamp.wish.start();")
+            settle(context)
+            try handshake(context)
+            deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": two, "peers": []])
+            return context
+        }
+
+        // 8,000 values of 1 under five-byte names, more than the bound holds, then each removed: every one taken goes.
+        let kept = try joined()
+        send(kept, names("k"), stamp: start, value: 1)
+        XCTAssertGreaterThan(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32() ?? 0, 0)
+        send(kept, names("k"), stamp: start + 1, value: nil)
+        XCTAssertEqual(kept.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 0, "every removal went")
+
+        // Removals of names never set, past the bound; then a real value of 4 KB.
+        let crowded = try joined()
+        send(crowded, names("r"), stamp: start, value: nil)
+        deliver(crowded, ["t": "values", "from": "iphone", "values": ["real": ["v": String(repeating: "x", count: 4000), "c": [start + 1, 0, "iphone"]]]])
+        XCTAssertEqual(crowded.evaluateScript("typeof Lamp.wish.values().real")?.toString(), "string", "the value was taken")
+    }
+
+    /// Every name an app sets counts at least 32 bytes against the limit of the whole, and so does a name it removed
+    /// while the removal is kept: so all an app can make, removals included, fits in what another app takes from it,
+    /// no removal there is ever let go, and an older copy from an app that was away can't bring a removed value back.
+    func testAnAppThatWasAwayCantBringBackWhatAnotherRemoved() throws {
+        // As much as one app can set under small names, then all of it removed.
+        let setter = try page()
+        setter.evaluateScript("""
+            var made = [];
+            for (var i = 0; i < 20000; i++) { var k = 'k' + ('0000' + i.toString(36)).slice(-4); if (!Lamp.wish.set(k, 1)) break; made.push(k); }
+            var removed = made.every(function (k) { return Lamp.wish.set(k, null); });
+            """)
+        let made = setter.evaluateScript("made")?.toArray() as? [String] ?? []
+        XCTAssertEqual(setter.evaluateScript("removed")?.toBool(), true, "every removal was made")
+        XCTAssertLessThanOrEqual(made.count * (5 + 32), 65536, "each name counts at least 32 bytes: \(made.count)")
+
+        // Another app of a wish of three had them, took every removal, then hears an older copy from the app that was away.
+        let three: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
+                                      ["peer": "android", "kind": "android", "name": "the Android app"]]
+        let context = try page()
+        context.evaluateScript("Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": three, "peers": []])
+        let start = Int(Date().timeIntervalSince1970 * 1000)
+        func send(from peer: String, stamp: Int, value: Any?) {
+            for chunk in stride(from: 0, to: made.count, by: 1000) {
+                var values: [String: Any] = [:]
+                for (i, name) in made[chunk..<min(chunk + 1000, made.count)].enumerated() {
+                    values[name] = value.map { ["v": $0, "c": [stamp, chunk + i, "iphone"]] } ?? ["c": [stamp, chunk + i, "iphone"]]
+                }
+                deliver(context, ["t": "values", "from": peer, "values": values])
+            }
+        }
+        send(from: "iphone", stamp: start, value: 1)
+        send(from: "iphone", stamp: start + 1, value: nil)
+        send(from: "android", stamp: start, value: 1)
+        XCTAssertEqual(context.evaluateScript("Object.keys(Lamp.wish.values()).length")?.toInt32(), 0, "nothing removed came back")
+    }
+
+    /// Removals kept a month are let go when the month is over, before anything is weighed against the limit, so an app
+    /// whose removals filled it can set values again then, even if nothing else happened meanwhile.
+    func testExpiredRemovalsMakeRoomEvenInAnIdleApp() throws {
+        let context = try page(before: { $0.evaluateScript("var clock = Date.now(); Date.now = function () { return clock; };") })
+        context.evaluateScript("""
+            var made = [];
+            for (var i = 0; i < 20000; i++) { var k = 'k' + ('0000' + i.toString(36)).slice(-4); if (!Lamp.wish.set(k, 1)) break; made.push(k); }
+            made.forEach(function (k) { Lamp.wish.set(k, null); });
+            var full = Lamp.wish.set('fresh', 'x');
+            clock += 31 * 24 * 3600 * 1000;
+            var later = Lamp.wish.set('fresh', 'x');
+            """)
+        XCTAssertEqual(context.evaluateScript("full")?.toBool(), false, "the removals fill the limit while they're kept")
+        XCTAssertEqual(context.evaluateScript("later")?.toBool(), true, "a month on, they're let go and the value is set")
+    }
+
+    /// An open app built by another Lamp is shown as out of date, still open, with what to do in words to show: an
+    /// older one (saying nothing of what it speaks) is to be opened from Lamp, a newer one means this one is. An older
+    /// one is sent no values; the status view shows the line.
+    func testAnAppBuiltByAnotherLampIsOutOfDate() throws {
+        let context = try page(before: Self.document)
+        context.evaluateScript("var view = Lamp.wish.statusView(); Lamp.wish.set('score', 1); Lamp.wish.start();")
+        settle(context)
+        try handshake(context)
+        let before = sentItems(context).count
+        deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1],
+                                    ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 1, "wire": 3]]])
+        XCTAssertEqual(context.evaluateScript("var p = Lamp.wish.peer('iphone'); p.open + '|' + p.status.state + '|' + p.status.reason")?.toString(),
+                       "true|outOfDate|The iPhone app is out of date. Open it from Lamp on your Mac to update it.")
+        XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
+                       "This app is older than the Android app. Open it from Lamp on your Mac to update it.")
+        XCTAssertEqual(context.evaluateScript("view.text()")?.toString(),
+                       "The iPhone app is out of date. Open it from Lamp on your Mac to update it.|This app is older than the Android app. Open it from Lamp on your Mac to update it.")
+        let pushed = try sentItems(context).dropFirst(before).map(opened).filter { $0["t"] as? String == "values" }
+        XCTAssertEqual(pushed.map { $0["to"] as? String }, ["android"], "the app from before values is sent none")
+    }
+
+    /// Just enough of a page's document for the status view: elements that hold children, a style and text.
+    private static func document(_ context: JSContext) {
+        context.evaluateScript("""
+            function Element() { this.children = []; this.style = {}; this.textContent = ''; }
+            Object.defineProperty(Element.prototype, 'firstChild', { get: function () { return this.children[0] || null; } });
+            Element.prototype.appendChild = function (c) { this.children.push(c); return c; };
+            Element.prototype.removeChild = function (c) { this.children.splice(this.children.indexOf(c), 1); return c; };
+            Element.prototype.text = function () {
+              return this.children.map(function (row) { return row.children.map(function (c) { return c.textContent; }).join(''); }).join('|');
+            };
+            var document = { createElement: function () { return new Element(); } };
+            """)
     }
 
     func testTurnedAwayThePageAsksLampAgain() throws {

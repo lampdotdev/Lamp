@@ -85,6 +85,8 @@ enum Runtime {
         var hasher = SHA256()
         // An app for both is a different build for each place, so moving it under Try On is a change.
         if project.platform.choosesPlace { hasher.update(data: Data(project.destination.rawValue.utf8)) }
+        // So is an iOS app built for Apple TV or Vision Pro (build.sh's LAMP_FAMILY).
+        if project.onIOS, project.family.isOtherOS { let family = project.family; hasher.update(data: Data(family.rawValue.utf8)) }
         // A Mac app's App Intents are kept or left out by whether it can be signed for a team, so a new team is a
         // change for an app that has them (Store.intentsCanComeBack).
         // The same for a share extension, which a Mac app keeps only when it's signed for a team (Store.shareCanComeBack).

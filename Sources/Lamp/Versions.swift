@@ -266,7 +266,7 @@ enum Versions {
             var project = name.map { project.named($0) } ?? project
             if let kind = Template.platform(fromPackageIn: project.dir), kind != project.platform {
                 project.platform = kind
-                if !kind.hasIOS { project.device = nil }
+                if !kind.reaches(.ios) { project.device = nil }
                 project.integration = kind.target.recipe.integration(project.dir)
                 try? Template.saveMeta(project)
             }

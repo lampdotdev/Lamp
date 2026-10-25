@@ -50,6 +50,53 @@ enum DeviceSupport {
         return String(core[range].filter(\.isNumber))
     }
 
+    /// three.js's node renderer (three.webgpu.js and three.tsl.js) and the addons built on it, as a whole: given only to a
+    /// page whose own files name `three/webgpu` or `three/tsl`, since they double what three.js takes in every app.
+    static let threeNodeFiles: Set<String> = {
+        let node = ["three.webgpu.js", "three.tsl.js"]
+        let imports = try! NSRegularExpression(pattern: #"(?:from\s*|import\s*\(?\s*)['"]([^'"]+)['"]"#)
+        func named(_ file: (name: String, contents: String)) -> [String] {
+            imports.matches(in: file.contents, range: NSRange(file.contents.startIndex..., in: file.contents)).compactMap { match in
+                Range(match.range(at: 1), in: file.contents).map { String(file.contents[$0]) }
+            }
+        }
+        var found = Set(node)
+        // An addon that imports the node renderer, or another addon that does, is one of them.
+        var changed = true
+        while changed {
+            changed = false
+            for file in threeFiles where !found.contains(file.name) {
+                let folder = (file.name as NSString).deletingLastPathComponent
+                let needs = named(file).contains { spec in
+                    if spec == "three/webgpu" || spec == "three/tsl" { return true }
+                    let path = spec.hasPrefix("three/addons/") ? "addons/" + spec.dropFirst("three/addons/".count)
+                        : spec.hasPrefix(".") ? ((folder as NSString).appendingPathComponent(spec) as NSString).standardizingPath : ""
+                    return found.contains(path)
+                }
+                if needs { found.insert(file.name); changed = true }
+            }
+        }
+        return found
+    }()
+
+    /// three.js as a page in `page` (a folder of the app's) is given it: the node renderer only when its own files use it.
+    static func threeFiles(for project: LampProject, page: String) -> [(name: String, contents: String)] {
+        usesNodeRenderer(project, page: page) ? threeFiles : threeFiles.filter { !threeNodeFiles.contains($0.name) }
+    }
+
+    /// Whether the page's own files (not three.js's) name the node renderer, `three/webgpu` or `three/tsl`.
+    static func usesNodeRenderer(_ project: LampProject, page: String) -> Bool {
+        let folder = project.dir.appendingPathComponent(page)
+        guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        for case let url as URL in walk {
+            if url.lastPathComponent == "three" { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if text.contains("three/webgpu") || text.contains("three/tsl") { return true }
+        }
+        return false
+    }
+
     static let threeFiles: [(name: String, contents: String)] = {
         guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/three"),
               let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
@@ -63,7 +110,7 @@ enum DeviceSupport {
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
-        guard project.platform.hasDevice, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
+        guard project.hasDevice, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
         return support.compactMap { name, path in
             guard let library = Library(rawValue: name), IntegrationCheck.isAppPath(path) else { return nil }
             return (library, path)
@@ -72,15 +119,21 @@ enum DeviceSupport {
 
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        if project.platform.hasTV { return [TVTemplate.supportFile] }
-        if GameKit.isGame(project) { return GameKit.paths }
+        if ScreenKit.isScreen(project) { return ScreenKit.paths }
+        if project.hasTV { return [TVTemplate.supportFile] }
+        // A game's are its kit's, and on the Xbox a three.js game's are the web app's as well.
+        if GameKit.isGame(project) { return GameKit.paths(for: project) + (GameKit.engine(project) == .web ? declaredPaths(for: project) : []) }
+        return declaredPaths(for: project)
+    }
+
+    private static func declaredPaths(for project: LampProject) -> [String] {
         return libraries(for: project).flatMap { entry in entry.library.files.map { $0.name.isEmpty ? entry.path : entry.path + "/" + $0.name } }
             + icons(for: project).map(\.path)
     }
 
     /// The icons a declared kind asks for (`app.declared.icons`), checked: a PNG at a plain path, at a size in pixels.
     static func icons(for project: LampProject) -> [(path: String, width: Int, height: Int)] {
-        guard project.platform.hasDevice, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
+        guard project.hasDevice, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
         return icons.compactMap { path, size in
             guard IntegrationCheck.isAppPath(path), path.lowercased().hasSuffix(".png"), let (width, height) = iconSize(size) else { return nil }
             return (path, width, height)
@@ -119,8 +172,15 @@ enum DeviceSupport {
 
     static func write(for project: LampProject) throws {
         if GameKit.isGame(project) { try GameKit.write(for: project); return }
+        try writeDeclared(for: project)
+    }
+
+    /// What the device's integration asks for (`app.declared.support` and `icons`), for its app or a game played there.
+    static func writeDeclared(for project: LampProject) throws {
         for entry in libraries(for: project) {
-            for file in entry.library.files {
+            let files = entry.library == .three
+                ? threeFiles(for: project, page: (entry.path as NSString).deletingLastPathComponent) : entry.library.files
+            for file in files {
                 let path = file.name.isEmpty ? entry.path : entry.path + "/" + file.name
                 try Template.put(file.contents, at: project.dir.appendingPathComponent(path), for: project)
             }
@@ -369,6 +429,8 @@ enum DeviceSupport {
           var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
           list = list.filter(function (r) { return ipv4.test(r); }).concat(list.filter(function (r) { return !ipv4.test(r); }));
         }
+        // Lamp's preview of a game replays a play exactly, so nothing in it answers from outside.
+        if (window.lampPreview) return Promise.reject(new Failure('Lamp\'s preview has no AI: show example content here, and look at the game on the device for the real answers.'));
         if (!list.length) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
         function attempt(i, round) {
           if (i >= list.length) {
@@ -888,8 +950,28 @@ enum DeviceSupport {
       // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
       Object.defineProperty(LampAI, '_post', { value: post });
 
+      /**
+       * What only the app around the page can reach: the person's mail, calendar, reminders, contacts, photos and the
+       * like, read by the app's own Swift (Sources/Native.swift, in a game or a screen on the Mac, iPhone or iPad).
+       * `available` is false everywhere else (a TV, an Xbox, Android, Lamp's preview), where `call` rejects: show
+       * example content then, in the page's own words.
+       *
+       *     LampNative.call('unanswered', { limit: 30 }).then(function (mails) { ... }, function () { ... });
+       */
+      var nativeBridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampNative;
+      var LampNative = {
+        available: !!nativeBridge,
+        call: function (name, args) {
+          if (!nativeBridge) return Promise.reject(new Error('Only the app on the Mac, iPhone or iPad can do that.'));
+          return nativeBridge.postMessage({ name: String(name), args: JSON.stringify(args || {}) }).then(function (text) {
+            return text === undefined || text === null || text === '' ? null : JSON.parse(text);
+          }, function (error) { throw new Error(String(error && error.message || error)); });
+        }
+      };
+
       window.LampAI = LampAI;
       window.LampQuestion = LampQuestion;
+      window.LampNative = LampNative;
       window.LampStore = LampStore;
       window.LampAssets = LampAssets;
     })();

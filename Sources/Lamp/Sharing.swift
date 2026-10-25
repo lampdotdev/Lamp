@@ -34,7 +34,7 @@ enum Sharing {
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
                        share: Bool = false, scene: Bool = false, parts: Bool = false) -> Int {
         parts || platform.target.recipe.language == .web ? 10
-            : platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.hasIOS || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+            : platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.reaches(.ios) || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
     @MainActor private static var picker: NSSharingServicePicker?
@@ -216,9 +216,9 @@ enum Sharing {
                                                     scene: root.scene, parts: !parts.isEmpty),
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
-                                    platform: project.platform, family: project.platform.hasIOS ? project.family : nil,
+                                    platform: project.platform, family: project.hasIOS ? project.family : nil,
                                     parts: parts.isEmpty ? nil : parts.map {
-                                        Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.platform.hasIOS ? $0.family : nil)
+                                        Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
                                     }))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
