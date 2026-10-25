@@ -4908,8 +4908,10 @@ final class Store: ObservableObject {
             let toSimulator = project.device == nil
             if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
             // An app for both reuses a build only when it was made for this place from this code (the
-            // place is part of the fingerprint), else it's built again.
-            if FileManager.default.fileExists(atPath: project.builtURL.path), stamps[project.id]?.isOutdated(for: project) != true,
+            // place is part of the fingerprint), else it's built again. Whether this Lamp made it is read from that
+            // build itself, not from `stamps`, which for an app for both is its Mac copy's: a build with no stamp, or
+            // an older Lamp's, is built again, so the wish's other apps stop showing it as out of date.
+            if FileManager.default.fileExists(atPath: project.builtURL.path), BuildStamp.read(project.builtURL, in: project)?.isOutdated(for: project) == false,
                !(project.platform == .universal && Runtime.sourcesChanged(project)) {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
@@ -8127,7 +8129,7 @@ final class Store: ObservableObject {
             return giveBack("Couldn't open the app in the simulator: \(error.localizedDescription)")
         }
         refreshOpenApps()
-        stamps[project.id] = BuildStamp.read(project.builtURL)
+        stamps[project.id] = BuildStamp.read(project.builtURL, in: project)
         return nil
     }
 
@@ -8194,6 +8196,15 @@ final class Store: ObservableObject {
         if progress[project.id]?.finished != nil { progress[project.id]?.failed = true }
         clearPhoneRetry(project)
         let team = Devices.team
+        // Lamp's own files first, as before any build: Xcode compiles the phone's copy from the app's Sources, which
+        // still hold an older Lamp's support code when the app was opened straight onto the phone after an update.
+        do {
+            try await writeOwnFiles(project, all: true)
+        } catch {
+            failed("Lamp couldn't write the app's build files: \(error.localizedDescription)")
+            return nil
+        }
+        guard stillOwns() else { return nil }
         // The code as it's staged, kept once it's on the phone, so a turn that changes nothing doesn't put it there again.
         let build = Runtime.fingerprint(project)
         // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.

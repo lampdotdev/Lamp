@@ -43,6 +43,21 @@ struct BuildStamp: Equatable {
         return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String)
     }
 
+    /// The stamp on a build in the app's folder, read as `AppFile` reads: the agent's commands write that folder, and
+    /// a link left at the build's Info.plist would be followed, a pipe there would keep Lamp waiting as it starts.
+    static func read(_ app: URL, in project: LampProject) -> BuildStamp? {
+        guard let data = AppFile.read(app.appendingPathComponent("Contents/Info.plist"), in: project)
+                ?? AppFile.read(app.appendingPathComponent("Info.plist"), in: project),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
+        return BuildStamp(lamp: info[lampKey] as? String, support: info[supportKey] as? String, wish: info[wishKey] as? String)
+    }
+
+    /// Where an app's stamp is read: a Mac app's installed copy, in Lamp's own apps folder; an app with no Mac half
+    /// has none, so its build, which is what the simulator gets.
+    static func of(_ project: LampProject) -> BuildStamp? {
+        project.hasMac ? read(project.installedURL) : read(project.builtURL, in: project)
+    }
+
     /// Stamps a freshly built app, before it's signed.
     /// A Mac bundle keeps its Info.plist under Contents; an iPhone bundle at its top.
     private static func infoPlist(of app: URL) -> URL {
