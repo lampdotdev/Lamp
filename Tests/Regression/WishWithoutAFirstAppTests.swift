@@ -189,3 +189,95 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac)])
     }
 }
+
+/// The same list of apps through Lamp's own steps around a version: what it does after a restore, and the first version
+/// it saves of a wish. Each runs on a Store over a folder of its own, never Lamp's wishes.
+@MainActor
+final class WishListThroughTheStoreTests: XCTestCase {
+    private var roots: [URL] = []
+
+    override func tearDown() async throws {
+        unsetenv("GIT_CONFIG_GLOBAL")
+        for root in roots { try? FileManager.default.removeItem(at: root) }
+    }
+
+    /// A folder of wishes under the home folder, as Lamp's own git runs confined to it, with git's Mac-wide settings empty.
+    private func newRoot() throws -> URL {
+        let fm = FileManager.default
+        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".lamp-wish-store-test-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        roots.append(root)
+        let settings = fm.temporaryDirectory.appendingPathComponent("lamp-test-git-settings-\(UUID().uuidString)")
+        roots.append(settings)
+        try "".write(to: settings, atomically: true, encoding: .utf8)
+        setenv("GIT_CONFIG_GLOBAL", settings.path, 1)
+        return root
+    }
+
+    private let waiting = WishApp(kind: .android, needs: "This Mac can't build Android apps yet.")
+
+    private func listed(_ dir: URL) throws -> [Platform] {
+        try XCTUnwrap(Store.readWish(at: dir)).apps.map(\.kind)
+    }
+
+    /// A Mac wish saved while its Android app waited, the Android app made later in Android/. Going back to the version
+    /// from before it was made takes Android/ away, and Lamp forgets the part it had; the wish still asks for the Android
+    /// app, as that version did, so the next turn makes it again.
+    func testGoingBackToAVersionWhileAnAppWaitedKeepsItWaiting() async throws {
+        let root = try newRoot()
+        var wish = try Template.scaffold(name: "Tallyrw", platform: .mac, in: root)
+        wish.apps = [WishApp(kind: .mac), waiting]
+        try Template.saveMeta(wish)
+        XCTAssertEqual(TestShell.run("/bin/bash", ["-c", "git init -q -b main"], in: wish.dir).status, 0)
+        let asked = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Put it on my Android phone too"])
+        XCTAssertEqual(asked, .saved)
+
+        let android = LampProject(id: Parts.id(wish: wish.id, folder: "Android"), name: wish.name, exe: wish.exe,
+                                  dir: wish.dir.appendingPathComponent("Android"), instance: Parts.instance(wish: wish, folder: "Android"),
+                                  platform: .android, partOf: wish.id)
+        try FileManager.default.createDirectory(at: android.dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        try Template.saveMeta(android)
+        try Template.fill(android)
+        wish.apps = [WishApp(kind: .mac), WishApp(kind: .android)]
+        try Template.saveMeta(wish)
+        let made = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Lamp made the Android app"])
+        XCTAssertEqual(made, .saved)
+
+        let store = Store(testingAt: root)
+        XCTAssertEqual(store.parts(of: try XCTUnwrap(store.current(wish))).map(\.platform), [.android])
+        let history = await Versions.list(wish)
+        let target = try XCTUnwrap(history.last)
+        let restored = await Versions.restore(wish, to: target, message: "Restored to “Put it on my Android phone too”")
+        XCTAssertTrue(restored)
+        let after = await store.followRestored(try XCTUnwrap(store.current(wish)))
+
+        XCTAssertTrue(store.parts(of: after).isEmpty, "the Android app the version didn't have is forgotten")
+        XCTAssertEqual(after.apps.map(\.kind), [.mac, .android], "and still asked for, as the version did")
+        XCTAssertEqual(try listed(wish.dir), [.mac, .android])
+        XCTAssertTrue(Parts.waiting(in: after, parts: store.parts(of: after)).map(\.kind) == [.android])
+    }
+
+    /// A wish's first version, as Lamp saves it on import (a shared file whose Android app this Mac can't build yet)
+    /// or for a new wish: Undo back to it after a change gives back the Android app it waits for.
+    func testAWishsFirstVersionCarriesTheAppsItWaitsFor() async throws {
+        let root = try newRoot()
+        var wish = try Template.scaffold(name: "Tallyfv", platform: .mac, in: root)
+        wish.apps = [WishApp(kind: .mac), waiting]
+        try Template.saveMeta(wish)
+        let store = Store(testingAt: root)
+        let saved = await store.initRepo(try XCTUnwrap(store.current(wish)), message: "Imported from a shared file")
+        XCTAssertTrue(saved)
+        let first = await Versions.list(wish)
+        XCTAssertEqual(first.first?.apps, [.mac, .android])
+
+        try "// counts up\n".write(to: wish.dir.appendingPathComponent("Sources/Count.swift"), atomically: true, encoding: .utf8)
+        let changed = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Count up"])
+        XCTAssertEqual(changed, .saved)
+        let versions = await Versions.list(wish)
+        let (undoing, target) = try XCTUnwrap(Versions.undoTarget(in: versions))
+        let undone = await Versions.restore(wish, to: target, message: "Undid “\(undoing.label)”", trailer: "Lamp-Undid: \(undoing.id)")
+        XCTAssertTrue(undone)
+        let after = await store.followRestored(try XCTUnwrap(store.current(wish)))
+        XCTAssertEqual(after.apps, [WishApp(kind: .mac), waiting], "still waiting, with what stops it")
+    }
+}
