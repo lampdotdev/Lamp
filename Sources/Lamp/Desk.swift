@@ -1464,6 +1464,12 @@ enum WishPlace: Equatable {
     /// Reads the app's files: not on the main thread. A Mac app's place is read from its code; every other kind
     /// says its own.
     static func of(_ project: LampProject) -> WishPlace {
+        // A wish whose apps are all in folders of their own lives where they do: one app's place, or several named.
+        if !project.holdsApp {
+            let places = Parts.load(project).map(of)
+            guard places.count > 1 else { return places.first ?? .window }
+            return .elsewhere(places.map { $0.caption ?? "Mac" }.joined(separator: " and "), symbol: places[0].symbol)
+        }
         if let place = project.platform.target.identity.place(project) { return place }
         if Template.isWidgetOnly(project) { return .widget }
         let code = sources(of: project)
@@ -1674,6 +1680,8 @@ extension Store {
     /// bar, a widget, the background, a phone) is used instead (`use`), and the desk says where it is. A wish Lamp
     /// came with that isn't built yet spins and opens when it's ready.
     func open(fromDesk project: LampProject) {
+        // A wish whose apps are all in folders of their own has no window of its own for its chat to go beside.
+        guard project.holdsApp else { return use(project) }
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
         if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {
@@ -1693,8 +1701,9 @@ extension Store {
     /// Where opening it brings nothing to the front (the menu bar, a widget, the background, the person's own
     /// phone), the desk says where it is.
     func use(_ project: LampProject) {
-        let made = FileManager.default.fileExists(atPath: project.installedURL.path)
-            || FileManager.default.fileExists(atPath: project.builtURL.path)
+        let made = apps(of: project).contains { app in
+            FileManager.default.fileExists(atPath: app.installedURL.path) || FileManager.default.fileExists(atPath: app.builtURL.path)
+        }
         // A wish Lamp came with that hasn't been built yet, or is being built now: its icon spins, and it
         // opens as soon as it's ready, without its chat in between.
         if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {

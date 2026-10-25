@@ -799,7 +799,7 @@ struct BuildingSettings: View {
     private func recheck() { Task { await store.recheckSetup() } }
 
     /// Signing for a phone only matters to someone with an iPhone or iPad app.
-    private var hasPhoneApps: Bool { store.projects.contains { $0.hasIOS } }
+    private var hasPhoneApps: Bool { store.everyApp.contains { $0.hasIOS } }
 }
 
 /// The AI, images and decisions that apps use while they run.
@@ -854,7 +854,7 @@ struct AppsSettings: View {
                 }
             }
             // Only for someone with an iPhone or iPad app: nothing else goes on a phone.
-            if store.projects.contains(where: { $0.hasIOS }) { PhoneAwaySection(revision: revision) }
+            if store.everyApp.contains(where: { $0.hasIOS }) { PhoneAwaySection(revision: revision) }
             ComputerUseSettings()
         }
         .settingsPane()
@@ -1425,7 +1425,7 @@ private struct EngineSheet: View {
             if downloads.isDownloading(engine) {
                 ProgressView(value: downloads.progress[engine] ?? 0)
             }
-            if Store.shared.projects.contains(where: { $0.hasIOS }) {   // said only to someone it concerns
+            if Store.shared.everyApp.contains(where: { $0.hasIOS }) {   // said only to someone it concerns
                 Text("The sign-in stays on this Mac: iOS apps can use it only on the same Wi‑Fi network as it. Away from it they need an OpenRouter key.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }

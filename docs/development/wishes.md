@@ -4,10 +4,19 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 
 A wish can be more than one app made to work together: a TV app with an iPhone app that controls it, a Mac app with an
 Android app (`Parts`). The wish is its own thing, apart from its apps: its name, chat, versions and icon are the wish's,
-and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its meta.json; below). One app is at its
-root, as every wish has one; each other part is an app of its own kind in a folder of the wish's
+and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its meta.json; below). No app of a wish is
+its main one: any of them, the first included, is added, replaced or taken away on the person's word, and the wish keeps
+its name, chat and history. A wish's first app is made in the wish's own folder, as every wish made so far has it, until
+it's taken away or replaced; each other app is an app of its own kind in a folder of the wish's
 (`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
-opened, looked at and used as any app of its kind is. It's a `LampProject` in `Store.projects` with `partOf` set (id: the
+opened, looked at and used as any app of its kind is. A wish whose folder holds no app of its own (its apps all in
+folders, `LampProject.holdsApp` false, read off its files each time so an Undo that brings the first app back has it
+again) is only the wish: it's no draft (`scaffolded`), and nothing builds, installs, opens, quits or writes Lamp's own
+files for it (`Template.writeOwnedFiles`, `fill`, `writeSupport`, `Runtime.sourcesChanged`, `buildNow`, `installNow`,
+`quit`, `macCopies`, `run`), so nothing puts an app back in its folder; Play, Open and Use open its apps (`openWish`),
+the desk captions it with where they are (`WishPlace.of`), and `Store.everyApp` is every app without it. Moving existing
+first apps into folders of their own, and a shared file's layout for such a wish, are a later change: until then a file
+carries its first app in the file's root (`Sharing.export`), and opening it makes a new wish rather than an update. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
 wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat or versions of its own: what's logged
 for it goes to its wish's chat (`Store.log`), and the wish's history keeps its folder. No app of a wish comes first
 beyond that: each carries the wish's icon. Its design and artwork are the wish's (`Icons.home`), drawn into each app's
@@ -33,7 +42,7 @@ its wish's (`Store.requestOwner`), and so is everything a part's Reload goes by 
 person stopped or was asked, what's pressed for them while they're away): the Reload in the wish's chat is for whichever of
 its apps waits. No app of a wish comes first in what a turn and the wish's history do to it. At a turn's end each app the
 agent changed is built, its errors sent back to the agent with its name and folder, before the version is saved, then
-opened as the app at the root is (`Store.settle`). An app whose change went into the open app counts as built there
+opened, each as itself (`Store.settle`). An app whose change went into the open app counts as built there
 (`Runtime.needsBuild`): its whole build, which writes what it was built from, runs on after the turn. Each keeps its own look and crash on launch in the turn
 (`Turn.Look.installed`, `crashes`, `LaunchWatch.app`), and a crash is fixed as that app's (`Store.crashRequest`). A part
 is worked on under the wish's turn (`Store.asPartOf`, and a part's look through `underTurn`, each leaving the hold as it
@@ -42,14 +51,16 @@ its own so its crash is fixed through the wish (`Store.rebuildParts`); a rename 
 APP.md. Each app's own menu (Open, Rebuild & Open) is still for that app alone. A copy is found by its install place only
 for an app with a Mac copy there, since a TV wish's Mac app is installed under the wish's name. Which kinds a list
 of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), in `Targets.all`'s
-order. No kind leads: which app is at a wish's root is the wish's own affair, never the list's (`Parts.root`). A wish keeps
-the app it began with at its root, and a new wish's root is the first of its kinds this Mac can build now (`Store.rootKind`:
-a TV app with an iPhone app, on a Mac without Xcode, starts as the TV app with the iPhone app waiting), else the first.
-The TV app of a wish takes the wish's other apps as players from its root or from TV/ alike (`Store.takesPlayers`,
+order. No kind leads: what a wish does with the list is `Parts.plan`, below. A wish keeps
+its first app in its own folder until it's taken away, and a new wish's first app is the first of its kinds this Mac can
+build now (`Store.firstKind`: a TV app with an iPhone app, on a Mac without Xcode, starts as the TV app with the iPhone app
+waiting), else the first; one read as a kind this Mac can't build yet is made a Mac app and still keeps its other apps on
+its list, so a missing tool holds back only the app that needs it.
+The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
 stands alone.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
-and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app at its root
+and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, the first of them)
 as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
 `Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
 opens it makes each part as `make_app_for` does (`Store.installParts`, with the file's family for an iPhone part); one it
@@ -64,33 +75,39 @@ with a part says 10.
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. What's made is read off the files (`Parts.wanted`, `Parts.waiting`,
-which take the app at the root and each part found as made whatever the list says). The apps a wish waits for are made at
+which take the app in the wish's own folder and each other found as made whatever the list says, `Parts.made`). The apps a wish waits for are made at
 the start of its next turn (`Store.makeWaitingParts`), each tried once rather than at every turn, since the kind's check
 opens its setup window: one this Mac can't build yet keeps what stops it and gets the chat's setup line
 (`IPhoneSetupLine` with `part`, `LogLine.text` "iphone part"), whose setup, once done, clears it and sends the request
 that adds it (`Store.retryWaitingApp`, `Parts.request`); the agent is told what waits at the end of each request
 (`Parts.brief`, once per conversation and when it changes) and never makes one itself. The list follows every change:
-`make_app_for` writes what it asked for, a part taken away or Undone leaves it (`forgetPart`), and the app at the root
-changing kind (`convert`, a restore) takes its place in it. A wish for a device Lamp can't make apps for yet
+`make_app_for` writes what it asked for, a part taken away or Undone leaves it (`forgetPart`), and an app
+changing kind (`convert`, a restore) takes its place in it, whichever folder it's in. A wish for a device Lamp can't make apps for yet
 (`waitsForDevice`) and one given its kinds in a turn begun without any (`decided`, whose engines' conversations are
 forgotten when that turn ends, or at Lamp's next start) are kept in the meta.json too.
 
-What the agent knows follows the parts. The wish's prompt is the kind's of the app at its root, with one rule naming the other parts
-(`Parts.rule`); each kind a part can be has its rules as a skill made from the prompts' own rules (`target-iphone`,
-`target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those about the wish as a whole, written
-for the folder the wish's part is in, since an iPhone app made for the Mac too stays in iPhone/), named
-with the request while the wish has that part (`Skills.applying`, so a compacted conversation is told again), and given
-whole in `make_app_for`'s reply when the part is added. So a conversation never carries the rules of a kind its wish
-doesn't have. `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), and run under the wish's turn
-(`Store.underTurn`). `make_app_for` takes the whole list and makes the wish those apps by adding and taking away folders, never by
-writing an app over again as another kind: the app at the root stays, changed by `convert` only inside its family (an
-iPhone app that's to be for the Mac too); a part is added (`Store.addPart`), changed in place inside its family, or taken
-away when it's left out. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/. A list that
-leaves the root app's family out is refused with why, and the agent tells the person the wish keeps that app (a wish
-still to be told what it's for has nothing written, so its root takes the first kind listed this Mac can build now,
-`Store.rootKind`, and the rest wait as parts). So a wish read as an Android app and made as a Mac app while Google's tools
-were missing gets, once they're set up, the Android app beside its Mac app (`Target.android.setup.later.request`), not in
-its place. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the main one's Try On included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
+What the agent knows follows the apps. A wish whose own folder holds an app has that kind's prompt, with one rule naming
+every app of the wish when it has several (`Parts.rule`); a wish whose apps are all in folders of their own has the wish's
+prompt (`Agent.wishPrompt`: what holds for the wish as a whole, then its one app's rules for its folder, or each of
+several apps named with its skill). Each kind an app in a folder can be has its rules as a skill made from the prompts'
+own rules (`target-iphone`, `target-mac`, `target-apple`, `target-tv`: `Parts.packs`, the kind's rules without those
+about the wish as a whole, written for the folder the app is in, since an iPhone app made for the Mac too stays in
+iPhone/), named with the request while the wish has that app (`Skills.applying`, so a compacted conversation is told
+again), and given whole in `make_app_for`'s reply when the app is added. So a conversation never carries the rules of a
+kind its wish doesn't have. Claude Code and Codex keep the prompt a conversation began with, so once the app in a wish's own folder goes or comes back (a restore), the wish's conversations are forgotten as its next request starts, and it starts one with the prompt that fits, told the chat so far (`Store.followPromptShape`, `.lamp/prompt-for`). `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), which may be
+left out only when the wish has one app (`Store.target`: no app is the one meant by naming none), and run under the
+wish's turn (`Store.underTurn`). `make_app_for` takes the whole list and treats every app alike (`Parts.plan`): one whose
+family is listed stays, changed by `convert` only inside its family (an iPhone app that's to be for the Mac too); a
+family it has no app of is added in its own folder (`Store.addPart`); one left out is taken away, the app in the wish's
+own folder as much as any other (`removePart`, `removeOwnApp`, which removes that app's files from the wish's folder and
+keeps the wish's: `.lamp/` but the app's runtime, the history, icon.json, about.json, Attachments/ and the other apps'
+folders). So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/, and "tv" alone replaces the
+Mac app with a TV app in TV/. What this Mac can't build yet holds back only that app: the others are made, and it waits
+on the list with its setup; an app is never taken away while nothing would be left, so it stays until what replaces it
+is made. A wish still to be told what it's for has nothing written, so its first app is the first kind listed this Mac
+can build now (`Store.firstKind`), in its own folder, and the rest wait as parts. So a wish read as an Android app and
+made as a Mac app while Google's tools were missing gets, once they're set up, the Android app beside its Mac app
+(`Target.android.setup.later.request`), not in its place, unless the person asks for that. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the Try On of the one in the wish's own folder included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
 
 A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
 (kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with

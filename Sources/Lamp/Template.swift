@@ -59,7 +59,11 @@ enum Template {
     }
 
     /// Writes the scaffold into a draft's folder, as the kind of app it is now (`Target.Recipe.fill`).
-    static func fill(_ project: LampProject) throws { try project.platform.target.recipe.fill(project) }
+    /// Never into a wish whose apps are all in folders of their own: a new app of it goes in a folder of its own too.
+    static func fill(_ project: LampProject) throws {
+        guard project.holdsApp else { return }
+        try project.platform.target.recipe.fill(project)
+    }
 
     /// A Swift app's scaffold, from its kind's App, ContentView and APP.md.
     static func fillSwift(_ project: LampProject, app: String, view: String, md: String) throws {
@@ -128,7 +132,11 @@ enum Template {
     }
 
     /// Lamp's own files in an app, written afresh before every build: each kind's own (`Target.Recipe.ownedFiles`).
-    static func writeOwnedFiles(for project: LampProject) throws { try project.platform.target.recipe.ownedFiles(project) }
+    /// Nothing for a wish whose own folder holds no app (`holdsApp`): its files would make one there again.
+    static func writeOwnedFiles(for project: LampProject) throws {
+        guard project.holdsApp else { return }
+        try project.platform.target.recipe.ownedFiles(project)
+    }
 
     /// The three files Lamp owns in every Swift app: LampSupport.swift, build.sh
     /// and Package.swift. The last two are what the build runs (the shell runs build.sh, and SwiftPM compiles
@@ -263,9 +271,17 @@ enum Template {
     /// as if the wish's apps couldn't talk at all, so it carries no code, size, rule or permission for something it can't
     /// use. A wish that comes to ask for a second app has its blocks written again before its next turn and build, as
     /// they always are.
+    /// The apps counted are the wish's, whichever folder each is in: a wish whose only app is in a folder of its own (the
+    /// app it began with replaced) is one app, and gets none of it either.
     static func talksToOtherApps(_ project: LampProject) -> Bool {
-        project.partOf != nil || !project.partFolders.isEmpty
-            || Set(project.apps.map { Parts.group($0.kind) } + [Parts.group(project.platform)]).count >= 2
+        // A part whose wish can't be read is taken as one of several, as every part was before a wish could lose its first app.
+        guard let wish = project.isPart ? Store.readWish(at: project.dir.deletingLastPathComponent()) : project else { return true }
+        var groups = Set(wish.apps.map { Parts.group($0.kind) })
+        for app in [project, wish] where app.holdsApp { groups.insert(Parts.group(app.platform)) }
+        for folder in wish.partFolders {
+            if let kind = Parts.kindOfScaffold(in: wish.dir.appendingPathComponent(folder), wish: wish.dir) { groups.insert(Parts.group(kind)) }
+        }
+        return groups.count >= 2
     }
 
     /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
@@ -289,7 +305,10 @@ enum Template {
 
     /// Lamp owns LampSupport.swift and rewrites it before every agent turn and build,
     /// so existing apps pick up helper improvements automatically.
-    static func writeSupport(for project: LampProject) throws { try project.platform.target.recipe.support(project) }
+    static func writeSupport(for project: LampProject) throws {
+        guard project.holdsApp else { return }
+        try project.platform.target.recipe.support(project)
+    }
 
     /// A Swift app's building blocks: an Android app's are Kotlin, a TV app's its own script, and a device app's what its
     /// integration asks for (`Target.Recipe.support`).
@@ -3251,6 +3270,8 @@ enum Template {
 
     /// Whether the app is still the empty scaffold: nothing has been built into it yet.
     static func isScaffold(_ project: LampProject) -> Bool {
+        // A wish whose apps are all in folders of their own is no new app.
+        guard project.holdsApp else { return false }
         guard project.scaffolded else { return true }   // a draft: not even the scaffold yet
         if GameKit.isGame(project) { return GameKit.isScaffold(project) }
         if ScreenKit.isScreen(project) {

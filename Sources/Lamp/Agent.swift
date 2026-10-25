@@ -362,10 +362,35 @@ enum Agent {
     /// The rules for the app's kind. Most are the same for a Mac app and an iPhone app, and each kind adds the
     /// blocks only it has, so a building block given to one is described to both in one place.
     /// A wish with other parts gets one rule more, naming them (`Parts.rule`); their own rules are skills, opened when
-    /// the agent works on them. A wish still to be told what it's for gets no kind's rules at all (`undecidedPrompt`).
+    /// the agent works on them. A wish whose apps are all in folders of their own has no kind's prompt of its own but the
+    /// wish's (`wishPrompt`). A wish still to be told what it's for gets no kind's rules at all (`undecidedPrompt`).
     @MainActor static func systemPrompt(for project: LampProject) -> String {
         if let candidates = project.undecided { return undecidedPrompt(candidates: candidates) }
-        return kindPrompt(for: project) + Parts.rule(for: project, parts: Store.shared.parts(of: project))
+        let parts = Store.shared.parts(of: project)
+        guard project.holdsApp else { return wishPrompt(for: project, parts: parts) }
+        return kindPrompt(for: project) + Parts.rule(for: project, parts: parts)
+    }
+
+    /// The prompt of a wish whose apps are all in folders of their own: what holds for the wish as a whole (asking, the
+    /// shell, its icon and description, attachments, how to talk and finish), then its apps. A wish of one such app has
+    /// that app's rules here, for the files in its folder; a wish of several has each app's as a skill, as any wish's
+    /// other apps have (`Parts.rule`), so no app of it comes first.
+    static func wishPrompt(for wish: LampProject, parts: [LampProject]) -> String {
+        let apps = parts.map { "\(Parts.name(of: $0.platform)) in \($0.dir.lastPathComponent)/" }
+        let header = """
+        You are Lamp's builder agent. The current directory is a wish: \(apps.joined(separator: " and ")), each app in a \
+        folder of its own with its own build files. The folder itself holds what's the wish's: its icon, its description \
+        and the person's attachments. Read the APP.md in each app's folder first for context.
+        """
+        let rules = [Rules.ask, Rules.shell, Rules.icon, Rules.about, Rules.wishAttachments, Rules.audience, Rules.begin, Rules.finish]
+            .joined()
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds each app you changed and opens it")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
+        let each = parts.count == 1
+            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent) }.joined()
+                + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
+            : Parts.rule(for: wish, parts: parts)
+        return header + "\n\nRules:\n" + rules + each
     }
 
     static func kindPrompt(for project: LampProject) -> String { project.platform.target.guidance.prompt(project) }
@@ -811,6 +836,17 @@ enum Agent {
         Load it with `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")` from \
         LampSupport.swift, writing the full file name (e.g. "logo.png"). Screenshots and mockups are usually just \
         references for you: leave them in Attachments/.
+        """
+
+        /// Attachments for a wish whose apps are all in folders of their own: the folder is the wish's, and each app
+        /// bundles its own files as its rules say.
+        static let wishAttachments = """
+        - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac and never \
+        ship with an app. When an app should use one (a logo, a data file, a sound), copy it into that app's folder: \
+        a Swift app's Assets/ (make the folder if needed), loaded with `LampAssets.url("name")`, `LampAssets.image("name")` \
+        or `LampAssets.text("name")` and the full file name; a TV app's Web/, loaded with a relative path; an Android app's \
+        app/src/main/assets/, read with `LampAssets`. Screenshots and mockups are usually just references for you: leave \
+        them in Attachments/.
         """
 
         static let logs = """

@@ -26,7 +26,7 @@ enum Sidebar {
 
     /// Whether this app gets the chat: a Mac app with windows (one that is only its widget has none).
     static func applies(to project: LampProject) -> Bool {
-        project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
+        project.holdsApp && project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
     }
 
     /// Puts the extension into a built app, before it's signed. Its program is the same for every app; what
