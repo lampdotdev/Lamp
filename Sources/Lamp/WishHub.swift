@@ -146,13 +146,13 @@ enum WishRooms {
     /// wish meant to be several is one of several from its first build, as its building blocks are.
     static func described(_ apps: [LampProject], in wish: LampProject) -> [[String: Any]] {
         apps.map { describe($0, in: wish) }
-            + Parts.waiting(in: wish, parts: apps.filter { $0.id != wish.id }).map { describe(kind: $0.kind) }
+            + Parts.waiting(in: wish, parts: apps.filter { $0.id != wish.id }).map { describe(kind: $0.kind, in: wish) }
     }
 
-    /// An app the wish asks for and doesn't have yet, by the folder it will be made in, marked as waiting so the others
-    /// say it isn't ready rather than ask the person to open it.
-    static func describe(kind: Platform) -> [String: Any] {
-        ["peer": Parts.folder(for: kind).lowercased(), "kind": Parts.word(for: kind), "name": Parts.name(of: kind), "waiting": true]
+    /// An app the wish asks for and doesn't have yet, by the folder it will be made in (`Parts.folder(waiting:in:)`),
+    /// marked as waiting so the others say it isn't ready rather than ask the person to open it.
+    static func describe(kind: Platform, in wish: LampProject) -> [String: Any] {
+        ["peer": Parts.folder(waiting: kind, in: wish.dir).lowercased(), "kind": Parts.word(for: kind), "name": Parts.name(of: kind), "waiting": true]
     }
 
     /// `kind` is the device word the tools use for the app ("iphone" for an app for iPhone and iPad, Mac too).
@@ -500,7 +500,7 @@ enum WishNote {
             return line
         }.joined(separator: "; ") + waiting.map { app in
             let name = Parts.name(of: app.kind)
-            return "; \(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(Parts.folder(for: app.kind).lowercased())\"): not made yet"
+            return "; \(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(Parts.folder(waiting: app.kind, in: wish.dir).lowercased())\"): not made yet"
         }.joined() + "."
     }
 

@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: 1 kept
+RELOAD 1: ok
+after1 (want it live: selection is computed now, note keeps its value): 7 kept
+RELOAD 2: ok
+after2 (want it live: the field kept under Lamp's name is kept again): 7 kept!

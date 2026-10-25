@@ -172,10 +172,14 @@ enum Sharing {
         wish.partFolders = Parts.folders(in: project.dir)
         let found = Parts.load(wish)
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
-        // be taken away: a wish whose apps are all in folders of their own travels with the first of them at the root,
-        // so any Lamp that opens format 10 opens it whole.
-        let root = wish.holdsApp ? project : (found.first ?? project)
-        let parts = wish.holdsApp ? found : Array(found.dropFirst())
+        // be taken away: a wish whose apps are all in folders of their own travels with one of them at the root, so any
+        // Lamp that opens format 10 opens it whole. The wish's apps know each other by their folders, and the app at a
+        // wish's root by the folder of its kind (`WishRooms.peer`), so the one that goes there is one whose folder is its
+        // kind's: an iPhone app made for the Mac too, still in iPhone/, would come out as another app than the one the
+        // others talk to. Every app of a wish is of its own family, so only a wish's one app can lack such a folder, and
+        // no other app talks to it.
+        let root = wish.holdsApp ? project : (found.first { $0.dir.lastPathComponent == Parts.folder(for: $0.platform) } ?? found.first ?? project)
+        let parts = found.filter { $0.id != root.id }
         for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
         }
@@ -531,6 +535,8 @@ enum Sharing {
     private struct Waiting: Codable {
         var platform: Platform
         var family: DeviceFamily?
+        /// The folder the file had it in, which it's made in when that's a folder for its kind. Nil from before it was kept.
+        var folder: String?
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
@@ -540,7 +546,7 @@ enum Sharing {
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
-        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family))
+        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder))
         try note.write(to: folder.appendingPathComponent("lamp-part.json"))
     }
 
@@ -552,7 +558,16 @@ enum Sharing {
               let note = try? JSONDecoder().decode(Waiting.self, from: data),
               let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
                                       identity: nil, description: nil, fileCount: 0) else { return nil }
-        return Package.Part(folder: Parts.folder(for: note.platform), package: package)
+        let folder = note.folder.flatMap { Parts.folder($0, canHold: note.platform) ? $0 : nil } ?? Parts.folder(for: note.platform)
+        return Package.Part(folder: folder, package: package)
+    }
+
+    /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
+    static func keptFolder(in wish: URL, for kind: Platform) -> String? {
+        guard let data = try? Data(contentsOf: waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data), note.platform == kind,
+              let folder = note.folder, Parts.folder(folder, canHold: kind) else { return nil }
+        return folder
     }
 
     static func forgetKept(in wish: URL, for kind: Platform) {

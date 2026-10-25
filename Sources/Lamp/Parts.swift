@@ -37,6 +37,19 @@ enum Parts {
     /// Every folder a part can be in.
     static var folders: Set<String> { Set(partKinds.map(folder(for:))) }
 
+    /// The folder an app the wish asks for and doesn't have yet will be made in (`Store.addPart`): the one a shared file
+    /// had it in, for one whose files are kept for it, else the one its kind gets. It's that app's name among the wish's
+    /// apps from the start (`WishRooms.peer`), so what the others say to it while it waits still reaches it once made.
+    static func folder(waiting kind: Platform, in wish: URL) -> String {
+        Sharing.keptFolder(in: wish, for: kind) ?? folder(for: kind)
+    }
+
+    /// Whether an app of this kind can be in this folder: one of Lamp's part folders for the kind's family, as an app
+    /// changed in place within its family keeps the folder it was made in (an iPhone app made for the Mac too, in iPhone/).
+    static func folder(_ folder: String, canHold kind: Platform) -> Bool {
+        Targets.all.contains { $0.part?.folder == folder && $0.part?.family == kind.target.part?.family }
+    }
+
     /// Where Lamp keeps its wishes (`Store.root`): a part's folder is always one of `folders`, inside a wish's folder here.
     static let appsRoot = Edition.supportFolder.appendingPathComponent("Apps")
 

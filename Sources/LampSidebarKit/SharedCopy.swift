@@ -2,7 +2,9 @@ import Foundation
 
 /// The file the chat hands to the share menu (`SidebarSharing`), kept where the service it's shared with reads it.
 /// This process can't reach the lasting file Lamp's own Share… hands on (`Store.sharedFile`), so it keeps one of
-/// its own the same way: one file, in its own caches folder, which belongs to this one app's chat.
+/// its own the same way: one file for each wish, in a folder of its own in the caches folder. Lamp's own process
+/// draws the chat of every wish, so a folder shared by all of them would have one wish's share remove the file just
+/// handed on for another.
 public enum SharedCopy {
     public static var folder: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Shared", isDirectory: true)
@@ -12,8 +14,10 @@ public enum SharedCopy {
     /// reading the earlier file (an upload, a mail being written), so it's never removed first: the new file is
     /// put whole beside it and takes its place in one step, and whatever was handed the old one finds a file there
     /// at every moment.
-    public static func keep(_ sharing: SidebarSharing, in folder: URL = folder) throws -> URL {
+    public static func keep(_ sharing: SidebarSharing, in shared: URL = folder) throws -> URL {
         let fm = FileManager.default
+        let wish = ((sharing.wish ?? "") as NSString).lastPathComponent
+        let folder = shared.appendingPathComponent(["", ".", ".."].contains(wish) ? "Wish" : wish, isDirectory: true)
         let name = (sharing.file.name as NSString).lastPathComponent
         let file = folder.appendingPathComponent(name.isEmpty ? "Wish.lampapp" : name)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -26,7 +30,7 @@ public enum SharedCopy {
         } else {
             try fm.moveItem(at: staged, to: file)
         }
-        // Anything else here is the app's file under a name it no longer has.
+        // Anything else here is this wish's file under a name it no longer has.
         for old in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where old != file.lastPathComponent {
             try? fm.removeItem(at: folder.appendingPathComponent(old))
         }

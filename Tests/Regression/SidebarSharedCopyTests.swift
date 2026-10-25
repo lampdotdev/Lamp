@@ -13,8 +13,8 @@ final class SidebarSharedCopyTests: XCTestCase {
 
     override func tearDown() { try? FileManager.default.removeItem(at: folder) }
 
-    private func shared(name: String, data: Data) -> SidebarSharing {
-        SidebarSharing(id: UUID(), file: SidebarFile(name: name, data: data))
+    private func shared(name: String, data: Data, wish: String = "tally") -> SidebarSharing {
+        SidebarSharing(id: UUID(), file: SidebarFile(name: name, data: data), wish: wish)
     }
 
     /// The names of the shared files kept, wherever under the folder they are.
@@ -44,5 +44,15 @@ final class SidebarSharedCopyTests: XCTestCase {
         let renamed = try SharedCopy.keep(shared(name: "Counter.lampapp", data: Data("b".utf8)), in: folder)
         XCTAssertEqual(renamed.lastPathComponent, "Counter.lampapp")
         XCTAssertEqual(try files(), ["Counter.lampapp"])
+    }
+
+    /// Lamp's own process draws every wish's chat, so they all keep their shared files under one folder: sharing
+    /// another wish must leave the file just handed on for this one.
+    func testSharingAnotherWishLeavesThisOnesFile() throws {
+        let tally = try SharedCopy.keep(shared(name: "Tally.lampapp", data: Data("tally".utf8), wish: "tally"), in: folder)
+        let notes = try SharedCopy.keep(shared(name: "Notes.lampapp", data: Data("notes".utf8), wish: "notes"), in: folder)
+        XCTAssertEqual(try? Data(contentsOf: tally), Data("tally".utf8))
+        XCTAssertEqual(try? Data(contentsOf: notes), Data("notes".utf8))
+        XCTAssertEqual(try files().sorted(), ["Notes.lampapp", "Tally.lampapp"])
     }
 }
