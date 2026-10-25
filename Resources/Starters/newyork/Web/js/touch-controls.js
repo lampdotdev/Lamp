@@ -78,8 +78,9 @@ class TouchControls {
   }
 
   updateAvailability() {
-    // Lamp: a Mac has no touch screen; it's played with the keyboard or a controller, so the touch controls stay hidden
-    const available = false;
+    // On a touch screen (an iPhone, an iPad, an Android phone): a Mac has none, and is played with the keyboard or a
+    // controller. Lamp's own touch controls are off for the city (`touch: false` in main.js), so these are its only ones.
+    const available = this.touchSeen || this.media.matches || navigator.maxTouchPoints > 0;
     const changed = available !== this.available;
     if (changed) this.reset();
     this.available = available;

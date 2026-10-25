@@ -2139,7 +2139,7 @@ final class Store: ObservableObject {
         }
         // A game's and a screen's home is the Mac, kept whatever's asked (a C++ game's is the Xbox alone, above).
         let native = GameKit.isGame(current) && GameKit.engine(current) == .native
-        let places = target.places.filter { ($0 == .mac && !native) || wanted.contains($0) }
+        let places = native ? [.device] : target.places.filter { $0 == .mac || wanted.contains($0) }
         let added = places.filter { !current.openPlaces.contains($0) }, gone = current.openPlaces.filter { !places.contains($0) }
         guard !added.isEmpty || !gone.isEmpty || family.map({ $0 != current.family }) == true else {
             return "It's already \(current.platform == .screen ? "shown" : "played") on \(GameKit.spoken(places))."

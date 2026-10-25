@@ -27,7 +27,8 @@ extension Target {
                            elsewhere: { _ in nil }),
         recipe: Recipe(language: .game, fill: GameKit.fill, ownedFiles: GameKit.write(for:), support: GameKit.write(for:),
                        isMade: GameKit.isMade, scaffolded: { dir, _ in GameKit.isMade(dir) },
-                       sources: { _ in ["Game", "Assets", GameKit.webFolder, "icon.json", "capabilities.json"] },
+                       // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
+                       sources: { _ in ["Game", "Assets", GameKit.webFolder, "Sources", "icon.json", "capabilities.json"] },
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again.
                        inputs: { _ in GameKit.stamp },
                        builtURL: { project in

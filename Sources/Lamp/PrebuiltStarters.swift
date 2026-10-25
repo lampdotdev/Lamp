@@ -107,7 +107,7 @@ enum PrebuiltStarters {
     /// `<starter>/Prebuilt`.
     private static func build(_ starter: Starters.Starter, in root: URL) throws {
         let fm = FileManager.default
-        let project = try Template.draft(name: starter.name, in: root)
+        let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
         try Template.fill(project)
         try Starters.copy(starter, into: project)
         try Template.writeOwnedFiles(for: project)

@@ -27,7 +27,8 @@ extension Target {
                            elsewhere: { _ in "- On the person's TV, iPad or Xbox: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI" }),
         recipe: Recipe(language: .web, fill: ScreenKit.fill, ownedFiles: ScreenKit.write(for:), support: ScreenKit.write(for:),
                        isMade: ScreenKit.isMade, scaffolded: { dir, _ in ScreenKit.isMade(dir) },
-                       sources: { _ in [TVTemplate.webFolder, "icon.json"] },
+                       // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
+                       sources: { _ in [TVTemplate.webFolder, "Sources", "icon.json"] },
                        inputs: { _ in ScreenKit.stamp },
                        builtURL: { project in
                            project.onTV ? TVs.stagingFolder(for: project).appendingPathComponent("web/index.html")
