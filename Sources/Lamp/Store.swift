@@ -5563,8 +5563,10 @@ final class Store: ObservableObject {
     private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         guard var wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
         // The wish's apps, one entry each: a kind, and where it runs beyond its kind's home.
-        let given = (arguments["apps"] as? [Any] ?? []).compactMap(Parts.AppAsked.init)
-        guard !given.isEmpty else {
+        // Every entry is read or the call is refused: one dropped would be an app left out, which is taken away.
+        let entries = arguments["apps"] as? [Any] ?? []
+        let given = entries.compactMap(Parts.AppAsked.init)
+        guard !given.isEmpty, given.count == entries.count else {
             return (400, ["error": "`apps` lists the wish's apps from now on, each as {\"kind\": …, \"places\": […]}: `kind` one of \(Targets.toolWords)."])
         }
         let asked: Parts.Asked

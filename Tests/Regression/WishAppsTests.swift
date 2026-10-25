@@ -73,6 +73,18 @@ final class WishGameAppsTests: XCTestCase {
         XCTAssertEqual(Parts.places(nil, devices: ["game"]), [:])
     }
 
+    /// An entry of `apps` that can't be read is no entry: `make_app_for` refuses the call rather than drop it, since an
+    /// app left out of the list is taken away.
+    func testAnUnreadableAppEntryIsNoEntry() {
+        XCTAssertNil(Parts.AppAsked(["kind": ""]))
+        XCTAssertNil(Parts.AppAsked(["kind": "  "]))
+        XCTAssertNil(Parts.AppAsked(["places": ["iphone"]]))
+        XCTAssertNil(Parts.AppAsked(["kind": "game", "places": [1, "iphone"]]))
+        XCTAssertNil(Parts.AppAsked(["kind": "game", "places": "iphone"]))
+        XCTAssertEqual(Parts.AppAsked(["kind": " Game ", "places": ["iPad"]]), Parts.AppAsked(kind: "game", places: ["ipad"]))
+        XCTAssertEqual(Parts.AppAsked(["kind": "mac"]), Parts.AppAsked(kind: "mac"))
+    }
+
     /// `make_app_for`'s `apps`, one entry per app, each with its own places: a wish of a game and a screen says where
     /// each goes, which one list of places for the wish couldn't; a Mac app given the iPhone is one app for both.
     func testEachAppOfMakeAppForHasItsOwnPlaces() throws {

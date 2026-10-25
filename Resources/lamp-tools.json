@@ -447,6 +447,7 @@
             "properties": {
               "kind": {
                 "type": "string",
+                "minLength": 1,
                 "description": "What the app is"
               },
               "places": {

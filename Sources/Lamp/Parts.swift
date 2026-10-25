@@ -151,11 +151,15 @@ enum Parts {
         var kind: String
         var places: Set<String> = []
 
-        /// Read off the tool's arguments; nil for an entry that isn't one.
+        /// Read off the tool's arguments; nil for an entry that isn't one: no kind, or places that aren't a list of words.
         init?(_ value: Any) {
             guard let entry = value as? [String: Any], let kind = (entry["kind"] as? String)?.trimmed.lowercased(), !kind.isEmpty else { return nil }
             self.kind = kind
-            places = Set((entry["places"] as? [String] ?? []).map { $0.trimmed.lowercased() })
+            switch entry["places"] {
+            case nil, is NSNull: places = []
+            case let words as [String]: places = Set(words.map { $0.trimmed.lowercased() })
+            default: return nil
+            }
         }
         init(kind: String, places: Set<String> = []) { self.kind = kind; self.places = places }
     }
