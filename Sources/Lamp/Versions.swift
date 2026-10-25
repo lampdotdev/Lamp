@@ -271,8 +271,10 @@ enum Versions {
                 try? Template.saveMeta(project)
             }
             try? Template.writeOwnedFiles(for: project)   // the build writes them again, and stops if it can't
-            // A wish's other parts too, as the restore left them: they carry the wish's name.
-            if name != nil, !project.isPart {
+            // Every other app of the wish too, as the restore left them: they carry the wish's name and what the wish's
+            // list makes of their building blocks, and no app of it comes first. Left to their next build, they'd leave
+            // the restore unsaved, and the next Undo would only discard that.
+            if !project.isPart {
                 project.partFolders = Parts.folders(in: project.dir)
                 for part in Parts.load(project) { try? Template.writeOwnedFiles(for: part) }
             }

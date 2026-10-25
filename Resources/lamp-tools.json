@@ -370,6 +370,10 @@
           ],
           "type": "string"
         },
+        "part": {
+          "type": "string",
+          "description": "For a wish of more than one app: which one the picture is for, by its device (\"iphone\", \"tv\", \"mac\"); it goes in that app's Assets/. Needed then; left out only when the wish has one app."
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."

@@ -31,9 +31,10 @@ apps, and every restore takes them in again at once (`Store.followRestored`, com
 stays listed until it's closed, and one it brings back or changes is listed again). A wish's name is in its meta.json,
 which no version holds, so the versions that change it carry it (`Lamp-Name`, `Lamp-Renamed-From`), and Undo or going
 back to a version gives back the name that version had (`Versions.name(at:in:)`), its parts with it. Lamp's own files
-(build.sh, the Info.plist lines) carry the name, so a rename and a restore that gives one back write them, the parts'
-too, under that name before the version is saved (`Versions.restoreFiles(name:)`): written after, the next build left
-the app unsaved and Undo could never get past the rename. A part's quit is judged by its
+(build.sh, the Info.plist lines) carry the name and what the wish's list makes of each app's building blocks, so a
+rename and every restore write them for every app of the wish, under the name the version gives, before the version is
+saved (`Versions.restoreFiles(name:)`): written after, the next build left the app unsaved and Undo could never get past
+it. A part's quit is judged by its
 wish's turn, which is the only one it has. Deleting a wish closes each part first (a Mac part may be kept open
 over unsaved work, which stops the delete) and forgets what Lamp keeps for it (`Store.forgetPart`: its installed copy,
 build folders, sign-ins and place in the lists), as taking a part away does; the list of apps is set in one go with the parts (`Store.reload`), since a moment without them ends a TV app's
@@ -95,7 +96,7 @@ about the wish as a whole, written for the folder the app is in, since an iPhone
 iPhone/), named with the request while the wish has that app (`Skills.applying`, so a compacted conversation is told
 again), and given whole in `make_app_for`'s reply when the app is added. So a conversation never carries the rules of a
 kind its wish doesn't have. Claude Code and Codex keep the prompt a conversation began with, so once the app in a wish's own folder goes or comes back (a restore), the wish's conversations are forgotten as its next request starts, and it starts one with the prompt that fits, told the chat so far (`Store.followPromptShape`, `.lamp/prompt-for`). `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), which may be
-left out only when the wish has one app (`Store.target`: no app is the one meant by naming none), and run under the
+left out only when the wish has one app (`Store.target`: no app is the one meant by naming none; `make_art` takes it too, for which app's Assets/ a picture goes in), and run under the
 wish's turn (`Store.underTurn`). `make_app_for` takes the whole list and treats every app alike (`Parts.plan`): one whose
 family is listed stays, changed by `convert` only inside its family (an iPhone app that's to be for the Mac too); a
 family it has no app of is added in its own folder (`Store.addPart`); one left out is taken away, the app in the wish's

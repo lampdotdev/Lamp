@@ -1911,6 +1911,9 @@ final class Store: ObservableObject {
               await quit(wish, for: turns[wish.id]) else { return false }
         let fm = FileManager.default
         await settleFiles(wish)
+        // The wish no longer should have it, so it isn't made again in a folder of its own at the next turn
+        // (`makeWaitingParts`), as a part taken away isn't (`forgetPart`).
+        setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(wish.platform) })
         if wish.hasMac {
             await WidgetProcess.end(for: wish)
             if fm.fileExists(atPath: wish.installedURL.path) { try? fm.trashItem(at: wish.installedURL, resultingItemURL: nil) }
@@ -5807,6 +5810,10 @@ final class Store: ObservableObject {
         func stillAsked() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let subject = (arguments["subject"] as? String)?.trimmed ?? ""
         guard !subject.isEmpty else { return (400, ["error": "Say in `subject` what the picture shows."]) }
+        // Into the Assets/ of the app it's for, which `part` names as it does for a look.
+        let (app, refusal) = target(arguments, in: project)
+        guard let app else { return (400, ["error": refusal ?? "No such app."]) }
+        let folder = app.isPart ? app.dir.lastPathComponent + "/Assets/" : "Assets/"
         var name = (arguments["name"] as? String)?.trimmed ?? ""
         if !name.lowercased().hasSuffix(".png") { name += ".png" }
         guard name.count > 4, !name.contains("/"), !name.hasPrefix(".") else {
@@ -5834,13 +5841,13 @@ final class Store: ObservableObject {
             guard stillAsked() else {
                 return (409, ["error": "The request was stopped before the picture was ready, so it wasn't saved."])
             }
-            guard let url = artDestination(name, in: project) else {
-                return (400, ["error": "Assets/\(name) can't be written: Assets or the file leads outside the app's folder."])
+            guard let url = artDestination(name, in: app) else {
+                return (400, ["error": "\(folder)\(name) can't be written: Assets or the file leads outside the app's folder."])
             }
             try png.write(to: url, options: .atomic)
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
-            return (200, ["text": "Saved Assets/\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
+            return (200, ["text": "Saved \(folder)\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
                           "screenshots": [Previews.forAgent(url, in: project)?.path].compactMap { $0 }])
         } catch let failure as AppAI.Failure where failure.needs == .pictures {
             offerSetup(project, SetupOffer(capability: .pictures), because: because)
