@@ -31,8 +31,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Select Xcode
+        # The same Xcode as every pull request's build check (mac-build.yml): one version, in .github/xcode-version.
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.6.app
+          sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
           xcodebuild -version
 
       - name: Cache pi and llama.cpp downloads
