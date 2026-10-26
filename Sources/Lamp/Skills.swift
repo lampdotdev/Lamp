@@ -121,7 +121,7 @@ enum Skills {
     }
 
     /// What in an app's Swift shows it uses one of the blocks the building-blocks skill covers.
-    static let buildingBlocks = #"\b(LampNotifications|LampSchedule|LampText|LampFolderWatcher|LampFolders|LampHotKey|LampLoginItem|LampClipboardWatcher|LampPhotos|LampLocation|LampWeather|LampMusic|LampSpotlight|LampHome|LampDropZone)\b|\.lampDropFiles|\.lampBackground|\.lampSpotlightOpen"#
+    static let buildingBlocks = #"\b(LampNotifications|LampSchedule|LampText|LampFolderWatcher|LampFolders|LampHotKey|LampLoginItem|LampClipboardWatcher|LampPhotos|LampLocation|LampWeather|LampMusic|LampSpotlight|LampHome|LampRoku|LampDropZone)\b|\.lampDropFiles|\.lampBackground|\.lampSpotlightOpen"#
 
     /// What in an app's Swift shows it uses what the iphone-hardware skill covers: Lamp's blocks for motion and
     /// Health, or the frameworks the skill names for the camera, scanning, Face ID, Bluetooth, nearby phones, NFC and AR.

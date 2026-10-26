@@ -1,6 +1,6 @@
 ---
 name: building-blocks
-description: How to call LampSupport.swift's tested building blocks - notifications, schedules and work while the app is closed, text from documents and pictures, dropped files, folders, global shortcuts, the clipboard, login items, photos, location, weather, music, Spotlight and the home. Read before using any of them.
+description: How to call LampSupport.swift's tested building blocks - notifications, schedules and work while the app is closed, text from documents and pictures, dropped files, folders, global shortcuts, the clipboard, login items, photos, location, weather, music, Spotlight, the home and a Roku. Read before using any of them.
 ---
 
 # Lamp's building blocks
@@ -38,6 +38,17 @@ them. Use them instead of writing your own.
 - Spotlight: for the app's own things people would look for by name (notes, recipes, people, trips),
   `LampSpotlight.index(id:title:details:keywords:)` when one is added or changed and `LampSpotlight.remove(id)` when
   it's deleted, and `.lampSpotlightOpen { id in … }` on the view that shows them, to show the one tapped in Spotlight.
+
+- Roku: `LampRoku`, for an app on the Mac or a phone that controls the person's Roku (a remote of its own, buttons
+  that open Netflix or a show, what's playing, a Roku TV's power, volume and input), with nothing installed on the
+  Roku. An app that runs on the Roku itself is a Roku app instead. `await LampRoku.find()` (every Roku that answers,
+  each with `name`, `isTV` and `canBeControlled`), then `launch(named:)` or `launch(appID:contentID:mediaType:)` for a
+  deep link, `press(.home)` and the other keys, `type(_:)` into its on-screen keyboard, `activeApp()`, `playing()`,
+  `apps()`, and on a Roku TV `power(on:)`, `press(.volumeUp)` and `input(.hdmi1)`. The one setup is on the Roku:
+  Settings, System, Advanced system settings, Control by mobile apps, Network access set to Enabled
+  (`LampRoku.setUp` says it); show that when `canBeControlled` is false or a call says so, and never suggest
+  Permissive. The first `find()` makes the system ask about the local network, so give the person a way to look
+  again; remember the Roku they chose by its `id`, and offer a choice when more than one answers.
 
 ## On the Mac only
 

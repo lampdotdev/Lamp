@@ -163,6 +163,16 @@ hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and p
 the rest Edge's `Gamepad…` names), and `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
+**Controlling a Roku from another app** (`LampRoku`, in LampSupport.swift): a wish's Mac or iPhone app drives the
+person's Roku over ECP (port 8060) with nothing installed on it: find (SSDP, then the Rokus found before, then a sweep of
+the device's own /24, since an iPhone app can't send multicast without an entitlement Apple grants on request),
+device-info, the active app, the media player, the apps, launch with a deep link, keys, `Lit_` typing, and a Roku TV's
+power, volume and input. Its only setup is the Roku's Control by mobile apps set to Enabled (Limited, the default for
+newer Rokus, refuses key presses and launches); the block's errors and the building-blocks skill say so, and never
+suggest Permissive. A request for such an app names the Roku, so the naming call is told that a device's own kind is
+only for what runs on the device (`Suggestions.deviceKinds`, `seen`). The iPhone's local-network reason says it reaches
+devices as well as Lamp.
+
 ## Games
 
 A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, `GameKit`), never a device's: the naming

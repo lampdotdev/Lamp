@@ -210,14 +210,16 @@ enum AppName {
             + kinds.map { entry in
                 let what = "their \(entry.integration.name) (\(entry.integration.kind ?? "device") by \(entry.integration.maker))"
                 return "[\"\(entry.id)\"] for " + (entry.kind.purpose.map { "\($0) on \(what)" } ?? what)
-            }.joined(separator: ", ") + "."
+            }.joined(separator: ", ") + ". Only for what runs on the device itself: an app on a phone or this Mac that controls one "
+            + "(a remote, buttons that open its apps or shows) is answered by the rules above."
     }
 
     /// The person's devices Lamp found just now, each with what to answer for a wish that's for it, so "my TV" or
     /// "my Roku" is read as the device they have: a Roku isn't a Samsung or LG TV. A wish to run something on one Lamp
     /// can't put apps on yet is "other", which leaves the wish a draft for the agent to set the device up
     /// (`device_integration`) and make the app for it once it can, rather than starting it as something else; a wish
-    /// to control such a device (a remote for the speakers) is an app on this Mac like any other.
+    /// to control any device (a remote for the speakers, buttons that open the Roku's apps) is an app on this Mac or
+    /// a phone like any other.
     static func seen(_ devices: [Device]) -> String {
         let listed = devices.compactMap { device -> String? in
             guard let answer = answer(for: device) else { return nil }
@@ -232,9 +234,9 @@ enum AppName {
         guard !listed.isEmpty else { return "" }
         return "\n\nThe person's devices, found just now, with what to answer when the request is for one of them (by its name, "
             + "its maker, its model or what it is: \"my TV\" is the TV here). These answers come before the rules above. "
-            + "[\"other\"] is a device Lamp can't put apps on yet: answer it alone, with \"devices_by_user\" true, only when "
-            + "what's asked for runs on that device itself (a game or a channel on it); an app that plays to it, controls it or "
-            + "reads it doesn't run on it, and is answered by the rules above.\n"
+            + "Answer a device only when what's asked for runs on that device itself (a game or a channel on it); an app that "
+            + "plays to it, controls it or reads it doesn't run on it, and is answered by the rules above. [\"other\"] is a device "
+            + "Lamp can't put apps on yet: answer it alone, with \"devices_by_user\" true.\n"
             + listed.prefix(20).joined(separator: "\n")
     }
 
