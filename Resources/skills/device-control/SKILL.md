@@ -38,8 +38,9 @@ Say so plainly in a sentence instead of half-building it.
 - Reach only addresses that discovery found, or one the person typed.
 - A device that signs its own secure socket (an LG's 3001, a Samsung's 8002) is trusted for that address alone,
   never every certificate the app meets.
-- A key or token a device hands back after the person allows the app on its screen goes in `LampSecrets`, never in
-  UserDefaults, LampStore, a file or the code.
+- A token a device hands back after the person allows the app on its screen is kept with the device in LampStore:
+  it only lets an app on this network reach that one device, and the remote must work with Lamp closed, which
+  `LampSecrets` on a Mac doesn't. A sign-in to the maker's account is the person's: `LampSecrets`, never LampStore.
 - When the device asks the person on its own screen (Allow on a TV), the app says so while it waits, and what to do
   if they missed it.
 - Example devices for exploring with nothing found, clearly marked, sending nothing.
