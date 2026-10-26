@@ -596,7 +596,7 @@ enum Agent {
         static let macBlocks = """
         - LampSupport.swift has tested building blocks for common Mac jobs: notifications, schedules, text from \
         documents and pictures, dropped files, watched folders, shortcuts that work from any app, the clipboard, \
-        opening at login, photos, location, weather, music and Spotlight. Use them instead of writing your own, and \
+        opening at login, photos, location, weather, music, Spotlight and the person's Roku. Use them instead of writing your own, and \
         open the building-blocks skill before using one. Make the most of being on the Mac: local files, drag and \
         drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
         """
@@ -613,7 +613,7 @@ enum Agent {
         static let iPhoneBlocks = """
         - LampSupport.swift has tested building blocks for common jobs, the same ones the Mac apps made with Lamp \
         have where a phone has them: notifications, schedules and work while the app is closed, text from documents \
-        and pictures, dropped files, photos, location, weather, music, Spotlight and the home. Use them instead of \
+        and pictures, dropped files, photos, location, weather, music, Spotlight, the home and the person's Roku. Use them instead of \
         writing your own, and open the building-blocks skill before using one. Make the most of being on a phone: \
         the camera, photos, location, haptics, and being with the person wherever they are.
         """

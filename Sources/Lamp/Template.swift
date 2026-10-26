@@ -1606,7 +1606,7 @@ enum Template {
         ("NFCReaderUsageDescription", "{{NAME}} reads NFC tags."),
         ("NSSiriUsageDescription", "{{NAME}} works with Siri and Shortcuts."),
         ("NSNearbyInteractionUsageDescription", "{{NAME}} finds nearby devices."),
-        ("NSLocalNetworkUsageDescription", "{{NAME}} talks to Lamp on your Mac for its AI features."),
+        ("NSLocalNetworkUsageDescription", "{{NAME}} talks to Lamp on your Mac and to devices on your network."),
         ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
         ("NSHomeKitUsageDescription", "{{NAME}} reads and controls your home."),
     ]
@@ -10648,6 +10648,306 @@ enum Template {
             Song(id: item.id.rawValue, title: item.title, artist: item.artistName, album: item.albumTitle ?? "",
                  seconds: item.duration ?? 0, artworkURL: item.artwork?.url(width: 300, height: 300)?.absoluteString,
                  inLibrary: inLibrary ? true : nil)
+        }
+    }
+
+    // MARK: - Roku
+
+    /// A Roku on the person's network, driven the way Roku's own phone app drives it (its External Control
+    /// Protocol, on port 8060): nothing is installed on the Roku. It takes commands only once the person has set
+    /// Settings, System, Advanced system settings, Control by mobile apps, Network access to Enabled (a Roku
+    /// says Limited until then, which refuses them). Never suggest Permissive.
+    ///
+    ///     let rokus = await LampRoku.find()                         // every Roku that answers, by name
+    ///     guard let roku = rokus.first else { … }                   // say none was found, and how to set one up
+    ///     try await roku.launch(named: "Netflix")                    // by the name on its home screen
+    ///     try await roku.launch(appID: "837", contentID: "dQw4w9WgXcQ", mediaType: "movie")   // a deep link
+    ///     try await roku.press(.play)                                // .home, .select, .up, .back, .volumeUp …
+    ///     try await roku.type("star trek")                           // into the keyboard on its screen
+    ///     let open = try await roku.activeApp()                      // nil on the home screen
+    ///     let now = try await roku.playing()                         // state, position and duration
+    ///     try await roku.power(on: false)                            // Roku TVs only (roku.isTV)
+    ///     try await roku.input(.hdmi1)
+    struct LampRoku: Identifiable, Codable, Hashable {
+        var id: String          // its serial number
+        var name: String        // what the person called it ("Living Room")
+        var model: String
+        var address: String
+        var isTV: Bool
+        /// Control by mobile apps: "enabled", "limited", "disabled", or "" where the Roku doesn't say.
+        var control: String
+
+        /// Whether it takes key presses and launches from apps now.
+        var canBeControlled: Bool { control != "limited" && control != "disabled" }
+
+        struct App: Identifiable, Codable, Hashable {
+            var id: String
+            var name: String
+            var version: String
+        }
+
+        struct Playing: Codable, Hashable {
+            var state: String       // "play", "pause", "buffer", "stop", "close", "none"
+            var appID: String?
+            var position: Double?   // seconds
+            var duration: Double?
+        }
+
+        enum Key: String, CaseIterable {
+            case home = "Home", back = "Back", select = "Select", up = "Up", down = "Down", left = "Left", right = "Right"
+            case play = "Play", rewind = "Rev", fastForward = "Fwd", replay = "InstantReplay", info = "Info"
+            case search = "Search", enter = "Enter", backspace = "Backspace", findRemote = "FindRemote"
+            // A Roku TV's, and a player's that controls its TV.
+            case volumeUp = "VolumeUp", volumeDown = "VolumeDown", mute = "VolumeMute"
+            case powerOn = "PowerOn", powerOff = "PowerOff", channelUp = "ChannelUp", channelDown = "ChannelDown"
+        }
+
+        enum Input: String, CaseIterable {
+            case tuner = "InputTuner", hdmi1 = "InputHDMI1", hdmi2 = "InputHDMI2", hdmi3 = "InputHDMI3", hdmi4 = "InputHDMI4", av1 = "InputAV1"
+        }
+
+        struct Failure: LocalizedError {
+            let message: String
+            var errorDescription: String? { message }
+        }
+
+        /// What the person does once on the Roku for apps to control it.
+        static let setUp = "On the Roku, open Settings, then System, Advanced system settings, Control by mobile apps, and set Network access to Enabled."
+
+        // MARK: Finding
+
+        /// Every Roku that answers on this network, by name. It asks the way Roku's own app does (SSDP), then where
+        /// one was found before, and only then each address near this device's, since an iPhone app may not ask
+        /// the whole network at once. The first time, the system asks the person whether the app may use the local
+        /// network, and nothing answers until they allow it: offer to look again.
+        static func find(timeout: TimeInterval = 3) async -> [LampRoku] {
+            let answered = await ssdp(timeout: min(timeout, 2))
+            var found = await read(Array(Set(answered + remembered)), timeout: timeout)
+            // Where SSDP got no answer (an iPhone app can't send it), the Rokus found before are only a start: one added
+            // or moved since is found by the sweep.
+            if answered.isEmpty {
+                let more = await read(neighbours().filter { address in !found.contains { $0.address == address } }, timeout: 1.5)
+                found += more.filter { roku in !found.contains { $0.id == roku.id } }
+            }
+            if !found.isEmpty { UserDefaults.standard.set(found.map(\.address), forKey: rememberKey) }
+            return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+
+        /// The Roku at an address the person typed, read fresh.
+        static func at(_ address: String) async throws -> LampRoku {
+            let xml = try await request(address, "/query/device-info", method: "GET", timeout: 4)
+            guard let roku = roku(at: address, from: xml) else { throw Failure(message: "Nothing at \(address) answered as a Roku.") }
+            return roku
+        }
+
+        // MARK: Reading
+
+        /// Every field the Roku tells about itself ("software-version", "power-mode", "is-tv" …).
+        func info() async throws -> [String: String] {
+            let xml = try await Self.request(address, "/query/device-info", method: "GET")
+            var fields: [String: String] = [:]
+            for match in Self.matches(#"<([a-z0-9-]+)>([^<]*)</\1>"#, in: xml) { fields[match[0]] = Self.unescaped(match[1]) }
+            return fields
+        }
+
+        /// The apps on its home screen.
+        func apps() async throws -> [App] {
+            Self.apps(in: try await Self.request(address, "/query/apps", method: "GET"))
+        }
+
+        /// What's open on it: nil on the home screen.
+        func activeApp() async throws -> App? {
+            let xml = try await Self.request(address, "/query/active-app", method: "GET")
+            guard !xml.contains("type=\"home\"") else { return nil }
+            return Self.apps(in: xml).first { !$0.id.isEmpty }
+        }
+
+        /// What it's playing, if anything.
+        func playing() async throws -> Playing {
+            let xml = try await Self.request(address, "/query/media-player", method: "GET")
+            func seconds(_ tag: String) -> Double? {
+                Self.matches("<\(tag)>([0-9]+) ms</\(tag)>", in: xml).first.flatMap { Double($0[0]) }.map { $0 / 1000 }
+            }
+            let state = Self.matches(#"<player[^>]* state="([^"]*)""#, in: xml).first?[0] ?? "none"
+            let app = Self.matches(#"<plugin[^>]* id="([^"]*)""#, in: xml).first?[0]
+            return Playing(state: state, appID: app, position: seconds("position"), duration: seconds("duration"))
+        }
+
+        // MARK: Doing
+
+        /// Opens an app, and with a content id and media type ("movie", "episode", "series", "live", the app's own
+        /// words) goes straight to that show, where the app supports deep links.
+        func launch(appID: String, contentID: String? = nil, mediaType: String? = nil) async throws {
+            var query: [URLQueryItem] = []
+            if let contentID { query.append(URLQueryItem(name: "contentId", value: contentID)) }
+            if let mediaType { query.append(URLQueryItem(name: "mediaType", value: mediaType)) }
+            var parts = URLComponents()
+            parts.queryItems = query.isEmpty ? nil : query
+            let id = appID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? appID
+            // The Roku answers once the app has opened, which can take several seconds.
+            _ = try await Self.request(address, "/launch/\(id)" + (parts.percentEncodedQuery.map { "?" + $0 } ?? ""), method: "POST", timeout: 20)
+        }
+
+        /// Opens the app with this name on its home screen ("Netflix", "YouTube").
+        func launch(named name: String, contentID: String? = nil, mediaType: String? = nil) async throws {
+            let apps = try await apps()
+            let wanted = name.lowercased()
+            guard let app = apps.first(where: { $0.name.lowercased() == wanted }) ?? apps.first(where: { $0.name.lowercased().contains(wanted) }) else {
+                throw Failure(message: "\(self.name) has no app called \(name). Add it from the Roku's home screen first.")
+            }
+            try await launch(appID: app.id, contentID: contentID, mediaType: mediaType)
+        }
+
+        func press(_ key: Key) async throws {
+            try await send("/keypress/\(key.rawValue)")
+        }
+
+        /// Types into the keyboard on its screen, a character at a time, as its remote's app does.
+        func type(_ text: String) async throws {
+            for character in text {
+                let letter = String(character).addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+                try await send("/keypress/Lit_\(letter)")
+            }
+        }
+
+        /// Turns a Roku TV on or off. A Roku player has no power of its own to switch.
+        func power(on: Bool) async throws {
+            guard isTV else { throw Failure(message: "\(name) is a Roku player, not a Roku TV, so it can't be turned on or off.") }
+            try await press(on ? .powerOn : .powerOff)
+        }
+
+        /// Switches a Roku TV to one of its inputs.
+        func input(_ input: Input) async throws {
+            guard isTV else { throw Failure(message: "\(name) is a Roku player, not a Roku TV, so it has no inputs.") }
+            try await send("/keypress/\(input.rawValue)")
+        }
+
+        // MARK: Talking to it
+
+        private func send(_ path: String) async throws {
+            _ = try await Self.request(address, path, method: "POST")
+        }
+
+        private static func request(_ address: String, _ path: String, method: String, timeout: TimeInterval = 5) async throws -> String {
+            guard let url = URL(string: "http://\(address):8060\(path)") else { throw Failure(message: "\(address) isn't a Roku's address.") }
+            var request = URLRequest(url: url, timeoutInterval: timeout)
+            request.httpMethod = method
+            if method == "POST" { request.httpBody = Data() }
+            let data: Data
+            let response: URLResponse
+            do { (data, response) = try await URLSession.shared.data(for: request) }
+            catch { throw Failure(message: "The Roku at \(address) didn't answer. Check that it's on and on the same Wi-Fi.") }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 401 || status == 403 { throw Failure(message: "The Roku doesn't take commands from apps yet. " + setUp) }
+            guard (200..<300).contains(status) else { throw Failure(message: "The Roku answered \(status) to \(path).") }
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        private static let rememberKey = "lamp.roku.addresses"
+        private static var remembered: [String] { UserDefaults.standard.stringArray(forKey: rememberKey) ?? [] }
+
+        private static func read(_ addresses: [String], timeout: TimeInterval) async -> [LampRoku] {
+            var found: [LampRoku] = []
+            // A few dozen at a time: a sweep of a whole home network is 254 addresses.
+            for batch in stride(from: 0, to: addresses.count, by: 48).map({ Array(addresses[$0..<min($0 + 48, addresses.count)]) }) {
+                await withTaskGroup(of: LampRoku?.self) { group in
+                    for address in batch {
+                        group.addTask { (try? await request(address, "/query/device-info", method: "GET", timeout: timeout)).flatMap { roku(at: address, from: $0) } }
+                    }
+                    for await roku in group { if let roku, !found.contains(where: { $0.id == roku.id }) { found.append(roku) } }
+                }
+            }
+            return found
+        }
+
+        private static func roku(at address: String, from xml: String) -> LampRoku? {
+            func field(_ tag: String) -> String { matches("<\(tag)>([^<]*)</\(tag)>", in: xml).first.map { unescaped($0[0]) } ?? "" }
+            let serial = field("serial-number")
+            guard !serial.isEmpty else { return nil }
+            let model = field("friendly-model-name").isEmpty ? field("model-name") : field("friendly-model-name")
+            let name = field("user-device-name").isEmpty ? model : field("user-device-name")
+            // ecp-setting-mode isn't in Roku's documentation, but Rokus report it.
+            return LampRoku(id: serial, name: name, model: model, address: address, isTV: field("is-tv") == "true", control: field("ecp-setting-mode"))
+        }
+
+        private static func apps(in xml: String) -> [App] {
+            matches(#"<app ([^>]*)>([^<]*)</app>"#, in: xml).map { match in
+                let attributes = Dictionary(matches(#"([a-z-]+)="([^"]*)""#, in: match[0]).map { ($0[0], $0[1]) }) { first, _ in first }
+                return App(id: attributes["id"] ?? "", name: unescaped(match[1]), version: attributes["version"] ?? "")
+            }
+        }
+
+        private static func matches(_ pattern: String, in text: String) -> [[String]] {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+            return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { match in
+                (1..<match.numberOfRanges).map { Range(match.range(at: $0), in: text).map { String(text[$0]) } ?? "" }
+            }
+        }
+
+        private static func unescaped(_ text: String) -> String {
+            text.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&apos;", with: "'")
+                .replacingOccurrences(of: "&amp;", with: "&")
+        }
+
+        /// The addresses that answered an SSDP search for Rokus. An iPhone app may not send it without an entitlement
+        /// Apple grants on request; then nothing answers, and the sweep finds them instead.
+        private static func ssdp(timeout: TimeInterval) async -> [String] {
+            await Task.detached { () -> [String] in
+                let socketID = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+                guard socketID >= 0 else { return [] }
+                defer { close(socketID) }
+                var wait = timeval(tv_sec: 0, tv_usec: 250_000)
+                setsockopt(socketID, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+                var to = sockaddr_in()
+                to.sin_family = sa_family_t(AF_INET)
+                to.sin_port = in_port_t(1900).bigEndian
+                to.sin_addr.s_addr = inet_addr("239.255.255.250")
+                let search = Array("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nST: roku:ecp\r\nMX: 1\r\n\r\n".utf8)
+                let sent = withUnsafePointer(to: &to) { pointer in
+                    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(socketID, search, search.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+                }
+                guard sent > 0 else { return [] }
+                var found: [String] = []
+                var buffer = [UInt8](repeating: 0, count: 2048)
+                let end = Date().addingTimeInterval(timeout)
+                while Date() < end {
+                    let count = recv(socketID, &buffer, buffer.count, 0)
+                    guard count > 0 else { continue }
+                    let answer = String(decoding: buffer[0..<count], as: UTF8.self)
+                    guard answer.lowercased().contains("roku:ecp"),
+                          let line = answer.split(whereSeparator: \.isNewline).first(where: { $0.lowercased().hasPrefix("location:") }),
+                          let host = URL(string: line.dropFirst("location:".count).trimmingCharacters(in: .whitespaces))?.host,
+                          !found.contains(host) else { continue }
+                    found.append(host)
+                }
+                return found
+            }.value
+        }
+
+        /// The other addresses of this device's home network (its /24), for the sweep.
+        private static func neighbours() -> [String] {
+            var list: UnsafeMutablePointer<ifaddrs>?
+            guard getifaddrs(&list) == 0, let first = list else { return [] }
+            defer { freeifaddrs(list) }
+            var own: Set<UInt32> = []
+            for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+                let entry = pointer.pointee
+                guard let address = entry.ifa_addr, address.pointee.sa_family == sa_family_t(AF_INET),
+                      Int32(entry.ifa_flags) & IFF_UP != 0, Int32(entry.ifa_flags) & IFF_LOOPBACK == 0 else { continue }
+                let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+                // Only a home network's own addresses: 10/8, 172.16/12 and 192.168/16.
+                if ip >> 24 == 10 || ip >> 20 == 0xAC1 || ip >> 16 == 0xC0A8 { own.insert(ip) }
+            }
+            var hosts: [String] = []
+            for ip in own {
+                for last in UInt32(1)...254 where ip & 0xFFFF_FF00 | last != ip {
+                    let host = ip & 0xFFFF_FF00 | last
+                    let text = "\(host >> 24).\(host >> 16 & 0xFF).\(host >> 8 & 0xFF).\(host & 0xFF)"
+                    if !hosts.contains(text) { hosts.append(text) }
+                }
+            }
+            return hosts
         }
     }
 
