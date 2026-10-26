@@ -347,15 +347,39 @@ enum DeviceProbe {
     }
 
     /// The same search, and whether macOS refused it: Lamp isn't allowed on the local network (Privacy & Security →
-    /// Local Network), or hasn't been answered yet, and a refused send fails with "no route to host".
+    /// Local Network), or hasn't been answered yet. A refused search only hears nothing, so a look that heard nothing
+    /// asks Network.framework why (`localNetworkDenied`).
     static func search(_ target: String, seconds: Double) async -> (answers: [SSDPAnswer], refused: Bool) {
-        await Task.detached { search(target, seconds: seconds) }.value
+        async let denied = localNetworkDenied()
+        let answers = await Task.detached { search(target, seconds: seconds) }.value
+        return (answers, await denied && answers.isEmpty)
     }
 
-    private static func search(_ target: String, seconds: Double) -> (answers: [SSDPAnswer], refused: Bool) {
-        guard !target.contains(where: { $0.isNewline }) else { return ([], false) }
+    /// Whether macOS refuses Lamp the local network now. A send it refuses still succeeds where Lamp makes it, so a
+    /// connection to the SSDP group is asked why its path can't be used, and closed at once.
+    static func localNetworkDenied() async -> Bool {
+        let connection = NWConnection(host: "239.255.255.250", port: 1900, using: .udp)
+        return await withCheckedContinuation { continuation in
+            let once = Once()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready, .waiting, .failed:
+                    guard once.take() else { return }
+                    let denied = connection.currentPath?.unsatisfiedReason == .localNetworkDenied
+                    connection.cancel()
+                    continuation.resume(returning: denied)
+                default: break
+                }
+            }
+            connection.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if once.take() { connection.cancel(); continuation.resume(returning: false) } }
+        }
+    }
+
+    private static func search(_ target: String, seconds: Double) -> [SSDPAnswer] {
+        guard !target.contains(where: { $0.isNewline }) else { return [] }
         let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { return ([], false) }
+        guard fd >= 0 else { return [] }
         defer { close(fd) }
         var wait = timeval(tv_sec: 0, tv_usec: 250_000)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
@@ -366,14 +390,12 @@ enum DeviceProbe {
         address.sin_port = UInt16(1900).bigEndian
         address.sin_addr.s_addr = inet_addr("239.255.255.250")
         let message = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: \(target)\r\n\r\n"
-        var refused = false
         for _ in 0..<2 {
-            let sent = message.withCString { text in
+            _ = message.withCString { text in
                 withUnsafePointer(to: &address) {
                     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
                 }
             }
-            if sent < 0, errno == EHOSTUNREACH { refused = true }
         }
         var answers: [SSDPAnswer] = []
         let end = Date().addingTimeInterval(seconds)
@@ -398,7 +420,7 @@ enum DeviceProbe {
             let answer = answer(String(decoding: buffer[0..<got], as: UTF8.self), from: String(cString: inet_ntoa(from.sin_addr)))
             if !answers.contains(answer) { answers.append(answer) }
         }
-        return (answers, refused && answers.isEmpty)
+        return answers
     }
 
     /// One SSDP answer's headers, as the device at `address` sent them.

@@ -126,8 +126,9 @@ device, a game given the Xbox, `device_integration`; a wish named for a TV or a 
 then `Store.lookOnNetworkForWish`, which names the wish again when the look found one Lamp didn't know); and the first
 request to a wish that opens on a TV or a device, whose device line says whether Lamp finds it. Never as Lamp opens or as
 a wish starts: those looks (`refreshDevices(network: false)`) list the phones and Android devices and leave the TVs and
-devices as the last look on the network left them, or as kept. A look macOS refused (`DeviceProbe.search`: a send that
-fails with no route to host, and nothing answered) sets `Store.localNetworkRefused`, and where a look was asked for (Your
+devices as the last look on the network left them, or as kept. A look macOS refused (`DeviceProbe.search`: nothing
+answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
+succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your
 Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security → Local Network.
 
 A look for devices (`Store.refreshDevices`) is one at a time: one asked for while another runs is made once it ends
