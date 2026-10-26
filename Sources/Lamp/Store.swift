@@ -9769,11 +9769,22 @@ final class Store: ObservableObject {
     /// building blocks: kept in step with the list of apps (Try On, deletion, rename, reload). A TV app's phone page has a
     /// port of its own (`PhoneSites`), opened and closed here too, with the TV preview.
     func syncLocalNetwork() {
+        // A device's app only once it's on a device, or going there now: one made and never put on one would have macOS
+        // ask about the local network as Lamp opens, for nothing.
         gateway?.setLocalNetwork(everyApp.contains {
-            (($0.hasIOS || $0.platform.reaches(.android) || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
+            (($0.hasIOS || $0.platform.reaches(.android) || $0.onTV) && $0.device != nil)
+                || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty && (puttingOnDevices.contains($0.id) || DeviceApps.wentOnADevice($0)))
         })
         PhoneSites.sync(projects)
         WishRooms.sync(wishes.map { ($0, apps(of: $0)) })
+    }
+
+    /// The device apps being put on a device now, which Lamp listens on the network for (`syncLocalNetwork`).
+    private var puttingOnDevices: Set<String> = []
+
+    func puttingOnDevice(_ id: String, _ going: Bool) {
+        if going { puttingOnDevices.insert(id) } else { puttingOnDevices.remove(id) }
+        syncLocalNetwork()
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp

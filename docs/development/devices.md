@@ -114,8 +114,9 @@ packaged, the Xbox's MSIX payload, a Roku's zip made again), never into the app'
 package: Lamp opens a claim for the app just before it puts it on a device (`DeviceSupport.Claims`, from that device's
 address, for half an hour), and the app, finding no token kept, asks `/app/claim` for it and keeps it on the device. The
 TV preview needs neither: LampAI's calls reach Lamp through the web view (`TVPreview`'s `lampGateway` handler), as the
-app. The gateway listens on the network while a TV app is set to open on a TV or a device app takes the building blocks
-(`Store.syncLocalNetwork`); from the network it answers a browser's preflight and lets the device's page read the answer
+app. The gateway listens on the network while a TV app is set to open on a TV, or a device app that takes the building
+blocks is being put on a device or has been (`Store.syncLocalNetwork`, `DeviceApps.wentOnADevice`): listening is what
+has macOS ask about the local network, so an app made for a device and never put on one doesn't; from the network it answers a browser's preflight and lets the device's page read the answer
 (only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
 name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
 

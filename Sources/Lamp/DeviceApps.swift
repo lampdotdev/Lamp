@@ -235,10 +235,13 @@ enum DeviceApps {
             log?.write(Data((line + "\n").utf8))
         })
         let run = Run(device: device)
-        // The app opened by this install asks for its token, which isn't in its package.
+        // The app opened by this install asks for its token, which isn't in its package, over the network: Lamp listens
+        // there from now on, and after, for as long as the app is on a device (`wentOnADevice`).
         if !DeviceSupport.libraries(for: project).isEmpty, let address = device.address {
+            await MainActor.run { Store.shared.puttingOnDevice(project.id, true) }
             DeviceSupport.Claims.shared.open(project.id, from: address)
         }
+        defer { Task { @MainActor in Store.shared.puttingOnDevice(project.id, false) } }
         // A game's or a screen's page of a wish asks for its wish's key too, as a TV app's does: open from minutes before
         // the upload, and again once it's open, since an Xbox's install can take longer than that.
         let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.talksToOtherApps(project) ? device.address : nil
@@ -372,6 +375,13 @@ enum DeviceApps {
     /// Where Lamp notes which app it last put on a device: a Roku has one developer channel, which each install replaces.
     private static func lastOnDevice(_ id: String) -> URL {
         Edition.supportFolder.appendingPathComponent("Device Builds").appendingPathComponent("last-\(MSIX.publisherID(id)).txt")
+    }
+
+    /// Whether Lamp has put the app on a device, by the record each install leaves: an app made for a device but never
+    /// put on one doesn't need Lamp listening on the network for it.
+    static func wentOnADevice(_ project: LampProject) -> Bool {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: buildFolder(for: project).path)) ?? []
+        return names.contains { $0.hasPrefix("installed-") && $0.hasSuffix(".device") }
     }
 
     /// Where Lamp notes which package of the app is on a device (the identity, with the device's id beside it), and
