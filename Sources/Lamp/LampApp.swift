@@ -79,11 +79,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.previewClosed = note.object is TVPreview.Window
         }
         MainActor.assumeIsolated {
+            // Opened at login to keep the person's phone apps opening (`PhoneRenewals.staysOpen`): Lamp works out of
+            // sight, its window put away as it appears, and the Dock icon brings it back.
+            if Self.launchedAtLogin, PhoneRenewals.staysOpen, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             Notifier.shared.start()
             MagicPanel.start()
             // Once the apps are read: an app whose sidebar is open finds Lamp again.
             DispatchQueue.main.async { SidebarServer.shared.start() }
         }
+    }
+
+    /// Whether macOS opened Lamp as a login item: the open-application event it launches Lamp with says so, read while
+    /// launch is under way.
+    private static var launchedAtLogin: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else { return false }
+        // keyAELaunchedAsLoginItem, 'lgit', which Swift's Carbon headers don't bring.
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == 0x6C67_6974
     }
 
     private let launched = Date()

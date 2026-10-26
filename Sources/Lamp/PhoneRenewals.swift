@@ -47,8 +47,9 @@ enum PhoneRenewals {
 
     // MARK: Running unattended
 
-    /// The person chose to keep their phone apps opening: Lamp opens when they log in and keeps running with its window
-    /// closed while some app of theirs is on a phone, so renewals happen without them. Off until they choose it.
+    /// The person chose to keep their phone apps opening: Lamp opens when they log in, without its window (`AppDelegate`),
+    /// and keeps running with its window closed while some app of theirs is on a phone, so renewals happen without them.
+    /// Off until they choose it.
     static let staysOpenKey = "keepPhoneAppsOpening"
     static var staysOpen: Bool { UserDefaults.standard.bool(forKey: staysOpenKey) }
 
