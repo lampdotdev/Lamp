@@ -111,9 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Closing Lamp's window quits it, except while an app's sidebar is open: Lamp is still in use there. A preview
     /// isn't Lamp's window: with the desk closed it's the last one AppKit counts (a chat is a panel, which it doesn't),
-    /// and stopping the app it shows must leave Lamp running.
+    /// and stopping the app it shows must leave Lamp running. Nor while the person chose to keep their phone apps
+    /// opening and one is on a phone: Lamp stays to put it back before it stops opening (`PhoneRenewals`).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        MainActor.assumeIsolated { !previewClosed && !SidebarServer.shared.isInUse }
+        MainActor.assumeIsolated {
+            !previewClosed && !SidebarServer.shared.isInUse && !(PhoneRenewals.staysOpen && PhoneRenewals.anyOnPhones(Store.shared.projects))
+        }
     }
 
     /// Quitting mid-turn would leave the agent and its build running on their own, and the gateway the

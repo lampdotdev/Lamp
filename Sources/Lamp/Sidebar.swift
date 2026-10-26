@@ -777,6 +777,13 @@ final class SidebarServer {
                     card.button = "See What's Needed…"
                     card.disabled = IPhoneSetupLine.isOff(for: project, wanted: kind, part: part)
                     out.append(card)
+                case .keepOpening:
+                    let on = PhoneRenewals.staysOpen
+                    var card = SidebarLine(id: line.id, kind: .action, text: KeepOpeningLine.text(project.name, on: on), gap: gap)
+                    card.symbol = KeepOpeningLine.symbol
+                    card.button = on ? nil : KeepOpeningLine.button
+                    card.prominent = true
+                    out.append(card)
                 case .deviceStep:
                     // The step's card has a field and a sign-in, which happen in Lamp's window.
                     let step = DeviceStepLine.text(line.text)
@@ -1031,6 +1038,10 @@ final class SidebarServer {
             if line.kind == .error, let udid = line.retryPhone {
                 Task { await store.retryPhone(project, udid: udid) }
                 return
+            }
+            if line.kind == .keepOpening {
+                store.keepPhoneAppsOpening(true, for: project)
+                return pushNow()
             }
             // A device's setup has a window of its own, and so has a kind's (the iPhone's tools, Android's).
             if line.kind == .deviceStep, let device = store.devices.first(where: { $0.id == line.text && $0.integration != nil }) {

@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 
 /// Putting the person's iPhone apps back on their phones before Apple lets them stop opening. A profile made for a free
 /// Apple account's team lasts seven days (a paid team's, a year); after that the app won't open until it's signed again
@@ -44,8 +45,34 @@ enum PhoneRenewals {
     /// Whether the person is to be told the app on their phone stopped opening: it ran out and hasn't been told yet.
     static func shouldTell(_ record: Record, now: Date) -> Bool { record.expires < now && record.told != record.expires }
 
+    // MARK: Running unattended
+
+    /// The person chose to keep their phone apps opening: Lamp opens when they log in and keeps running with its window
+    /// closed while some app of theirs is on a phone, so renewals happen without them. Off until they choose it.
+    static let staysOpenKey = "keepPhoneAppsOpening"
+    static var staysOpen: Bool { UserDefaults.standard.bool(forKey: staysOpenKey) }
+
+    /// Turns it on or off: Lamp registered with macOS to open at login, or not. Returns what went wrong, in words, or nil.
+    /// macOS may want the person's approval in System Settings → Login Items, which is opened for them then.
+    @discardableResult static func setStaysOpen(_ on: Bool) -> String? {
+        do {
+            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+        } catch where on {
+            return "macOS didn't let Lamp open when you log in: \(error.localizedDescription)"
+        } catch {}
+        if on, SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+        UserDefaults.standard.set(on, forKey: staysOpenKey)
+        return nil
+    }
+
+    /// Whether any of these apps is on a phone, kept for renewal.
+    static func anyOnPhones(_ projects: [LampProject]) -> Bool { projects.contains { record(for: $0) != nil } }
+
     /// Whether `project`'s copy on its phone has stopped opening.
     static func hasExpired(_ project: LampProject, now: Date = Date()) -> Bool { (record(for: project)?.expires).map { $0 < now } ?? false }
+
+    /// A free account's profile, which runs out in days, not a paid one's, which lasts a year.
+    static func isShortLived(_ record: Record, now: Date = Date()) -> Bool { record.expires.timeIntervalSince(now) < 30 * 24 * 3600 }
 
     // MARK: Kept on disk
 
@@ -79,4 +106,15 @@ enum PhoneRenewals {
     static func forget(_ project: LampProject) {
         try? FileManager.default.removeItem(at: folder(for: project))
     }
+}
+
+/// The chat's card offering to keep an app opening on the person's phone: a plain action card, its button gone once
+/// the person has chosen it (here or in Settings).
+enum KeepOpeningLine {
+    static func text(_ name: String, on: Bool) -> String {
+        on ? "Lamp opens when you log in and puts \(name) back on your phone before it stops opening."
+            : "Apple lets apps signed with a free account open for seven days. Lamp can put \(name) back on your phone before then if it opens when you log in and keeps running with its window closed."
+    }
+    static let button = "Keep It Opening"
+    static let symbol = "clock.arrow.circlepath"
 }

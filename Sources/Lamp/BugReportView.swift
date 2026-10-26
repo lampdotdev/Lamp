@@ -108,7 +108,7 @@ struct BugReportView: View {
             case .detail: .detail
             case .tool: .tool
             case .summary: .summary
-            case .needsKey, .offer: .setupOffered
+            case .needsKey, .offer, .keepOpening: .setupOffered
             }
         }
         let os = ProcessInfo.processInfo.operatingSystemVersion
