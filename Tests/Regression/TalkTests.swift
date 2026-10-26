@@ -71,6 +71,10 @@ final class TalkTests: XCTestCase {
         DevicePermissions.asking(about: "Living Room TV", at: "10.0.0.120", for: wish)
         DevicePermissions.answer(DevicePermissions.allowAlways("Living Room TV"), about: "Living Room TV", for: wish)
         XCTAssertEqual(DevicePermissions.allowedAddresses(wish), ["10.0.0.120"])
+        // Asked again at a new address and turned down: the new address isn't allowed.
+        DevicePermissions.asking(about: "Living Room TV", at: "10.0.0.121", for: wish)
+        DevicePermissions.answer(DevicePermissions.notNow, about: "Living Room TV", for: wish)
+        XCTAssertEqual(DevicePermissions.allowedAddresses(wish), ["10.0.0.120"])
         XCTAssertEqual(DevicePermissions.devicesChanged(by: "curl -X POST http://10.0.0.120:8060/keypress/Home && curl -d x http://10.0.0.99:1400/x"),
                        ["10.0.0.120", "10.0.0.99"])
     }

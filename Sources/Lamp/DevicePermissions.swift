@@ -11,6 +11,8 @@ enum DevicePermissions {
         /// Each device's address (or `.local` name), from the card that asked about it: what a command may reach once
         /// the device is allowed.
         var addresses: [String: String] = [:]
+        /// The address a card that's up was asked for, kept apart until the person allows it.
+        var asked: [String: String] = [:]
     }
 
     static let allowOnce = "Allow once"
@@ -48,15 +50,20 @@ enum DevicePermissions {
     /// The card is up: the device's address is noted, to be allowed with it.
     static func asking(about device: String, at address: String, for wish: LampProject) {
         var kept = kept(wish)
-        kept.addresses[device] = address
+        kept.asked[device] = address
         save(kept, for: wish)
     }
 
     /// The person's answer to the card, as the option they chose.
     static func answer(_ choice: String, about device: String, for wish: LampProject) {
         var kept = kept(wish)
-        if choice == allowOnce { kept.once = device }
-        if choice == allowAlways(device), !kept.always.contains(device) { kept.always.append(device) }
+        let address = kept.asked.removeValue(forKey: device)
+        if choice == allowOnce || choice == allowAlways(device) {
+            // The address the card was for, now allowed: an earlier one for the same name is the person's no longer.
+            kept.addresses[device] = address
+            if choice == allowOnce { kept.once = device }
+            if choice == allowAlways(device), !kept.always.contains(device) { kept.always.append(device) }
+        }
         save(kept, for: wish)
     }
 
