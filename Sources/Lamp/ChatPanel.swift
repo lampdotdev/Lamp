@@ -117,6 +117,9 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         window.minSize = NSSize(width: Self.narrowest, height: 360)
         window.maxSize = NSSize(width: Self.aloneWidest, height: .greatestFiniteMagnitude)
         window.title = Store.shared.projects.first { $0.id == id }?.title ?? "Wish"
+        // AppKit lists its windows in the Window menu and the Dock icon's menu, but never a panel on its own: the chat
+        // is put there, so one behind other windows can be found again. Closing it takes it out.
+        NSApp.addWindowsItem(window, title: window.title, filename: false)
         window.delegate = self
         window.contentView = NSHostingView(rootView: PanelContent(link: link).environmentObject(Store.shared))
         // Following what it's beside: Lamp's own windows tell it when they move, other apps' don't, so it looks.
@@ -191,7 +194,10 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         missing = project == nil && Store.shared.project(following: id) == nil ? missing + 1 : 0
         if missing > 3 { return close() }
         // Its name in the Window menu and Mission Control follows the wish's.
-        if let title = project?.title, window.title != title { window.title = title }
+        if let title = project?.title, window.title != title {
+            window.title = title
+            NSApp.changeWindowsItem(window, title: title, filename: false)
+        }
         // Its Mac app opened (Play, a reopen for a change, the person opening it): the chat goes beside it, in one place.
         let open = Store.shared.openOnMac.contains(id)
         if let project, open, openOnMac == false {
