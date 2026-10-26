@@ -246,7 +246,7 @@ enum AppName {
     static func answer(for device: Device) -> String? {
         switch device.kind {
         case .mac, .androidEmulator, .iphone, .ipad, .watch: return nil
-        case .android: return "android"
+        case .android: return device.features.contains("tv") ? "android-tv" : "android"
         case .samsungTV, .lgTV: return "tv"
         case .other:
             guard let id = device.integration, DeviceApps.makesApps(id) else { return "other" }

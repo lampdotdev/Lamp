@@ -63,3 +63,18 @@ files bring in beyond Lamp's catalogue. Converting to or from Android is a rewri
 language: `convert` puts the new kind's scaffold beside the old code and tells the agent to write the app again and
 delete the rest.
 
+**Android TV** (`Platform.androidTV`, "android-tv", Targets/AndroidTVTarget.swift) is an Android app made for a Google
+TV, Android TV or Fire TV: the same Gradle project and building blocks, with a mark of its own (`.lamp-android-tv`,
+`recipe.refines` Android), a TV's manifest (the leanback launcher, no touch screen required, a banner) and Compose for
+TV (`androidx.tv:tv-material`, in Lamp's catalogue), and rules for the remote and the room (`Rules.androidTVDesign`,
+`androidTVTry`) in place of the phone's design skill. The banner (`lamp_banner.png`, 320x180) is drawn by Lamp from the
+app's icon before every build, the tile alone until there is one (`writeAndroidTVOwnedFiles`, `DeviceSupport.iconPNG`).
+The naming call reads a device that says it's a TV (`ro.build.characteristics` has "tv": `Device.from(adb:)` gives it
+the "tv" feature) as "android-tv". It opens in Lamp's TV emulator (`Emulator.Kind.tv`, "Lamp TV", a 1080p TV made from
+the Android TV system image the first time one is wanted: `Emulator.prepareTV`), which takes Lamp's emulator ports from
+the phone (closed first) and gives them back the same way: `Target.androidEmulator` says which. `use_app` presses the
+remote's keys (select, menu and play beside the arrows, back and home). A TV has no cable to the Mac, so Try On's
+Connect Over Wi‑Fi… (`AndroidWiFi`) pairs and connects adb over the network: Android 11 and later's wireless debugging,
+found by adb's own search (`Adb.networkServices`, `adb mdns services`), pairs with the code the TV shows (`Adb.pair`,
+the code on adb's input) and connects on the port it offers; a Fire TV or an older device connects on 5555 and asks on
+its screen to allow this Mac. Phones can connect the same way. Android TV apps can't be shared as a file yet.

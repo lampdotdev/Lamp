@@ -66,7 +66,8 @@ struct TryOnMenu: Equatable {
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
         }
         if places.contains(.android) {
-            var items = [Item(id: "emulator", title: AndroidTools.avdName, symbol: "smartphone", checked: project.onAndroid && project.device == nil)]
+            let tv = project.platform.target.androidEmulator == .tv
+            var items = [Item(id: "emulator", title: tv ? AndroidTools.tvAVDName : AndroidTools.avdName, symbol: tv ? "tv" : "smartphone", checked: project.onAndroid && project.device == nil)]
             items += store.devices.filter { $0.kind == .android }.map { device in
                 Item(id: "android:\(device.udid)", title: "\(device.name)\(step(device))", symbol: "smartphone",
                      checked: project.onAndroid && project.device == device.udid)
@@ -139,13 +140,15 @@ extension TryOnMenu {
             if !setups.isEmpty { sections.append(Section(title: nil, items: setups)) }
         } else if project.onAndroid {
             let devices = store.devices.filter { $0.kind == .android }
-            var items = [Item(id: "emulator", title: AndroidTools.avdName, symbol: "smartphone", checked: project.device == nil)]
+            let tv = project.platform.target.androidEmulator == .tv
+            var items = [Item(id: "emulator", title: tv ? AndroidTools.tvAVDName : AndroidTools.avdName, symbol: tv ? "tv" : "smartphone", checked: project.device == nil)]
             items += devices.map { Item(id: "android:\($0.udid)", title: "\($0.name)\(step($0))", symbol: "smartphone", checked: project.device == $0.udid) }
             if let chosen = project.device, !devices.contains(where: { $0.udid == chosen }) {
                 items.append(Item(id: "android:\(chosen)", title: "Chosen device (not connected)", symbol: "smartphone", checked: true))
             }
             sections.append(Section(title: "Android", items: items))
-            sections.append(Section(title: nil, items: [Item(id: "check:android", title: "Check Android Setup…", symbol: "checklist")]))
+            sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi"),
+                                                        Item(id: "check:android", title: "Check Android Setup…", symbol: "checklist")]))
         } else {
             if project.platform.choosesPlace, project.hasMac {
                 // An app for both: this Mac is a place to open it too, beside the simulators and phones.
@@ -220,6 +223,9 @@ extension Store {
             return
         case "tvsetup":
             TVSetup.shared.show(value)
+            return
+        case "wifi":
+            AndroidWiFi.shared.show()
             return
         case "check":
             NSApp.activate()

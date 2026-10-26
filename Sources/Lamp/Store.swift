@@ -7800,8 +7800,10 @@ final class Store: ObservableObject {
                 serial = chosen
                 androidDensities[project.id] = found.density
             } else {
-                note("Starting the Android emulator…", for: project)
-                serial = try await Emulator.start(show: inFront)
+                let kind = project.platform.target.androidEmulator
+                if kind == .tv { try await Emulator.prepareTV { [weak self] in self?.note($0, for: project) } }
+                note(kind == .tv ? "Starting the Android TV emulator…" : "Starting the Android emulator…", for: project)
+                serial = try await Emulator.start(show: inFront, kind: kind)
                 if androidDensities[project.id] == nil {
                     androidDensities[project.id] = (await Adb.getprop(on: serial))["density"].flatMap { Int($0) }
                 }
