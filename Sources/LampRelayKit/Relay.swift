@@ -498,6 +498,16 @@ public final class Relay: @unchecked Sendable {
             for (other, each) in room.members where other != id && each.isFor(to, id: other) && each.peer.pendingText <= Self.hostBehind { each.send(said) }
             return
         }
+        // The app's shared collections (`LampStore.shared`), for one copy (or each copy of one app) that speaks 5: passed on
+        // as they are, since each copy keeps and merges its own.
+        if kind == "store", member.rate.allowed(member.peer), let to = message["to"] as? String {
+            var out = message
+            out["to"] = nil
+            out["from"] = id
+            let said = Self.json(out)
+            for (other, each) in room.members where other != id && each.wire >= 5 && each.isFor(to, id: other) && each.peer.pendingText <= Self.hostBehind { each.send(said) }
+            return
+        }
         if kind == "pad" || kind.hasPrefix("file") { return fileOrPad(room, id: id, member: member, kind: kind, message: message) }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String

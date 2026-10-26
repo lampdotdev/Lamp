@@ -1153,9 +1153,9 @@ extension TVTemplate {
           'use strict';
           var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
           // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-          // 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices; an app from before says
-          // none, which counts as 1.
-          var WIRE = 4;
+          // 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
+          // (LampStore.shared); an app from before says none, which counts as 1.
+          var WIRE = 5;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
@@ -1224,11 +1224,17 @@ extension TVTemplate {
         /*LAMP_FILES*/
           var files = lampFiles(function (route, file) {
             var ch = coming, key = ch.indexOf('pad') === 0 ? padKey(route.peer, ch.slice(4)) : null;
+            // A shared file's bytes (LampStore.sharedFiles), for the store rather than the app's onFile.
+            if (ch.indexOf('store:') === 0) {
+              var name = ch.slice(6);
+              file.done.then(function (buffer) { sharedFileArrived(name, file.name, new Uint8Array(buffer), route.peer); }, function () {});
+            }
             // A file that stops coming ends, as one that stops going does.
             var watch = setTimeout(stalled, 20000);
             function stalled() { file.cancel(); }
             file.onProgress(function () { clearTimeout(watch); watch = setTimeout(stalled, 20000); });
             file.done.then(function () { clearTimeout(watch); }, function () { clearTimeout(watch); });
+            if (ch.indexOf('store:') === 0) return;
             if (key !== null) { if (padHooks && padPlayers[key]) padHooks.file(key, file); else file.cancel(); }
             else if (on.file.length) { file.copy = route.peer; emit('file', [appOf(route.peer), file, route.peer]); }
             else file.cancel();
@@ -1303,6 +1309,7 @@ extension TVTemplate {
             // Values set before this page knew its own name take it now, so two apps' settings never tie.
             if (mine) for (var k in entries) if (entries[k].c[2] === '') { entries[k].c = [entries[k].c[0], entries[k].c[1], me]; named = true; }
             if (named) keepValues();
+            if (mine) for (var cn in cols) for (var ci in cols[cn]) if (cols[cn][ci].c[2] === '') { cols[cn][ci].c = [cols[cn][ci].c[0], cols[cn][ci].c[1], me]; unsaved[cn] = true; saveItemsSoon(); }
             // Every copy open either way, this one aside: an app is open while any copy of it is.
             if (started) {
               for (id in relayPresent) if (id !== me) open[id] = true;
@@ -1368,6 +1375,9 @@ extension TVTemplate {
             // An app that has just come is told every value this page has, and tells this page its own, so the two agree
             // again whichever was open meanwhile.
             for (var j = 0; j < arrived.length; j++) if (wireOf(arrived[j]) >= 2) share(entries, arrived[j]);
+            // And what its shared collections add up to, so each asks the other for what differs.
+            for (var sj = 0; sj < arrived.length; sj++) if (wireOf(arrived[sj]) >= 5) sendSums(arrived[sj]);
+            if (arrived.length) fetchFiles();
           }
           // What another open copy speaks: 1 for an app from before values, which says nothing of it.
           function wireOf(id) {
@@ -1630,6 +1640,7 @@ extension TVTemplate {
             if (restored || !key) return;
             restored = true;
             restoreValues();
+            restoreItems();
             var k = storage(keptName()), made = !(k && typeof k.copy === 'string' && isName('a.' + k.copy));
             if (!made) copyId = k.copy;
             else myCopy();
@@ -1791,6 +1802,8 @@ extension TVTemplate {
               emit('message', [appOf(m.from), m.data, m.from]);
             } else if (m.t === 'values' && isName(m.from)) {
               heardValues(m, m.from);
+            } else if (m.t === 'store' && isName(m.from)) {
+              heardStore(m, m.from);
             } else if (m.t === 'pad' && isName(m.from) && m.m && typeof m.m === 'object') {
               heardPad(m.m, m.from);
             } else if (typeof m.t === 'string' && m.t.indexOf('file') === 0 && isName(m.from)) {
@@ -1982,6 +1995,7 @@ extension TVTemplate {
               if (said && said.t === 'welcome' && !d.ready) return ready(d, said);
               if (said && said.t === 'message' && d.ready && said.data !== undefined) return emit('message', [appOf(d.peer), said.data, d.peer]);
               if (said && said.t === 'values' && d.ready) return heardValues(said, d.peer);
+              if (said && said.t === 'store' && d.ready) return heardStore(said, d.peer);
               if (said && said.t === 'pad' && d.ready && said.m && typeof said.m === 'object') return heardPad(said.m, d.peer);
               if (said && typeof said.t === 'string' && said.t.indexOf('file') === 0 && d.ready) return fileText(routeTo(d.peer, d), said);
               if (said && typeof said === 'object') return;
@@ -2259,6 +2273,9 @@ extension TVTemplate {
             // Once a minute each open copy is told what this page's values add up to, so one that missed a setting asks.
             var each = copiesFor(null);
             if (beats % 12 === 0) for (var j = 0; j < each.length; j++) if (wireOf(each[j]) >= 2) share({}, each[j], { sum: digest() });
+            // And its shared collections; a shared file asked of a copy that has gone quiet is asked again.
+            if (beats % 12 === 0) for (var sj = 0; sj < each.length; sj++) if (wireOf(each[sj]) >= 5) sendSums(each[sj]);
+            if (beats % 12 === 6) fetchFiles();
             // A page without the wish's key keeps saying why (open, claim) rather than "Connecting…".
             if (key) rebuild();
             reach();
@@ -2373,6 +2390,442 @@ extension TVTemplate {
             onMessage: adder('message'), onPeers: adder('peers'), onApps: adder('apps'), onState: adder('state'), onChange: adder('change'),
             onFile: adder('file')
           };
+
+          // The app's shared collections (LampStore.shared, LampStore.sharedFiles): every copy of the app keeps each on its
+          // device and copies that meet merge them item by item, as they merge values (each item's latest setting wins, a
+          // deleted one kept a month without its value). As copies meet, and once a minute, each tells the other what each
+          // sixteenth of each collection adds up to, and asks for the sixteenths where they differ. A shared file is an
+          // item saying its size, type and checksum; a copy without its bytes asks one that has them, which sends them as a
+          // file. The same in LampSupport.swift and LampSupport.kt.
+          var ITEM = 8192, SHARED = 1048576, SHARED_FILES = 268435456, COLLECTIONS = 32;
+          var cols = Object.create(null), colOn = Object.create(null), unsaved = {}, saving = null;
+          // A shared file's bytes on this TV, kept in memory (a TV page has no files of its own): asked again of the
+          // others each time the page opens.
+          var fileBytes = Object.create(null), fileAsks = {}, fileTries = {}, filesOut = {}, filesSending = {};
+          function colOk(n) {
+            var plain = typeof n === 'string' && n.indexOf('files:') === 0 ? n.slice(6) : n;
+            return typeof plain === 'string' && plain.length > 0 && plain.length <= 64 && /^[A-Za-z0-9._-]+$/.test(plain);
+          }
+          function itemOk(id) { return typeof id === 'string' && id.length > 0 && bytes(id) <= 128 && id !== '__proto__'; }
+          // JSON with its keys in order, to tell an item set again unchanged.
+          function canon(v) {
+            if (v instanceof Array) return '[' + v.map(canon).join(',') + ']';
+            if (v && typeof v === 'object') return '{' + names(v).map(function (k) { return JSON.stringify(k) + ':' + canon(v[k]); }).join(',') + '}';
+            return JSON.stringify(v);
+          }
+          function fnv(text) {
+            var b = C.utf8(text), h = 2166136261;
+            for (var i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 16777619) >>> 0;
+            return h;
+          }
+          function heldItem(id, v) { return bytes(id) + (v === undefined ? 32 : Math.max(32, bytes(JSON.stringify(v)))); }
+          function heldAll() { var t = 0; for (var n in cols) for (var id in cols[n]) t += cols[n][id].h; return t; }
+          function colItems(name) {
+            var list = [], c = cols[name] || {};
+            for (var id in c) if (c[id].v !== undefined) list.push([id, c[id].v]);
+            list.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
+            return list;
+          }
+          function itemsChanged(name, changed, from) {
+            unsaved[name] = true;
+            saveItemsSoon();
+            if (name.indexOf('files:') === 0) for (var i = 0; i < changed.length; i++) dropStaleBytes(name, changed[i][0]);
+            var list = (colOn[name] || []).slice();
+            for (var j = 0; j < list.length; j++) { try { list[j](changed, appOf(from)); } catch (e) { if (window.console) console.error(e); } }
+            if (name.indexOf('files:') === 0) fetchFiles();
+          }
+          function dropExpiredItems() {
+            var old = Date.now() - REMOVALS_KEPT;
+            for (var n in cols) for (var id in cols[n]) if (cols[n][id].v === undefined && cols[n][id].c[0] <= old) { delete cols[n][id]; unsaved[n] = true; }
+          }
+          function putItems(name, given) {
+            var what = 'LampStore.shared("' + (String(name).indexOf('files:') === 0 ? name.slice(6) : name) + '")';
+            if (!colOk(name)) { say(what + ': a collection\'s name is 1 to 64 letters, digits, "-", "_" or ".".'); return false; }
+            var count = 0;
+            for (var k in cols) count++;
+            if (!cols[name] && count >= COLLECTIONS) { say(what + ': an app shares at most ' + COLLECTIONS + ' collections.'); return false; }
+            dropExpiredItems();
+            var held = heldAll(), sets = {}, changed = [], failed = false;
+            for (var i = 0; i < given.length; i++) {
+              var id = given[i][0], value = given[i][1], had = cols[name] && cols[name][id], v, size = 32;
+              if (!itemOk(id)) { say(what + ': an item\'s id is 1 to 128 bytes; "' + String(id).slice(0, 40) + '" was not set.'); failed = true; continue; }
+              if (value !== null && value !== undefined) {
+                var text;
+                try { text = JSON.stringify(value); } catch (e) { text = undefined; }
+                if (text === undefined) { say(what + ': the item "' + id + '" holds nothing JSON can, and was not set.'); failed = true; continue; }
+                size = bytes(text);
+                if (size > ITEM) { say(what + ': the item "' + id + '" is ' + size + ' bytes as JSON, and was not set: an item is at most ' + ITEM + '.'); failed = true; continue; }
+                v = JSON.parse(text);
+                if (v === null) v = undefined;
+                if (had && had.v !== undefined && v !== undefined && canon(had.v) === canon(v)) continue;
+              }
+              if (v === undefined && (!had || had.v === undefined)) continue;
+              var need = bytes(id) + Math.max(32, v === undefined ? 32 : size);
+              if (held - (had ? had.h : 0) + need > SHARED) { say(what + ': the item "' + id + '" was not set: the app\'s shared collections would pass ' + SHARED + ' bytes (a deleted item counts 32 bytes for a month).'); failed = true; continue; }
+              held += need - (had ? had.h : 0);
+              var now = Date.now();
+              clock = now > clock[0] ? [now, 0] : clock[1] < COUNTS ? [clock[0], clock[1] + 1] : [clock[0] + 1, 0];
+              if (!cols[name]) cols[name] = Object.create(null);
+              cols[name][id] = sets[id] = { v: v, c: [clock[0], clock[1], myCopy()], h: need };
+              changed.push([id, v]);
+            }
+            if (!changed.length) return !failed;
+            keepValues();
+            itemsChanged(name, changed, myCopy() || mine);
+            var list = copiesFor(null);
+            for (var j = 0; j < list.length; j++) if (wireOf(list[j]) >= 5) shareItems(name, sets, list[j]);
+            return !failed;
+          }
+          function publishItems(name, given) {
+            var ids = {}, list = given.slice(), c = cols[name] || {}, me = myCopy();
+            for (var i = 0; i < given.length; i++) ids[given[i][0]] = true;
+            for (var id in c) if (!ids[id] && c[id].v !== undefined && c[id].c[2] === me) list.push([id, null]);
+            return putItems(name, list);
+          }
+          function heardStore(m, from) {
+            var name, i;
+            if (m.op === 'items') {
+              if (colOk(m.s) && m.items && typeof m.items === 'object') mergeItems(m.s, m.items, from);
+            } else if (m.op === 'sum') {
+              var theirs = m.sums && typeof m.sums === 'object' ? m.sums : {}, asks = {}, any = false;
+              for (name in theirs) {
+                if (!own(theirs, name) || !colOk(name) || typeof theirs[name] !== 'string' || theirs[name].length !== 128) continue;
+                var ours = sums(name), differ = [];
+                for (i = 0; i < 16; i++) {
+                  var part = parseInt(theirs[name].substr(i * 8, 8), 16) >>> 0;
+                  if (part !== 0 && part !== ours[i]) differ.push(i);
+                }
+                if (differ.length) { asks[name] = differ; any = true; }
+              }
+              if (any) storeSay({ op: 'ask', asks: asks }, from);
+            } else if (m.op === 'ask') {
+              var asked = m.asks && typeof m.asks === 'object' ? m.asks : {};
+              for (name in asked) {
+                if (!own(asked, name) || !colOk(name) || !(asked[name] instanceof Array) || !cols[name]) continue;
+                var want = {}, list = {}, some = false;
+                for (i = 0; i < asked[name].length; i++) want[asked[name][i]] = true;
+                for (var id in cols[name]) if (want[fnv(id) & 15]) { list[id] = cols[name][id]; some = true; }
+                if (some) shareItems(name, list, from);
+              }
+            } else if (m.op === 'file') {
+              var meta = typeof m.s === 'string' && cols[m.s] && typeof m.id === 'string' && cols[m.s][m.id] && cols[m.s][m.id].v;
+              var kept = meta && fileBytes[m.s + '\t' + m.id];
+              if (!kept || kept.sum !== meta.sum || m.sum !== meta.sum) return;
+              var queue = filesOut[from] || (filesOut[from] = []);
+              for (i = 0; i < queue.length; i++) if (queue[i][0] === m.s && queue[i][1] === m.id) return;
+              queue.push([m.s, m.id]);
+              sendFiles(from);
+            }
+          }
+          function mergeItems(name, given, from) {
+            var count = 0;
+            for (var k in cols) count++;
+            if (!cols[name] && count >= COLLECTIONS * 2) return;
+            dropExpiredItems();
+            var most = SHARED * 2 * Math.max(2, roster.length), held = heldAll(), removals = null, next = 0, list = names(given);
+            var old = Date.now() - REMOVALS_KEPT, changed = [], taken = {}, any = false;
+            function oldestRemoval(except) {
+              if (!removals) {
+                removals = [];
+                for (var n in cols) for (var r in cols[n]) if (cols[n][r].v === undefined) removals.push([n, r, cols[n][r].c]);
+                removals.sort(function (a, b) { return later(a[2], b[2]) ? 1 : later(b[2], a[2]) ? -1 : 0; });
+              }
+              while (next < removals.length) {
+                var each = removals[next++];
+                if (!(each[0] === name && each[1] === except) && cols[each[0]] && cols[each[0]][each[1]] && cols[each[0]][each[1]].v === undefined) return each;
+              }
+              return null;
+            }
+            for (var i = 0; i < list.length; i++) {
+              var id = list[i], e = given[id];
+              if (!itemOk(id) || !e || typeof e !== 'object' || !stampOk(e.c)) continue;
+              if (e.c[0] > clock[0] || (e.c[0] === clock[0] && e.c[1] > clock[1])) clock = [e.c[0], e.c[1]];
+              var had = cols[name] && cols[name][id];
+              if (had && !later(e.c, had.c)) continue;
+              var v = e.v === null ? undefined : e.v, size = v === undefined ? 32 : bytes(JSON.stringify(v));
+              if (size > ITEM * 2) continue;
+              var need = bytes(id) + Math.max(32, size), gone;
+              var dropOnly = function () {
+                if (v !== undefined || !had) return;
+                held -= had.h;
+                delete cols[name][id];
+                unsaved[name] = true;
+                if (had.v !== undefined) changed.push([id, undefined]);
+              };
+              if (v === undefined && e.c[0] < old) { dropOnly(); continue; }
+              while (held - (had ? had.h : 0) + need > most && (gone = oldestRemoval(id))) {
+                held -= cols[gone[0]][gone[1]].h;
+                delete cols[gone[0]][gone[1]];
+                unsaved[gone[0]] = true;
+              }
+              if (held - (had ? had.h : 0) + need > most) { dropOnly(); continue; }
+              held += need - (had ? had.h : 0);
+              if (!cols[name]) cols[name] = Object.create(null);
+              cols[name][id] = taken[id] = { v: v, c: e.c, h: need };
+              changed.push([id, v]);
+              any = true;
+            }
+            keepValues();
+            if (changed.length) itemsChanged(name, changed, from);
+            else { var u = false; for (var un in unsaved) u = true; if (u) saveItemsSoon(); }
+            if (!any) return;
+            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            var each_ = copiesFor(null);
+            for (var j = 0; j < each_.length; j++) {
+              var to = each_[j], straight = directs[to] && directs[to].ready;
+              if (to !== from && wireOf(to) >= 5 && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
+            }
+          }
+          function shareItems(name, list, id) {
+            var batch = {}, size = 0, any = false, keys = names(list);
+            function flush() {
+              if (!any) return;
+              storeSay({ op: 'items', s: name, items: batch }, id);
+              batch = {}; size = 0; any = false;
+            }
+            for (var i = 0; i < keys.length; i++) {
+              var e = list[keys[i]], json = { c: e.c };
+              if (e.v !== undefined) json.v = e.v;
+              var b = bytes(JSON.stringify(json)) + bytes(JSON.stringify(keys[i])) + 2;
+              if (size + b > 12288) flush();
+              batch[keys[i]] = json; size += b; any = true;
+            }
+            flush();
+          }
+          function storeSay(body, id) {
+            body.t = 'store';
+            var d = directs[id];
+            if (d && d.ready) directSeal(d, JSON.stringify(body));
+            else if (relayPresent[id] && socket && socket.readyState === 1 && sendKey) { body.to = id; seal(JSON.stringify(body)); }
+          }
+          function sums(name) {
+            var parts = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], c = cols[name] || {};
+            for (var id in c) parts[fnv(id) & 15] = (parts[fnv(id) & 15] ^ fnv(id + '\u0000' + c[id].c[0] + '\u0000' + c[id].c[1] + '\u0000' + c[id].c[2])) >>> 0;
+            return parts;
+          }
+          function sendSums(id) {
+            var said = {}, any = false;
+            for (var name in cols) {
+              var some = false;
+              for (var x in cols[name]) { some = true; break; }
+              if (!some) continue;
+              said[name] = sums(name).map(function (p) { return ('0000000' + p.toString(16)).slice(-8); }).join('');
+              any = true;
+            }
+            if (any) storeSay({ op: 'sum', sums: said }, id);
+          }
+          function checksum(b) { return hex(C.sha256(b).subarray(0, 16)); }
+          function dropStaleBytes(name, id) {
+            var k = name + '\t' + id, kept = fileBytes[k], meta = cols[name] && cols[name][id] && cols[name][id].v;
+            if (kept && (!meta || meta.sum !== kept.sum)) {
+              if (kept.url && window.URL && URL.revokeObjectURL) URL.revokeObjectURL(kept.url);
+              delete fileBytes[k];
+            }
+          }
+          function fetchFiles() {
+            var sources = copiesFor(null).filter(function (id) { return wireOf(id) >= 5; }), now = Date.now(), here = 0, name, id;
+            if (!sources.length) return;
+            for (var k in fileBytes) here += fileBytes[k].data.length;
+            var list = names(cols);
+            for (var i = 0; i < list.length; i++) {
+              name = list[i];
+              if (name.indexOf('files:') !== 0) continue;
+              var ids = names(cols[name]);
+              for (var j = 0; j < ids.length; j++) {
+                id = ids[j];
+                var item = cols[name][id], meta = item.v, key_ = name + '\t' + id;
+                if (!meta || typeof meta.sum !== 'string' || typeof meta.size !== 'number') continue;
+                if (fileBytes[key_] && fileBytes[key_].sum === meta.sum) { delete fileAsks[key_]; delete fileTries[key_]; continue; }
+                var ask = fileAsks[key_];
+                if (ask && sources.indexOf(ask.peer) >= 0 && now - ask.at < 60000) continue;
+                if (here + meta.size > SHARED_FILES) return;
+                var tries = fileTries[key_] || 0, setter = item.c[2];
+                var order = sources.indexOf(setter) >= 0 ? [setter].concat(sources.filter(function (s) { return s !== setter; })) : sources;
+                var source = order[tries % order.length], busy = 0;
+                for (var a in fileAsks) if (fileAsks[a].peer === source && now - fileAsks[a].at < 60000) busy++;
+                if (busy >= 2) continue;
+                fileTries[key_] = tries + 1;
+                fileAsks[key_] = { peer: source, at: now };
+                here += meta.size;
+                storeSay({ op: 'file', s: name, id: id, sum: meta.sum }, source);
+              }
+            }
+          }
+          function sendFiles(peer) {
+            while ((filesSending[peer] || 0) < 2 && filesOut[peer] && filesOut[peer].length) {
+              var next = filesOut[peer].shift(), kept = fileBytes[next[0] + '\t' + next[1]], meta = cols[next[0]] && cols[next[0]][next[1]] && cols[next[0]][next[1]].v;
+              if (!kept || !meta || kept.sum !== meta.sum) continue;
+              var t = sendFile(peer, kept.data, { name: next[1], type: meta.type || '' }, 'store:' + next[0]);
+              filesSending[peer] = (filesSending[peer] || 0) + 1;
+              var done = function () { filesSending[peer]--; sendFiles(peer); };
+              t.done.then(done, done);
+            }
+          }
+          function sharedFileArrived(name, id, data, from) {
+            var key_ = name + '\t' + id, meta = cols[name] && cols[name][id] && cols[name][id].v;
+            delete fileAsks[key_];
+            if (!meta || typeof meta.sum !== 'string' || checksum(data) !== meta.sum) return fetchFiles();
+            dropStaleBytes(name, id);
+            fileBytes[key_] = { sum: meta.sum, data: data, url: null };
+            delete fileTries[key_];
+            var list = (colOn[name] || []).slice();
+            for (var j = 0; j < list.length; j++) { try { list[j]([[id, meta]], appOf(from)); } catch (e) { if (window.console) console.error(e); } }
+            fetchFiles();
+          }
+          function saveItemsSoon() {
+            if (saving) return;
+            saving = setTimeout(function () {
+              saving = null;
+              var n = keptName();
+              if (!n) return;
+              var kept = [];
+              for (var name in unsaved) {
+                var out = {}, some = false, c = cols[name] || {};
+                for (var id in c) { out[id] = { c: c[id].c }; if (c[id].v !== undefined) out[id].v = c[id].v; some = true; }
+                if (some) storage(n + '.shared.' + name, out);
+                else try { window.localStorage.removeItem('lamp:' + n + '.shared.' + name); } catch (e) {}
+              }
+              unsaved = {};
+              for (var each in cols) { for (var x in cols[each]) { kept.push(each); break; } }
+              storage(n + '.shared', kept);
+            }, 1000);
+          }
+          // What was kept on this TV, once the wish's key is known: taken in beside anything set before then.
+          function restoreItems() {
+            var n = keptName(), list = storage(n + '.shared');
+            if (!(list instanceof Array)) return;
+            for (var i = 0; i < list.length; i++) {
+              var name = list[i], kept = colOk(name) && storage(n + '.shared.' + name), changed = [];
+              if (!kept || typeof kept !== 'object') continue;
+              for (var id in kept) {
+                var e = kept[id];
+                if (!itemOk(id) || !e || !stampOk(e.c)) continue;
+                var had = cols[name] && cols[name][id];
+                if (had && !later(e.c, had.c)) continue;
+                if (!cols[name]) cols[name] = Object.create(null);
+                var v = e.v === null ? undefined : e.v;
+                cols[name][id] = { v: v, c: e.c, h: heldItem(id, v) };
+                changed.push([id, v]);
+              }
+              if (changed.length) itemsChanged(name, changed, myCopy() || mine);
+            }
+            dropExpiredItems();
+          }
+          // What LampStore.shared and LampStore.sharedFiles call: the page's own store here, the app's around the page when
+          // it's hosted (below).
+          var store = {
+            items: function (name) { return colItems(name); },
+            put: putItems,
+            publish: publishItems,
+            listen: function (name, fn) { (colOn[name] || (colOn[name] = [])).push(fn); },
+            putFile: function (name, id, data, type) {
+              if (data.length > 67108864) { say('LampStore.sharedFiles: "' + id + '" is too big to share: 64 MB at most.'); return false; }
+              var total = data.length;
+              for (var n in cols) if (n.indexOf('files:') === 0) for (var x in cols[n]) if (!(n === name && x === id) && cols[n][x].v) total += cols[n][x].v.size || 0;
+              if (total > SHARED_FILES) { say('LampStore.sharedFiles: "' + id + '" was not kept: the app\'s shared files would pass 256 MB.'); return false; }
+              var sum = checksum(data), k = name + '\t' + id;
+              if (!fileBytes[k] || fileBytes[k].sum !== sum) {
+                var was = fileBytes[k];
+                fileBytes[k] = { sum: sum, data: data, url: null };
+                if (!putItems(name, [[id, { size: data.length, type: String(type || '').slice(0, 100), sum: sum }]])) { if (was) fileBytes[k] = was; else delete fileBytes[k]; return false; }
+                return true;
+              }
+              return putItems(name, [[id, { size: data.length, type: String(type || '').slice(0, 100), sum: sum }]]);
+            },
+            fileBytes: function (name, id) {
+              var kept = fileBytes[name + '\t' + id], meta = cols[name] && cols[name][id] && cols[name][id].v;
+              return Promise.resolve(kept && meta && kept.sum === meta.sum ? kept.data : null);
+            },
+            here: function (name, id) {
+              var kept = fileBytes[name + '\t' + id], meta = cols[name] && cols[name][id] && cols[name][id].v;
+              return !!(kept && meta && kept.sum === meta.sum);
+            }
+          };
+          function bytesFrom(data) {
+            if (typeof data === 'string') return Promise.resolve(C.utf8(data));
+            if (data instanceof ArrayBuffer) return Promise.resolve(new Uint8Array(data));
+            if (data && data.buffer instanceof ArrayBuffer && typeof data.byteLength === 'number') return Promise.resolve(new Uint8Array(data.buffer, data.byteOffset || 0, data.byteLength));
+            if (typeof Blob !== 'undefined' && data instanceof Blob) {
+              return new Promise(function (resolve, reject) {
+                var reader = new FileReader();
+                reader.onload = function () { resolve(new Uint8Array(reader.result)); };
+                reader.onerror = function () { reject(new Error('the file could not be read.')); };
+                reader.readAsArrayBuffer(data);
+              });
+            }
+            return Promise.reject(new Error('a file is a File, a Blob, an ArrayBuffer, bytes or text.'));
+          }
+          var sharedLists = {}, sharedFolders = {};
+          // A list the app keeps the same on every copy of it (the same app on a Mac, an iPad, a TV and a photo frame):
+          // see LampStore.shared in lamp.js's header.
+          function shared(name, idKey) {
+            idKey = idKey || 'id';
+            if (sharedLists[name]) return sharedLists[name];
+            api.start();
+            var on_ = [];
+            store.listen(name, function (changed, from) {
+              for (var i = 0; i < changed.length; i++) for (var j = 0; j < on_.length; j++) {
+                try { on_[j](changed[i][0], changed[i][1] === undefined ? null : copyOf(changed[i][1]), from); } catch (e) { if (window.console) console.error(e); }
+              }
+            });
+            function idOf(item) { return item && item[idKey] !== undefined && item[idKey] !== null ? String(item[idKey]) : ''; }
+            var list = sharedLists[name] = {
+              name: name,
+              put: function (item) {
+                var items = item instanceof Array ? item : [item];
+                return store.put(name, items.map(function (x) { return [idOf(x), x]; }));
+              },
+              publish: function (items) { return store.publish(name, (items || []).map(function (x) { return [idOf(x), x]; })); },
+              get: function (id) { var all = store.items(name); for (var i = 0; i < all.length; i++) if (all[i][0] === String(id)) return copyOf(all[i][1]); return null; },
+              all: function () { return store.items(name).map(function (x) { return copyOf(x[1]); }); },
+              count: function () { return store.items(name).length; },
+              'delete': function (id) { return store.put(name, [[String(id), null]]); },
+              onChange: function (fn) { on_.push(fn); return function () { var i = on_.indexOf(fn); if (i >= 0) on_.splice(i, 1); }; }
+            };
+            return list;
+          }
+          // Files the app keeps the same on every copy of it: see LampStore.sharedFiles in lamp.js's header.
+          function sharedFiles(name) {
+            if (sharedFolders[name]) return sharedFolders[name];
+            api.start();
+            var key_ = 'files:' + name, on_ = [], urls = {};
+            store.listen(key_, function (changed, from) {
+              for (var i = 0; i < changed.length; i++) for (var j = 0; j < on_.length; j++) {
+                try { on_[j](changed[i][0], from); } catch (e) { if (window.console) console.error(e); }
+              }
+            });
+            var folder = sharedFolders[name] = {
+              name: name,
+              put: function (fileName, data, type) {
+                return bytesFrom(data).then(function (b) { return store.putFile(key_, String(fileName), b, type || (data && data.type) || ''); },
+                                            function (error) { say('LampStore.sharedFiles: ' + error.message); return false; });
+              },
+              all: function () {
+                return store.items(key_).map(function (x) {
+                  var meta = x[1] || {};
+                  return { name: x[0], size: meta.size || 0, type: meta.type || '', here: store.here(key_, x[0]) };
+                });
+              },
+              get: function (fileName) { return store.fileBytes(key_, String(fileName)); },
+              url: function (fileName) {
+                var all = store.items(key_), sum = null;
+                for (var i = 0; i < all.length; i++) if (all[i][0] === String(fileName)) sum = all[i][1] && all[i][1].sum;
+                if (!sum) return Promise.resolve(null);
+                if (urls[fileName] && urls[fileName].sum === sum) return Promise.resolve(urls[fileName].url);
+                return store.fileBytes(key_, String(fileName)).then(function (b) {
+                  if (!b || typeof Blob === 'undefined' || !window.URL) return null;
+                  var meta = null;
+                  for (var j = 0; j < all.length; j++) if (all[j][0] === String(fileName)) meta = all[j][1];
+                  if (urls[fileName]) URL.revokeObjectURL(urls[fileName].url);
+                  urls[fileName] = { sum: sum, url: URL.createObjectURL(new Blob([b], { type: (meta && meta.type) || '' })) };
+                  return urls[fileName].url;
+                });
+              },
+              'delete': function (fileName) { return store.put(key_, [[String(fileName), null]]); },
+              onChange: function (fn) { on_.push(fn); return function () { var i = on_.indexOf(fn); if (i >= 0) on_.splice(i, 1); }; }
+            };
+            return folder;
+          }
 
           // The app around the page is the peer: what it says of the wish comes to `window.__lampWish`, and what the page
           // does goes to it. Kept here as the page's own state is everywhere else, so everything that reads it (peers,
@@ -2502,6 +2955,83 @@ extension TVTemplate {
               if (!filesAsked) { filesAsked = true; post({ op: 'files' }); }
               return plainOnFile(fn);
             };
+            // The shared collections are the app's: the page mirrors each it uses, told all of it first and then what
+            // changes ({ t: 'items', s, items: { id: value or null }, whole, from, here }), and a change made here is
+            // shown at once and made in the app.
+            var subscribed = {}, here_ = {}, fileAsked = {}, nextAsk = 0;
+            function subscribe(name) { if (!subscribed[name]) { subscribed[name] = true; post({ op: 'shared', s: name }); } }
+            function heardItems(m) {
+              if (!colOk(m.s) || !m.items || typeof m.items !== 'object') return;
+              var name = m.s, c = cols[name] || (cols[name] = Object.create(null)), changed = [], id;
+              if (m.whole) for (id in c) if (!own(m.items, id)) { if (c[id].v !== undefined) changed.push([id, undefined]); delete c[id]; }
+              for (id in m.items) {
+                if (!own(m.items, id)) continue;
+                var v = m.items[id] === null ? undefined : m.items[id], had = c[id];
+                if (v === undefined) { if (had) { delete c[id]; if (had.v !== undefined) changed.push([id, undefined]); } continue; }
+                if (had && had.v !== undefined && canon(had.v) === canon(v)) continue;
+                c[id] = { v: v, c: [0, 0, ''], h: 0 };
+                changed.push([id, v]);
+              }
+              if (m.here && typeof m.here === 'object') for (id in m.here) if (own(m.here, id)) {
+                var k = name + '\t' + id, was = !!here_[k];
+                here_[k] = !!m.here[id];
+                if (here_[k] && !was && !changed.some(function (x) { return x[0] === id; })) changed.push([id, c[id] ? c[id].v : undefined]);
+              }
+              if (!changed.length) return;
+              var list = (colOn[name] || []).slice();
+              for (var j = 0; j < list.length; j++) { try { list[j](changed, typeof m.from === 'string' ? m.from : mine); } catch (e) { if (window.console) console.error(e); } }
+            }
+            var plainHeard = window.__lampWish;
+            window.__lampWish = function (m) {
+              if (m && m.t === 'items') return heardItems(m);
+              if (m && m.t === 'fileBytes' && fileAsked[m.ask]) {
+                var done = fileAsked[m.ask];
+                delete fileAsked[m.ask];
+                return done(typeof m.data === 'string' ? fromBase64(m.data) : null);
+              }
+              return plainHeard(m);
+            };
+            store.items = function (name) { subscribe(name); return colItems(name); };
+            store.listen = function (name, fn) { subscribe(name); (colOn[name] || (colOn[name] = [])).push(fn); };
+            store.put = function (name, given) {
+              subscribe(name);
+              if (!colOk(name)) { say('LampStore.shared("' + name + '"): a collection\'s name is 1 to 64 letters, digits, "-", "_" or ".".'); return false; }
+              var c = cols[name] || (cols[name] = Object.create(null)), out = [], changed = [];
+              for (var i = 0; i < given.length; i++) {
+                var id = given[i][0], text = null;
+                if (!itemOk(id)) { say('LampStore.shared("' + name + '"): an item\'s id is 1 to 128 bytes.'); return false; }
+                if (given[i][1] !== null && given[i][1] !== undefined) {
+                  try { text = JSON.stringify(given[i][1]); } catch (e) { text = undefined; }
+                  if (text === undefined || bytes(text) > ITEM) { say('LampStore.shared("' + name + '"): the item "' + id + '" is not JSON of at most ' + ITEM + ' bytes, and was not set.'); return false; }
+                }
+                var v = text === null ? undefined : JSON.parse(text), had = c[id];
+                out.push([id, v === undefined ? null : v]);
+                if (v === undefined) { if (had) { delete c[id]; if (had.v !== undefined) changed.push([id, undefined]); } }
+                else if (!(had && had.v !== undefined && canon(had.v) === canon(v))) { c[id] = { v: v, c: [0, 0, ''], h: 0 }; changed.push([id, v]); }
+              }
+              post({ op: 'put', s: name, items: JSON.stringify(out) });
+              var list = (colOn[name] || []).slice();
+              if (changed.length) for (var j = 0; j < list.length; j++) { try { list[j](changed, mine); } catch (e) { if (window.console) console.error(e); } }
+              return true;
+            };
+            store.publish = function (name, given) {
+              subscribe(name);
+              var out = [];
+              for (var i = 0; i < given.length; i++) if (itemOk(given[i][0])) out.push([given[i][0], given[i][1] === undefined ? null : given[i][1]]);
+              post({ op: 'publish', s: name, items: JSON.stringify(out) });
+              return true;
+            };
+            store.putFile = function (name, id, data, type) {
+              subscribe(name);
+              if (data.length > 67108864) { say('LampStore.sharedFiles: "' + id + '" is too big to share: 64 MB at most.'); return false; }
+              post({ op: 'putFile', s: name, id: id, type: String(type || ''), data: toBase64(data) });
+              return true;
+            };
+            store.fileBytes = function (name, id) {
+              subscribe(name);
+              return new Promise(function (resolve) { var ask = ++nextAsk; fileAsked[ask] = resolve; post({ op: 'fileBytes', s: name, id: id, ask: ask }); });
+            };
+            store.here = function (name, id) { subscribe(name); return !!here_[name + '\t' + id]; };
           }
           if (host) hosted();
           else if (stranded) {
@@ -2510,6 +3040,7 @@ extension TVTemplate {
             api.stop = function () { started = false; setState('ended'); };
           }
           if (window.Lamp) window.Lamp.wish = api;
+          if (window.LampStore) { window.LampStore.shared = shared; window.LampStore.sharedFiles = sharedFiles; }
           if (!host && window.Lamp && window.Lamp.controllers && window.Lamp.controllers._attach) window.Lamp.controllers._attach(padSource);
         })();
 
@@ -2771,7 +3302,10 @@ extension Agent.Rules {
     `LampStore.save(value, key)` for a value saved whole, `LampStore.collection(name)` for items saved one at a time \
     (put, get, all, delete), JSON kept on the TV. People rely on their data through every change you make, so once \
     something is saved, only ever add to it: a new field gets a default where it's read, and never rename or retype a \
-    saved one. The app's own files (pictures, data) come in its package: `LampAssets.url(name)`, `.json(name)`.
+    saved one. The app's own files (pictures, data) come in its package: `LampAssets.url(name)`, `.json(name)`. \
+    Data that should be the same wherever the app is open (one list on the TV, an iPad and the Mac): \
+    `LampStore.shared(name)` (put, get, all, delete, publish, onChange), merged item by item between the app's \
+    copies, and `LampStore.sharedFiles(name)` for pictures another copy reads; open the `wish-links` skill first.
     """
 
     static let tvPhone = """

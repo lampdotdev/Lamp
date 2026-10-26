@@ -91,6 +91,11 @@ final class WishNativeTests: XCTestCase {
                 return ["socket": socket, "peer": env["LAMP_PEER"]!, "apps": apps]
             }
         }
+        // What the block's shared collections (`LampStore.shared`) need of LampStore, which the block doesn't carry.
+        enum LampStore {
+            static let decoder = JSONDecoder()
+            static func encode<T: Encodable>(_ value: T) -> String? { (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } }
+        }
         \(block)
         \(main)
         """

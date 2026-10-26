@@ -134,6 +134,9 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
     private var watching: AnyCancellable?
     private var transfers: [Int: LampTransfer] = [:]
     private var watchingTransfers: [Int: AnyCancellable] = [:]
+    /// The shared collections the page uses (`LampStore.shared` in lamp.js), which this app keeps: told whole once, then
+    /// as they change.
+    private var collections: Set<String> = []
     init(scheme: String) { self.scheme = scheme }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -173,6 +176,29 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
         case "cancel":
             guard let id = call["id"] as? Int else { return }
             transfers[id]?.cancel()
+        case "shared":
+            guard let name = call["s"] as? String, LampWish.isCollection(name) else { return }
+            page = message.webView
+            // Heard once; told whole each time the page asks, a page loaded again included.
+            if collections.insert(name).inserted {
+                wish.onItems(in: name) { [weak self] changed, from in self?.tellItems(name, changed.map { ($0.0, $0.1) }, whole: false, from: from) }
+            }
+            tellItems(name, wish.items(in: name).map { ($0.id, $0.value as Any?) }, whole: true, from: wish.me)
+        case "put", "publish":
+            guard let name = call["s"] as? String, let list = Self.json(call["items"]) as? [[Any]] else { return }
+            let given = list.compactMap { pair -> (String, Any?)? in
+                guard pair.count == 2, let id = pair[0] as? String else { return nil }
+                return (id, pair[1] is NSNull ? nil : pair[1])
+            }
+            if op == "put" { wish.putItems(in: name, given) } else { wish.publishItems(in: name, given.compactMap { id, value in value.map { (id, $0) } }) }
+        case "putFile":
+            guard let name = call["s"] as? String, let id = call["id"] as? String,
+                  let data = (call["data"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return }
+            wish.putFile(in: name, id: id, data: data, type: call["type"] as? String ?? "")
+        case "fileBytes":
+            guard let name = call["s"] as? String, let id = call["id"] as? String, let ask = call["ask"] as? Int else { return }
+            let data = wish.fileURL(in: name, id: id).flatMap { try? Data(contentsOf: $0) }
+            tell(["t": "fileBytes", "ask": ask, "data": data.map { $0.base64EncodedString() } ?? NSNull()])
         default:
             break
         }
@@ -202,6 +228,16 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
                     "status": ["state": peer.status.state.rawValue, "reason": peer.status.reason, "lastSeen": lastSeen]]
         }
         tell(["t": "state", "me": wish.me, "copy": wish.copy, "apps": apps, "status": ["state": wish.status.state.rawValue, "reason": wish.status.reason]])
+    }
+
+    private func tellItems(_ name: String, _ items: [(String, Any?)], whole: Bool, from: String) {
+        let wish = LampWish.shared
+        var said: [String: Any] = [:], here: [String: Bool] = [:]
+        for (id, value) in items {
+            said[id] = value ?? NSNull()
+            if name.hasPrefix("files:") { here[id] = wish.fileURL(in: name, id: id) != nil }
+        }
+        tell(["t": "items", "s": name, "items": said, "whole": whole, "from": from, "here": here])
     }
 
     private func tellValues(_ changed: [[String: Any]]) {
