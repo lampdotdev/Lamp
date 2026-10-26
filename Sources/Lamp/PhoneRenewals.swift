@@ -157,6 +157,10 @@ enum OldCopyLine {
         }
     }
 
+    static func failed(phone: String) -> String {
+        "Lamp couldn't remove the old copy from \(phone). Keep it connected and unlocked, then click Remove Old Copy again."
+    }
+
     static let keep = "Keep Old Copy"
     static let remove = "Remove Old Copy"
     static let symbol = "iphone"

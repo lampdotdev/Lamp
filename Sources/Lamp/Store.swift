@@ -9489,7 +9489,9 @@ final class Store: ObservableObject {
                 try await uninstall(old, udid)
                 answer = OldCopyLine.removed
             } catch {
-                log(project, .error, (error as? PhoneFailure)?.message ?? error.localizedDescription)
+                let phone = devices.first { $0.udid == udid }?.name ?? "your phone"
+                log(project, .error, OldCopyLine.failed(phone: phone))
+                log(project, .detail, (error as? PhoneFailure)?.output ?? error.localizedDescription)
                 return
             }
         }

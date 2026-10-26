@@ -56,7 +56,7 @@ final class OldCopyCardTests: XCTestCase {
             throw PhoneFailure(stage: .install, output: "The device is locked.")
         }
         XCTAssertEqual(text(store, project, id), old, "the card still asks")
-        XCTAssertEqual(store.logs[project.id]?.last?.kind, .error)
+        XCTAssertTrue(store.logs[project.id]?.contains { $0.kind == .error && $0.text == OldCopyLine.failed(phone: "your phone") } == true)
         // Asked again, it can still be removed.
         var removed = false
         await store.answerOldCopy(project, line: id, remove: true) { _, _ in removed = true }
