@@ -24,9 +24,12 @@ enum WishArrival {
     }
 
     /// Plays the way from the bar to the chat's window, which waits unseen until the light reaches it.
+    /// Only when the bar and the chat are on one screen: a window can't cross into another display while each display
+    /// has its own Spaces, so a flight between two would start out of sight. There the chat opens at once.
     static func play(from start: (frame: CGRect, text: String), into panel: NSWindow) {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let screen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) }) ?? NSScreen.main else { return }
+              let screen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) }),
+              screen.frame.contains(start.frame) else { return }
         let area = screen.frame
         func local(_ rect: CGRect) -> CGRect {
             CGRect(x: rect.minX - area.minX, y: area.maxY - rect.maxY, width: rect.width, height: rect.height)

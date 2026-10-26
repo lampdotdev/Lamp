@@ -15,8 +15,8 @@ way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhen
 setup checks as anything typed in a chat. Its chat doesn't pop up out of nowhere: the bar lifts off the desk and
 grows into the chat's window, lit in the colours of the smoke an app being changed shows (`LampTransition.Look.hues`),
 with a few sparks rising off it, and the chat fades in where it lands (`WishArrival`, drawn in a window of its own
-over the desk, so the chat is laid out once, at its real size). Where the person asked for less motion it opens at
-once. A click on a wish (or Return, or Open on its menu) opens it to use and
+over the desk, so the chat is laid out once, at its real size). Where the person asked for less motion, or the chat
+opens on another screen than the bar's, it opens at once. A click on a wish (or Return, or Open on its menu) opens it to use and
 change at once (`Store.open(fromDesk:)`), always with its chat beside whatever shows it: a Mac app with windows opens with
 its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens
 no Mac window is used (`Store.use`) with its chat in Lamp's panel, beside the simulator, the emulator or Lamp's preview
