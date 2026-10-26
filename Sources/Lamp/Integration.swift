@@ -173,6 +173,9 @@ struct Integration: Codable, Hashable {
         var log: [IntegrationAction]?
         /// Takes the app off the device when its wish is deleted, with the values of the copy that's there.
         var remove: [IntegrationAction]?
+        /// Types text, run once per character with `{text}` that character (a Roku's `/keypress/Lit_{text}`), for a
+        /// keyboard on the device's screen.
+        var type: [IntegrationAction]?
         /// Lamp's names for a remote's keys ("home", "up", "select", "back") to the device's own.
         var keys: [String: String]?
     }
@@ -366,6 +369,10 @@ enum Placeholders {
         guard lamp.contains(name) else {
             return "{\(name)} isn't a value Lamp fills (they are \(lamp.sorted().map { "{\($0)}" }.joined(separator: ", ")), {field:<key>} and {read:<step>})"
         }
+        // Text the builder types: any character, so never where a line break could start a header or a command.
+        if name == "text", place != .path, place != .form, place != .body {
+            return "{text} goes only in a path, a form or a body"
+        }
         if name == "signIn", place != .auth, place != .header, place != .form, place != .body {
             return "{signIn} goes only in a sign-in, a header, a form or a body"
         }
@@ -385,9 +392,14 @@ enum Placeholders {
             guard let name = piece.name else { out += piece.text; continue }
             let found = name.hasPrefix("base64:") ? values[String(name.dropFirst("base64:".count))].map { Data($0.utf8).base64EncodedString() } : values[name]
             guard let value = found else { throw Unsafe(name: name) }
-            // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet.
+            // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet, nor
+            // is text being typed, which in a path is encoded down to letters and digits so it can't change the path.
             let secret = name.hasPrefix("field:") || name == "signIn" || name == "sshKey"
-            if !secret, value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
+            if !secret, name != "text", value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
+            if name == "text", place == .path {
+                out += value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")) ?? ""
+                continue
+            }
             switch place {
             case .command: out += "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
             case .path: out += value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "?#+&="))) ?? ""
@@ -470,7 +482,7 @@ enum IntegrationCheck {
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
-                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "keys": .map]),
+                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map]),
             "app": appKind,
             "kinds": .map, "certificateRoot": .leaf,
         ])
@@ -585,7 +597,8 @@ enum IntegrationCheck {
         // Bridge
         if let bridge = integration.bridge {
             let sequences: [(String, [IntegrationAction]?)] = [("install", bridge.install), ("launch", bridge.launch), ("look", bridge.look), ("use", bridge.use),
-                                                               ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove)]
+                                                               ("logs", bridge.logs), ("stop", bridge.stop), ("log", bridge.log), ("remove", bridge.remove),
+                                                               ("type", bridge.type)]
             for (name, sequence) in sequences {
                 for (n, action) in (sequence ?? []).enumerated() {
                     problems += actionProblems(action, at: "bridge.\(name)[\(n)]", fields: fields, steps: steps, inBridge: true)
@@ -606,6 +619,9 @@ enum IntegrationCheck {
                 say("bridge.keys[\(key)] must map a lowercase name to the device's name for the key, in letters and digits.")
             }
             if bridge.logs?.contains(where: { $0.stream == nil }) == true { say("bridge.logs is a stream, and nothing else.") }
+            if let type = bridge.type, !type.contains(where: { $0.http.map { Placeholders.names(in: $0.path + ($0.body ?? "")).contains("text") } ?? false }) {
+                say("bridge.type must send {text}, the character it types, in a request's path or body.")
+            }
         }
 
         // App kind

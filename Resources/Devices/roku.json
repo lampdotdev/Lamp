@@ -1,0 +1,319 @@
+{
+  "app": {
+    "declared": {
+      "files": {
+        "components/MainScene.brs": "sub init()\n    m.top.setFocus(true)\nend sub\n\nfunction onKeyEvent(key as String, press as Boolean) as Boolean\n    return false\nend function\n",
+        "components/MainScene.xml": "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<component name=\"MainScene\" extends=\"Scene\">\n  <script type=\"text/brightscript\" uri=\"MainScene.brs\" />\n  <children>\n    <Rectangle id=\"bg\" width=\"1920\" height=\"1080\" color=\"0x101418FF\" />\n    <Label id=\"title\" text=\"{{NAME}}\" translation=\"[96,54]\" width=\"1728\" horizAlign=\"center\" />\n  </children>\n</component>\n",
+        "manifest": "title={{NAME}}\nmajor_version=1\nminor_version=0\nbuild_version=1\nui_resolutions=fhd\nmm_icon_focus_hd=pkg:/images/icon_focus_hd.png\nmm_icon_focus_fhd=pkg:/images/icon_focus_fhd.png\nsplash_screen_sd=pkg:/images/splash_sd.png\nsplash_screen_hd=pkg:/images/splash_hd.png\nsplash_screen_fhd=pkg:/images/splash_fhd.png\nsplash_color=#1B1B3A\n",
+        "source/main.brs": "sub Main()\n    screen = CreateObject(\"roSGScreen\")\n    port = CreateObject(\"roMessagePort\")\n    screen.setMessagePort(port)\n    scene = screen.CreateScene(\"MainScene\")\n    screen.show()\n    while true\n        msg = wait(0, port)\n        if type(msg) = \"roSGScreenEvent\" and msg.isScreenClosed() then return\n    end while\nend sub\n"
+      },
+      "icons": {
+        "images/icon_focus_fhd.png": "540x405",
+        "images/icon_focus_hd.png": "290x218",
+        "images/splash_fhd.png": "1920x1080",
+        "images/splash_hd.png": "1280x720",
+        "images/splash_sd.png": "720x480"
+      },
+      "output": "build/app.zip",
+      "package": "rm -f build/app.zip && mkdir -p build images && zip -qr build/app.zip manifest source components images -x '*.DS_Store'",
+      "rules": "A Roku channel written in BrightScript with SceneGraph. source/main.brs creates an roSGScreen and the MainScene; the UI lives in components/*.xml (SceneGraph nodes: Rectangle, Label, Poster, Group, LayoutGroup, Timer, Video, Audio, etc.) with their logic in .brs files they include via <script uri>. The screen is 1920x1080 (ui_resolutions=fhd); keep content inside a 5% safe margin, text at least 28px, a dark background. Input arrives in the focused component's onKeyEvent(key, press) with key names up, down, left, right, OK, back, play, rewind, fastforward, options, replay; return true when handled; returning false for back on the main scene exits the channel. A Keyboard or MiniKeyboard node takes typed text. Use a Timer node (repeat=true, observe its fire field) for animation or game loops, never a busy loop in a component. The render thread can't reach the network: every request of the app's own (roUrlTransfer for a feed or an API) runs in a Task node, a component of its own that extends Task, with interface fields for what it's asked and what it found, functionName set in init and control = \"RUN\" to start it; the scene observes the result field. A live connection runs in a Task too: on Roku OS 16 and later roWebSocket, and for server-sent events an roStreamSocket on which the Task writes the GET itself and reads the event lines as they arrive (roUrlTransfer answers only once a request is complete); check the version with roDeviceInfo's GetOSVersion() and fall back to asking again on a Timer. Saved data goes through Lamp's LampStore, never roRegistrySection directly: Roku keeps about 32 KB of saved data per channel, shared by every app Lamp puts on that Roku, so keep it small. BrightScript is case-insensitive, has no classes (use associative arrays), arrays are roArray, integer division uses \\, and every component runs in its own scope (share state through m and node fields). print writes to the debug log. Pictures go in images/ and are referenced as pkg:/images/name.png. The manifest names the icon and splash pictures Lamp draws in images/ (mm_icon_focus_hd, mm_icon_focus_fhd, splash_screen_sd, splash_screen_hd, splash_screen_fhd, at icon_focus_hd.png, icon_focus_fhd.png, splash_sd.png, splash_hd.png and splash_fhd.png): keep those lines, add them when they're missing, and never draw or replace those files. A screensaver is an app of its own: its manifest adds screensaver_title={{NAME}} and source/main.brs a sub RunScreenSaver() that shows its scene the way Main does (keep Main, so it can be opened and tried); the person picks it under Settings, Theme, Screensaver. Keep it slow and dark, and move what it shows now and then. Lamp's support library is in components/Lamp and is packaged with the app.",
+      "support": {
+        "brightscript": "components/Lamp"
+      }
+    },
+    "purpose": "a channel: menus and pages, video and music, a simple game, or a screensaver"
+  },
+  "bridge": {
+    "install": [
+      {
+        "http": {
+          "auth": {
+            "digest": true,
+            "password": "{field:password}",
+            "user": "rokudev"
+          },
+          "form": {
+            "archive": "@{package}",
+            "mysubmit": "Install"
+          },
+          "method": "POST",
+          "path": "/plugin_install",
+          "port": 80
+        }
+      }
+    ],
+    "keys": {
+      "back": "Back",
+      "backspace": "Backspace",
+      "channel-down": "ChannelDown",
+      "channel-up": "ChannelUp",
+      "down": "Down",
+      "enter": "Enter",
+      "fastforward": "Fwd",
+      "find-remote": "FindRemote",
+      "home": "Home",
+      "input-av1": "InputAV1",
+      "input-hdmi1": "InputHDMI1",
+      "input-hdmi2": "InputHDMI2",
+      "input-hdmi3": "InputHDMI3",
+      "input-hdmi4": "InputHDMI4",
+      "input-tuner": "InputTuner",
+      "left": "Left",
+      "options": "Info",
+      "play": "Play",
+      "power-off": "PowerOff",
+      "replay": "InstantReplay",
+      "rewind": "Rev",
+      "right": "Right",
+      "search": "Search",
+      "select": "Select",
+      "up": "Up",
+      "volume-down": "VolumeDown",
+      "volume-mute": "VolumeMute",
+      "volume-up": "VolumeUp"
+    },
+    "launch": [
+      {
+        "http": {
+          "method": "POST",
+          "path": "/launch/dev",
+          "port": 8060
+        }
+      },
+      {
+        "wait": 3
+      }
+    ],
+    "logs": [
+      {
+        "stream": {
+          "port": 8085
+        }
+      }
+    ],
+    "look": [
+      {
+        "http": {
+          "auth": {
+            "digest": true,
+            "password": "{field:password}",
+            "user": "rokudev"
+          },
+          "form": {
+            "mysubmit": "Screenshot"
+          },
+          "method": "POST",
+          "path": "/plugin_inspect",
+          "port": 80
+        }
+      },
+      {
+        "http": {
+          "auth": {
+            "digest": true,
+            "password": "{field:password}",
+            "user": "rokudev"
+          },
+          "keep": "picture",
+          "path": "/pkgs/dev.jpg",
+          "port": 80
+        }
+      }
+    ],
+    "remove": [
+      {
+        "http": {
+          "auth": {
+            "digest": true,
+            "password": "{field:password}",
+            "user": "rokudev"
+          },
+          "form": {
+            "archive": "",
+            "mysubmit": "Delete"
+          },
+          "method": "POST",
+          "path": "/plugin_install",
+          "port": 80
+        }
+      }
+    ],
+    "stop": [
+      {
+        "http": {
+          "method": "POST",
+          "path": "/exit-app/dev",
+          "port": 8060
+        }
+      }
+    ],
+    "type": [
+      {
+        "http": {
+          "method": "POST",
+          "path": "/keypress/Lit_{text}",
+          "port": 8060
+        }
+      }
+    ],
+    "use": [
+      {
+        "http": {
+          "method": "POST",
+          "path": "/keypress/{key}",
+          "port": 8060
+        }
+      }
+    ]
+  },
+  "find": [
+    {
+      "ssdp": "roku:ecp"
+    }
+  ],
+  "id": "roku",
+  "identity": {
+    "id": {
+      "http": {
+        "path": "/query/device-info",
+        "port": 8060
+      },
+      "xml": "serial-number"
+    },
+    "model": {
+      "http": {
+        "path": "/query/device-info",
+        "port": 8060
+      },
+      "xml": "model-name"
+    },
+    "modelID": {
+      "http": {
+        "path": "/query/device-info",
+        "port": 8060
+      },
+      "xml": "model-number"
+    },
+    "name": {
+      "http": {
+        "path": "/query/device-info",
+        "port": 8060
+      },
+      "xml": "user-device-name"
+    },
+    "os": "Roku OS",
+    "osVersion": {
+      "http": {
+        "path": "/query/device-info",
+        "port": 8060
+      },
+      "xml": "software-version"
+    }
+  },
+  "kind": "streaming player or TV",
+  "maker": "Roku",
+  "name": "Roku",
+  "sources": [
+    "https://developer.roku.com/docs/developer-program/debugging/external-control-api.md",
+    "https://developer.roku.com/docs/developer-program/getting-started/developer-setup.md",
+    "https://developer.roku.com/docs/developer-program/getting-started/architecture/channel-manifest.md"
+  ],
+  "steps": [
+    {
+      "check": [
+        {
+          "equals": "enabled",
+          "http": {
+            "path": "/query/device-info",
+            "port": 8060
+          },
+          "xml": "ecp-setting-mode"
+        }
+      ],
+      "id": "mobile-control",
+      "known": {
+        "how": "people",
+        "model": "3900X",
+        "source": "https://developer.roku.com/docs/developer-program/debugging/external-control-api.md",
+        "version": "15.3.4"
+      },
+      "lines": [
+        "On the Roku, open Settings",
+        "Go to System, then Advanced system settings",
+        "Choose Control by mobile apps",
+        "Set Network access to Enabled"
+      ],
+      "title": "Let this Mac use the remote",
+      "wait": true
+    },
+    {
+      "accepts": [
+        "softwareRisk"
+      ],
+      "check": [
+        {
+          "equals": "true",
+          "http": {
+            "path": "/query/device-info",
+            "port": 8060
+          },
+          "xml": "developer-enabled"
+        },
+        {
+          "tcp": 80
+        }
+      ],
+      "id": "developer-mode",
+      "known": {
+        "how": "people",
+        "model": "3900X",
+        "source": "https://developer.roku.com/docs/developer-program/getting-started/developer-setup.md",
+        "version": "15.3.4"
+      },
+      "lines": [
+        "Press Home three times on the remote",
+        "Then press Up, Up, Right, Left, Right, Left, Right",
+        "Choose Enable installer and restart",
+        "Agree to the license",
+        "Set a developer password and remember it",
+        "Wait for the Roku to restart"
+      ],
+      "title": "Turn on developer mode",
+      "wait": true
+    },
+    {
+      "check": [
+        {
+          "field": "password"
+        },
+        {
+          "http": {
+            "auth": {
+              "digest": true,
+              "password": "{field:password}",
+              "user": "rokudev"
+            },
+            "path": "/plugin_install",
+            "port": 80
+          }
+        }
+      ],
+      "field": {
+        "key": "password",
+        "label": "Developer password",
+        "secret": true
+      },
+      "id": "password",
+      "known": {
+        "how": "people",
+        "model": "3900X",
+        "source": "https://developer.roku.com/docs/developer-program/getting-started/developer-setup.md",
+        "version": "15.3.4"
+      },
+      "lines": [
+        "Type the developer password you just set on the Roku"
+      ],
+      "title": "Enter your developer password"
+    }
+  ]
+}

@@ -15,9 +15,9 @@ Lamp runs: every step and bridge is a list of Lamp's primitives (`IntegrationAct
 fix. Values in a request or command are placeholders Lamp fills (`Placeholders`: `{address}`, `{mac}`, `{package}`,
 `{field:<key>}`…), each checked to a safe alphabet; what the person typed goes only into a sign-in, a form, a header or
 a body, never a path or a command, and a command's values are quoted for the shell. Kept integrations are in Lamp's
-folder (`Integrations.folder`), beside those Lamp ships in `Resources/Devices` (none yet; the kits aren't data yet).
-The model can only say a step was read (`known.how` "read", with its source); Lamp marks it Checked by Lamp or Done
-by people (`Integrations.mark`, by whether it needed hands on the device) once its check passes on a device, with that
+folder (`Integrations.folder`), beside those Lamp ships in `Resources/Devices` (the Xbox's and the Roku's), which win over a written one with the same id, and whose id `device_integration` refuses.
+The model can only say a step was read (`known.how` "read", with its source); Lamp marks it Checked by Lamp or Worked
+before (`Integrations.mark`: done by hand or not, by whether it needed hands on the device) once its check passes on a device, with that
 device's model and version, and keeps the mark while the step's text is unchanged.
 
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
@@ -64,17 +64,26 @@ is all data. The naming call is told each such integration as a device a wish ma
 (`Agent.devicePrompt`), and the build is the declared `package` command run in the app's sandbox like every build, its
 `output` then copied through `AppFile` into Lamp's own folder (`Device Builds`), which is all that's ever sent. Its icon
 is the one Lamp draws for every app: the kind names where the device's manifest looks for it and at what size
-(`app.declared.icons`, `"images/icon_focus_hd.png": "336x210"`), and Lamp draws it there before every turn and build
-(`DeviceSupport.write`, the icon on a dark tile, as the Xbox's logos are), Lamp's own like the building blocks; the agent
-never draws one. Every other kind already carries it: the Mac's and iPhone's, a watch app's catalog, Android's launcher
+(`app.declared.icons`, `"images/icon_focus_hd.png": "290x218"`, and a Roku's splash screens), and Lamp draws it there
+before every turn and build (`DeviceSupport.write`, the icon on a dark tile, as the Xbox's logos are, and the tile alone
+until the app has an icon, since the manifest names the files), Lamp's own like the building blocks; the agent never
+draws one. Every other kind already carries it: the Mac's and iPhone's, a watch app's catalog, Android's launcher
 icon, a Samsung TV's `icon.png`, an LG TV's two, and the Xbox's logos. Play,
 Open and every look put it on the device chosen under Try On (`Store.setDeviceAppDevice`, the integration's devices;
 one not set up opens its setup window, and with no choice the only one found is used) with the bridge's `install` and
 `launch` (`Store.installOnDeviceApp`), reading `logs` into the app's log; a device not set up gets its next step in the
 chat instead. `look_at_app` is the bridge's `look` picture with what the device answered the install
 (`IntegrationRunner.Outcome.answers`, as plain text) and the log; `use_app` takes only `key` (Lamp's names in
-`bridge.keys`, each pressed with `use`) and `wait`. Stop presses `home` when there is one. Lamp can't tell whether the
-app is still open on the device, so Play always puts it there again. Such apps aren't shared yet.
+`bridge.keys`, each pressed with `use`), `type` (the bridge's `type`, once per character as `{text}`, which in a path
+Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`. Stop runs the bridge's `stop` (a Roku's
+`/exit-app/dev`), and presses `home` when there's none or the device refuses it. Lamp can't tell whether the
+app is still open on the device, so Play always puts it there again. Such apps aren't shared yet. Lamp ships the Roku's
+integration (`Resources/Devices/roku.json`): a channel in BrightScript with Lamp's building blocks, its icon and splash
+screens, and a bridge whose `remove` is the developer installer's Delete, so deleting a wish takes the channel off the
+Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere` removes the device's one copy, and only
+while it's still this wish's: `lastOnDevice` notes which app each device took last). Its
+mobile-control step reads `ecp-setting-mode` from device-info, which Roku's ECP page doesn't list but Rokus report, and
+asks only for Enabled, never Permissive.
 
 **Lamp's building blocks on devices** (`DeviceSupport`, DeviceSupport.swift): TVs and declared app kinds get `LampAI`,
 `LampStore` and `LampAssets` as Mac, iPhone and Android apps do, under the same names and with the same advice in their

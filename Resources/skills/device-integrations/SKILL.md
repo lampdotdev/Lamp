@@ -87,7 +87,7 @@ launched after it), however it ends, sends `{"<field>": "<that value>"}` back th
 Write `{name}`; Lamp fills it, checked to a safe alphabet. You never write a value yourself.
 
 - `{address}` the device's address, `{mac}` this Mac's address on that network, `{deviceID}` the device's id
-- `{package}` the built package's file, `{appID}` the app's id, `{key}` a remote key from `bridge.keys`, `{text}` text to type
+- `{package}` the built package's file, `{appID}` the app's id, `{key}` a remote key from `bridge.keys`, `{text}` one character being typed (only in `bridge.type`, in a path, form or body; in a path Lamp percent-encodes it)
 - `{callback}` the sign-in's address back (only in `vendorSignIn.page`), `{signIn}` what that sign-in returned
 - `{sshKey}` Lamp's public SSH key, for a device that must be told it
 - `{field:<key>}` what the person typed in a step's field: only in a sign-in, a form, a header or a body, never in a path
@@ -132,7 +132,9 @@ The setup, in order. Each step is done when its `check` passes, never because an
 - Every setting of the device's that the bridge needs is a step of its own, checked on the device, so it's found in
   setup rather than when a builder first uses it: a Roku answers key presses only with Settings → System → Advanced
   system settings → Control by mobile apps set to Enabled, which its device-info says
-  (`{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "ecp-setting-mode", "equals": "enabled"}`).
+  (`{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "ecp-setting-mode", "equals": "enabled"}`; Roku's ECP
+  page doesn't list that field, but Rokus report it: enabled, limited, disabled or permissive). Never ask for a setting
+  looser than the bridge needs (a Roku's Permissive).
 - `accepts`: what doing it may cost, from Lamp's list; Lamp writes the sentences. `account` (an account with the
   maker), `softwareRisk` (it may stop working until reset), `warranty`, `dataWiped`, `updatesStop`, `protectionsOff`,
   `commandRuns` (required by any step that runs `ssh` or a downloaded `tool`).
@@ -163,9 +165,10 @@ to make apps for the device with, and the builder of each app gets it as Lamp's 
 the person presses Play and at every look, `look` for the picture the builder sees, `use` once for each of the
 remote's keys the builder presses (`{key}` is the device's name for it, from `keys`), `logs` read into the app's log
 while it's open. What the device answers to `install` is shown to the builder, so a device that says there what it
-made of the package (a compile error) needs nothing more. Lamp presses `home` when the app is stopped. `stop` ends the
-copy on the device before an update goes over it, for a device that can fail to open a package installed over its
-running copy, with the values of the copy that's there. `log` reads a log the app keeps on the device (a file) for the
+made of the package (a compile error) needs nothing more. `stop` ends the app when the person stops it (Lamp presses
+`home` when there's no `stop`, or the device refuses it), and for a wrapped package it also ends the copy on the device
+before an update goes over it, with the values of the copy that's there. `type` types into a keyboard on the device's
+screen, run once per character with `{text}` that character (a Roku's `/keypress/Lit_{text}`). `log` reads a log the app keeps on the device (a file) for the
 builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted.
 
 ```json
@@ -180,6 +183,11 @@ builder, for a device with no log to stream. `remove` takes the app off the devi
               { "http": { "port": 80, "path": "/pkgs/dev.jpg", "keep": "picture",
                           "auth": { "digest": true, "user": "rokudev", "password": "{field:password}" } } }],
   "use":     [{ "http": { "method": "POST", "port": 8060, "path": "/keypress/{key}" } }],
+  "type":    [{ "http": { "method": "POST", "port": 8060, "path": "/keypress/Lit_{text}" } }],
+  "stop":    [{ "http": { "method": "POST", "port": 8060, "path": "/exit-app/dev" } }],
+  "remove":  [{ "http": { "method": "POST", "port": 80, "path": "/plugin_install",
+                          "auth": { "digest": true, "user": "rokudev", "password": "{field:password}" },
+                          "form": { "mysubmit": "Delete", "archive": "" } } }],
   "logs":    [{ "stream": { "port": 8085 } }],
   "keys": { "home": "Home", "up": "Up", "down": "Down", "left": "Left", "right": "Right", "select": "Select", "back": "Back" }
 }
@@ -200,9 +208,9 @@ never anything to download; `output` is where it leaves it, which `"@{package}"`
 "app": { "declared": {
   "files": { "manifest": "title={{NAME}}\nmajor_version=1\nmm_icon_focus_hd=pkg:/images/icon_focus_hd.png\n…", "source/main.brs": "sub Main()\n…\nend sub\n" },
   "rules": "What a builder needs to know to write apps for it, in a few sentences.",
-  "package": "rm -f build/app.zip && mkdir -p build && zip -r build/app.zip manifest source components images",
+  "package": "rm -f build/app.zip && mkdir -p build images && zip -qr build/app.zip manifest source components images",
   "output": "build/app.zip",
-  "icons": { "images/icon_focus_hd.png": "336x210" }
+  "icons": { "images/icon_focus_hd.png": "290x218", "images/icon_focus_fhd.png": "540x405" }
 } }
 ```
 
@@ -215,9 +223,9 @@ components include). Lamp writes them before every build, so keep them out of `f
 takes them into the package. Lamp tells the app where it is and gives it its token on the device itself.
 
 `"icons"` gives the app its icon on the device, wherever the device shows one (a channel's poster on a Roku's home
-screen, a tile, a launcher): by path in the app's folder to its size in pixels, `"images/icon_focus_hd.png": "336x210"`,
-one for each picture the device's manifest names, at the sizes its maker documents. Lamp draws the icon it made for the
-app at each path before every build, so name those paths in the scaffold's manifest, keep them out of `files`, and make
+screen, a tile, a splash screen, a launcher): by path in the app's folder to its size in pixels,
+`"images/icon_focus_hd.png": "290x218"`, one for each picture the device's manifest names, at the sizes its maker
+documents. Lamp draws the icon it made for the app at each path before every build (a dark tile until there is one), so name those paths in the scaffold's manifest, keep them out of `files`, and make
 sure the package step takes them in. Never draw an icon in the scaffold or the package step. A device that shows no icon
 for an app needs none.
 

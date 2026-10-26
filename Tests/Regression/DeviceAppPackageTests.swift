@@ -93,5 +93,9 @@ final class DeviceAppPackageTests: XCTestCase {
         let filled = try Placeholders.fill("/api/app?package={base64:packageFullName}", ["packageFullName": "Lamp.a_1.0.0.0_neutral__x"], in: .path)
         // The value's own "+", "/" and "=" can't change the query they're put in.
         XCTAssertEqual(filled, "/api/app?package=TGFtcC5hXzEuMC4wLjBfbmV1dHJhbF9feA%3D%3D")
+        // Text being typed is any character, encoded in a path so it can't leave it, and never in a header.
+        XCTAssertEqual(try Placeholders.fill("/keypress/Lit_{text}", ["text": "/"], in: .path), "/keypress/Lit_%2F")
+        XCTAssertEqual(try Placeholders.fill("/keypress/Lit_{text}", ["text": "é"], in: .path), "/keypress/Lit_%C3%A9")
+        XCTAssertNotNil(Placeholders.problem("text", in: .header, fields: []))
     }
 }

@@ -314,6 +314,27 @@ enum DeviceApps {
         _ = try await IntegrationRunner(integration: integration, device: device).run(use, extra: values(project).merging(["key": name]) { $1 })
     }
 
+    /// Types text on the device's screen through the bridge's `type`, a character at a time.
+    static func type(_ text: String, in project: LampProject, on device: Device) async throws {
+        guard let integration = integration(for: project), let type = integration.bridge?.type, !type.isEmpty else {
+            throw Failure(message: "Lamp can't type on the \(device.name): its integration doesn't say how.")
+        }
+        let runner = IntegrationRunner(integration: integration, device: device)
+        for character in text {
+            _ = try await runner.run(type, extra: values(project).merging(["text": String(character)]) { $1 })
+        }
+    }
+
+    /// Ends the app on the device as the person stops it, through the bridge's `stop`; false when the integration has
+    /// none or the device refused, for the caller to take the device back another way (Home).
+    static func stop(_ project: LampProject, on device: Device) async -> Bool {
+        guard let integration = integration(for: project), let stop = integration.bridge?.stop, !stop.isEmpty else { return false }
+        // A wrapped package is ended by its names, so only the copy Lamp knows is there.
+        let extra = integration.app?.declared?.wrap == nil ? values(project) : installedValues(project, on: device)
+        guard let extra else { return false }
+        return (try? await IntegrationRunner(integration: integration, device: device).run(stop, extra: extra)) != nil
+    }
+
     /// What the app's own log on the device holds now, through the bridge's `log`; nil when the integration has none.
     static func log(_ project: LampProject, on device: Device) async throws -> String? {
         guard let integration = integration(for: project), let log = integration.bridge?.log, !log.isEmpty else { return nil }
@@ -329,6 +350,13 @@ enum DeviceApps {
         try? FileManager.default.copyItem(at: identity, to: record)
         try? Data(device.id.utf8).write(to: installedRecord(project, device: device.id).deletingPathExtension().appendingPathExtension("device"))
         if !pending { try? FileManager.default.removeItem(at: installedRecord(project, device: device.id, pending: true)) }
+        // Which app the device last took, for a device that keeps only one copy of anything Lamp puts there.
+        if !pending { try? Data(project.id.utf8).write(to: lastOnDevice(device.id), options: .atomic) }
+    }
+
+    /// Where Lamp notes which app it last put on a device: a Roku has one developer channel, which each install replaces.
+    private static func lastOnDevice(_ id: String) -> URL {
+        Edition.supportFolder.appendingPathComponent("Device Builds").appendingPathComponent("last-\(MSIX.publisherID(id)).txt")
     }
 
     /// Where Lamp notes which package of the app is on a device (the identity, with the device's id beside it), and
@@ -351,6 +379,14 @@ enum DeviceApps {
             guard let id = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8),
                   let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) else { continue }
             let runner = IntegrationRunner(integration: integration, device: device)
+            // A package that isn't wrapped has no names of its own: the device keeps one copy (a Roku's developer channel).
+            guard integration.app?.declared?.wrap != nil else {
+                // Only while it's still this app's: another wish put on the device since has replaced it.
+                guard (try? String(contentsOf: lastOnDevice(id), encoding: .utf8)) == project.id else { continue }
+                if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: values(project)) }
+                _ = try? await runner.run(remove, extra: values(project))
+                continue
+            }
             // The copy the device took, and one that was on its way and may have landed; the same package twice is asked once.
             var asked: Set<String> = []
             for pending in [false, true] {
@@ -503,6 +539,7 @@ extension Agent.Rules {
             rule += "Lamp can't press the \(name)'s keys, so `use_app` doesn't work for it. "
         } else {
             rule += "`use_app` presses the remote's keys there, with `key` actions (\(keys.joined(separator: ", "))) and `wait`, then shows the screen again. "
+            if integration?.bridge?.type?.isEmpty == false { rule += "`type` with `text` types into a keyboard on its screen once one has focus. " }
         }
         if integration?.bridge?.look == nil { rule += "Its integration has no way to picture its screen, so ask the person what they see. " }
         return rule + "There is no screen as text and no pointer: try the app the way the person will, with the keys.\n"

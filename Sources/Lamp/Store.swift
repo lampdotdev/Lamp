@@ -7628,6 +7628,7 @@ final class Store: ObservableObject {
         guard !keys.isEmpty, DeviceApps.integration(for: project)?.bridge?.use != nil else {
             return (200, ["text": "Lamp can't press the \(name)'s keys: its integration doesn't say how."])
         }
+        let typing = DeviceApps.integration(for: project)?.bridge?.type?.isEmpty == false
         var report: [String] = []
         for action in actions {
             guard turns[project.id] === owner, !owner.stopped else { report.append("Stopped."); break }
@@ -7647,8 +7648,17 @@ final class Store: ObservableObject {
                     report.append("Couldn't press \(key): \(error.localizedDescription)")
                     break
                 }
+            } else if kind == "type", typing, let text = action["text"] as? String, !text.isEmpty {
+                do {
+                    try await DeviceApps.type(text, in: project, on: run.device)
+                    report.append("Typed \"\(text)\".")
+                    try? await Task.sleep(for: .milliseconds(400))
+                } catch {
+                    report.append("Couldn't type \"\(text)\": \(error.localizedDescription)")
+                    break
+                }
             } else {
-                report.append("\(kind.isEmpty ? "That" : kind) isn't something a \(name) does: only `key` (\(keys.joined(separator: ", "))) and `wait`.")
+                report.append("\(kind.isEmpty ? "That" : kind) isn't something a \(name) does: only `key` (\(keys.joined(separator: ", ")))\(typing ? ", `type`" : "") and `wait`.")
                 break
             }
         }
@@ -9504,8 +9514,11 @@ final class Store: ObservableObject {
             deviceRunBuilt[project.id] = nil
             if let run = deviceRuns.removeValue(forKey: project.id) {
                 run.end()
-                // Home takes a device back from the app, where its remote has one.
-                if DeviceApps.keys(for: project).contains("home") { try? await DeviceApps.press("home", in: project, on: run.device) }
+                // The bridge's stop ends the app; where there's none, or the device refused, Home takes the device back
+                // from it, where its remote has one.
+                if await !DeviceApps.stop(project, on: run.device), DeviceApps.keys(for: project).contains("home") {
+                    try? await DeviceApps.press("home", in: project, on: run.device)
+                }
             }
             return true
         }
