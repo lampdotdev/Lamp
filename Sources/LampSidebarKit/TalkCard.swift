@@ -30,11 +30,14 @@ public enum TalkCard {
         public var options: [Option]
         /// A line under the question, for what it's about: Lamp's own cards have one (`Starters`), the agent's don't.
         public var detail: String?
+        /// Only the person can answer it (Lamp's device card): no "Decide for me".
+        public var personOnly: Bool?
 
-        public init(question: String, options: [Option], detail: String? = nil) {
+        public init(question: String, options: [Option], detail: String? = nil, personOnly: Bool? = nil) {
             self.question = question
             self.options = options
             self.detail = detail
+            self.personOnly = personOnly
         }
 
         /// A card saved while options were plain words, some with the one the agent had `chosen`, reads too.
@@ -42,6 +45,7 @@ public enum TalkCard {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             question = try values.decode(String.self, forKey: .question)
             detail = try values.decodeIfPresent(String.self, forKey: .detail)
+            personOnly = try values.decodeIfPresent(Bool.self, forKey: .personOnly)
             if let options = try? values.decode([Option].self, forKey: .options) {
                 self.options = options
             } else {
@@ -53,6 +57,9 @@ public enum TalkCard {
     /// Whether "Decide for me" is one of a question's tiles: beside up to three answers, where the tiles still make a
     /// row of four on a wide card. With four of its own there's no room left in the row, and it's a link under them.
     public static func decidesAsTile(_ question: Question) -> Bool { question.options.count < 4 }
+
+    /// Whether a question offers "Decide for me" at all: not one only the person can answer.
+    public static func decides(_ question: Question) -> Bool { question.personOnly != true }
 
     public struct Ask: Codable, Equatable {
         public var layout: Layout
@@ -66,13 +73,18 @@ public enum TalkCard {
         /// Lamp's own card, not the agent's: what a wish Lamp came with offers to change first (`Starters`).
         /// It's answered the same way, but nothing waits on it: the wish is there to use meanwhile.
         public var offer: Bool?
+        /// Lamp's own card asking whether the agent may change this device of the person's (`device_permission`):
+        /// Lamp, not the agent, keeps what's chosen on it.
+        public var device: String?
 
-        public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil, offer: Bool? = nil) {
+        public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil, offer: Bool? = nil,
+                    device: String? = nil) {
             self.layout = layout
             self.questions = questions
             self.answers = answers
             self.typed = typed
             self.offer = offer
+            self.device = device
         }
 
         private enum Earlier: String, CodingKey { case questions, dismissed }
@@ -88,6 +100,7 @@ public enum TalkCard {
             questions = try values.decode([Question].self, forKey: .questions)
             typed = try values.decodeIfPresent(Bool.self, forKey: .typed)
             offer = try values.decodeIfPresent(Bool.self, forKey: .offer)
+            device = try values.decodeIfPresent(String.self, forKey: .device)
             let chosen = ((try? earlier.decode([Chosen].self, forKey: .questions)) ?? []).map(\.chosen)
             let given = try values.decodeIfPresent([String?].self, forKey: .answers)
             let assumed = !chosen.isEmpty && chosen.allSatisfy { $0 != nil }

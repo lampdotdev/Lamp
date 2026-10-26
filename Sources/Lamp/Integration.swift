@@ -23,6 +23,13 @@ struct Integration: Codable, Hashable {
     /// naming call as "<id>:<name>" with its `purpose`, and an app made as one keeps that in `LampProject.integration`.
     /// Only Lamp's own kinds, in the integrations Lamp ships: the Xbox's native games (`GameKit`).
     var kinds: [String: AppKind]?
+    /// What the device can run, of "web" (a page in a host) and "native" (the device's own code): its row in the table of
+    /// devices (`Places`). Unsaid, it's what `app` declares. Each one named must be one its `app` or `kinds` has files for.
+    var supports: [String]?
+    /// What a game's page on the device is told about its input, as a built-in row says it (`Place.Input`): its
+    /// keyboard's names for keys, the controller that comes with it, the one layout its controllers have. `{}` is a web
+    /// view with a PC keyboard and no controller of its own; left out, Lamp can't put a game's page there.
+    var input: Place.Input?
     /// Where a device that serves its own HTTPS certificate serves the root that signs it ("/config/rootcertificate"
     /// for Xbox's Device Portal, which makes itself a new certificate each time it starts): Lamp reads it once, over
     /// the connection it keeps the device's first certificate on, and from then on takes any certificate it signed.
@@ -495,7 +502,7 @@ enum IntegrationCheck {
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
                                "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
-            "kinds": .map, "certificateRoot": .leaf,
+            "kinds": .map, "supports": .array(.leaf), "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
         ])
     }
 
@@ -689,6 +696,18 @@ enum IntegrationCheck {
             if kind.purpose?.trimmed.isEmpty != false { say("kinds.\(name).purpose says what it's for, beside app's.") }
             if integration.app?.declared?.wrap != "msix" { say("kinds.\(name): a native game is a Windows package, so app.declared.wrap must be \"msix\" and the bridge must install one.") }
         }
+        if let supports = integration.supports {
+            // What the device runs is its row in Lamp's table of devices: each make it claims has files to make it.
+            let made = Set([integration.app?.declared.map(Places.declaredMake), integration.app?.lamp == "tv-web" ? .web : nil].compactMap { $0 })
+            for word in supports {
+                if let make = Place.Make(rawValue: word) {
+                    if !made.contains(make) { say("supports: \"\(word)\" needs an app that makes it, and app declares \(made.isEmpty ? "none" : made.map { "a \($0.rawValue) one" }.joined(separator: " and ")).") }
+                } else {
+                    say("supports: \"\(word)\" must be \"web\" or \"native\".")
+                }
+            }
+        }
+        if let input = integration.input, let problem = Controllers.problem(in: input) { say(problem) }
         if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
             say("certificateRoot is the path the device serves its root certificate at, over HTTPS on the port the bridge uses: \"/config/rootcertificate\".")
         }

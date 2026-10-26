@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -320,6 +320,13 @@ enum Gallery {
             option("Remind me to plan at 8", "bell"),
         ])],
         offer: true)),
+        // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
+        ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
+        ask("A device of the person's, answered", {
+            var card = DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")
+            card.answers = [DevicePermissions.allowOnce]
+            return card
+        }(), isOpen: false),
     ]
 
     private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true, waiting: LiveAsk.Waiting? = nil) -> Entry {
@@ -758,6 +765,9 @@ enum Gallery {
         wishLink("Shared, changed since", link: true, changed: true),
         wishLink("Beside the app", link: true, copied: true, width: nil),
         wishLink("Beside the app, new link", width: nil),
+        wishLink("With the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
+        wishLink("Beside the app, with the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+                 canIncludeFile: true, width: nil),
     ]
 
     private static let diskMapLine = "Shows where your disk space goes, as rings that fill in while it measures."
@@ -765,7 +775,7 @@ enum Gallery {
 
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
-                                 changed: Bool = false, width: CGFloat? = 480) -> Entry {
+                                 changed: Bool = false, canIncludeFile: Bool = false, width: CGFloat? = 480) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -773,12 +783,51 @@ enum Gallery {
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
-                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false,
+                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
                 .background(width == nil ? AnyShapeStyle(ChatLook.paper) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor)),
                             in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+    }
+
+    // MARK: Publish
+
+    /// The card that says what a game's page will put up and where, from checking it to its being up, in the chat's
+    /// place at its narrowest and widest.
+    private static let publishEntries: [Entry] = [
+        publish("Checking", stage: .preparing),
+        publish("Needs GitHub's tool", stage: .needsGitHub(.install)),
+        publish("Needs a sign-in", stage: .needsGitHub(.signIn)),
+        publish("No licence", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no licence. It can still be used on this Mac.")),
+        publish("Ready", stage: .ready),
+        publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same licence.",
+                                                             "2 pictures made with AI, marked as such."]),
+        publish("Publishing", stage: .publishing("Waiting for GitHub to put it up…")),
+        publish("Couldn't publish", stage: .failed("GitHub didn't take the page: the connection was lost.")),
+        publish("Up", stage: .published, page: true),
+        publish("Up and copied", stage: .published, page: true, copied: true),
+        publish("Up, changed since", stage: .ready, page: true),
+        publish("Up, wide", stage: .published, page: true, width: 480),
+    ]
+
+    private static func publish(_ name: String, stage: PublishCard.Stage, notes: [String] = [], page: Bool = false, copied: Bool = false,
+                                width: CGFloat? = nil) -> Entry {
+        Entry(group: "Publish", name: name) {
+            let folder = Starters.folder?.appendingPathComponent("newyork")
+            let ready = stage != .preparing
+            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+                                   stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
+                                   credit: "Based on Slop New York by Mr.doob",
+                                   openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
+                                   copied: copied, republish: page, canPublish: stage == .ready || { if case .failed = stage { true } else { false } }(), publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
+            return AnyView(card
+                .frame(width: width == nil ? 340 : nil)
+                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize(horizontal: false, vertical: true))

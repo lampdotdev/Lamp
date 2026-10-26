@@ -92,6 +92,28 @@ enum AppSecrets {
     }
 
     /// Everything an app kept, when the app is deleted.
+    /// Everything one app keeps, for the check that none of it leaves in a shared wish (`ShareCheck`).
+    static func values(app: String, in place: Place = place) -> [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+        switch place {
+        case .keychain(let service):
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                        kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
+            var items: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess else { return [] }
+            return (items as? [[String: Any]] ?? []).compactMap { item in
+                guard let account = item[kSecAttrAccount as String] as? String, account.hasPrefix(app + "/") else { return nil }
+                var one = Keychain.query(service, account: account)
+                one[kSecReturnData as String] = true
+                var data: CFTypeRef?
+                return SecItemCopyMatching(one as CFDictionary, &data) == errSecSuccess ? data as? Data : nil
+            }
+        case .file(let url):
+            return (File.read(url)?[app] ?? [:]).values.compactMap { Data(base64Encoded: $0) }
+        }
+    }
+
     static func forget(app: String, in place: Place = place) {
         lock.lock()
         defer { lock.unlock() }

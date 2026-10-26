@@ -26,6 +26,7 @@
  *   Lamp already has for each.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
  *   or keeps it and finds the device.
+ * - `device_permission`: asks the person, on a card of Lamp's own, whether the agent may change one of their devices.
  * - `ask`, `progress`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking,
  *   `progress` puts a short line on how the work is going in the chat, and
  *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
@@ -685,7 +686,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(connectors);
 	pi.registerTool(networkDevices);
 	pi.registerTool(deviceIntegration);
-	for (const name of ["ask", "progress", "write_wish"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "progress", "write_wish", "device_permission"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);
 }

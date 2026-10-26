@@ -193,6 +193,10 @@ enum Parts {
                 }
                 kind = one
             }
+            // What each device can run is a fact Lamp holds (`Places`): an app on one that can't run its make is refused
+            // here, with the device's reason, rather than by a build that fails after a turn.
+            let model = Places.model(of: kind, places: app.places, integration: kind == .device ? app.kind : nil)
+            if let refusal = Places.refusal(make: model.make, devices: model.devices) { return .wrong(refusal) }
             guard !asked.kinds.contains(where: { group($0) == group(kind) }) else {
                 return .wrong("A wish has one app of each kind: give \(name(of: kind)) once, with all its places.")
             }

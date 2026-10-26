@@ -126,6 +126,13 @@ keeps its folder and data), adds the ones the wish doesn't have, and leaves a pa
 files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
 with a part says 10.
 
+A three.js game travels as its page (`GameFiles`): Web/ without Lamp's runtime beside it (lamp-game.js, lamp.js,
+three/), its scripts and pages as code the review reads (as a TV app's page is read, and its Sources/Native.swift as any
+app's Swift) and its models, pictures and sounds as data. The Mac that opens it makes a three.js game and writes Lamp's
+files around the page (`GameKit.write`); the copy opens on the Mac, wherever the sender had put it. Such a file says 11,
+so a Lamp from before asks to be updated rather than looking for Swift and finding none. A game in C++ isn't shared:
+Lamp makes no new ones.
+
 ## Credit
 
 A wish says where it came from in `credits.json` at its root (`Credits`): `upstream`, other people's work in it (name,
@@ -139,6 +146,50 @@ changed is still shown and shared. Lamp keeps only what passes `Credits.checked`
 alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the
 bundle by `Store.stageSigned`). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
 file's format isn't raised for it.
+
+Pictures `make_art` paints are marked as made with AI twice: in the PNG itself (IPTC's digital source type
+`trainedAlgorithmicMedia` in its XMP, `AIMark`), and in the wish's `generated` list, which the info panel and About
+window count ("3 pictures made with AI") while the files are there.
+
+Before a wish leaves the Mac (a shared file now, a published page too), `ShareCheck` decides whether it may: work under
+an open licence goes with its licence and credit; under a share-alike one (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) it goes
+and the remix stays under it, which a shared file satisfies by carrying the code and a published page says
+(`ShareCheck.notes`); under its own terms (`LicenseRef-`, an id Lamp doesn't know, non-commercial or no-derivatives) it
+goes, credited and named; with no licence it can be used here but the share is refused, naming it. A licence file the
+credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
+provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and
+for anything shaped like a key (a private key, the prefixes services give their keys), and a hit refuses the share,
+naming the file. The person's data isn't in the folder (an app keeps it in its container) and the chat's attachments
+never ship.
+
+### Publishing a game as a page
+
+A wish whose one app is a game drawn with three.js can be published as a page anyone plays in a browser (`Publish`,
+an experiment: Settings → Experimental, Lamp Dev only, since the page carries Lamp's own runtime, which needs a
+licence that lets anyone pass it on before every Lamp can publish). Its share menu has Publish as Web Page…, which puts
+the Publish card in the chat's place (`PublishCard`, `PublishCards`, `SidebarPublish`). It goes on GitHub Pages under the
+person's own account, through GitHub's `gh` and their sign-in there, never through Lamp's servers: the page costs Lamp
+nothing however often it's played, and it's the person's under GitHub's terms. Without `gh` the card's one button gets
+it; signed out, Sign In to GitHub… runs `gh auth login --web` in Terminal and the card checks again once that's done.
+Before anything goes up the card shows what will: the repository (the wish's name, made public; a name the account
+already has gets a number), the credit, the licence notes, the AI pictures and the size, all worked out by staging the
+page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it with Lamp's credit bar over it ("Based on Slop New York by Mr.doob · Open in
+Lamp", settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding its link on a
+narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), once the person has made one: Publish never sends
+the wish's words or picture itself, and a wish with none has Make Share Link… on the card, which opens Share Link's own
+card where they see and change what it shows, and can tick Include the wish itself so the link's page offers this
+exact wish to anyone with Lamp (site/SHARED_WISHES.md) (with none, the bar links Lamp's site). That page is the one that works for
+someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
+wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
+the page too (a three.js game's as its page, `GameFiles`), offered in the README, and made by
+`Sharing.export`, so held to its checks. With them go credits.json with this wish at the end of the
+chain, a README with the credits and licences, and `.nojekyll`; the staged page is searched for secrets again. The push
+signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built
+that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten minutes.
+A repository is kept as soon as it's made, and a failed try keeps the page staged, so Publish tries again into the same
+repository instead of leaving one behind and making another. Where a
+wish's page went is kept in Lamp's folder (`Published Pages.json`), so Update Page puts the wish as it is now in its
+place.
 
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
@@ -221,7 +272,8 @@ lamp.js's own SHA-256, HMAC, AES-GCM and X25519 in ES5, since a TV's page has no
 CryptoKit's answers by `WishChannelTests`; change one and change them all. Every app of a wish holds the same key, so a
 device with one of them could join as any; there is no forward secrecy; and a reset of a wish's key isn't offered yet. The
 relay lets a peer in only once it has proved it holds the room's key and named an app the wish has, tells every member who joins and leaves
-(`welcome`, with every app the wish has; `joined`, `left`: peer, kind, name, the device it said and since when), passes a `send` to one peer or to all as
+(`welcome`, with every app the wish has; `joined`, `left`: peer, app, kind, name, the device it said and since when), passes a `send` to one peer, to
+every copy of one app or to all as
 a `message` with who sent it, tells the sender when the one it was for isn't there (`undelivered`), and holds peers to a
 phone's size and rate limits (16 KB of JSON a message, `ControllerWire`), and passes files and a game's controls to one
 peer (below). The same
@@ -233,7 +285,29 @@ sealed messages each way as they are, unread: the app posts them to `/app/wish/s
 `/app/wish/poll` for what came (answered as soon as something has, or after 6 seconds with nothing), and Lamp answers the
 relay's beats for it. An app that stops polling (closed, force-stopped) has its socket let go a few seconds after its last
 poll could have ended (`WishProxies.grace`), so the others see it leave while it's gone and arrive when it's back; and an app
-back on a new socket before its old one was noticed gone is said to have left before it's said to join. The app's token is what lets it use those routes; the wish's key is what lets it into the room. Every
+back on a new socket before its old one was noticed gone is said to have left before it's said to join. The app's token is what lets it use those routes; the wish's key is what lets it into the room.
+
+One app of a wish can be open on several devices at once (a screen on the kitchen iPad, on the TV and on an Android
+photo frame): each is a **copy** of it, a member of the room and a peer of its own. A copy's peer name is the app's,
+a dot and an id its device made the first time the app ran there and keeps with what it keeps of the wish (`copy`
+beside `me`: UserDefaults, the Android app's file, localStorage; eight letters and digits; "screen.k3j9x0ab",
+`WishChannel.isName`, 32 bytes at most), so the same app opened again on that device is the same copy, and a reconnect
+from it still replaces its old socket (code 4000), while a copy on another device sits beside it. The TV preview has a
+store of its own, so it's a copy apart from the TV's. Everything that was by peer is by copy: the room's members, a
+link straight between two apps, where each was reached (`at`), a file's transfer, a game's player (`LampController`
+plays with one copy of the TV app, the one open longest), and the name a value's setting carries (`c: [ms, n, peer]`),
+so two copies of one app never tie. What an app is told is still by app: `peers`, `apps` and `peer("screen")` are
+apps, each with its `copies` open now (`id`, `device`, `since`), open while any copy is, out of date only when no copy
+speaks this one's `wire`; another copy of this app is listed while it's open. A message `to` an app goes to every open
+copy of it (the relay passes a `send` or `values` whose `to` has no dot to each member of that app, `Member.isFor`),
+`to` a copy's id to that copy alone; `onMessage` and `onFile` say the app (`from`), and which copy sent it as a third
+argument (`file.copy` in Swift and Kotlin); a file goes to one copy, the one named or the app's opened last. An app built
+before copies (wire 3 or less) joins by its app's name alone, as a copy of that app: the relay and the new libraries
+take it so, and it's shown as out of date, but it doesn't know the new copies' names (it sees them as no app of the
+wish, so it shows the others as not open and its messages to them don't arrive), so it's rebuilt when opened from Lamp,
+as any app of an earlier wire is: `LampWishVersion`, `Template.androidWishOutdated` and a TV app's install on open.
+An app with no other app in its wish has copies too (the same app on two iPhones), with a room of its own (below).
+`WishNote` gives each copy in the room its own line. Every
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
 added to (a `RawRepresentable` struct in Swift, a value class in Kotlin, a string in lamp.js), so code that switches on one
@@ -252,7 +326,7 @@ tells the agent to show it but the `wish-links` skill. Each app tells Lamp's roo
 keeps what came only until the next poll (an app that falls 256 behind has its link ended, since a sealed message can't be
 skipped) and lets the socket go when the app has stopped polling. A room is opened the
 first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
-`Store.syncLocalNetwork`), and ended when the wish is gone, has no other app, or has had nobody in it and nobody asking for
+`Store.syncLocalNetwork`), and ended when the wish is gone, has no app, or has had nobody in it and nobody asking for
 fifteen minutes, so the relay process runs only while a game or a room needs it (`ControllerRelay` keeps rooms beside
 sessions, and starts the relay for either). Where a wish's apps are is asked of `Store.apps(of:)` and `Store.wish(of:)`
 alone, and a wish is alone when it has fewer than two apps, so nothing in the hub knows which app is at the root. The relay says who is in each room on its output as that changes
@@ -277,17 +351,22 @@ talking with Lamp closed, the Mac asleep or Lamp updating, as long as they're on
 app listens (an `NWListener` speaking WebSocket in LampSupport.swift; a `ServerSocket` and just enough of WebSocket,
 `LampWish.Ws`, in LampSupport.kt) at the wish's port for it: 20000 plus a block of eight the wish's key picks
 (`lamp-wish port`), plus the app's place in the wish's sorted list of apps, so a TV page, which can't listen or look names
-up, knows where to try; any port when another program has that one. It's found by Bonjour (`_lampwish._tcp`,
+up, knows where to try; any port when another program has that one. Every copy of an app listens at the app's port,
+each on its own device, so copies don't collide (two copies on one device, an app for iPhone and Mac open on the Mac and
+in the simulator, put the second on any port). It's found by Bonjour (`_lampwish._tcp`,
 `Template.wishServiceType`, which an iPhone app's Info.plist names in `NSBonjourServices`) or NSD under a name only the key
-makes (`lamp-wish service` of its peer name), which says nothing of the wish or the app to anyone else, and at the
+makes (`lamp-wish service` of its app's name, then a dash and the copy's id), which says nothing of the wish or the app to
+anyone else, and at the
 addresses it tells Lamp's room it listens at (`at`, sealed like any message; the relay passes each member's on, eight short
 ones at most, in `welcome`, `joined` and `at`). Each app keeps on its device, by the wish's tag, who it is, the wish's apps
 and where each was reached (UserDefaults, a file in the Android app's storage, localStorage on a TV), so it finds the
 others without Lamp. A Mac app says this Mac's loopback first, for an iPhone app in the simulator, which shares the Mac's
-network. Each app dials the others at the last address it reached them at, what it was told and what Bonjour or NSD found;
-a TV page, which only dials, then sweeps its own network (its address from Tizen's or webOS's system calls, else the /24s
-of the addresses it was told) at that app's port, 32 at a time, at most once a minute and only for an app Lamp's room
-doesn't have either. Tries come again less often each time (2 to 30 seconds, with jitter), and at once when the app comes
+network. Each app dials every copy it knows of (in the room, found by Bonjour or NSD, or reached before) at the last
+address it reached it at, what it was told and what Bonjour or NSD found; whichever copy of that app answers there is
+taken, as the copy it says it is (an address changes hands). A TV page, which only dials, then sweeps its own network
+(its address from Tizen's or webOS's system calls, else the /24s of the addresses it was told) at an app's port, every
+address of it, since the app may be open on several devices, 32 at a time, at most once a minute, only for an app no
+copy of which it reaches either way, and for its own app only once it has known another copy of it. Tries come again less often each time (2 to 30 seconds, with jitter), and at once when the app comes
 to the front, the network changes or Bonjour or NSD finds the other again. A link's handshake is the room's
 (`WishChannel`'s steps), the app that listens taking the relay's side and naming itself, so only an app holding the wish's
 key answers and only the one it was dialled as; a listener lets in only a hello naming an app of the wish, eight unproven
@@ -296,7 +375,9 @@ earlier name dialled, so both sides agree without saying. A message goes the str
 the room; another app is open when either way says so, and this one is away (`State.away`, "Can't reach the wish's other
 apps…") only when neither way reaches anyone. An app reaches the others only while it runs: an iPhone app in the
 background doesn't, and an Android app only while its activity is open. `WishDirectTests` runs two Swift apps through
-Lamp's relay going away and opening again without it, and a TV page finding a Mac app by its port with no Lamp. A TV's own
+Lamp's relay going away and opening again without it, a TV page finding a Mac app by its port with no Lamp, and two
+copies of one app (a Swift program and a TV page) with a Mac app seeing each other and sharing values with Lamp and
+after it's gone, and two copies of an app on its own doing the same. A TV's own
 address on Tizen and webOS is untried on real TVs.
 
 Beside messages, which are for apps open now, the apps of a wish share **values** (`LampWish.values`, `set`, `onChange`
@@ -316,7 +397,11 @@ setting without a value, kept so that an older setting from an app that was away
 comes (open either way, where it wasn't), each sends it every setting it has, a few at a time within a message's size
 (`values`, sealed like a message; through Lamp's room the relay passes it to the one app named and keeps none), and each
 takes those later than its own; a setting made while others are open goes to each at once. So a value set while apart
-arrives when they meet, and where two apps set one apart, the later wins in both. A value taken from another app is held
+arrives when they meet, and where two apps set one apart, the later wins in both. A setting an app takes from
+another copy goes on to the copies open now that the one it came from may not reach (those this app reaches straight,
+and those in the room when the one it came from isn't there itself, `pass`): two TV pages, which only dial, reach each
+other's values through an app that listens when Lamp is closed. A copy that has a setting already takes nothing from it,
+so it goes no further; messages and files aren't passed on. A value taken from another app is held
 to twice a value's limit, since apps measure a little differently, and what the store holds from other apps (names,
 values, and removals at 32 bytes each) to the wish's apps times twice the whole, 64 KB: every app sets at most the whole,
 so everything they set fits and they agree whatever the order, and an app gone wrong or hostile that floods the others
@@ -351,8 +436,8 @@ On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow th
 two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
 them.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 3 since files and a game's controls, 2 brought
-values; an app from before says none,
+What a wish's apps say to each other is numbered (`wire` in each library: 4 since copies, 3 brought files and a game's
+controls, 2 values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
@@ -363,18 +448,23 @@ fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an 
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`
 in all three libraries and `WishRooms.wire` together whenever what they say changes in a way an older app would misread.
 
-A wish of one app, which
-is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
-has or asks for other apps (`Template.talksToOtherApps`: its parts, or its list of apps, `LampProject.apps`, counting apps
-and not devices, so one app for the Mac and the iPhone is one). The first app of a wish meant to be several has it from its
-first build, while the others wait for this Mac to be able to build them: the wish's key, a room that lists the apps still
-to be made as not open (`WishRooms.described`, `Parts.waiting`), the pointer in its prompt and the skill with its requests,
-so it's written to talk to them from the start. An app on its own's LampSupport.swift, LampSupport.kt and lamp.js are what they would be
-without the hub, the channel's crypto and the direct links included (no listener, no Bonjour or NSD, so no Local Network
-question), its prompt has no rule and its requests no line about the hub, no key is made for it and none goes in its install
-(`Store.wishKey(for:)` is nil), its iPhone Info.plist names no Bonjour type, no room is opened for it and so nothing starts
-the relay, and `BuildStamp` leaves the block out and stamps no fingerprint of it, so no app is built again for code it
-doesn't carry (`WishHubStaysOutTests`).
+A wish of one app, which is most wishes and every starter, carries `LampWish` too (`Template.carriesWish`: every app
+that holds one), since any app may be open on several devices at once and its copies share values through it: its key,
+a room of its own once it asks (`WishRooms.answer` answers `alone` only for a wish with no app), its iPhone Info.plist's
+Bonjour type, its install's key, and `BuildStamp`'s fingerprint of the block (a starter's prebuilt copy is stamped with
+it too, `BuildStamp.stamp`). Every kind but a device's offers the `wish-links` skill in its prompt's list, which is also
+named with the requests of an app whose code uses `LampWish`. What's for a wish of several apps alone still goes by
+`Template.talksToOtherApps` (its parts, or its list of apps, `LampProject.apps`, counting apps and not devices, so one
+app for the Mac and the iPhone is one): the rule in the prompt (`Rules.wishTalk`), naming the skill with every request,
+and the builder's note (`WishNote`). The first app of a wish meant to be several has all of it from its first build,
+while the others wait for this Mac to be able to build them: a room that lists the apps still to be made as not open
+(`WishRooms.described`, `Parts.waiting`), the pointer in its prompt and the skill with its requests, so it's written to
+talk to them from the start. An app with no other app in its wish is `alone` (no reason to show) while no other copy
+of it is open, and doesn't look for its copies on the network (no listener, no Bonjour or NSD, so no Local Network
+question on a Mac) until Lamp's room has shown it another copy of itself, which it keeps on the device (`copies`
+beside `copy`): copies of an app on its own first meet through Lamp, and after that also straight. Only apps that use
+`LampWish` ask Lamp for a room at all, since the block starts the first time it's used. `WishHubStaysOutTests` holds
+an app on its own to carrying the block without the rule or the note.
 
 A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) can do so as a player of
 `Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`; the prompt offers it beside plain

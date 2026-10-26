@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { deflateSync, crc32 } from "node:zlib";
-import { createShareHandler, memoryStore, readShare, imageInfo, isID, LIMITS } from "../lib/shared-wishes.js";
+import { createShareHandler, createFileHandler, memoryStore, readShare, imageInfo, isID, isWishFile, LIMITS, FILE_LIMITS } from "../lib/shared-wishes.js";
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
@@ -140,8 +140,65 @@ test("the card is a 1200×630 PNG, with or without a picture", async () => {
   }
 });
 
+/** A zip holding one stored file, as Lamp's shared files are zips with lamp-app.json at their root. */
+function zip(name, data) {
+  const nameBytes = Buffer.from(name), local = Buffer.alloc(30), central = Buffer.alloc(46), end = Buffer.alloc(22);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt32LE(crc32(data), 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt32LE(crc32(data), 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24); central.writeUInt16LE(nameBytes.length, 28);
+  const offset = local.length + nameBytes.length + data.length;
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(central.length + nameBytes.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([local, nameBytes, data, central, nameBytes, end]);
+}
+
+test("the wish itself goes with its link in parts, only as a file Lamp made, and goes with the link", async () => {
+  const store = memoryStore();
+  const handler = createShareHandler({ store, limited: false });
+  const files = createFileHandler({ store, limited: false });
+  const { id, secret } = await (await send(handler, "POST", share)).json();
+  const file = zip("lamp-app.json", Buffer.alloc(5000, 7));
+  assert.ok(isWishFile(file));
+  assert.equal(isWishFile(zip("readme.txt", Buffer.from("hi"))), false);
+  const part = (n, of, bytes, key = secret) => files(new Request(`https://lamp.dev/api/wish-file?id=${id}&part=${n}&of=${of}`, {
+    method: "PUT", headers: { "content-type": "application/octet-stream", authorization: `Bearer ${key}` }, body: bytes,
+  }));
+  const finish = (key = secret) => files(new Request(`https://lamp.dev/api/wish-file?id=${id}`, { method: "POST", headers: { authorization: `Bearer ${key}` } }));
+
+  assert.equal((await part(0, 2, file.subarray(0, 3000), "x".repeat(43))).status, 404, "only with the link's secret");
+  assert.equal((await part(0, FILE_LIMITS.parts + 1, file)).status, 400);
+  assert.equal((await part(0, 2, file.subarray(0, 3000))).status, 204);
+  assert.equal((await finish()).status, 409, "not until every part is there");
+  assert.equal((await part(1, 2, file.subarray(3000))).status, 204);
+  const done = await finish();
+  assert.equal(done.status, 200);
+  assert.equal(store.records.get(id).parts, undefined, "the parts go once they're together");
+  assert.deepEqual(Buffer.from(store.records.get(id).file.url.split(",")[1], "base64"), file);
+
+  const page = await createPageHandler({ store, template: async () => "<html><head></head><body></body></html>" })(new Request(`https://lamp.dev/api/wish-page?id=${id}`));
+  assert.match(await page.text(), /"file":"data:application\/octet-stream;base64,[^"]+","fileSize":\d+/);
+
+  // A word-only update keeps the file; taking the link down takes it too.
+  assert.equal((await send(handler, "PUT", { ...share, name: "Plant Friend" }, { id, secret })).status, 200);
+  assert.ok(store.records.get(id).file);
+  assert.equal((await part(0, 1, zip("other.txt", Buffer.from("x")))).status, 204);
+  assert.equal((await finish()).status, 400, "only a file Lamp made");
+  assert.equal((await send(handler, "DELETE", undefined, { id, secret })).status, 204);
+  assert.equal(store.records.has(id), false);
+
+  // A link taken down while a part goes up keeps nothing of it.
+  const again = await (await send(handler, "POST", share)).json();
+  const removed = [];
+  const racing = { ...store, async get(at) { const record = await store.get(at); store.records.delete(at); return record; }, async removeImages(urls) { removed.push(...urls); } };
+  const late = await createFileHandler({ store: racing, limited: false })(new Request(`https://lamp.dev/api/wish-file?id=${again.id}&part=0&of=1`, {
+    method: "PUT", headers: { "content-type": "application/octet-stream", authorization: `Bearer ${again.secret}` }, body: file,
+  }));
+  assert.equal(late.status, 404);
+  assert.equal(removed.length, 1, "the part that went up is taken away");
+});
+
 test("the site and Lamp agree on the limits", () => {
   const swift = readFileSync(new URL("../../Sources/Lamp/WishLink.swift", import.meta.url), "utf8");
+  assert.ok(swift.includes(`static let filePart = ${FILE_LIMITS.part.toLocaleString("en").replaceAll(",", "_")}`), "filePart");
+  assert.ok(swift.includes(`static let fileTotal = ${FILE_LIMITS.total.toLocaleString("en").replaceAll(",", "_")}`), "fileTotal");
   for (const [name, value] of Object.entries({ name: LIMITS.name, line: LIMITS.line, words: LIMITS.words })) {
     assert.ok(swift.includes(`static let ${name} = ${value}`), name);
   }

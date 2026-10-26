@@ -29,8 +29,9 @@ extension Target {
                        isMade: GameKit.isMade, scaffolded: { dir, _ in GameKit.isMade(dir) },
                        // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
                        sources: { _ in ["Game", "Assets", GameKit.webFolder, "Sources", "icon.json", "capabilities.json"] },
-                       // The kit is part of what's built: a new Lamp with a new kit builds the game again.
-                       inputs: { _ in GameKit.stamp },
+                       // The kit is part of what's built: a new Lamp with a new kit builds the game again. So is what the
+                       // page is told of the device it's built for: a change to that row builds it again too.
+                       inputs: { GameKit.stamp + GamePage.buildInput(for: $0) },
                        builtURL: { project in
                            project.onDevice ? DeviceApps.packageURL(for: project) : project.onAndroid ? GameAndroid.apk(project)
                                : project.dir.appendingPathComponent(project.onIOS ? "build/iOS/\(project.exe).app" : "build/\(project.exe).app")
@@ -38,7 +39,8 @@ extension Target {
                        marker: GameKit.marker,
                        // A game from before games were a kind of their own carries the device app's marker.
                        refines: .device,
-                       shareRefusal: "Lamp doesn't share games yet."),
+                       // A three.js game is shared as its page (`GameFiles`); one in C++ is refused in `Sharing.export`.
+                       shareRefusal: nil),
         part: Part(folder: "Game", family: "game", word: "game", menu: ("Game", "gamecontroller"), rules: { Agent.gamePrompt(part: $0, alone: $1) },
                    // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.gameAmongApps) { dir, wish in

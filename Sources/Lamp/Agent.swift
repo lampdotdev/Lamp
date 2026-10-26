@@ -57,7 +57,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,network_devices,device_integration,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -314,7 +314,9 @@ enum Agent {
     own words, and never try to reach the device with a command of yours.
     - When a wish controls, plays to or reads devices on the person's network (a remote, buttons for the speakers, \
     what's playing on the TV), call `network_devices` before asking what they have, and start from what it finds: \
-    "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you.
+    "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you. Open the `device-control` \
+    skill before writing code that reaches one of their devices. Reading a device is fine; change nothing on a real one \
+    (a key press, opening an app, volume, power) until the person allows it with `device_permission`.
     """
 
     /// With every request in a device's setup conversation: the conversation outlives what it began with, and a
@@ -601,7 +603,7 @@ enum Agent {
         static let macBlocks = """
         - LampSupport.swift has tested building blocks for common Mac jobs: notifications, schedules, text from \
         documents and pictures, dropped files, watched folders, shortcuts that work from any app, the clipboard, \
-        opening at login, photos, location, weather, music, Spotlight and the person's Roku. Use them instead of writing your own, and \
+        opening at login, photos, location, weather, music, Spotlight, the devices on the home network and the person's Roku. Use them instead of writing your own, and \
         open the building-blocks skill before using one. Make the most of being on the Mac: local files, drag and \
         drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
         """
@@ -618,7 +620,8 @@ enum Agent {
         static let iPhoneBlocks = """
         - LampSupport.swift has tested building blocks for common jobs, the same ones the Mac apps made with Lamp \
         have where a phone has them: notifications, schedules and work while the app is closed, text from documents \
-        and pictures, dropped files, photos, location, weather, music, Spotlight, the home and the person's Roku. Use them instead of \
+        and pictures, dropped files, photos, location, weather, music, Spotlight, the home, the devices on the home network and \
+        the person's Roku. Use them instead of \
         writing your own, and open the building-blocks skill before using one. Make the most of being on a phone: \
         the camera, photos, location, haptics, and being with the person wherever they are.
         """

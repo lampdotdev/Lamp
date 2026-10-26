@@ -23,17 +23,17 @@ enum Sharing {
     /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes. 9: it's an Android app, its
     /// Kotlin, manifest, resources and build file in app/. 10: it may be a wish of several apps, each other app in its
     /// folder (`parts` in the manifest, `Parts`), or a TV app, its web files in Web/ and Phone/ (`TVFiles`).
-    static let formatVersion = 10
+    static let formatVersion = 11
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
     /// app a 6, only one with a share extension a 7 and only one with a 3D scene an 8, so an app with none of them still opens in an older
     /// Lamp, and a Lamp that would build the app without one of them says to update instead. An Android app is a 9
     /// whatever it has: a Lamp from before would look for Swift and find none. A wish of several apps, and a TV app,
-    /// are a 10 the same way: a Lamp from before would open the app at the root alone, or find no code.
+    /// are a 10 the same way: a Lamp from before would open the app at the root alone, or find no code. A game is an 11.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
                        share: Bool = false, scene: Bool = false, parts: Bool = false) -> Int {
-        parts || platform.target.recipe.language == .web ? 10
+        platform.target.recipe.language == .game ? 11 : parts || platform.target.recipe.language == .web ? 10
             : platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.reaches(.ios) || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
@@ -158,6 +158,9 @@ enum Sharing {
         }
     }
 
+    /// The secrets `export` keeps out of a file. Tests give their own, since the person's keys aren't theirs to read.
+    nonisolated(unsafe) static var knownSecrets: (LampProject) -> [String] = ShareCheck.keptSecrets(of:)
+
     /// Where `export` and `open` make their folders. Tests give each test a folder of its own here, so what one leaves
     /// behind is told apart from the folders a running Lamp makes at the same moment.
     nonisolated(unsafe) static var workFolder = FileManager.default.temporaryDirectory
@@ -182,7 +185,13 @@ enum Sharing {
         let parts = found.filter { $0.id != root.id }
         for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
+            if app.platform == .game, GameKit.engine(app) != .web {
+                throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share games written in C++.")
+            }
         }
+        // Others' work in it goes only with its licence and credit, and work with no licence doesn't go at all.
+        let credits = Credits.load(project)
+        if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -212,9 +221,24 @@ enum Sharing {
             case .waiting, nil: break
             }
         }
-        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it.
-        let credits = Credits.load(project).remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
-        try credits.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it. Its paths
+        // are the wish's; when one of its apps in a folder goes at the file's root, paths into that folder lose it.
+        let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
+        func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
+        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
+        carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
+        carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
+        try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // Each licence the credits name goes with the work it covers, wherever the kind's own files left it.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, Credits.isLicenceFile(path) else { continue }
+            let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
+            guard !fm.fileExists(atPath: to.path),
+                  (try? from.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map({ $0.isRegularFile == true && $0.isSymbolicLink != true }) == true
+            else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: from, to: to)
+        }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
         if let icon = icon ?? drawnIcon(of: project) {
@@ -223,9 +247,11 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: format(withWidget: first.widget, capabilities: first.capabilities,
-                                                    platform: root.platform, watch: first.watch, share: first.share,
-                                                    scene: first.scene, parts: !parts.isEmpty),
+        // A game anywhere in the wish makes it an 11: a Lamp from before would find no code in the game's folder.
+        let number = max(format(withWidget: first.widget, capabilities: first.capabilities, platform: root.platform, watch: first.watch,
+                                share: first.share, scene: first.scene, parts: !parts.isEmpty),
+                         parts.contains { $0.platform == .game } ? format(withWidget: false, platform: .game) : 0)
+        try encoder.encode(Manifest(format: number,
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
                                     platform: root.platform, family: root.hasIOS ? root.family : nil,
@@ -234,6 +260,21 @@ enum Sharing {
                                     }))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
+        // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
+        // like a key.
+        // A licence the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) else { continue }
+            throw ImportError("\(project.name) can't be shared.",
+                              detail: "The licence of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+        }
+        // Every app's: each of a wish's apps keeps its own secrets and token.
+        let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
+        let leaks = ShareCheck.secrets(in: stage, known: known)
+        if let first = leaks.first {
+            throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
+                              detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
+        }
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
         let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
@@ -272,6 +313,9 @@ enum Sharing {
             for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
         case .web:
             let files = TVFiles.list(in: project.dir)
+            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
+        case .game:
+            let files = GameFiles.list(in: project.dir)
             for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
         default:
             for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
@@ -405,6 +449,8 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
+        /// The licence texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
+        var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
         /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
@@ -479,6 +525,11 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.licences = (package.credits?.upstream ?? []).compactMap(\.licenseFile).filter(Credits.isLicenceFile).compactMap { path in
+            let file = folder.appendingPathComponent(path)
+            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            return values?.isRegularFile == true && values?.isSymbolicLink != true ? file : nil
+        }
         // The wish's other apps, each read from its folder as the app at the root is: only a folder Lamp keeps a part
         // in, named once, holding a kind that can be a part. The manifest is the sender's word, so the folder's name
         // and kind are taken only within those.
@@ -487,6 +538,14 @@ enum Sharing {
             let read = try read(app: folder.appendingPathComponent(part.folder), platform: part.platform, family: part.family ?? .iphone,
                                 name: package.name, identity: nil, description: nil, fileCount: 0)
             package.parts.append(Package.Part(folder: part.folder, package: read))
+        }
+        // A licence inside one of the other apps' folders goes in with that app too: its install replaces what its folder
+        // held, the licence the wish's own install put there included.
+        package.parts = package.parts.map { part in
+            var app = part.package
+            let inside = folder.appendingPathComponent(part.folder).standardizedFileURL.path + "/"
+            app.licences = package.licences.filter { $0.standardizedFileURL.path.hasPrefix(inside) }
+            return Package.Part(folder: part.folder, package: app)
         }
         // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
         // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
@@ -504,7 +563,7 @@ enum Sharing {
                              description: String?, fileCount: Int) throws -> Package {
         let language = platform.target.recipe.language
         let android = language == .kotlin ? AndroidFiles.list(in: folder) : nil
-        let web = language == .web ? TVFiles.list(in: folder) : nil
+        let web = language == .web ? TVFiles.list(in: folder) : language == .game ? GameFiles.list(in: folder) : nil
         let appCode = android?.code ?? web?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
         guard !appCode.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         // A widget's and a share extension's code is read whatever number the file gives itself: the number is
@@ -544,6 +603,8 @@ enum Sharing {
         var family: DeviceFamily?
         /// The folder the file had it in, which it's made in when that's a folder for its kind. Nil from before it was kept.
         var folder: String?
+        /// The licence texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
+        var licences: [String]?
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
@@ -553,7 +614,8 @@ enum Sharing {
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
-        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder))
+        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder,
+                                                    licences: part.package.licences.map { relativePath(of: $0, in: part.package.folder) }))
         try note.write(to: folder.appendingPathComponent("lamp-part.json"))
     }
 
@@ -566,7 +628,10 @@ enum Sharing {
               let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
                                       identity: nil, description: nil, fileCount: 0) else { return nil }
         let folder = note.folder.flatMap { Parts.folder($0, canHold: note.platform) ? $0 : nil } ?? Parts.folder(for: note.platform)
-        return Package.Part(folder: folder, package: package)
+        var app = package
+        app.licences = (note.licences ?? []).filter(Credits.isLicenceFile).map { kept.appendingPathComponent($0) }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map { $0.isRegularFile == true && $0.isSymbolicLink != true } == true }
+        return Package.Part(folder: folder, package: app)
     }
 
     /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
@@ -603,6 +668,8 @@ enum Sharing {
             try AndroidFiles.install(package, into: project)
         } else if package.platform.target.recipe.language == .web {
             try TVFiles.install(package, into: project)
+        } else if package.platform.target.recipe.language == .game {
+            try GameFiles.install(package, into: project)
         } else {
             let sources = project.dir.appendingPathComponent("Sources")
             for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
@@ -644,8 +711,17 @@ enum Sharing {
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
         try AppDescription.write(package.description, for: project)
-        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`).
+        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
+        // each licence it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        // An update replaces what's there, so a licence whose text changed upstream never stays as it was; one the kind's
+        // files already brought is the same text written again.
+        for file in package.licences {
+            let target = project.dir.appendingPathComponent(Sharing.relativePath(of: file, in: package.folder))
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
@@ -859,127 +935,7 @@ extension Sharing {
                    patterns: ["CGEvent", "AXUIElement", "CGEventTap"]),
         Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
                    patterns: ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
-        encodedData,
     ]
-
-    /// Found by `hidesEncodedText`, not by its patterns.
-    static let encodedData = Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive,
-                                        patterns: [])
-
-    /// Whether the code carries something written in base64, the usual way to keep an address, a script or a
-    /// payload from someone reading it. What's looked for is the encoded text itself, not a call that decodes:
-    /// decoding is also how an app reads what it downloads (the tag on each link of a page it fetches), which
-    /// hides nothing in the app, and a call that decodes text written into the code is found by that text.
-    /// A run of base64 counts when some stretch of it decodes to readable text, at any of the four ways it can
-    /// line up, or when it's long and has the mix of letters and digits encoded bytes have. Text cut into
-    /// pieces is put back together: strings that are nothing but base64, written close together, are read as
-    /// one, in the order they're written. Pieces written far apart or joined in another order, and other encodings (hex, numbers, a
-    /// reversed or scrambled string), are beyond a search like this; the AI review reads that code.
-    static func hidesEncodedText(_ code: String) -> Bool {
-        // A literal handed straight to the decoder, however short.
-        if code.contains(#/base64Encoded:\s*#*"/#) { return true }
-        let quote = UInt8(ascii: "\"")
-        var run: [UInt8] = [], pieces: [UInt8] = [], starts: [Int] = []
-        var before: UInt8 = 0
-        var offset = 0, lastPiece = 0
-        for byte in code.utf8 {
-            offset += 1
-            if base64Value(byte) != nil || byte == UInt8(ascii: "=") {
-                run.append(byte)
-                continue
-            }
-            if encodes(run) { return true }
-            if before == quote, byte == quote, !run.isEmpty {
-                // Pieces are written close together (`"…" + "…"`, one `let` a line); words far apart in the
-                // code, joined, can read as text by chance.
-                if offset - run.count - lastPiece > 40 {
-                    if joinedReadsAsText(pieces, from: starts) { return true }
-                    pieces.removeAll(keepingCapacity: true)
-                    starts.removeAll(keepingCapacity: true)
-                }
-                starts.append(pieces.count)
-                pieces += run.compactMap(base64Value)
-                lastPiece = offset
-            }
-            before = byte
-            run.removeAll(keepingCapacity: true)
-        }
-        return encodes(run) || joinedReadsAsText(pieces, from: starts)
-    }
-
-    /// Joined pieces are decoded from the start of one of them, as the app joining them would: read from
-    /// partway into a word, words repeated in a list can line up as text. A later start four digits on, or
-    /// any multiple of four, decodes to the end of what the earlier one does, so the first start of each of
-    /// the four ways to line up is enough, and a long list is read four times at most.
-    private static func joinedReadsAsText(_ digits: [UInt8], from starts: [Int]) -> Bool {
-        var first: [Int: Int] = [:]
-        for start in starts where first[start % 4] == nil { first[start % 4] = start }
-        return first.values.contains { digits.count - $0 >= 16 && readable(digits, from: $0, enough: 12) >= 12 }
-    }
-
-    /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
-    private static func base64Value(_ byte: UInt8) -> UInt8? {
-        switch byte {
-        case UInt8(ascii: "A")...UInt8(ascii: "Z"): byte - UInt8(ascii: "A")
-        case UInt8(ascii: "a")...UInt8(ascii: "z"): byte - UInt8(ascii: "a") + 26
-        case UInt8(ascii: "0")...UInt8(ascii: "9"): byte - UInt8(ascii: "0") + 52
-        case UInt8(ascii: "+"), UInt8(ascii: "-"): 62
-        case UInt8(ascii: "/"), UInt8(ascii: "_"): 63
-        default: nil
-        }
-    }
-
-    private static func encodes(_ run: [UInt8]) -> Bool {
-        let digits = run.compactMap(base64Value)
-        // Shorter text gives itself away by its padding: a whole run of base64 ending in = that decodes to
-        // readable text (a short command).
-        if digits.count >= 8, run.count % 4 == 0, run.last == UInt8(ascii: "="), run.count - digits.count <= 2,
-           readable(digits, from: 0) >= digits.count * 6 / 8 { return true }
-        guard digits.count >= 16 else { return false }
-        // Encoded bytes are about two parts capitals, two parts small letters and one part digits and signs;
-        // a long path or a long name is mostly small letters, or capitals, with few digits. The alphabet
-        // itself, written out to make ids from, has that mix too, but in order: in encoded bytes one digit is
-        // followed by the next about once in sixty-four.
-        if digits.count >= 64 {
-            let capitals = digits.filter { $0 < 26 }.count, small = digits.filter { (26..<52).contains($0) }.count
-            let inOrder = zip(digits, digits.dropFirst()).filter { $1 == $0 + 1 }.count
-            if capitals * 4 >= digits.count, small * 4 >= digits.count, (digits.count - capitals - small) * 16 >= digits.count,
-               inOrder * 4 < digits.count {
-                return true
-            }
-        }
-        return readsAsText(digits)
-    }
-
-    /// What an address or a command is written in: letters, digits, spaces and the signs they use. Not line
-    /// breaks, tabs or the rarer signs (`^ { } [ ] \\` and the backquote): a long name in ordinary words can
-    /// decode to a line of those with a few letters between.
-    private static let readableBytes: Set<UInt8> = Set(Array(UInt8(ascii: "a")...UInt8(ascii: "z")) + Array(UInt8(ascii: "A")...UInt8(ascii: "Z"))
-        + Array(UInt8(ascii: "0")...UInt8(ascii: "9")) + Array(" !\"#$%&'()*+,-./:;<=>?@_|~".utf8))
-
-    /// Sixteen digits make twelve bytes: twelve such characters in a row don't come out of words, paths or
-    /// numbers by chance (about one in a million), and an address is longer than that.
-    private static func readsAsText(_ digits: [UInt8]) -> Bool {
-        digits.count >= 16 && (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
-    }
-
-    /// The longest stretch of readable characters the digits decode to, starting at `start`; it stops counting
-    /// at `enough`.
-    private static func readable(_ digits: [UInt8], from start: Int, enough: Int = .max) -> Int {
-        var longest = 0, stretch = 0
-        var bits = 0, held = 0
-        for digit in digits.dropFirst(start) {
-            held = (held << 6 | Int(digit)) & 0xFFFF
-            bits += 6
-            guard bits >= 8 else { continue }
-            bits -= 8
-            let byte = UInt8((held >> bits) & 0xFF)
-            stretch = readableBytes.contains(byte) ? stretch + 1 : 0
-            longest = max(longest, stretch)
-            if longest >= enough { break }
-        }
-        return longest
-    }
 
     /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
     /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
@@ -1268,12 +1224,21 @@ extension Sharing {
             case .kotlin:
                 // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
                 // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
-                add(AndroidFiles.detected(in: app) + (hidesEncodedText(everything) ? [encodedData] : []))
+                add(AndroidFiles.detected(in: app))
             case .web:
                 add(TVFiles.detected(in: app.sources))
+            case .game:
+                // The page's reach as a TV app's page is read, and the Swift beside it (Native.swift) as any app's, without
+                // its comments: Lamp's scaffold names its blocks there as examples.
+                let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+                add(TVFiles.detected(in: app.sources) + checklist.filter { item in
+                    item.patterns.contains { swift.contains($0) }
+                })
             default:
                 add(checklist.filter { item in
-                    item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }
+                    item.patterns.contains { everything.contains($0) }
                 })
             }
             if app.capabilities.background == true { add([startsAtLogin]) }

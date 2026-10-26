@@ -210,6 +210,21 @@ hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and p
 the rest Edge's `Gamepad…` names), and `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
+**What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
+person's devices itself, for the ones Lamp has no block for. `requestAccess()` is the system's Local Network question,
+asked when the app chooses (after saying why, never at launch): a datagram to a neighbour has the system ask, and the
+connection's path says whether it's allowed (`unsatisfiedReason == .localNetworkDenied`); the first time it waits for
+the person's answer, after that it says how things stand at once (`access` keeps the last). `find()` asks SSDP twice
+over, to the multicast group (a Mac) and to each address of the /24 (no multicast, so an iPhone app without Apple's
+multicast entitlement gets answers too; most players and TVs answer, a Sonos doesn't), reads each SSDP device's UPnP
+description for its name (a speaker's room before its friendly name, which a Sonos fills with its serial number), maker
+and model, and browses Bonjour for the types in the app's `NSBonjourServices` (an
+iPhone app may browse no others; a Mac copy is given them by `Capabilities.macInfo`), plus common media and home types on a Mac; each Bonjour service is resolved to its
+address by a connection opened and closed at once. This device's own addresses are left out. The app's own reason for
+the question is `localNetwork` in capabilities.json (`Capabilities.localNetworkReason`: one line, 150 characters at
+most, words and plain punctuation only, since it passes through build scripts' heredocs), written in place of Lamp's general one wherever the reasons are (build.sh, the phone's project, the simulator's
+bundle, `apply(to:)` for a Mac copy).
+
 **Controlling a Roku from another app** (`LampRoku`, in LampSupport.swift): a wish's Mac or iPhone app drives the
 person's Roku over ECP (port 8060) with nothing installed on it: find (SSDP, then the Rokus found before, then a sweep of
 the device's own /24, since an iPhone app can't send multicast without an entitlement Apple grants on request),
@@ -228,8 +243,9 @@ Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an 
 the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits and the
 integrations, so a device that answers only Bonjour isn't in it, and the answer says so. Kept devices not on the network
 now are listed apart. When macOS keeps Lamp off the local network (`Store.localNetworkRefused`), the
-answer says where the person turns it on rather than that nothing answered. A device-control rule in
-`deviceRules` names the tool; it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
+answer says where the person turns it on rather than that nothing answered. A rule in `deviceRules` names the tool, the
+`device-control` skill (also named with the request once an app's code reaches devices, `Skills.applying`) and
+`device_permission`, which the agent asks with before changing a real device ("Approvals and privacy"); it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
 
 ## Games
 
@@ -262,11 +278,18 @@ A game is drawn with three.js (`GameKit.Engine.web`, written in its `.lamp-game`
 place has a web view, and on the Xbox a game installed as a game gets enough of the console. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
-controls on a touch screen) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
+controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
+drawn at 3/4 and then 1/2 of 1920x1080 while frames come slower than 45 a second, a step undone when it didn't make them
+faster) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
-console starts on its controller, a touch screen on touch, the Mac and the preview on the keyboard, and it follows the
-last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick or trigger for it: the
-keyboard's names come from the same table `keyboardPad` reads, and the touch controls' from the one they're drawn
+device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
+keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick
+or trigger for it. The page never works out which device it's on: what it needs of one comes from the device's row in
+the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, the one controller
+layout its host supports, where it supports one), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
+[kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognised, what's printed on its buttons)
+from Lamp's one list of them, `Controllers`, as `Web/lamp-controllers.js`. The keys a prompt names come from the same
+table `keyboardPad` reads, and the touch controls' from the one they're drawn
 with, so neither can drift. On a Switch controller a prompt names the letter printed on the button, which isn't the
 Xbox's in that place: BUTTON.A is the bottom button, marked B there. The game's rules say to write the controls once as
 actions and build every prompt and help screen from them (`Rules.gameWebKit`); New York is the worked example. On the Mac and iOS the Swift around it is

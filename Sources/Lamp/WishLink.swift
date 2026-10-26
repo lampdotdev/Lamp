@@ -3,10 +3,12 @@ import SwiftUI
 import CryptoKit
 import LampSidebarKit
 
-/// A wish shared as a link (lamp.dev/w/<id>): only the idea leaves the Mac, as the person confirmed it on the Share
-/// Link card (`WishLinkCard`): the wish's name, its line, its words and, if they keep them, a picture of it and its
-/// icon. No code, no data and no chat: whoever opens the link makes their own version from the words, through the
-/// site's hand-off (`Wish`). The site's side is site/lib/shared-wishes.js; the two must agree on the limits.
+/// A wish shared as a link (lamp.dev/w/<id>): the idea leaves the Mac, as the person confirmed it on the Share Link card
+/// (`WishLinkCard`): the wish's name, its line, its words and, if they keep them, a picture of it and its icon. Whoever
+/// opens the link makes their own version from the words, through the site's hand-off (`Wish`). If the person ticks it,
+/// the wish itself goes too, as the file Share… makes (`Sharing.export`, with its checks), so someone with Lamp can open
+/// that exact one, reviewed as any shared file is (`uploadFile`). Never the chat or the app's data. The site's side is
+/// site/lib/shared-wishes.js; the two must agree on the limits.
 ///
 /// The link can be changed or taken down later only with the secret the site gave when it was made, which Lamp keeps
 /// in its own folder, never in the app's, where the agent's commands read.
@@ -16,6 +18,10 @@ enum WishLink {
         static let name = 60
         static let line = 140
         static let words = 2000
+        /// The wish's file goes in parts of at most this many bytes (a request to the site's function holds 4.5 MB), and
+        /// is at most `fileTotal`.
+        static let filePart = 3_000_000
+        static let fileTotal = 16_000_000
     }
     /// The picture is sent as a JPEG this many pixels on its long side at most, the icon as a PNG of this side.
     static let pictureSide: CGFloat = 1600
@@ -36,6 +42,8 @@ enum WishLink {
         var words: String
         /// Which picture goes with it (a digest of it), or none.
         var picture: String?
+        /// The wish's file goes with it. Nil in links from before files could go.
+        var file: Bool?
     }
 
     /// A link that's out, with what it shows and the secret that changes it.
@@ -163,6 +171,49 @@ enum WishLink {
         return Shared(id: id, url: link, secret: secret, shown: words)
     }
 
+    /// Where the wish's file goes: beside the link's API (`site/api/wish-file.js`).
+    private static func fileAddress(for id: String, part: Int? = nil, of count: Int? = nil) -> URL {
+        var parts = URLComponents(url: endpoint.deletingLastPathComponent().appendingPathComponent("wish-file"), resolvingAgainstBaseURL: false)!
+        parts.queryItems = [URLQueryItem(name: "id", value: id)]
+            + (part.map { [URLQueryItem(name: "part", value: String($0)), URLQueryItem(name: "of", value: String(count ?? 1))] } ?? [])
+        return parts.url!
+    }
+
+    /// Sends the wish's file with its link, in parts, and has the site put them together in place of any file it had.
+    static func uploadFile(_ data: Data, for shared: Shared) async throws {
+        guard data.count <= Limit.fileTotal else {
+            throw Failure(message: "This wish is too big to go with its link (over \(Limit.fileTotal / 1_000_000) MB). Share the link without it.")
+        }
+        let count = max(1, (data.count + Limit.filePart - 1) / Limit.filePart)
+        for n in 0..<count {
+            var request = URLRequest(url: fileAddress(for: shared.id, part: n, of: count))
+            request.httpMethod = "PUT"
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+            request.httpBody = data.subdata(in: (n * Limit.filePart)..<min(data.count, (n + 1) * Limit.filePart))
+            let (_, status) = try await send(request)
+            guard status == 204 else { throw fileFailure(status) }
+        }
+        var finish = URLRequest(url: fileAddress(for: shared.id))
+        finish.httpMethod = "POST"
+        finish.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+        let (_, status) = try await send(finish)
+        guard status == 200 else { throw fileFailure(status) }
+    }
+
+    private static func fileFailure(_ status: Int) -> Failure {
+        [400, 409, 413].contains(status) ? Failure(message: "lamp.dev couldn't take this wish's file. Share the link without it, or try again.") : failure(status)
+    }
+
+    /// Takes the wish's file away from its link, which keeps showing the idea.
+    static func removeFile(for shared: Shared) async throws {
+        var request = URLRequest(url: fileAddress(for: shared.id))
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(shared.secret)", forHTTPHeaderField: "Authorization")
+        let (_, status) = try await send(request)
+        guard status == 204 || status == 404 else { throw failure(status) }
+    }
+
     /// Takes the link down: the page says the wish isn't shared any more. A link the site no longer has is down already.
     static func remove(_ shared: Shared) async throws {
         var request = URLRequest(url: address(for: shared.id))
@@ -223,9 +274,10 @@ enum WishLink {
         /// What the link would show with what's on the card.
         var words: WishLink.Words {
             WishLink.Words(name: values.name.trimmed, line: values.line.trimmed, words: values.words.trimmed,
-                           picture: values.includePicture ? pictureDigest : nil)
+                           picture: values.includePicture ? pictureDigest : nil, file: values.includeFile ? true : nil)
         }
-        var changed: Bool { shared?.shown != words }
+        /// A link that carries the wish is always worth sending again: the file is the wish as it is now.
+        var changed: Bool { shared?.shown != words || values.includeFile }
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -241,7 +293,8 @@ enum WishLink {
         let picture = WishLink.picture(of: project)
         let digest = picture.map(Self.digest)
         let values = shared.map { WishLinkCard.Values(name: $0.shown.name, line: $0.shown.line, words: $0.shown.words,
-                                                      includePicture: $0.shown.picture != nil && picture != nil) }
+                                                      includePicture: $0.shown.picture != nil && picture != nil,
+                                                      includeFile: $0.shown.file == true && Self.canIncludeFile(project)) }
             ?? WishLinkCard.Values(name: WishLink.clip(project.untitled ? "" : project.name, WishLink.Limit.name),
                                    line: WishLink.line(of: project), words: WishLink.firstRequest(of: project, store: Store.shared),
                                    includePicture: picture != nil)
@@ -254,6 +307,11 @@ enum WishLink {
             let icon = await Sharing.sharedIcon(of: project)
             cards[project.id]?.icon = icon
         }
+    }
+
+    /// Whether the wish can go with its link as a file: its kind can be shared as one.
+    static func canIncludeFile(_ project: LampProject) -> Bool {
+        project.platform.target.recipe.shareRefusal == nil && !(project.platform == .game && GameKit.engine(project) != .web)
     }
 
     func update(_ project: LampProject, values: WishLinkCard.Values) {
@@ -277,7 +335,30 @@ enum WishLink {
                 let (picture, icon) = await Task.detached(priority: .userInitiated) {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
                 }.value
-                let shared = try await WishLink.publish(words, picture: picture, icon: icon, replacing: card.shared)
+                var shared = try await WishLink.publish(words, picture: picture, icon: icon, replacing: card.shared)
+                // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
+                // down, so a file that fails after this leaves a link the card can still stop.
+                shared.shown.file = card.shared?.shown.file
+                WishLink.keep(shared, for: project)
+                cards[project.id]?.shared = shared
+                // The wish itself, made as Share… makes it (with its checks), sent with the link; or taken away from a link
+                // that carried it and shouldn't now.
+                if words.file == true {
+                    // Counted as carrying the file from the first part on: an upload cut short may have left parts, or a
+                    // whole file whose answer was lost, so unticking later takes it away (`removeFile` clears both).
+                    shared.shown.file = true
+                    WishLink.keep(shared, for: project)
+                    cards[project.id]?.shared = shared
+                    let data = try await Task.detached(priority: .userInitiated) { () throws -> Data in
+                        let file = try Sharing.export(project)
+                        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+                        return try Data(contentsOf: file)
+                    }.value
+                    try await WishLink.uploadFile(data, for: shared)
+                } else if card.shared?.shown.file == true {
+                    try await WishLink.removeFile(for: shared)
+                }
+                shared.shown = words
                 WishLink.keep(shared, for: project)
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
@@ -337,7 +418,7 @@ enum WishLink {
         }
     }
 
-    private static func digest(_ data: Data) -> String {
+    static func digest(_ data: Data) -> String {
         SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 }

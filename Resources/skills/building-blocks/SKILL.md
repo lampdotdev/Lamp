@@ -1,6 +1,6 @@
 ---
 name: building-blocks
-description: How to call LampSupport.swift's tested building blocks - notifications, schedules and work while the app is closed, text from documents and pictures, dropped files, folders, global shortcuts, the clipboard, login items, photos, location, weather, music, Spotlight, the home and a Roku. Read before using any of them.
+description: How to call LampSupport.swift's tested building blocks - notifications, schedules and work while the app is closed, text from documents and pictures, dropped files, folders, global shortcuts, the clipboard, login items, photos, location, weather, music, Spotlight, the home, the devices on the home network and a Roku. Read before using any of them.
 ---
 
 # Lamp's building blocks
@@ -39,6 +39,18 @@ them. Use them instead of writing your own.
   `LampSpotlight.index(id:title:details:keywords:)` when one is added or changed and `LampSpotlight.remove(id)` when
   it's deleted, and `.lampSpotlightOpen { id in … }` on the view that shows them, to show the one tapped in Spotlight.
 
+- The home network: `LampNetwork`, for an app on the Mac or a phone that controls, plays to or reads the person's
+  devices (a remote for the TV and speakers, what's playing, a light). The system asks the person about the local
+  network before anything answers, so the app says why first, in its own words and on its own screen, and asks with
+  `await LampNetwork.requestAccess()` (`.allowed`, `.denied` with `LampNetwork.allowHint` saying where to turn it on,
+  or `.unknown` off a home network), never at launch. Then `await LampNetwork.find()`: every device that answers, each
+  with `address`, `name`, `maker`, `model`, what it answered SSDP for (`ssdp`, `server`, `location`) and its Bonjour
+  services (`bonjour`). An iPhone app sees only the Bonjour types in capabilities.json's `bonjourServices` (add the
+  types of the devices the app is for: `"_sonos._tcp"`, `"_googlecast._tcp"`), and the system's question shows
+  `"localNetwork"` there, the app's own reason ("TV Remote finds your TV and speakers to control them."). Work out how
+  to reach each device from what it says of itself; a Roku is `LampRoku`'s. Its maker and model say what a device is;
+  its services say only what it can do: a console and a TV both answer as media renderers, and a Mac offers AirPlay,
+  so none of them is a speaker for that.
 - Roku: `LampRoku`, for an app on the Mac or a phone that controls the person's Roku (a remote of its own, buttons
   that open Netflix or a show, what's playing, a Roku TV's power, volume and input), with nothing installed on the
   Roku. An app that runs on the Roku itself is a Roku app instead. `await LampRoku.find()` (every Roku that answers,

@@ -76,10 +76,17 @@ public enum WishChannel {
     /// Which wish this is, as the listener knows it: the first 8 bytes of a value only the wish's key makes.
     public static func tag(for key: SymmetricKey) -> Data { derive("lamp-wish tag", key: key).prefix(tagSize) }
 
-    /// A peer's name, as it may be in a handshake: Lamp's folder names, lowercased.
+    /// A peer's name, as it may be in a handshake: Lamp's folder names, lowercased, each copy of an app with its own id
+    /// after a dot ("screen.k3j9x0ab"), at most 32 bytes in all. An app built before copies says its name alone.
     public static func isName(_ name: String) -> Bool {
-        (1...32).contains(name.utf8.count) && name.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d }
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...32).contains(name.utf8.count), (1...2).contains(parts.count), !parts.contains(where: \.isEmpty) else { return false }
+        return parts[0].utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d }
+            && parts.dropFirst().allSatisfy { $0.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) } }
     }
+
+    /// Which app a peer is a copy of: its name before the copy's id.
+    public static func app(of peer: String) -> String { peer.split(separator: ".", maxSplits: 1).first.map(String.init) ?? peer }
 
     /// Everything the handshake has said, in one order: the tag, each side's name with its length before it, and both nonces.
     public static func transcript(tag: Data, client: String, server: String, clientNonce: Data, serverNonce: Data) -> Data {

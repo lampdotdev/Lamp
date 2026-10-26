@@ -56,7 +56,8 @@ Renaming any of those needs a migration, not a find-and-replace.
 
 - Comments explain why, in plain prose; user-facing text never names files, types or frameworks.
 - Files committed to the repo (README, docs, code comments, tests) must never name a person, personal device or hostname, or narrate a particular session or test run; put those details in the PR description.
-- Verify in an isolated harness app rather than in the user's apps.
+- Verify in an isolated harness app rather than in the user's apps, without taking over the screen others are using:
+  see "Checking a change beside other work" in [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md).
 - No attribution lines in commits or PR descriptions.
 
 ## Guides
@@ -70,8 +71,8 @@ Read the guide for the part you're changing before you change it. A section name
 | [chat](docs/development/chat.md) | How the agent talks: `Talk`, cards, `ask`, `progress`, the chat's timeline, its activity line and folded steps; the chat's one screen (`ChatScreen`, `SidebarState`) and Lamp's chat panel (`ChatPanel`, `SetupSheet`) |
 | [approvals and privacy](docs/development/approvals-and-privacy.md) | `/agent/approve`, `Privacy`, the sandbox, file access outside an app's folder, data snapshots |
 | [desk](docs/development/desk.md) | The desk, Lamp's only window: wishes as icons, opening a wish, starters and their checks |
-| [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md) | Two Lamps on one Mac: `Edition`, worktree instances, `dev-data.sh`, `fresh-start.sh`, `LAMP_PRETEND_MISSING` |
-| [kinds of app](docs/development/kinds-of-app.md) | `Platform`, `Targets/`, a kind's identity, guidance, recipe, part and setup; `Destination` |
+| [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md) | Two Lamps on one Mac: `Edition`, worktree instances, checking a change beside other work, `dev-data.sh`, `fresh-start.sh`, `LAMP_PRETEND_MISSING` |
+| [kinds of app](docs/development/kinds-of-app.md) | `Platform`, `Targets/`, a kind's identity, guidance, recipe, part and setup; `Destination`; the table of what each device can run (`Places`) |
 | [iPhone](docs/development/iphone.md) | iPhone apps, the simulator and phones, Apple TV and Vision Pro; Apps for both the Mac and the iPhone |
 | [Android](docs/development/android.md) | Android apps, the emulator and Android devices |
 | [devices](docs/development/devices.md) | Devices as data (device integrations), games and their places, and screens |

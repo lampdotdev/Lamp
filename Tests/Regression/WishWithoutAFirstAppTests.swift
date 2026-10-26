@@ -155,7 +155,6 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         XCTAssertTrue(restored)
 
         XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac)])
-        XCTAssertFalse(try String(contentsOf: support, encoding: .utf8).contains("MARK: - The wish's other apps"))
         let unsaved = await Versions.hasUnsavedChanges(wish)
         XCTAssertFalse(unsaved, "the restore's own version holds everything it wrote")
         // And the Undo's own version carries the list it brought back.

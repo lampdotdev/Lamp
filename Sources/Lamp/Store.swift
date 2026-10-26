@@ -468,7 +468,7 @@ final class Store: ObservableObject {
     /// while the others it asks for are still to be made; nil for an app on its own, which gets nothing of the wish's
     /// apps' link.
     func wishKey(for project: LampProject) -> Data? {
-        guard Template.talksToOtherApps(project) else { return nil }
+        guard Template.carriesWish(project) else { return nil }
         return WishKeys.key(for: wish(of: project))
     }
     /// The wish a part belongs to, or the app itself when it's a wish.
@@ -3186,6 +3186,8 @@ final class Store: ObservableObject {
         // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
+        // Anything but a click on a card is the person going on: what they allowed once is spent.
+        if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         let files = message.attachments, pointed = message.pointed
@@ -3759,6 +3761,12 @@ final class Store: ObservableObject {
             if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
+            }
+            // Lamp's device card: what was clicked on it is kept now that the answer is delivered, so one taken back
+            // while it waited in line never allowed anything.
+            if let card = message.card, let ask = logs[project.id]?.first(where: { $0.id == card })?.ask,
+               let device = ask.device, let choice = ask.answers?.first {
+                DevicePermissions.answer(choice, about: device, for: wish(of: project))
             }
             if message.byLamp, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].byLamp = true
@@ -4701,6 +4709,8 @@ final class Store: ObservableObject {
             return
         }
         stop(project)   // anything begun while the app was asking about unsaved work
+        // What the person allowed on their devices is the wish's, and goes with it.
+        DevicePermissions.forget(project)
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -5463,7 +5473,7 @@ final class Store: ObservableObject {
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
-            case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish", "device_permission": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -5582,6 +5592,35 @@ final class Store: ObservableObject {
                 saveChat(project)
                 return (200, ["text": Talk.told])
             }
+        case "device_permission":
+            let device = (arguments["device"] as? String ?? "").trimmed
+            let doing = (arguments["doing"] as? String ?? "").trimmed
+            let address = (arguments["address"] as? String ?? "").trimmed.lowercased()
+            guard address.range(of: #"^[a-z0-9][a-z0-9.-]{0,252}$"#, options: .regularExpression) != nil else {
+                return (400, ["error": "Give the device's address in `address`, as `network_devices` or LampNetwork found it (\"10.0.0.20\", \"living-room.local\")."])
+            }
+            guard !device.isEmpty, device.count <= 40, !device.contains("\n") else {
+                return (400, ["error": "Give the device's name in `device`, as the person knows it (\"Living Room TV\"), 40 characters at most."])
+            }
+            guard !doing.isEmpty, Talk.words(in: doing) <= 12 else {
+                return (400, ["error": "Say in `doing` what you'd press or change on it, 12 words at most."])
+            }
+            let wish = wish(of: project)
+            // Allowed always, at the address the card was for. At another one (a router hands out new ones), the person is
+            // asked again: Lamp can't tell the same device from another one given the old name.
+            let kept = DevicePermissions.kept(wish)
+            if kept.always.contains(device), kept.addresses[device] == address {
+                return (200, ["text": "The person already allows \(device) for this wish: go ahead."])
+            }
+            if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+            DevicePermissions.asking(about: device, at: address, for: wish)
+            let ask = DevicePermissions.card(device: device, doing: doing)
+            logs[project.id, default: []].append(chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project))
+            closeSteps(project)
+            turn.asked = true
+            away.questionAsked(project.id)
+            saveChat(project)
+            return (200, ["text": "Lamp asked the person. Change nothing on the device and end your turn now: their answer is the next message. Go ahead only if it allows \(device)."])
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
             // isn't the agent's to fill.
@@ -6014,7 +6053,9 @@ final class Store: ObservableObject {
             guard let url = artDestination(name, in: app) else {
                 return (400, ["error": "\(folder)\(name) can't be written: Assets or the file leads outside the app's folder."])
             }
-            try png.write(to: url, options: .atomic)
+            try AIMark.marked(png).write(to: url, options: .atomic)
+            // Marked as made with AI in the wish's credits too, wherever it's shown, shared or published.
+            try? Credits.add(Credits(generated: [Credits.Generated(file: folder + name)]), to: project)
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved \(folder)\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",
@@ -6051,28 +6092,40 @@ final class Store: ObservableObject {
     }
 
     /// The tools every engine gets: Resources/lamp-tools.json, the one place their names, descriptions and schemas live,
-    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`). That's done
-    /// once, to the file's own text: the MCP endpoint serves it, and pi's extension (lamp-tools.ts) reads it from
-    /// `toolsFile`, so both get the same rendering.
-    nonisolated static let toolsJSON: Data = {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"), let data = try? Data(contentsOf: url),
-              let quoted = try? JSONSerialization.data(withJSONObject: [Targets.toolDevices], options: .withoutEscapingSlashes) else {
+    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`; `{{PLACES}}`, what
+    /// each device can run, from the table of devices: `Places.forAgent`). Filled each time it's asked for, since an
+    /// integration written meanwhile adds a row to the table: the MCP endpoint serves it to Claude Code and Codex as each
+    /// asks for its tools, and pi's extension (lamp-tools.ts) reads it from `toolsFile`, written as each pi starts, so all
+    /// three get the same rendering.
+    nonisolated static var toolsJSON: Data {
+        guard let template = toolsTemplate else {
             assertionFailure("lamp-tools.json is missing from the app")
             return Data("[]".utf8)
         }
-        let devices = String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
-        return Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: "{{DEVICES}}", with: devices).utf8)
-    }()
+        // Each as it goes inside a JSON string: quoted, without its quotes.
+        let inString = { (text: String) -> String in
+            let quoted = (try? JSONSerialization.data(withJSONObject: [text], options: .withoutEscapingSlashes)) ?? Data(#"[""]"#.utf8)
+            return String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
+        }
+        return Data(template.replacingOccurrences(of: "{{DEVICES}}", with: inString(Targets.toolDevices))
+            .replacingOccurrences(of: "{{PLACES}}", with: inString(Places.forAgent)).utf8)
+    }
+    private nonisolated static let toolsTemplate: String? = Bundle.main.resourceURL
+        .flatMap { try? String(contentsOf: $0.appendingPathComponent("lamp-tools.json"), encoding: .utf8) }
     // `label` is pi's: MCP clients see name, description and inputSchema.
-    static let mcpTools: [[String: Any]] = ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? [])
-        .map { tool in tool.filter { $0.key != "label" } }
-    /// `toolsJSON` as pi's extension reads it, written once per launch to Lamp's own pi folder.
-    nonisolated static let toolsFile: URL? = {
+    static var mcpTools: [[String: Any]] {
+        ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? []).map { tool in tool.filter { $0.key != "label" } }
+    }
+    /// `toolsJSON` as pi's extension reads it, in Lamp's own pi folder: written again as each pi starts, so it has the
+    /// table as it is then.
+    nonisolated static var toolsFile: URL? {
         let url = URL(fileURLWithPath: Agent.configDir).appendingPathComponent("lamp-tools.json")
+        let json = toolsJSON
+        if (try? Data(contentsOf: url)) == json { return url }
         guard (try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)) != nil,
-              (try? toolsJSON.write(to: url, options: .atomic)) != nil else { return nil }
+              (try? json.write(to: url, options: .atomic)) != nil else { return nil }
         return url
-    }()
+    }
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
     static func binary(of project: LampProject, contains marker: String) -> Bool {
@@ -6709,6 +6762,11 @@ final class Store: ObservableObject {
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         // An iOS app Try On points at an Apple TV or a Vision Pro is the same code built for tvOS or visionOS.
         if project.onIOS, project.family.isOtherOS { env["LAMP_FAMILY"] = project.family.rawValue }
+        // A game's page is told the device it's built for (`GamePage`), which build.sh writes into its copy.
+        do { env.merge(try GamePage.buildEnvironment(for: project)) { $1 } } catch {
+            log(project, .error, error.localizedDescription)
+            return error.localizedDescription
+        }
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
         // Said again: a change that couldn't go into the open app left the line on putting it in, through the whole build.
         note("Building…", for: project)
@@ -6875,7 +6933,9 @@ final class Store: ObservableObject {
                     guard turns[project.id] === turn, !turn.stopped, exists(current) else { return }
                     let universal = current.platform == .universal
                     let command = universal ? "./build.sh mac" : "./build.sh"
-                    let env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+                    // A game's page is told its device as in a whole build; one that can't be stops build.sh, which says why.
+                    let env: [String: String] = (universal ? ["LAMP_TEAM": Devices.team] : [:])
+                        .merging((try? GamePage.buildEnvironment(for: current)) ?? [:]) { $1 }
                     let glowing = AppTransition.begin(current)
                     let went = await reloadBeforeBuilding(current, command: command, env: env, fingerprint: now)
                     // Stopped meanwhile: whatever went in stays in, and the turn that's over says nothing of it.
@@ -7429,7 +7489,7 @@ final class Store: ObservableObject {
             // The app opened by this install asks for its token, which isn't in its package, and a wish's app for its
             // wish's key: that claim is open again once the app is open, since an install can take longer than it lasts.
             DeviceSupport.Claims.shared.open(project.id, from: record.address)
-            let claimsKey = Template.talksToOtherApps(project)
+            let claimsKey = Template.carriesWish(project)
             if claimsKey { WishClaims.shared.open(project.id, from: record.address) }
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
@@ -8496,17 +8556,19 @@ final class Store: ObservableObject {
             plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
 
             """
-        // Every usage description, from the one list, so apps made before a reason was added get it too.
-        for (key, text) in Template.iosUsageDescriptions {
-            let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
-            script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
-        }
         // What the agent declared in capabilities.json: background work in Info.plist, the rest as
         // entitlements the ad hoc signature carries (the simulator checks them for Health and the like).
         let capabilities = Template.Capabilities.load(project)
+        // Every usage description, from the one list, so apps made before a reason was added get it too; the app's own
+        // local network reason in place of Lamp's.
+        for (key, text) in Template.iosUsageDescriptions {
+            let own = key == "NSLocalNetworkUsageDescription" ? capabilities.localNetworkReason : nil
+            let reason = (own ?? text).replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
+            script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
+        }
         var lists = capabilities.lists
         // An app of a wish of several is found by the wish's other apps on the network, and finds them, by Bonjour.
-        if Template.talksToOtherApps(project), !(lists["NSBonjourServices"] ?? []).contains(Template.wishServiceType) {
+        if Template.carriesWish(project), !(lists["NSBonjourServices"] ?? []).contains(Template.wishServiceType) {
             lists["NSBonjourServices", default: []].append(Template.wishServiceType)
         }
         for (key, names) in lists.sorted(by: { $0.key < $1.key }) {
@@ -9973,7 +10035,7 @@ final class Store: ObservableObject {
         if route == "/app/wish/claim" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             guard request.fromNetwork, let id = body["app"] as? String,
-                  let project = projects.first(where: { $0.id == id }), Template.talksToOtherApps(project),
+                  let project = projects.first(where: { $0.id == id }), Template.carriesWish(project),
                   let publicKey = (body["public"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
                 return (403, ["error": "Lamp didn't just put this app here."])
             }
@@ -10056,7 +10118,7 @@ final class Store: ObservableObject {
         let apps = apps(of: wish)
         switch route {
         case "/app/wish/open":
-            return await WishProxies.open(project, wish: wish, apps: apps)
+            return await WishProxies.open(project, copy: body["copy"] as? String ?? "", wish: wish, apps: apps)
         case "/app/wish/poll":
             return await WishProxies.poll(project, link: body["link"] as? Int ?? 0)
         case "/app/wish/send":
@@ -10309,6 +10371,14 @@ final class Store: ObservableObject {
                     confinedCommands[confined] = (command, said, call)
                 }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
+            }
+            // Under "Only when risky" Codex's ordinary commands run in its sandbox with the network open, where no reviewer
+            // sees them: this hook only keeps them off the person's devices until one is allowed.
+            if request.path.contains("format=codex-devices") {
+                let allowed = DevicePermissions.allowedAddresses(wish(of: project))
+                guard DevicePermissions.devicesChanged(by: command).contains(where: { !allowed.contains($0) }) else { return (200, [:]) }
+                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                     "permissionDecisionReason": DevicePermissions.commandRefusal]])
             }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
@@ -10758,8 +10828,17 @@ final class Store: ObservableObject {
     private func useCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
+        // An app that controls the person's devices presses on real ones: only on the device the person allowed on Lamp's
+        // card, which the call names.
+        if DevicePermissions.reachesDevices(app) {
+            let device = (arguments["device"] as? String)?.trimmed ?? ""
+            guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
+                return (400, ["error": DevicePermissions.useRefusal])
+            }
+        }
         var actions = arguments
         actions["part"] = nil
+        actions["device"] = nil
         let body = (try? JSONSerialization.data(withJSONObject: actions)) ?? Data("{}".utf8)
         return await underTurn(of: project, app) { await use(app, request: body) }
     }

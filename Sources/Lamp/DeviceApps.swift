@@ -132,17 +132,24 @@ enum DeviceApps {
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
         }
-        let output = project.dir.appendingPathComponent(declared.output)
-        AppFolder.remove(output, in: project.dir)
+        // The package step runs on Lamp's copy of the app, where a game's page is told the device it's on (`GamePage`).
+        // That copy is checked for it after the step, and so is the package where Lamp can read it (a ZIP): a package
+        // in any other form is the integration's own, which Lamp doesn't look inside.
+        let source = try await packageSource(project)
+        let page = GameKit.isGame(project) ? try GamePage.place(for: project) : nil
+        if let page { try GamePage.stage(source.appendingPathComponent(GameKit.webFolder), in: source, for: page) }
+        let output = freshOutput(declared.output, in: source)
         var printed: [String] = []
-        let status = await Sandbox.run(declared.package, for: project, started: started) { printed.append($0) }
+        let status = await Sandbox.run(declared.package, for: project, cwd: source, opening: [source.path], started: started) { printed.append($0) }
         guard status == 0 else {
             throw Failure(message: (["The package step failed:"] + printed.suffix(30)).joined(separator: "\n"))
         }
-        guard let data = AppFile.read(output, in: project), !data.isEmpty else {
+        if let page { try GamePage.check(source, for: page) }
+        guard let data = AppFile.read(output, inFolder: source), !data.isEmpty else {
             throw Failure(message: "The package step ran but left nothing at \(declared.output).")
         }
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
+        if let page, declared.output.lowercased().hasSuffix(".zip") { try GamePage.check(payload: try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
             try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
@@ -151,6 +158,41 @@ enum DeviceApps {
         } else {
             try data.write(to: packageURL(for: project), options: .atomic)
         }
+    }
+
+    /// Where the package step leaves its package in the copy, with what an earlier package left in the app's folder
+    /// (and so came along in the copy) taken away: a step that makes nothing mustn't pass on an old one.
+    static func freshOutput(_ path: String, in source: URL) -> URL {
+        let output = source.appendingPathComponent(path)
+        AppFolder.remove(output, in: source)
+        return output
+    }
+
+    /// The app's folder as its package step takes it: a copy in Lamp's own folder (`buildFolder`), never the app's, so
+    /// what Lamp adds for this device goes into the package alone, and nothing in the app's folder changes while the
+    /// package is made. What builds leave there (.build, build) and its history (.git) stay behind; the copy is made
+    /// under the app's sandbox, as the preview's page is (`GameKit.stageWeb`).
+    static func packageSource(_ project: LampProject, in folder: URL? = nil) async throws -> URL {
+        let fm = FileManager.default
+        let source = (folder ?? buildFolder(for: project)).appendingPathComponent("source")
+        try? fm.removeItem(at: source)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a --exclude=/.build --exclude=/build --exclude=/.git ./ \"$LAMP_TO/\""
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [source.path]) else {
+            throw Failure(message: "Lamp couldn't copy the app's files to package it.")
+        }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: source, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": source.path], login: false) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        // Links stay links in the copy, and Lamp writes in it: one anywhere in it refuses the package, as it refuses the
+        // page for the preview or a phone (`GameKit.stageWeb`, `Devices.checkUnlinked`).
+        let linked = (fm.enumerator(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
+            .first { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        if let linked {
+            try? fm.removeItem(at: source)
+            throw Failure(message: "\(linked.path.dropFirst(source.path.count + 1)) is a shortcut to another file. Put the file itself in its place.")
+        }
+        return source
     }
 
     /// The package step's zip with Lamp's own files filled in with where Lamp is (`DeviceSupport.fill`), zipped again in
@@ -244,7 +286,7 @@ enum DeviceApps {
         defer { Task { @MainActor in Store.shared.puttingOnDevice(project.id, false) } }
         // A game's or a screen's page of a wish asks for its wish's key too, as a TV app's does: open from minutes before
         // the upload, and again once it's open, since an Xbox's install can take longer than that.
-        let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.talksToOtherApps(project) ? device.address : nil
+        let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.carriesWish(project) ? device.address : nil
         if let claimsKey { WishClaims.shared.open(project.id, from: claimsKey) }
         if let logs = bridge.logs, !logs.isEmpty {
             // A device with nothing listening on its log's port still takes the app.

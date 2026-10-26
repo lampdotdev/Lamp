@@ -20,6 +20,13 @@
     },
     "purpose": "an app, or a game played through menus (a quiz, a board or card game)"
   },
+  "supports": [
+    "web"
+  ],
+  "input": {
+    "controller": "xbox",
+    "layout": "xbox"
+  },
   "bridge": {
     "install": [
       {
