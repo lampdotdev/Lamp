@@ -23,7 +23,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// remote is its own key; on anything else it's Escape, as an Xbox's B button sends.
     private var device = "TV"
     private var isTV: Bool { device == "TV" }
-    private let window: NSWindow
+    private let window: Window
     private let webView: WKWebView
     private let files = StagedFiles()
     private var loaded: CheckedContinuation<Void, Never>?
@@ -97,8 +97,8 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 960, height: 540), configuration: configuration)
         webView.pageZoom = 0.5
         webView.autoresizingMask = [.width, .height]
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                          backing: .buffered, defer: false)
+        window = Window(contentRect: NSRect(x: 0, y: 0, width: 960, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                        backing: .buffered, defer: false)
         super.init()
         controller.add(self, name: "lampConsole")
         controller.addScriptMessageHandler(self, contentWorld: .page, name: "lampGateway")
@@ -112,9 +112,15 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         if window.frame.origin == .zero { window.center() }
     }
 
+    /// The preview's window, told apart from the desk: closing it stops the app, never Lamp (`AppDelegate`).
+    final class Window: NSWindow {}
+
     func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
 
     func windowWillClose(_ notification: Notification) {
+        // The wish's chat is attached to the preview (`ChatPanel`), and AppKit hides a window's children with it: let go
+        // of it first, so Stop leaves the chat on screen, on its own, rather than nowhere.
+        for child in window.childWindows ?? [] { window.removeChildWindow(child) }
         // Closing the window doesn't end the page: WebKit runs it, its sound and timers included, for as long as the web
         // view lives, and the web view's script handlers hold on to this preview, which holds the web view. So the app's
         // page is swapped for an empty one and the handlers let go, and the web view goes with the window.
