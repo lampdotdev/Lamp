@@ -143,6 +143,10 @@
           "type": "string",
           "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Needed then; left out only when the wish has one app."
         },
+        "device": {
+          "type": "string",
+          "description": "In an app that controls the person's devices: the device these actions would change, named as on Lamp's device card. Lamp refuses them unless the person allowed that device with `device_permission`."
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
@@ -520,6 +524,34 @@
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
+    "name": "device_permission",
+    "label": "Ask about a device",
+    "description": "Asks the person, on a card of Lamp's own, whether you may change one of their real devices: press a key, open an app, change the volume or input, turn it on or off. Call it before the first such change on that device, from a command or by using the app; reading a device needs no card. Lamp keeps the answer (once, or always for that device): change nothing on the device unless it allows it. Asking ends your turn: the answer is the next message.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "address",
+        "doing"
+      ],
+      "properties": {
+        "device": {
+          "type": "string",
+          "description": "The device as the person knows it, from what it calls itself: \"Living Room TV\". 40 characters at most."
+        },
+        "doing": {
+          "type": "string",
+          "description": "What you'd press or change on it, 12 words at most: \"Press Home and open Netflix to check the buttons\"."
+        },
+        "address": {
+          "type": "string",
+          "description": "Its address on the network, as `network_devices` or LampNetwork found it: \"10.0.0.20\" or \"living-room.local\"."
         }
       }
     }

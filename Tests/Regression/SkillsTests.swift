@@ -41,17 +41,17 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
-                                           "scripting", "games-2d", "icloud-sync", "wish-links"])
+                                           "scripting", "games-2d", "icloud-sync", "wish-links", "device-control"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
             XCTAssertNil(skill.name.range(of: #"[^a-z0-9-]"#, options: .regularExpression), name)
         }
-        // The integrations' skill is named by its own rule, in every prompt, rather than in the list, and the one on how
-        // a wish's apps share data by its rule in the prompt of a wish of several apps only; every other one is offered
-        // to some prompt.
+        // The integrations' skill and the one on controlling the person's devices are named by the devices' rule, in every
+        // prompt, rather than in the list, and the one on how a wish's apps share data by its rule in the prompt of a wish
+        // of several apps only; every other one is offered to some prompt.
         let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
-        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "wish-links"])) }
+        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "wish-links"])) }
         XCTAssertEqual(Skills.offered(.android), ["android-design"])
         XCTAssertEqual(Skills.offered(.tv), ["phone-controllers"])
         XCTAssertEqual(Skills.offered(.device), [])
@@ -192,7 +192,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-integrations, finder-files, games-2d, icloud-sync, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, phone-controllers, scene-3d, scripting, share-extension, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, games-2d, icloud-sync, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, phone-controllers, scene-3d, scripting, share-extension, wish-links.")
     }
 
     func testParsing() {

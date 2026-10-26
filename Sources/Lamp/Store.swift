@@ -3186,6 +3186,8 @@ final class Store: ObservableObject {
         // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
+        // Anything but a click on a card is the person going on: what they allowed once is spent.
+        if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         let files = message.attachments, pointed = message.pointed
@@ -3759,6 +3761,12 @@ final class Store: ObservableObject {
             if let card = message.card, Talk.shows(logs[project.id]?.first { $0.id == card }), let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
+            }
+            // Lamp's device card: what was clicked on it is kept now that the answer is delivered, so one taken back
+            // while it waited in line never allowed anything.
+            if let card = message.card, let ask = logs[project.id]?.first(where: { $0.id == card })?.ask,
+               let device = ask.device, let choice = ask.answers?.first {
+                DevicePermissions.answer(choice, about: device, for: wish(of: project))
             }
             if message.byLamp, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].byLamp = true
@@ -4701,6 +4709,8 @@ final class Store: ObservableObject {
             return
         }
         stop(project)   // anything begun while the app was asking about unsaved work
+        // What the person allowed on their devices is the wish's, and goes with it.
+        DevicePermissions.forget(project)
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -5463,7 +5473,7 @@ final class Store: ObservableObject {
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
-            case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish", "device_permission": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -5582,6 +5592,35 @@ final class Store: ObservableObject {
                 saveChat(project)
                 return (200, ["text": Talk.told])
             }
+        case "device_permission":
+            let device = (arguments["device"] as? String ?? "").trimmed
+            let doing = (arguments["doing"] as? String ?? "").trimmed
+            let address = (arguments["address"] as? String ?? "").trimmed.lowercased()
+            guard address.range(of: #"^[a-z0-9][a-z0-9.-]{0,252}$"#, options: .regularExpression) != nil else {
+                return (400, ["error": "Give the device's address in `address`, as `network_devices` or LampNetwork found it (\"10.0.0.20\", \"living-room.local\")."])
+            }
+            guard !device.isEmpty, device.count <= 40, !device.contains("\n") else {
+                return (400, ["error": "Give the device's name in `device`, as the person knows it (\"Living Room TV\"), 40 characters at most."])
+            }
+            guard !doing.isEmpty, Talk.words(in: doing) <= 12 else {
+                return (400, ["error": "Say in `doing` what you'd press or change on it, 12 words at most."])
+            }
+            let wish = wish(of: project)
+            // Allowed always, at the address the card was for. At another one (a router hands out new ones), the person is
+            // asked again: Lamp can't tell the same device from another one given the old name.
+            let kept = DevicePermissions.kept(wish)
+            if kept.always.contains(device), kept.addresses[device] == address {
+                return (200, ["text": "The person already allows \(device) for this wish: go ahead."])
+            }
+            if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+            DevicePermissions.asking(about: device, at: address, for: wish)
+            let ask = DevicePermissions.card(device: device, doing: doing)
+            logs[project.id, default: []].append(chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project))
+            closeSteps(project)
+            turn.asked = true
+            away.questionAsked(project.id)
+            saveChat(project)
+            return (200, ["text": "Lamp asked the person. Change nothing on the device and end your turn now: their answer is the next message. Go ahead only if it allows \(device)."])
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
             // isn't the agent's to fill.
@@ -10294,6 +10333,14 @@ final class Store: ObservableObject {
                 }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
             }
+            // Under "Only when risky" Codex's ordinary commands run in its sandbox with the network open, where no reviewer
+            // sees them: this hook only keeps them off the person's devices until one is allowed.
+            if request.path.contains("format=codex-devices") {
+                let allowed = DevicePermissions.allowedAddresses(wish(of: project))
+                guard DevicePermissions.devicesChanged(by: command).contains(where: { !allowed.contains($0) }) else { return (200, [:]) }
+                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                     "permissionDecisionReason": DevicePermissions.commandRefusal]])
+            }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
@@ -10741,8 +10788,17 @@ final class Store: ObservableObject {
     private func useCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
+        // An app that controls the person's devices presses on real ones: only on the device the person allowed on Lamp's
+        // card, which the call names.
+        if DevicePermissions.reachesDevices(app) {
+            let device = (arguments["device"] as? String)?.trimmed ?? ""
+            guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
+                return (400, ["error": DevicePermissions.useRefusal])
+            }
+        }
         var actions = arguments
         actions["part"] = nil
+        actions["device"] = nil
         let body = (try? JSONSerialization.data(withJSONObject: actions)) ?? Data("{}".utf8)
         return await underTurn(of: project, app) { await use(app, request: body) }
     }

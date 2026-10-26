@@ -92,7 +92,8 @@ A capability given to one engine must be given to all of them that can take it, 
   at once (`AskSteps`), so nothing moves under the pointer. Its answers are small tiles, a symbol and a line each, as the
   chips of a card with every question on it are: one under another below a card width that takes in the wand's
   panel at any size it opens at, in one row only on a wider card where each fits on a line (`TileRows`, and
-  `ChipRow` the same way). A question left to Lamp is "Decide for me" (`TalkCard.youDecide`). Asking ends the turn: nothing is built or saved
+  `ChipRow` the same way). A question left to Lamp is "Decide for me" (`TalkCard.youDecide`), except on a question only the person can answer
+(`personOnly`: Lamp's device card, `device_permission`). Asking ends the turn: nothing is built or saved
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
   runaway one is (`Store.endIfOver`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still

@@ -88,3 +88,21 @@ A capability given to one engine must be given to all of them that can take it, 
   Undo puts back code, never data. Data is copied, though: before a change goes into a Mac app, by reopening it
   or live, Lamp copies its LampStore database into its Backups folder, named after the version that wrote it
   (`DataSnapshots`, beside the app's own once-a-launch copies).
+- **The person's devices**: the agent may read a device on the network freely, but changes one (a key press, opening
+  an app, volume, input, power, a setting) only once the person has said yes on Lamp's own card (`device_permission`,
+  `DevicePermissions`): "Try it on your <device>?", answered Allow once (until the person next writes), Always for the
+  device (the wish's life) or Not now, with no "Decide for me" (`TalkCard.Question.personOnly`). Lamp keeps the answer
+  from the click once it's delivered as the person's message (an answer taken back while it waited in line allows
+  nothing), in its own folder by the wish's instance, never in the app's folder, which the agent can write.
+  `use_app` on an app that reaches devices (`DevicePermissions.reachesDevices`: LampRoku or LampNetwork in its code, or a
+  local network reason or Bonjour types in capabilities.json) is refused unless its `device` names one the person allowed.
+  Each engine's command check carries the same rule (`DevicePermissions.commandRule`): pi's `CommandRisk` counts such a
+  command as reaching beyond the app, so it gets Lamp's card; Claude Code's auto mode gets it as a `soft_deny` rule after
+  its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs
+  more than Codex's sandbox, which leaves the network open, so under "Only when risky" Codex also gets Lamp's hook asking
+  only this (`format=codex-devices`, `DevicePermissions.mayChangeADevice`: a command naming a private address or a
+  `.local` name that isn't a plain `curl` read is refused unless that address is an allowed device's, as the card noted it; a device asked about again at another
+  address gets the card again, since Lamp can't tell it's the same device).
+  Never leaves every engine's commands unchecked, this rule included. What this can't see: a command that keeps the
+  device's address in a script or file it runs, and which device a `use_app` click really reaches (the agent names it).
+  Holding those too would take filtering the network itself, per address, in the sandbox and in the app.
