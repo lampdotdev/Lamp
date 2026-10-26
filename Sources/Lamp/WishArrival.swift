@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A wish made on the desk doesn't pop its chat up out of nowhere: the bar it was typed in lifts off the desk and
-/// grows into the chat's window, lit warm the way Lamp's light is, with a few sparks rising off it, and the chat
+/// grows into the chat's window, lit in the colours of the smoke an app being changed shows, with a few sparks rising off it, and the chat
 /// fades in where it lands. Drawn in a window of its own over the desk, so the chat itself is laid out once, at its
 /// real size, rather than at every step of the way.
 @MainActor
@@ -61,9 +61,9 @@ enum WishArrival {
     }
 }
 
-/// The bar on its way to becoming the chat: a white card that grows from the bar's frame to the chat's, warm light
+/// The bar on its way to becoming the chat: a white card that grows from the bar's frame to the chat's, coloured light
 /// gathering round it and a band of it rising across it, the wish's words lifting away as it opens.
-private struct ArrivalView: View {
+struct ArrivalView: View {
     let from: CGRect
     let to: CGRect
     let text: String
@@ -72,7 +72,15 @@ private struct ArrivalView: View {
     @State private var swept = false
     @State private var started = Date()
 
-    private static let warm = Color(red: 1, green: 0.78, blue: 0.42)
+    /// The smoke's colours (`LampTransition.Look.hues` in LampSupport.swift): blue, violet, pink, orange and teal.
+    static let hues: [Color] = [
+        Color(red: 0.25, green: 0.5, blue: 1),
+        Color(red: 0.6, green: 0.38, blue: 1),
+        Color(red: 1, green: 0.38, blue: 0.68),
+        Color(red: 1, green: 0.6, blue: 0.22),
+        Color(red: 0.2, green: 0.82, blue: 0.9),
+    ]
+    private static var ring: AngularGradient { AngularGradient(colors: hues + [hues[0]], center: .center) }
     private var frame: CGRect { landed ? to : from }
 
     var body: some View {
@@ -116,10 +124,11 @@ private struct ArrivalView: View {
                     .animation(.easeOut(duration: 0.22), value: landed)
             }
             .overlay {
-                // A band of warm light rising through the card as it grows.
+                // A band of the smoke's colours rising through the card as it grows.
                 GeometryReader { proxy in
-                    LinearGradient(colors: [Self.warm.opacity(0), Self.warm.opacity(0.55), .white.opacity(0.7), Self.warm.opacity(0)],
-                                   startPoint: .bottom, endPoint: .top)
+                    LinearGradient(colors: Self.hues, startPoint: .leading, endPoint: .trailing)
+                        .opacity(0.5)
+                        .mask(LinearGradient(colors: [.clear, .black, .white.opacity(0.6), .clear], startPoint: .bottom, endPoint: .top))
                         .frame(height: proxy.size.height * 0.45)
                         .offset(y: swept ? -proxy.size.height * 0.5 : proxy.size.height)
                 }
@@ -127,28 +136,30 @@ private struct ArrivalView: View {
                 .opacity(swept ? 0 : 1)
             }
             .clipShape(shape)
-            .overlay(shape.strokeBorder(Self.warm.opacity(lit ? 0.7 : 0), lineWidth: 1.5))
-            .shadow(color: Self.warm.opacity(lit ? 0.6 : 0), radius: lit ? 42 : 8)
+            .overlay(shape.strokeBorder(Self.ring, lineWidth: 1.5).opacity(lit ? 0.8 : 0))
+            // The glow round the edge, in the smoke's colours all the way round.
+            .background(shape.fill(Self.ring).blur(radius: lit ? 30 : 6).opacity(lit ? 0.55 : 0))
             .shadow(color: .black.opacity(0.1), radius: 18, y: 8)
             .environment(\.colorScheme, .light)
     }
 }
 
-/// A few warm sparks rising off the bar as the wish leaves it.
+/// A few sparks in the smoke's colours rising off the bar as the wish leaves it.
 private struct Sparks: View {
     let origin: CGRect
     let started: Date
 
     private struct Spark {
-        let x: CGFloat, rise: CGFloat, drift: CGFloat, size: CGFloat, delay: Double, life: Double
+        let x: CGFloat, rise: CGFloat, drift: CGFloat, size: CGFloat, delay: Double, life: Double, hue: Int
     }
 
     private static let sparks: [Spark] = {
         var generator = SystemRandomNumberGenerator()
-        return (0..<22).map { _ in
+        return (0..<22).map { index in
             Spark(x: .random(in: 0.05...0.95, using: &generator), rise: .random(in: 70...220, using: &generator),
                   drift: .random(in: -26...26, using: &generator), size: .random(in: 2...4.5, using: &generator),
-                  delay: .random(in: 0...0.25, using: &generator), life: .random(in: 0.6...1.1, using: &generator))
+                  delay: .random(in: 0...0.25, using: &generator), life: .random(in: 0.6...1.1, using: &generator),
+                  hue: index % ArrivalView.hues.count)
         }
     }()
 
@@ -165,9 +176,10 @@ private struct Sparks: View {
                     let alpha = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8
                     let size = spark.size * (1 - 0.4 * t)
                     let glow = CGRect(x: point.x - size * 2.5, y: point.y - size * 2.5, width: size * 5, height: size * 5)
-                    context.fill(Path(ellipseIn: glow), with: .color(Color(red: 1, green: 0.75, blue: 0.35).opacity(alpha * 0.25)))
+                    context.fill(Path(ellipseIn: glow), with: .color(ArrivalView.hues[spark.hue].opacity(alpha * 0.3)))
                     let core = CGRect(x: point.x - size / 2, y: point.y - size / 2, width: size, height: size)
-                    context.fill(Path(ellipseIn: core), with: .color(Color(red: 1, green: 0.93, blue: 0.75).opacity(alpha)))
+                    context.fill(Path(ellipseIn: core), with: .color(ArrivalView.hues[spark.hue].opacity(alpha)))
+                    context.fill(Path(ellipseIn: core.insetBy(dx: size * 0.3, dy: size * 0.3)), with: .color(.white.opacity(alpha * 0.8)))
                 }
             }
         }
