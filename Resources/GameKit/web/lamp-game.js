@@ -340,6 +340,7 @@ const xboxHost = !preview && (!!(window.chrome && window.chrome.webview) || /Xbo
 let current = preview ? { kind: 'keyboard' } : xboxHost ? { kind: 'controller', family: 'xbox' } : touchScreen ? { kind: 'touch' } : { kind: 'keyboard' };
 // The controller's own name, for the one difference within a family a prompt shows (a DualShock's Share button).
 let padName = '';
+const dualShock = name => /dualshock|05c4|09cc/i.test(name);
 const listeners = new Set();
 
 export function input() { return Object.assign({}, current); }
@@ -353,8 +354,10 @@ export function onInput(changed) {
 
 function use(kind, family, name = '') {
     if (preview) return;
+    // A new controller of the same family can still change a label (a DualShock's Share where a DualSense has Create).
+    const relabels = dualShock(name) !== dualShock(padName);
     padName = name;
-    if (current.kind === kind && current.family === family) return;
+    if (current.kind === kind && current.family === family && !relabels) return;
     current = family ? { kind, family } : { kind };
     const spoken = { xbox: 'an Xbox controller', playstation: 'a PlayStation controller', switch: 'a Switch controller', other: 'a controller' };
     log(`Lamp: playing with ${family ? spoken[family] : 'the ' + kind}.`);
@@ -430,7 +433,7 @@ export function label(what, on = current) {
         const bit = BUTTON[name];
         return bit && bit < BUTTON.UP && (touchButtons & bit) ? NAMES.touch[name] || NAMES.xbox[name] : null;
     }
-    if (on.family === 'playstation' && name === 'VIEW' && /dualshock|05c4|09cc/i.test(padName)) return 'Share';
+    if (on.family === 'playstation' && name === 'VIEW' && dualShock(padName)) return 'Share';
     return (NAMES[on.family] || {})[name] || NAMES.xbox[name];
 }
 
@@ -502,7 +505,7 @@ function readPads() {
     // The touch controls are there from the start, step aside once a controller is played with (a connected one alone
     // may only be the simulator passing the Mac's through), and come back when the screen is touched.
     const played = found.find(inUse);
-    const nativeInUse = nativePad && (nativePad.down || [nativePad.lx, nativePad.ly, nativePad.rx, nativePad.ry].some(a => Math.abs(a) > 0.3));
+    const nativeInUse = nativePad && (nativePad.down || [nativePad.lx, nativePad.ly, nativePad.rx, nativePad.ry, nativePad.lt, nativePad.rt].some(a => Math.abs(a) > 0.3));
     if (touchScreen && !scripted) {
         if (seenControllers === -1) showTouch();
         if (touchShown && (played || nativeInUse)) hideTouch();
