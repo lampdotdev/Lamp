@@ -147,8 +147,9 @@ enum Publish {
             .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    /// The page with Lamp's credit bar over it, at the top in the middle: what it's based on, linked, and Open in Lamp.
-    /// It fades back after a few seconds so the game has the screen, and comes back under the pointer.
+    /// The page with Lamp's credit bar over it: what it's based on, linked, and Open in Lamp. It starts at the top in the
+    /// middle, over the game's loading, and after a few seconds settles into a thin line on the bottom edge, where a
+    /// game's own controls rarely are, so it never sits over a button the game draws.
     static func withCreditBar(_ html: String, credits: Credits, file: String) -> String {
         var parts: [String] = []
         if let source = credits.upstream.first {
@@ -159,13 +160,15 @@ enum Publish {
         parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
         let bar = """
 
-            <div id="lamp-credit" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;\
-            font:500 12px/1.4 -apple-system,system-ui,sans-serif;color:#fff;background:rgba(0,0,0,.6);padding:5px 14px;\
-            border-radius:999px;white-space:nowrap;transition:opacity .8s;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)">\
-            \(parts.joined(separator: " · "))</div>
-            <style>#lamp-credit a{color:#fff;text-decoration:underline}</style>
-            <script>setTimeout(function(){var c=document.getElementById('lamp-credit');if(!c)return;c.style.opacity=.3;\
-            c.onmouseenter=function(){c.style.opacity=1};c.onmouseleave=function(){c.style.opacity=.3}},8000)</script>
+            <div id="lamp-credit">\(parts.joined(separator: " · "))</div>
+            <style>
+            #lamp-credit{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;max-width:calc(100vw - 24px);
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12px/1.4 -apple-system,system-ui,sans-serif;color:#fff;
+              background:rgba(0,0,0,.6);padding:5px 14px;border-radius:999px;transition:all .8s;pointer-events:none}
+            #lamp-credit a{color:#fff;text-decoration:underline;pointer-events:auto}
+            #lamp-credit.settled{top:auto;bottom:0;font-size:10px;padding:1px 10px;border-radius:6px 6px 0 0;background:rgba(0,0,0,.45);opacity:.8}
+            </style>
+            <script>setTimeout(function(){var c=document.getElementById('lamp-credit');if(c)c.className='settled'},8000)</script>
 
             """
         if let end = html.range(of: "</body>", options: [.caseInsensitive, .backwards]) {
