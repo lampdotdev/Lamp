@@ -5,13 +5,14 @@ description: 3D games and scenes in a web page with three.js, on any device that
 
 # 3D in a web page
 
-three.js runs wherever web runs: a Mac, an iPhone or iPad, Android, an Android TV, a Samsung or LG TV and an Xbox.
-Any of them can show a 3D game. What differs is speed: a Mac draws far more than a phone, and a TV's chip is often
-slower than a phone's. Nothing here limits what you make; it says what costs the most, so you can choose what the
-game is worth on the devices it's played on.
+three.js runs wherever web runs with WebGL 2: a Mac, an iPhone or iPad, Android, an Android TV, a Samsung or LG TV
+and an Xbox. Any of them can show a 3D game. What differs is speed: a Mac draws far more than a phone, and a TV's chip
+is often slower than a phone's. Nothing here limits what you make; it says what costs the most, so you can choose
+what the game is worth on the devices it's played on.
 
-For 3D in Swift on Apple's devices (RealityKit), open the scene-3d skill instead. The game skill holds what every game
-needs (the frame loop, controls, sound, saves); read it too.
+For 3D in Swift in a Mac-only app (RealityKit through LampSceneView), open the scene-3d skill instead; native 3D on
+iPhone, iPad or Apple TV is written with that device's own frameworks. The game skill holds what every game needs
+(the frame loop, controls, sound, saves); read it too.
 
 ## The renderer
 
@@ -19,6 +20,12 @@ The page loads three.js from `Web/three` through the import map in index.html (`
 WebGL build and its addons such as GLTFLoader; nothing is loaded from the network). A game makes one
 `THREE.WebGLRenderer({ antialias: true })` and hands it to `game()` in lamp-game.js, which sizes the canvas to
 1920x1080, fits it to the screen and runs your `frame`. Read lamp-game.js's comments first.
+
+The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
+WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
+`canvas.getContext('webgl2')` returns a context, and read the log with `look_at_app` and `on_device`). Most browsers
+have it; not every Samsung TV does. Where it's missing, make the game another way (2D on a canvas, or native on that
+device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials
 
@@ -38,8 +45,8 @@ many draw calls (each distinct mesh and material), large textures, and many tria
 
 ## On a TV
 
-A TV's browser runs three.js, but often slowly: a scene that's smooth on a Mac can draw a few frames a second on a TV.
-Some Samsung models lack WebGL 2. When the game is played on a TV, a light scene keeps it playable:
+A TV's browser with WebGL 2 runs three.js, but often slowly: a scene that's smooth on a Mac can draw a few frames a
+second on a TV. Once the renderer runs there, a light scene keeps the game playable:
 
 - few lights and no live shadows (a dark blob under things reads as a shadow);
 - no post-processing;

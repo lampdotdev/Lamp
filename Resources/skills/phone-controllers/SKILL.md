@@ -21,8 +21,11 @@ person only what you can't tell from the request (one short line, about people a
 
 The phones connect to the game's own page, over the home Wi‑Fi, through a relay Lamp runs on this Mac:
 
-- **A page with lamp.js's `Lamp.controllers`** hosts phones: a TV app's page, and a page shown full screen on a
-  Mac, an iPad, a TV or an Xbox. This is what works today.
+- **A TV app's page with lamp.js's `Lamp.controllers`** hosts phones: on the TV, and in the TV preview on this Mac.
+  This is what works today, because Lamp hands out the phone page and runs the relay only for a TV app.
+- **A page shown on a Mac, an iPad or an Xbox** can't host phones yet: the page there reaches only Lamp's AI, not the
+  relay, and Lamp serves phone pages only to TV apps. Hosting phones there needs both opened to those apps. Say so,
+  and offer the game as a TV app (its preview on this Mac hosts phones too) or played with a controller.
 - **A page on Lamp's game runtime** (lamp-game.js) has no `Lamp.controllers` yet: its players use a controller, the
   keyboard or touch. A game played with phones today is a page with lamp.js's controllers, drawn without the runtime.
 - **A native Apple TV game can't host phones yet**: the host's side of phones exists only in lamp.js. Say so, and

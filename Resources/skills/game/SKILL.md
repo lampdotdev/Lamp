@@ -13,8 +13,9 @@ The tools Lamp has for games:
 
 - **Web**: Lamp's game runtime, `Web/lamp-game.js`, with three.js. It's the same on every device that runs web.
   Read lamp-game.js first, all of it: its comments are the whole interface.
-- **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, RealityKit through LampSceneView for 3D (the
-  scene-3d skill), SwiftUI for menus and scores, and Lamp's blocks in LampSupport.swift.
+- **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
+  in LampSupport.swift. For 3D, LampSceneView (the scene-3d skill) is for Mac-only apps; a native 3D game on iPhone,
+  iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit), without LampSceneView.
 - **Native Android**: Lamp has no game help in Kotlin yet. You can still write one (a SurfaceView or Canvas with its
   own frame loop); say to the person that it's plainer than a web game, which has the runtime.
 - **An integration's device** (Roku…): what its integration declares; read the device-integrations skill.
@@ -72,7 +73,7 @@ A frame has about 16 ms, and anything that runs during play takes from it, so a 
 - load each picture, model and sound once and reuse it; prepare a level before it starts;
 - reuse what comes and goes (bullets, enemies, particles) rather than making new ones each time;
 - allocate nothing per frame, and keep per-frame work to what moves;
-- many copies of one thing are one draw (THREE.InstancedMesh, `LampScene.copies`).
+- many copies of one thing are one draw (THREE.InstancedMesh, `LampScene.copies` in a Mac-only app).
 
 The request's device line names the slowest device the game is played on and its budget; the log says how frames kept
 to time. When frames are late, draw less. On a TV, draw much less: the 3d-game skill says how.
