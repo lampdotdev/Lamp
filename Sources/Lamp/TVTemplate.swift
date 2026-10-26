@@ -1132,7 +1132,7 @@ extension TVTemplate {
          *                                     one copy open now: the one named, or the app's opened last (two at a time to
          *                                     each); gives a transfer: onProgress(fn(sent, size)), cancel(), done (a Promise
          *                                     that fails with why it didn't get there)
-         * Lamp.wish.onFile(fn(from, file, copy))   another app is sending a file: file.name, .type, .size,
+         * Lamp.wish.onFile(fn(from, file, copy))   another app is sending a file: file.name, .type, .size, .copy (which copy sent it),
          *                                     file.onProgress(fn(received, size)), file.cancel(), file.done.then(fn(arrayBuffer))
          * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; anything bigger goes with sendFile
          * Lamp.wish.valueLimit, valuesLimit  8192 and 65536: the most bytes one value, and all of them, take as JSON
@@ -1228,7 +1228,7 @@ extension TVTemplate {
             file.onProgress(function () { clearTimeout(watch); watch = setTimeout(stalled, 20000); });
             file.done.then(function () { clearTimeout(watch); }, function () { clearTimeout(watch); });
             if (key !== null) { if (padHooks && padPlayers[key]) padHooks.file(key, file); else file.cancel(); }
-            else if (on.file.length) emit('file', [appOf(route.peer), file, route.peer]);
+            else if (on.file.length) { file.copy = route.peer; emit('file', [appOf(route.peer), file, route.peer]); }
             else file.cancel();
           });
           // The wish's own apps playing this app's game (LampController): joined to Lamp.controllers while it takes
@@ -2417,7 +2417,7 @@ extension TVTemplate {
                 emit('message', [m.from, m.data, m.copy || m.from]);
               } else if (m.t === 'file') {
                 var data = fromBase64(m.data || ''), size = data.length;
-                var file = { name: m.name, type: m.type, size: size, onProgress: function (fn) { try { fn(size, size); } catch (e) {} },
+                var file = { name: m.name, type: m.type, size: size, copy: m.copy || m.from, onProgress: function (fn) { try { fn(size, size); } catch (e) {} },
                              cancel: function () {}, done: Promise.resolve(data.buffer) };
                 emit('file', [m.from, file, m.copy || m.from]);
               } else if (m.t === 'transfer' && transfers[m.id]) {

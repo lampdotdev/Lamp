@@ -306,6 +306,9 @@ before copies (wire 3 or less) joins by its app's name alone, as a copy of that 
 take it so, and it's shown as out of date, but it doesn't know the new copies' names (it sees them as no app of the
 wish, so it shows the others as not open and its messages to them don't arrive), so it's rebuilt when opened from Lamp,
 as any app of an earlier wire is: `LampWishVersion`, `Template.androidWishOutdated` and a TV app's install on open.
+Copies are of an app of a wish of several: an app on its own carries no `LampWish` (below), so the same app on two
+devices with no other app in its wish doesn't share values; giving it the block would bring the Local Network question
+to every app on its own.
 `WishNote` gives each copy in the room its own line. Every
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
