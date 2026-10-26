@@ -44,6 +44,9 @@ final class OpensFromFinderTests: XCTestCase {
         // The local network reason is shown as it is in the system's question: one line, kept short.
         XCTAssertEqual(Template.Capabilities(localNetwork: " Finds your TV. ").checked.localNetwork, "Finds your TV.")
         XCTAssertTrue(Template.Capabilities(localNetwork: "Finds\nyour TV").isEmpty)
+        // It goes into build scripts' heredocs, which the shell expands: nothing in it may be read as shell or XML.
+        XCTAssertTrue(Template.Capabilities(localNetwork: "Finds $(touch x) your TV").isEmpty)
+        XCTAssertTrue(Template.Capabilities(localNetwork: "Finds `id` & <your> TV").isEmpty)
     }
 
     /// A shared app keeps what it declares: Lamp writes the copy's capabilities.json itself from what passed,

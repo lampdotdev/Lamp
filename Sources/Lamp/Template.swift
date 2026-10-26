@@ -1711,11 +1711,12 @@ enum Template {
                                 localNetwork: localNetworkReason)
         }
 
-        /// The local network reason, kept to one plain sentence of 150 characters at most: it's shown as it is in the
-        /// system's question, and goes into Info.plist.
+        /// The local network reason, kept to one plain sentence of 150 characters at most, in words and plain punctuation:
+        /// it's shown as it is in the system's question, and goes into Info.plist through build scripts whose heredocs the
+        /// shell expands, so nothing in it may mean anything to a shell or to XML (`$`, backticks, backslashes, quotes, `<>&`).
         var localNetworkReason: String? {
             guard let text = localNetwork?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 150,
-                  !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+                  text.range(of: #"^[\p{L}\p{N} .,;:!?'’()–-]+$"#, options: .regularExpression) != nil else { return nil }
             return text
         }
 
@@ -1870,6 +1871,8 @@ enum Template {
         /// The Info.plist keys a Mac app's capabilities own, each with its value or nil when nothing is declared.
         func macInfo(for project: LampProject) -> [String: Any?] {
             ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes,
+             // What LampNetwork.find() looks for besides its own (an iPhone app's are in its own Info.plist, `lists`).
+             "NSBonjourServices": services.isEmpty ? nil : services,
              "LampBackground": background == true ? true : nil,
              "LampICloudContainer": container(for: project)]
         }
