@@ -820,7 +820,7 @@ enum Gallery {
             let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
                                    stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
                                    credit: "Based on Slop New York by Mr.doob", notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
-                                   copied: copied, republish: page, publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
+                                   copied: copied, republish: page, canPublish: stage == .ready || { if case .failed = stage { true } else { false } }(), publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))

@@ -36,6 +36,8 @@ public struct PublishCard: View {
     let copied: Bool
     /// It's up already: Publish puts the wish as it is now in its place.
     let republish: Bool
+    /// Publish can be pressed now (ready, or after a failed try).
+    let canPublish: Bool
     let publish: () -> Void
     let fix: () -> Void
     let openPage: () -> Void
@@ -44,7 +46,7 @@ public struct PublishCard: View {
     let width: CGFloat?
 
     public init(icon: NSImage?, name: String, stage: Stage, repo: String?, page: String?, credit: String?, notes: [String],
-                size: String?, copied: Bool, republish: Bool, publish: @escaping () -> Void, fix: @escaping () -> Void,
+                size: String?, copied: Bool, republish: Bool, canPublish: Bool, publish: @escaping () -> Void, fix: @escaping () -> Void,
                 openPage: @escaping () -> Void, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
         self.icon = icon
         self.name = name
@@ -56,6 +58,7 @@ public struct PublishCard: View {
         self.size = size
         self.copied = copied
         self.republish = republish
+        self.canPublish = canPublish
         self.publish = publish
         self.fix = fix
         self.openPage = openPage
@@ -173,7 +176,7 @@ public struct PublishCard: View {
             Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction).disabled(busy && stage != .preparing)
             Button(republish ? "Update Page" : "Publish", action: publish)
                 .keyboardShortcut(.defaultAction)
-                .disabled(stage != .ready)
+                .disabled(!canPublish)
         }
     }
 }

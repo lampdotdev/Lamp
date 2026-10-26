@@ -172,7 +172,10 @@ shared file beside it (made by `Sharing.export`, so held to its checks, and the 
 share as a file yet, a game among them, goes up without one, and the bar's link is the wish's Share Link, "Make it with
 Lamp", or with none "Made with Lamp" to lamp.dev, `Publish.OpenInLamp`), credits.json with this wish at the end of the
 chain, a README with the credits and licences, and `.nojekyll`; the staged page is searched for secrets again. The push
-signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits for GitHub's build. Where a
+signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built
+that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten minutes.
+A repository is kept as soon as it's made, and a failed try keeps the page staged, so Publish tries again into the same
+repository instead of leaving one behind and making another. Where a
 wish's page went is kept in Lamp's folder (`Published Pages.json`), so Update Page puts the wish as it is now in its
 place.
 

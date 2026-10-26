@@ -810,9 +810,11 @@ public struct SidebarPublish: Codable, Equatable {
     public var size: String?
     public var copied: Bool
     public var republish: Bool
+    /// Publish can be pressed: it's ready, or a try failed and can be made again.
+    public var canPublish: Bool
 
     public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, notes: [String],
-                size: String?, copied: Bool, republish: Bool) {
+                size: String?, copied: Bool, republish: Bool, canPublish: Bool) {
         self.name = name
         self.icon = icon
         self.stage = stage
@@ -823,6 +825,7 @@ public struct SidebarPublish: Codable, Equatable {
         self.size = size
         self.copied = copied
         self.republish = republish
+        self.canPublish = canPublish
     }
 }
 

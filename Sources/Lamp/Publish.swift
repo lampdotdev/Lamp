@@ -190,8 +190,8 @@ enum Publish {
 
             <div id="lamp-credit">\(parts.joined(separator: " · "))</div>
             <style>
-            #lamp-credit{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;max-width:calc(100vw - 24px);
-              overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12px/1.4 -apple-system,system-ui,sans-serif;color:#fff;
+            #lamp-credit{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;width:max-content;
+              max-width:calc(100vw - 24px);box-sizing:border-box;text-align:center;font:500 12px/1.4 -apple-system,system-ui,sans-serif;color:#fff;
               background:rgba(0,0,0,.6);padding:5px 14px;border-radius:999px;transition:all .8s;pointer-events:none}
             #lamp-credit a{color:#fff;text-decoration:underline;pointer-events:auto}
             #lamp-credit.settled{top:auto;bottom:0;font-size:10px;padding:1px 10px;border-radius:6px 6px 0 0;background:rgba(0,0,0,.45);opacity:.8}
@@ -255,6 +255,9 @@ enum Publish {
                                                  "--description", AppDescription.description(of: project) ?? "\(project.name), made with Lamp"],
                                             timeout: 60)
             guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
+            // Kept as soon as it's made, so a publish that fails after this tries the same repository again rather than
+            // leaving this one behind and making another.
+            keep(Page(repo: repo, url: url), for: project)
         }
         step("Uploading…")
         let git = FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/git") ? "/opt/homebrew/bin/git" : "/usr/bin/git"
@@ -269,6 +272,7 @@ enum Publish {
                                                "push", "-q", "--force", "https://github.com/\(repo).git", "HEAD:main"],
                                           cwd: site, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take the page: \(pushed.output.trimmed.suffix(200))") }
+        let commit = (await Subprocess.run(git, ["rev-parse", "HEAD"], cwd: site, timeout: 10)).output.trimmed
 
         step("Turning on GitHub Pages…")
         let existing = await Subprocess.run(gh, ["api", "repos/\(repo)/pages"], timeout: 30)
@@ -279,19 +283,22 @@ enum Publish {
         } else {
             _ = await Subprocess.run(gh, ["api", "-X", "POST", "repos/\(repo)/pages/builds"], timeout: 30)
         }
+        // Up only once GitHub says it built this very commit: an earlier build's "built" is the page as it was.
         step("Waiting for GitHub to put it up…")
-        let deadline = Date().addingTimeInterval(300)
+        let deadline = Date().addingTimeInterval(600)
         while Date() < deadline {
             try await Task.sleep(for: .seconds(5))
-            let status = await Subprocess.run(gh, ["api", "repos/\(repo)/pages/builds/latest", "--jq", ".status"], mergeErrors: false, timeout: 30)
-            switch status.output.trimmed {
+            let build = await Subprocess.run(gh, ["api", "repos/\(repo)/pages/builds/latest", "--jq", ".commit + \" \" + .status"],
+                                             mergeErrors: false, timeout: 30)
+            let parts = build.output.trimmed.split(separator: " ").map(String.init)
+            guard parts.count == 2, parts[0] == commit else { continue }
+            switch parts[1] {
             case "built": return Page(repo: repo, url: url)
             case "errored": throw Failure(message: "GitHub couldn't put the page up. Try again in a moment.")
             default: continue
             }
         }
-        // Still building: the page will be there shortly.
-        return Page(repo: repo, url: url)
+        throw Failure(message: "GitHub is still putting the page up. It should be at \(url) in a few minutes; Publish again if it isn't.")
     }
 
     static func pageURL(_ repo: String) -> String {
@@ -314,6 +321,15 @@ enum Publish {
         var page: Publish.Page?
         var copied = false
         var icon: Data?
+
+        /// Ready, or failed with the page still staged, so Publish tries again.
+        var canPublish: Bool {
+            switch stage {
+            case .ready: true
+            case .failed: staged != nil
+            default: false
+            }
+        }
     }
 
     @Published private(set) var cards: [String: Card] = [:]
@@ -369,9 +385,10 @@ enum Publish {
     private func set(_ project: LampProject, _ stage: PublishCard.Stage) { cards[project.id]?.stage = stage }
 
     func publish(_ project: LampProject) {
-        guard let card = cards[project.id], card.stage == .ready, let staged = card.staged, let repo = card.repo,
+        guard let card = cards[project.id], card.canPublish, let staged = card.staged, let repo = card.repo,
               let gh = card.gh, let login = card.login else { return }
-        let isNew = card.page?.repo != repo
+        // A first try that made the repository before failing kept it (`upload`): this goes on with it.
+        let isNew = (card.page ?? Publish.kept(for: project))?.repo != repo
         set(project, .publishing("Starting…"))
         Task {
             do {
@@ -385,6 +402,8 @@ enum Publish {
                 cards[project.id]?.page = page
                 set(project, .published)
             } catch {
+                // The page stays staged, so Publish can try again; a repository made on the way is kept (`upload`).
+                cards[project.id]?.page = Publish.kept(for: project) ?? cards[project.id]?.page
                 set(project, .failed(error.localizedDescription))
             }
         }
@@ -435,6 +454,6 @@ enum Publish {
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
         return SidebarPublish(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo,
                               page: card.page?.url, credit: credits.basedOn, notes: notes, size: size, copied: card.copied,
-                              republish: card.page != nil)
+                              republish: card.page != nil, canPublish: card.canPublish)
     }
 }
