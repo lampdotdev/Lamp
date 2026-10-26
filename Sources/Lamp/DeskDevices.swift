@@ -1,19 +1,20 @@
 import SwiftUI
 import AppKit
 
-/// Your Devices, at the desk's end: the person's TVs, consoles and phones, each with a wish to start for it. Lamp looks
-/// on the network only once the person asks here (Look, `Store.lookOnNetwork`), after one line saying that macOS will
-/// ask: the system's question about Local Network is asked once, and a no stays until System Settings is changed, so it
-/// comes with Lamp's reason in front of it, never in the middle of a first wish. From then on the tile shows
-/// what was found, and its list puts the start of a wish for one in the bar ("A game for my Xbox: "), for the person to
-/// finish; a device nothing in Lamp knows yet is set up from there instead. A Local Network turned down is said there,
-/// with where to allow it.
+/// Your Devices, at the desk's end: the person's TVs, consoles, phones and whatever else answered on their network,
+/// and wishes made for them. Lamp looks on the network only once the person asks here (Look, `Store.lookOnNetwork`),
+/// after one line saying that macOS will ask: the system's question about Local Network is asked once, and a no stays
+/// until System Settings is changed, so it comes with Lamp's reason in front of it, never in the middle of a first wish.
+/// From then on the tile shows what was found, and its list has wishes the model thought of for all of it together
+/// (`DeviceIdeas`), each put in the bar for the person to make their own, then each device with what it still needs.
+/// A Local Network turned down is said there, with where to allow it.
 struct DeskDevices: View {
     @EnvironmentObject private var store: Store
     /// Puts the start of a wish in the desk's bar.
     let choose: (String) -> Void
     @State private var hovered = false
     @State private var listing = false
+    @ObservedObject private var ideas = DeviceIdeas.shared
     /// The rows' height, measured: the list is as tall as they are, up to `tallest`, past which they scroll.
     @State private var rowsHeight: CGFloat = 0
     private static let tallest: CGFloat = 380
@@ -49,6 +50,9 @@ struct DeskDevices: View {
         .onKeyPress(.return) { show(); return .handled }
         .help(store.looksOnNetwork ? "Make something for your TV, console or phone" : "Find your TV, console and phones on this network")
         .popover(isPresented: $listing, arrowEdge: .trailing) { list.environment(\.colorScheme, Self.macScheme) }
+        // Wishes for what's found are thought of while the list is open, once for each set of devices.
+        .onChange(of: listing ? devices.map(\.id) : []) { if listing && store.looksOnNetwork { ideas.think(about: devices) } }
+        .onChange(of: listing) { if listing && store.looksOnNetwork { ideas.think(about: devices) } }
     }
 
     /// Before the first look the list asks first (Look); after it, opening the list looks again.
@@ -126,7 +130,21 @@ struct DeskDevices: View {
             Text("Your Devices").font(.headline)
             VStack(alignment: .leading, spacing: 12) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) { ForEach(devices) { row($0) } }
+                    VStack(alignment: .leading, spacing: 12) {
+                        if ideas.thinking && ideas.ideas.isEmpty {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Thinking of wishes…").foregroundStyle(.secondary)
+                            }
+                        }
+                        ForEach(ideas.ideas) { idea($0) }
+                        if !ideas.ideas.isEmpty {
+                            Button(ideas.thinking ? "Thinking…" : "Other Ideas") { ideas.think(about: devices, again: true) }
+                                .controlSize(.small).disabled(ideas.thinking)
+                            Divider()
+                        }
+                        ForEach(devices) { row($0) }
+                    }
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
                 }
                 .frame(height: min(rowsHeight, Self.tallest))
@@ -157,6 +175,25 @@ struct DeskDevices: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// A wish the model thought of, which goes in the bar to be made the person's own.
+    private func idea(_ idea: DeviceIdeas.Idea) -> some View {
+        Button { listing = false; choose(idea.wish) } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: "sparkles").foregroundStyle(Color.accentColor).frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(idea.wish).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                    if !idea.devices.isEmpty {
+                        Text(idea.devices.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Put this wish in the bar")
+    }
+
     private func row(_ device: Device) -> some View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: Self.symbol(device)).foregroundStyle(.secondary).frame(width: 20)
@@ -165,14 +202,8 @@ struct DeskDevices: View {
                 if !device.line.isEmpty { Text(device.line).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 12)
-            if let start = Self.wishStart(for: device) {
-                // What it still needs is asked for when a wish first goes there, as everywhere else.
-                Button("Make…") { listing = false; choose(start) }
-                    .controlSize(.small)
-                    .accessibilityLabel("Make something for \(device.name)")
-            } else {
-                DeviceNextStep(device: device, then: { listing = false })
-            }
+            // What a device still needs, where Lamp can take it there; one that's ready shows nothing.
+            if device.setup() != .ready { DeviceNextStep(device: device, then: { listing = false }) }
         }
         .accessibilityElement(children: .contain)
     }
@@ -188,20 +219,5 @@ struct DeskDevices: View {
             }
         }
         return device.kind.symbol
-    }
-
-    /// How a wish for the device starts, in the person's own words for it, so the naming call reads it as that device
-    /// (`AppName.seen`); nil for one Lamp doesn't know yet, which is set up first.
-    static func wishStart(for device: Device) -> String? {
-        switch device.kind {
-        case .iphone: return "An app for my iPhone: "
-        case .ipad: return "An app for my iPad: "
-        case .android: return "An app for my Android phone: "
-        case .samsungTV, .lgTV: return "Something for my TV: "
-        case .other:
-            guard let integration = device.integration.flatMap(Integrations.integration) else { return nil }
-            return integration.kind == "game console" ? "A game for my \(integration.name): " : "Something for my \(integration.name): "
-        default: return nil
-        }
     }
 }

@@ -90,10 +90,12 @@ someone typed their first wish, and is asked once (a no stays until System Setti
 only once `Store.looksOnNetwork` is true (`lookForDevicesForWish`): set by Look in the tile's list, which first says in
 one line that Lamp looks for TVs, consoles and phones and that macOS will ask (`Store.lookOnNetwork`), or already true for someone who has used a device (a TV or
 another device Lamp set up, or a wish that opens on a phone or a TV, which looks as Lamp starts). Until then the tile
-shows a TV, a controller, a phone and an ellipsis; after, up to four of what was found. Its list has each device with Make…, which puts
-the start of a wish in the bar ("A game for my Xbox: ", `DeskDevices.wishStart`, in the words the naming call reads as
-that device) for the person to finish; what the device still needs is asked for when a wish first goes there. A
-device nothing in Lamp knows yet has its Set Up… instead (`DeviceNextStep`). Local Network turned down is found by a
+shows a TV, a controller, a phone and an ellipsis; after, up to four of what was found. Its list starts with six wishes the model makes up for everything found at once (`DeviceIdeas`, on the naming
+call's model), so what a TV, a console, a phone and the speakers can do together is the model's to see rather than
+a list of Lamp's; each goes in the bar to be made the person's own, and Other Ideas asks again. The model is told
+only what each device is (maker, model, software, whether Lamp puts apps on it), numbered: never the names people give
+their devices, nor what a device said of itself on the network, which can carry serial numbers and hardware
+addresses. Then come the devices, each with its setup step while it needs one (`DeviceNextStep`). Local Network turned down is found by a
 short Bonjour browse after each look (`LocalNetwork.isDenied`): an orange mark on the tile, and in the list a line with
 Allow…, which opens that pane of System Settings.
 
