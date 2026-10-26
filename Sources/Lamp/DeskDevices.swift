@@ -13,6 +13,9 @@ struct DeskDevices: View {
     let choose: (String) -> Void
     @State private var hovered = false
     @State private var listing = false
+    /// The rows' height, measured: the list is as tall as they are, up to `tallest`, past which they scroll.
+    @State private var rowsHeight: CGFloat = 0
+    private static let tallest: CGFloat = 380
 
     /// What the person might make something for: not this Mac (the desk is on it), an emulator or a watch on its own.
     private var devices: [Device] {
@@ -94,7 +97,12 @@ struct DeskDevices: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Your Devices").font(.headline)
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(devices) { row($0) }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) { ForEach(devices) { row($0) } }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
+                }
+                .frame(height: min(rowsHeight, Self.tallest))
+                .scrollBounceBehavior(.basedOnSize)
                 if store.localNetworkDenied {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
                         Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange).frame(width: 20)
