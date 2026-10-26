@@ -61,11 +61,10 @@ struct WishDesk: View {
                         if !hidesDesk {
                             VStack(spacing: 0) {
                                 headline
-                                if !wishes.isEmpty || !store.newerWishes.isEmpty || !missingStarters.isEmpty {
-                                    grid.padding(.top, 28)
-                                        .modifier(receding ? Recede.behind : Recede.present)
-                                        .animation(.easeOut(duration: 0.3), value: receding)
-                                }
+                                // Never empty: Your Devices is at its end even before there's a wish.
+                                grid.padding(.top, 28)
+                                    .modifier(receding ? Recede.behind : Recede.present)
+                                    .animation(.easeOut(duration: 0.3), value: receding)
                             }
                             .padding(.bottom, wishes.isEmpty ? 18 : 32)
                             .transition(.modifier(active: Recede.gone, identity: Recede.present))
@@ -380,6 +379,7 @@ struct WishDesk: View {
             if !missingStarters.isEmpty {
                 MoreFromLamp(starters: missingStarters)
             }
+            DeskDevices(choose: choose)
         }
         .frame(maxWidth: 880)
         .padding(.horizontal, 32)

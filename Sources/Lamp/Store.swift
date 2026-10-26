@@ -995,7 +995,11 @@ final class Store: ObservableObject {
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
         // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        if projects.contains(where: { $0.platform.target.places.contains(where: \.listsDevices) }) { refreshDevices(); refreshSimulators() }
+        if projects.contains(where: { $0.platform.target.places.contains(where: \.listsDevices) }) {
+            // Someone with a wish on a phone or a TV has met the system's question already.
+            if !looksOnNetwork { lookOnNetwork() } else { refreshDevices() }
+            refreshSimulators()
+        }
         else { Task { thisMac = await Device.readThisMac() } }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
@@ -2323,6 +2327,22 @@ final class Store: ObservableObject {
     /// When the last look ended, so a new wish doesn't look again within a moment of one (`lookForDevicesForWish`).
     private var devicesLookedAt: Date?
 
+    /// Whether a new wish looks on the network by itself (`lookForDevicesForWish`). The first look there is when macOS asks
+    /// the person about Local Network, which typed into the middle of a first wish makes no sense, so it waits until
+    /// they've asked to look (the desk's Your Devices, `DeskDevices`) or have used a device already (a TV or another
+    /// device set up, a wish that opens on one). Until then a wish is named from what Lamp already knows.
+    @Published private(set) var looksOnNetwork = UserDefaults.standard.bool(forKey: "looksOnNetwork")
+        || !TVs.kept().isEmpty || !Integrations.kept().isEmpty
+    /// The person turned Local Network down for Lamp, as the last look found: nothing on the network answers it.
+    @Published private(set) var localNetworkDenied = false
+
+    /// The person asked to look on the network: now, and as every new wish begins from then on.
+    func lookOnNetwork() {
+        UserDefaults.standard.set(true, forKey: "looksOnNetwork")
+        looksOnNetwork = true
+        refreshDevices()
+    }
+
     func refreshDevices() {
         deviceLook += 1
         let look = deviceLook
@@ -2346,6 +2366,11 @@ final class Store: ObservableObject {
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
+            // Asked of the system only once Lamp looks on the network anyway, since asking is itself a look there.
+            if looksOnNetwork {
+                let denied = await LocalNetwork.isDenied()
+                if denied != localNetworkDenied { localNetworkDenied = denied }
+            }
         }
     }
 
@@ -2353,7 +2378,7 @@ final class Store: ObservableObject {
     /// looked for as a wish begins: when something is typed in the desk's bar, when a new wish is made, and as its
     /// first request is named. A look from the last two minutes does.
     func lookForDevicesForWish() {
-        guard !lookingForDevices else { return }
+        guard looksOnNetwork, !lookingForDevices else { return }
         if let at = devicesLookedAt, Date().timeIntervalSince(at) < 120 { return }
         refreshDevices()
     }

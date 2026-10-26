@@ -83,6 +83,19 @@ an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(s
 on the desk, which the first launch uses too), saved and built out of sight like the first launch's. The tile goes
 once every one is there.
 
+After them, always, is **Your Devices** (`DeskDevices`), a dashed tile like Starter wishes: the person's TVs,
+consoles and phones, each with the start of a wish for it. Lamp doesn't look on the network by itself until the
+person has asked: the first look there is when macOS asks about Local Network, which made no sense arriving while
+someone typed their first wish. So a new wish looks only once `Store.looksOnNetwork` is true (`lookForDevicesForWish`):
+set by the tile's first click (`Store.lookOnNetwork`), or already true for someone who has used a device (a TV or
+another device Lamp set up, or a wish that opens on a phone or a TV, which looks as Lamp starts). Until then the tile
+shows a TV and a controller; after, up to four of what was found. Its list has each device with Make…, which puts
+the start of a wish in the bar ("A game for my Xbox: ", `DeskDevices.wishStart`, in the words the naming call reads as
+that device) for the person to finish; what the device still needs is asked for when a wish first goes there. A
+device nothing in Lamp knows yet has its Set Up… instead (`DeviceNextStep`). Local Network turned down is found by a
+short Bonjour browse after each look (`LocalNetwork.isDenied`): an orange mark on the tile, and in the list a line with
+Allow…, which opens that pane of System Settings.
+
 **A starter added or changed in how it looks ships a new preview.png in the same change** (`StartersTests` fails
 without one). Take it from the app itself, not a mock-up: open the starter's build in Lamp Dev with its chat closed,
 and once its window has settled its `.lamp/runtime/preview.png` is the picture (the app writes it at each launch,

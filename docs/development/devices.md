@@ -97,6 +97,9 @@ app. The gateway listens on the network while a TV app is set to open on a TV or
 (only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
 name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
 
+A new wish looks on the network only once the person has asked to look (the desk's Your Devices, the "Desk" guide)
+or has used a device, so macOS's Local Network question never arrives mid-wish (`Store.looksOnNetwork`).
+
 Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
 that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
