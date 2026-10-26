@@ -417,11 +417,13 @@ enum DeviceNote {
             "\(Parts.name(of: part.platform).prefix(1).uppercased() + Parts.name(of: part.platform).dropFirst()) in \(part.dir.lastPathComponent)/: "
                 + line(for: part, store: .shared)
         }
-        guard !own.isEmpty || !placed.isEmpty else { return "" }
-        // And every device of the person's Lamp knows, with what each can run, so an app is made for the ones they have.
+        // And every device of the person's Lamp knows, with what each can run, so an app is made for the ones they have:
+        // said for a wish whose apps are all in folders of their own too.
         let known = Places.known(Store.shared.devices)
+        guard !own.isEmpty || !placed.isEmpty || !known.isEmpty else { return "" }
         let now = (own + placed + (known.isEmpty ? [] : [known])).joined(separator: "\n")
-        let what = placed.isEmpty ? "The device this app is for" : own.isEmpty ? "Where the wish's game or screen is" : "The devices this wish's apps are for"
+        let what = own.isEmpty && placed.isEmpty ? "The person's devices" : placed.isEmpty ? "The device this app is for"
+            : own.isEmpty ? "Where the wish's game or screen is" : "The devices this wish's apps are for"
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\n\(what) (from Lamp, not part of the request above): \(now)"
         case .changed: return "\n\n---\n\(what), changed (from Lamp, not part of the request above): \(now)"

@@ -155,15 +155,15 @@ enum Places {
     /// What an app of a stored kind is: its make and the devices (rows) it's on. A kind's places beyond its home are
     /// given by their words (`Parts.AppAsked.places`); an integration's kind is that integration's row.
     static func model(of kind: Platform, places: Set<String> = [], integration: String? = nil) -> (make: Place.Make, devices: Set<String>) {
-        let named = Set(places.compactMap { named($0)?.id })
+        let others = Set(places.compactMap { Places.named($0)?.id })
         switch kind {
-        case .mac: return (.native, Set(["mac"]).union(named))
-        case .iphone: return (.native, Set(["iphone"]).union(named))
-        case .universal: return (.native, Set(["mac", "iphone"]).union(named))
+        case .mac: return (.native, Set(["mac"]).union(others))
+        case .iphone: return (.native, Set(["iphone"]).union(others))
+        case .universal: return (.native, Set(["mac", "iphone"]).union(others))
         case .android: return (.native, ["android"])
         case .androidTV: return (.native, ["android-tv"])
         case .tv: return (.web, ["tv"])
-        case .game, .screen: return (.web, Set(["mac"]).union(named))
+        case .game, .screen: return (.web, Set(["mac"]).union(others))
         default:
             let id = integration.map { DeviceApps.split($0).integration }
             let row = id.flatMap { id in all.first { $0.id == id } }
