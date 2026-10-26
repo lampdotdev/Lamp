@@ -30,7 +30,7 @@ enum Gallery {
     /// Whole chats, drawn by the chat's own `Transcript`: every kind of line one after another, so a line set in
     /// or sized unlike the rest shows against its neighbours.
     private static let chatEntries: [Entry] = [
-        chat("A finished chat", finishedChat, undo: true),
+        chat("A finished chat", finishedChat),
         // The first request and what the agent said; its steps so far are in the line under them, which opens to them.
         chat("A turn going", Array(finishedChat.prefix(6)), activity: "Thinking"),
         chat("A clicked answer", [LogLine(kind: .user, text: "make a habit tracker"),
@@ -237,17 +237,14 @@ enum Gallery {
         LogLine(kind: .summary, text: "Worked for 6m 12s · $0.41"),
     ]
 
-    private static func chat(_ name: String, _ lines: [LogLine], group: String = "Chat", undo: Bool = false,
-                             activity: String? = nil) -> Entry {
+    private static func chat(_ name: String, _ lines: [LogLine], group: String = "Chat", activity: String? = nil) -> Entry {
         screen(name, group: group, lines, progress: activity.map { activity in
             var progress = TurnProgress(newApp: false)
             progress.activity = activity
             progress.started = .now.addingTimeInterval(-7)
             progress.activitySince = progress.started
             return progress
-        }) { state in
-            if undo { state.undoChange = "gallery" }
-        }
+        })
     }
 
     /// The made-up wish the gallery's chats are for: a Mac app called Today, with no folder.
@@ -639,13 +636,12 @@ enum Gallery {
                 .environmentObject(GalleryChat(nil) as ChatLink))
         },
         // A change waiting for Reload, under the answer that says so: the action line's symbol and words in the steps'
-        // column, with "Worked for…" above and Undo Last Change below.
+        // column, with "Worked for…" above.
         Entry(group: "Activity", name: "Reload under a change") {
             AnyView(VStack(alignment: .leading, spacing: 8) {
                 ChatLook.AgentText("Once you press Reload, the rack scrolls to each new spice as you add it.")
                 ChatLook.Worked("Worked for 54 s") { EmptyView() }
                 ChatLook.ActionLine(symbol: "arrow.clockwise", text: ReloadLine.text("Hot Shelf"), button: "Reload", prominent: true) {}
-                ChatLook.UndoChange {}
             })
         },
         // Reload pressed while the agent is still at work on the app: it goes in once that's done.
