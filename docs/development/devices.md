@@ -129,7 +129,8 @@ a wish starts: those looks (`refreshDevices(network: false)`) list the phones an
 devices as the last look on the network left them, or as kept. A look macOS refused (`DeviceProbe.search`: nothing
 answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
 succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your
-Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security → Local Network.
+Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security, and that Local Network is chosen there (System Settings has no
+link to that page itself).
 
 A look for devices (`Store.refreshDevices`) is one at a time: one asked for while another runs is made once it ends
 (`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every

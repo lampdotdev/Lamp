@@ -2333,8 +2333,9 @@ final class Store: ObservableObject {
     @Published private(set) var localNetworkRefused = false
     /// A look on the network has been made since Lamp opened: before one, the TVs and devices are as kept, not found.
     private var lookedOnNetwork = false
-    /// Privacy & Security → Local Network, where the person allows Lamp.
-    static let localNetworkSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!
+    /// Privacy & Security, where the person chooses Local Network and allows Lamp: System Settings has no link to
+    /// Local Network's own page.
+    static let localNetworkSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
 
     /// Looks for the person's devices. `network` searches the local network too (the TVs, the integrations' devices,
     /// what nothing knows yet), which is what makes macOS ask whether Lamp may: only when the person is doing

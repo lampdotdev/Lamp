@@ -1039,11 +1039,16 @@ struct DevicesSection: View {
 }
 
 /// macOS refused the last look on the network, said where a look was asked for, with the way to allow Lamp there.
+/// System Settings opens on Privacy & Security, not on Local Network itself (it has no link to that page), so the
+/// line says where to go from there.
 struct LocalNetworkRefused: View {
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Label("Lamp can't look on your local network.", systemImage: "wifi.exclamationmark").foregroundStyle(.orange)
-            Button("Allow…") { NSWorkspace.shared.open(Store.localNetworkSettings) }.controlSize(.small)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label("Lamp can't look on your local network.", systemImage: "wifi.exclamationmark").foregroundStyle(.orange)
+                Button("Allow…") { NSWorkspace.shared.open(Store.localNetworkSettings) }.controlSize(.small)
+            }
+            Text("In Privacy & Security, choose Local Network and turn on Lamp.").font(.caption).foregroundStyle(.secondary)
         }
     }
 }
