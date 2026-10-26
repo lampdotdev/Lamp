@@ -153,7 +153,7 @@ enum OldCopyLine {
         switch answer {
         case removed: ("Removed the old copy", "It's off \(phone).")
         case kept: ("Kept the old copy", "It stays on \(phone) until you delete it there.")
-        default: ("The new copy is installed.", "Remove the old copy from \(phone)? The old copy's saved data (its documents and settings) will be deleted from the phone. The new app doesn't have it.")
+        default: ("The new copy is installed.", "Remove the old copy from \(phone)? The old copy's saved data (its documents and settings) will be deleted from the phone.")
         }
     }
 
