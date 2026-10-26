@@ -5,6 +5,12 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.24.0
+
+- Make apps for Google TV, Android TV and Fire TV: wish for one, try it in a TV emulator on your Mac, and put it on
+  your own TV over Wi‑Fi with Connect a TV Over Wi‑Fi… under Try On.
+- Connect an Android phone over Wi‑Fi the same way, with the pairing code it shows.
+
 ## 0.23.0
 
 - Your iPhone and Mac apps can control your Roku: a button that opens Netflix, YouTube or a show, the remote's keys,
