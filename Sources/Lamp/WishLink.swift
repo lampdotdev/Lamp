@@ -336,6 +336,11 @@ enum WishLink {
                     (source.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(iconSource))
                 }.value
                 var shared = try await WishLink.publish(words, picture: picture, icon: icon, replacing: card.shared)
+                // Kept at once, with the file as the link had it so far: its secret is the only way to change it or take it
+                // down, so a file that fails after this leaves a link the card can still stop.
+                shared.shown.file = card.shared?.shown.file
+                WishLink.keep(shared, for: project)
+                cards[project.id]?.shared = shared
                 // The wish itself, made as Share… makes it (with its checks), sent with the link; or taken away from a link
                 // that carried it and shouldn't now.
                 if words.file == true {

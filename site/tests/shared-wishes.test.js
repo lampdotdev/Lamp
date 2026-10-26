@@ -183,6 +183,16 @@ test("the wish itself goes with its link in parts, only as a file Lamp made, and
   assert.equal((await finish()).status, 400, "only a file Lamp made");
   assert.equal((await send(handler, "DELETE", undefined, { id, secret })).status, 204);
   assert.equal(store.records.has(id), false);
+
+  // A link taken down while a part goes up keeps nothing of it.
+  const again = await (await send(handler, "POST", share)).json();
+  const removed = [];
+  const racing = { ...store, async get(at) { const record = await store.get(at); store.records.delete(at); return record; }, async removeImages(urls) { removed.push(...urls); } };
+  const late = await createFileHandler({ store: racing, limited: false })(new Request(`https://lamp.dev/api/wish-file?id=${again.id}&part=0&of=1`, {
+    method: "PUT", headers: { "content-type": "application/octet-stream", authorization: `Bearer ${again.secret}` }, body: file,
+  }));
+  assert.equal(late.status, 404);
+  assert.equal(removed.length, 1, "the part that went up is taken away");
 });
 
 test("the site and Lamp agree on the limits", () => {

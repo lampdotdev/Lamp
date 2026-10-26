@@ -157,7 +157,8 @@ export function cloudStore(env, fetcher = fetch) {
       return typeof text === "string" ? JSON.parse(text) : null;
     },
     async create(record) { return (await command(["SET", key(record.id), JSON.stringify(record), "NX"])) === "OK"; },
-    async replace(record) { await command(["SET", key(record.id), JSON.stringify(record), "XX"]); },
+    /** False when the record is gone (taken down meanwhile): nothing was written. */
+    async replace(record) { return (await command(["SET", key(record.id), JSON.stringify(record), "XX"])) === "OK"; },
     async remove(id) { await command(["DEL", key(id)]); },
     async putImage(id, name, image) {
       const { put } = await import("@vercel/blob");
@@ -206,7 +207,7 @@ export function memoryStore() {
     records,
     async get(id) { return records.has(id) ? structuredClone(records.get(id)) : null; },
     async create(record) { if (records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
-    async replace(record) { if (records.has(record.id)) records.set(record.id, structuredClone(record)); },
+    async replace(record) { if (!records.has(record.id)) return false; records.set(record.id, structuredClone(record)); return true; },
     async remove(id) { records.delete(id); },
     async putImage(_id, _name, image) { return `data:${image.type};base64,${image.bytes.toString("base64")}`; },
     async removeImages() {},
@@ -414,7 +415,8 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
         const replaced = parts.urls[part.n];
         const at = await kept.putFile(id, `part-${part.n}`, part.bytes);
         uploaded.push(at);
-        await kept.replace({ ...record, parts: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } });
+        // Taken down while the part went up: nothing leads to it, so it goes now (the catch below takes it away).
+        if (!(await kept.replace({ ...record, parts: { of: parts.of, urls: { ...parts.urls, [part.n]: at } } }))) throw new Error("Gone");
         uploaded = [];
         await kept.removeImages([...stale, replaced].filter(Boolean));
         return reply(204);
@@ -437,14 +439,19 @@ export function createFileHandler({ env = process.env, fetcher = fetch, store, l
       const at = await kept.putFile(id, fileName(record.name), bytes);
       uploaded.push(at);
       const { parts: _parts, ...rest } = record;
-      await kept.replace({ ...rest, file: { url: at, size: bytes.length }, updated: now().toISOString() });
+      if (!(await kept.replace({ ...rest, file: { url: at, size: bytes.length }, updated: now().toISOString() }))) {
+        // Taken down meanwhile: the file and its parts go with it.
+        await kept.removeImages([...uploaded, ...Object.values(parts.urls)]);
+        uploaded = [];
+        return reply(404, { error: "not_found" });
+      }
       uploaded = [];
       await kept.removeImages([record.file?.url, ...Object.values(parts.urls)].filter(Boolean));
       await kept.forget(id);
       return reply(200, { url: at, size: bytes.length });
-    } catch {
+    } catch (error) {
       try { await kept.removeImages(uploaded); } catch {}
-      return reply(503, { error: "service_unavailable" });
+      return error?.message === "Gone" ? reply(404, { error: "not_found" }) : reply(503, { error: "service_unavailable" });
     }
   };
 }
