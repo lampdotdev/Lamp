@@ -344,6 +344,11 @@ enum WishLink {
                 // The wish itself, made as Share… makes it (with its checks), sent with the link; or taken away from a link
                 // that carried it and shouldn't now.
                 if words.file == true {
+                    // Counted as carrying the file from the first part on: an upload cut short may have left parts, or a
+                    // whole file whose answer was lost, so unticking later takes it away (`removeFile` clears both).
+                    shared.shown.file = true
+                    WishLink.keep(shared, for: project)
+                    cards[project.id]?.shared = shared
                     let data = try await Task.detached(priority: .userInitiated) { () throws -> Data in
                         let file = try Sharing.export(project)
                         defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
