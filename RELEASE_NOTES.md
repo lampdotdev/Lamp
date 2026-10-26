@@ -5,6 +5,15 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.21.0
+
+- Attach files when you wish for something new: press + in the desk's bar or drop files on it.
+- A game is one of its wish's apps everywhere it's played, on your Mac, iPhone, iPad, Android phone or Xbox: it sends
+  messages, values and files to the wish's other apps, like any of them. So is a screen.
+- A new game shows the same card a new app does while Lamp makes it, instead of a ball on a floor.
+- A new wish's first message no longer shows twice in its chat.
+- The chat beside an app is named after the app, and a turn's cost says when it was spent on pictures.
+
 ## 0.20.0
 
 - A wish's chat is always beside whatever shows it: beside the app on your Mac, beside the simulator for an iPhone app,
