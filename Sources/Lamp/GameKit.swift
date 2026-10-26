@@ -781,7 +781,10 @@ extension Agent.Rules {
     another input (`input()` says which). Both are null where that input has nothing for it: leave that line out. A \
     page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. Shake \
     the controller with `rumble(0, low, high, seconds)`. Log events with `log()`, a line per event, never per \
-    frame. Plain modern JavaScript, nothing loaded from the network.
+    frame. Where it's played, the log says every ten seconds how many frames a second it really gets there and at \
+    what size it's drawn; when frames run slow, Lamp draws it smaller and scales it up to the screen by itself \
+    (`sharp: true` in game() keeps 1920x1080), so size anything drawn off-screen from `renderer.getSize()`, not \
+    1920x1080. Plain modern JavaScript, nothing loaded from the network.
     """
 
     static let gameWebSound = """

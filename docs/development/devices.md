@@ -262,7 +262,9 @@ A game is drawn with three.js (`GameKit.Engine.web`, written in its `.lamp-game`
 place has a web view, and on the Xbox a game installed as a game gets enough of the console. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
-controls on a touch screen) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
+controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
+drawn at 3/4 and then 1/2 of 1920x1080 while frames come slower than 45 a second, a step undone when it didn't make them
+faster) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
 console starts on its controller, a touch screen on touch, the Mac and the preview on the keyboard, and it follows the
 last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick or trigger for it: the
