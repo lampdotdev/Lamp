@@ -79,6 +79,8 @@ struct Target {
     var otherSystems = false
     /// Its Mac half is built by Xcode for the person's Apple team, so it can't be built without one.
     var macSignedForTeam = false
+    /// Which of Lamp's Android emulators it opens in, where it opens on Android: a phone, or a TV.
+    var androidEmulator: Emulator.Kind = .phone
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {
@@ -215,7 +217,7 @@ struct SetupLater {
 /// Every kind of app Lamp makes, in the order they're listed: to the naming call, in `make_app_for`'s description, and
 /// to a wish still to be told what it's for.
 enum Targets {
-    static let all: [Target] = [.mac, .iphone, .universal, .android, .tv, .game, .screen, .device]
+    static let all: [Target] = [.mac, .iphone, .universal, .android, .androidTV, .tv, .game, .screen, .device]
     static let named = Dictionary(uniqueKeysWithValues: all.map { ($0.platform.rawValue, $0) })
 
     /// The kind a wish is when nothing says otherwise: a Mac app needs nothing more than Lamp has.

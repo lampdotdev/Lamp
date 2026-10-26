@@ -149,6 +149,7 @@ extension Template {
     androidxNavigation3 = "1.0.1"
     androidxDatastore = "1.1.7"
     androidxWebkit = "1.14.0"
+    androidxTvMaterial = "1.1.0"
     coroutines = "1.10.2"
     kotlin = "2.3.20"
     serialization = "1.9.0"
@@ -171,6 +172,7 @@ extension Template {
     kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
     kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
     androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "androidxWebkit" }
+    androidx-tv-material = { module = "androidx.tv:tv-material", version.ref = "androidxTvMaterial" }
 
     [plugins]
     android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
@@ -398,21 +400,25 @@ extension Agent {
     /// Lamp's building blocks (LampAI, LampStore, LampAssets) under the names they have in Swift.
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the kind's rules alone, without the ones about
     /// the wish as a whole, which the wish's own prompt has.
-    static func androidPrompt(part: String? = nil, alone: Bool = false) -> String {
+    /// `tv`: an Android TV app (`Target.androidTV`), the same Kotlin with the TV's design and remote in place of a phone's.
+    static func androidPrompt(part: String? = nil, alone: Bool = false, tv: Bool = false) -> String {
+        let platform: Platform = tv ? .androidTV : .android
+        let design = tv ? Rules.androidTVDesign : Rules.androidDesign
         let rules = part == nil
             ? [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
-               Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
-               Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(.android)),
+               tv ? "" : Rules.androidKinds, design, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
+               Rules.androidLogs, Rules.androidTry, tv ? Rules.androidTVTry : "", Skills.index(Skills.offered(platform)),
                Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
             : [Rules.androidEdit, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
-               Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.androidLogs, Rules.androidTry,
-               alone ? "" : Rules.androidPartTalk, Skills.index(Skills.offered(.android))]
-        let header = part.map { Rules.partHeader("an Android app (Kotlin and Jetpack Compose, a Gradle project, Android 8.0 and later, Material 3, no Android Studio)", folder: $0) }
-            ?? Rules.androidHeader
+               tv ? "" : Rules.androidKinds, design, Rules.androidGenerated, Rules.androidLogs, Rules.androidTry, tv ? Rules.androidTVTry : "",
+               alone ? "" : Rules.androidPartTalk, Skills.index(Skills.offered(platform))]
+        let what = tv ? "an Android TV app (Kotlin and Compose for TV, a Gradle project, Android 8.0 and later, no Android Studio)"
+            : "an Android app (Kotlin and Jetpack Compose, a Gradle project, Android 8.0 and later, Material 3, no Android Studio)"
+        let header = part.map { Rules.partHeader(what, folder: $0) } ?? (tv ? Rules.androidTVHeader : Rules.androidHeader)
         return (header + "\n\nRules:\n" + rules.joined())
-            .replacingOccurrences(of: "{{DEVICE}}", with: "Android")
-            .replacingOccurrences(of: "{{A_DEVICE}}", with: "an Android phone")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it in the emulator")
+            .replacingOccurrences(of: "{{DEVICE}}", with: tv ? "Android TV" : "Android")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: tv ? "an Android TV" : "an Android phone")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: tv ? "builds it and opens it in the TV emulator" : "builds it and opens it in the emulator")
     }
 }
 

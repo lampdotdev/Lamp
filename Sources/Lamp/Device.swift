@@ -263,12 +263,14 @@ struct Device: Identifiable, Hashable {
         let emulator = serial.hasPrefix("emulator-") || properties["ro.kernel.qemu"] == "1" || properties["ro.boot.qemu"] == "1"
         let maker = properties["ro.product.manufacturer"].flatMap { $0.isEmpty ? nil : $0 } ?? (emulator ? "Google" : "Android")
         let model = properties["ro.product.model"].flatMap { $0.isEmpty ? nil : $0 }
-        let name = emulator ? AndroidTools.avdName : (model.map { "\(maker) \($0)" } ?? "Android device")
+        // A TV (Google TV, Android TV, Fire TV, Lamp's TV emulator) has the leanback feature.
+        let tv = properties["leanback"] == "true"
+        let name = emulator ? (tv ? AndroidTools.tvAVDName : AndroidTools.avdName) : (model.map { "\(maker) \($0)" } ?? (tv ? "Android TV" : "Android device"))
         var device = Device(id: serial, kind: emulator ? .androidEmulator : .android, maker: maker,
                             model: emulator ? "Android emulator" : (model ?? "Android device"),
                             modelID: properties["ro.product.device"] ?? "", name: name, os: "Android",
                             osVersion: properties["ro.build.version.release"] ?? "",
-                            input: ["touch"], features: [], reach: emulator ? .thisMac : serial.contains(":") ? .network : .cable)
+                            input: [tv ? "remote" : "touch"], features: tv ? ["tv"] : [], reach: emulator ? .thisMac : serial.contains(":") ? .network : .cable)
         device.adbState = state
         device.density = properties["density"].flatMap { Int($0) }
         if let size = properties["size"], let density = device.density {

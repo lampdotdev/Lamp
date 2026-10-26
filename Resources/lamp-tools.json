@@ -84,7 +84,7 @@
                 "type": "string"
               },
               "key": {
-                "description": "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a. With a target, up and down step a slider or stepper. In an iPhone app: return, escape, home (the home screen, where widgets are) and lock (the lock screen, where a Live Activity is). In an Xbox game: the button for `button` (a, b, x, y, lb, rb, lt, rt, menu, view, up, down, left, right, ls, rs), or one held with a `stick`",
+                "description": "key: return, escape, tab, delete, space, up, down, left, right, or a letter, with modifiers like cmd+a. With a target, up and down step a slider or stepper. In an iPhone app: return, escape, home (the home screen, where widgets are) and lock (the lock screen, where a Live Activity is). In an Android TV app: up, down, left, right, select, back, home, menu and play, the remote's keys. In an Xbox game: the button for `button` (a, b, x, y, lb, rb, lt, rt, menu, view, up, down, left, right, ls, rs), or one held with a `stick`",
                 "type": "string"
               },
               "text": {
