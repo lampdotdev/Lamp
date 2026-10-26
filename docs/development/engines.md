@@ -26,7 +26,8 @@ A capability given to one engine must be given to all of them that can take it, 
   entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
   allowed tools (`Agent.run`), and a `case` in `Store.mcp`. The devices `make_app_for` takes are each kind's own:
   `{{DEVICES}}` in its description is filled once from `Targets.toolDevices`, and `{{PLACES}}`, what each device can run,
-  from the table of devices (`Places.forAgent`) (`Store.toolsJSON`), which the endpoint
+  from the table of devices (`Places.forAgent`), and `{{PAGE_PLACES}}`, where a game or a screen goes and where it
+  needs a native version (`Places.pageList`) (`Store.toolsJSON`), which the endpoint
   serves and pi's extension reads from `Store.toolsFile`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is

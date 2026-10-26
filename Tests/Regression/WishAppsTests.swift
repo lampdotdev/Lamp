@@ -65,7 +65,7 @@ final class WishGameAppsTests: XCTestCase {
         // Places are only a game's or a screen's, only one the list has, and only where it can be.
         XCTAssertNil(Parts.asked(["mac"], places: ["mac": ["iphone"]]))
         XCTAssertNil(Parts.asked(["game"], places: ["screen": ["tv"]]))
-        XCTAssertNil(Parts.asked(["game"], places: ["game": ["tv"]]))
+        XCTAssertNil(Parts.asked(["game"], places: ["game": ["apple-tv"]]))
         // The tool's argument: by app, or the plain list it once was, which is the one game's or screen's.
         XCTAssertEqual(Parts.places(["game": [" iPhone "]], devices: ["game"]), ["game": ["iphone"]])
         XCTAssertEqual(Parts.places(["iphone"], devices: ["game", "mac"]), ["game": ["iphone"]])
@@ -100,8 +100,8 @@ final class WishGameAppsTests: XCTestCase {
         guard case .apps(let watch) = Parts.asked(apps: [app("iphone", ["watch"]), app("tv", [])]) else { return XCTFail() }
         XCTAssertEqual(watch.kinds, [.iphone, .tv])
         XCTAssertEqual(watch.words[.iphone], ["iphone", "watch"])
-        // What can't be: a game on a TV, two Mac apps, a Mac app on an Xbox.
-        for wrong in [[app("game", ["tv"])], [app("mac", []), app("mac", ["iphone"])], [app("mac", ["xbox-one"])]] {
+        // What can't be: a game on an Apple TV, two Mac apps, a Mac app on an Xbox.
+        for wrong in [[app("game", ["apple-tv"])], [app("mac", []), app("mac", ["iphone"])], [app("mac", ["xbox-one"])]] {
             guard case .wrong = Parts.asked(apps: wrong) else { return XCTFail("\(wrong) was taken") }
         }
     }

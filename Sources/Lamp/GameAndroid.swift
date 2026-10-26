@@ -195,6 +195,8 @@ enum GameAndroid {
     <?xml version="1.0" encoding="utf-8"?>
     <!-- Written by Lamp before every build; don't edit. -->
     <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <!-- Back reaches the page as a key (the game's B, a TV page's Back), not Android's predictive back, which would
+             leave the app before the page says what going back means. -->
         <!-- One app for phones and TVs: no touch screen needed, and on a TV's home screen through the leanback launcher. -->
         <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
         <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -202,6 +204,7 @@ enum GameAndroid {
         <application
             android:allowBackup="true"
             android:banner="@drawable/lamp_banner"
+            android:enableOnBackInvokedCallback="false"
             android:icon="@mipmap/ic_launcher"
             android:label="{{NAME}}"
             android:hardwareAccelerated="true"

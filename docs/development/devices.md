@@ -247,6 +247,26 @@ answer says where the person turns it on rather than that nothing answered. A ru
 `device-control` skill (also named with the request once an app's code reaches devices, `Skills.applying`) and
 `device_permission`, which the agent asks with before changing a real device ("Approvals and privacy"); it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
 
+## Pages and their hosts
+
+A three.js game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
+`Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (`LampPage.swift` with `LampWebGame.swift` or
+`LampScreen.swift`); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
+and Fire TV (`GameAndroid`, in the page's `Lamp/Android`); the TV's own browser on a Samsung or LG (`TVs`); and the
+integration's own host on the Xbox (WebView2, `WebHost`). A row of the table of devices names its host in its `web`;
+the kinds' places are `Places.pagePlaces`, the destinations of every row with one, and the words they're given by are
+`Places.pageWords`, so a host added to a row is a place for every page at once, with no list per kind to keep. The
+Android host is one APK for every Android place: its manifest has the phone's launcher and the TV's (the leanback
+launcher, a banner Lamp draws from the icon, no touch screen required), Android TV is its own `Destination`
+(`.androidTV`, opened in Lamp's TV emulator: `Destination.emulator`), and the remote reaches the page as a TV's does: the
+d-pad, OK and play/pause are a game's controller (`lampNativePad`), and for a screen Back, the media, colour and channel
+keys are sent as the key codes Web/lamp.js reads on a TV, with Back on the first view leaving the app
+(`lampAndroid.exit`). On a Samsung or LG, `lamp-game.js` reads the remote's numbered keys as the keyboard's. A device
+with no web engine Lamp reaches (the Apple TV, a Roku) has no host: a page asked to go there is refused with the row's
+reason, that it needs a native version (`Parts.asked`, `Places.refusal`), Try On lists it under the places to add as
+"Needs a Native Version" (`Places.noPage`), and the agent's rules and `make_app_for` say so (`Places.pageList`,
+`{{PAGE_PLACES}}`).
+
 ## Games
 
 A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, `GameKit`), never a device's: the naming
@@ -254,7 +274,8 @@ call gives "game" for a 3D game or one played with a controller or on an Xbox (a
 tapping stays a Mac or iPhone app), with the devices it's played on beside the Mac in its `places`. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
 `LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator or
-the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp's Android app in the game's
+the person's own, whose Xcode project carries `Web/`), a Samsung or LG TV (`.tv`, staged and installed as a TV app's page
+is), Android and Android TV (`.android`, `.androidTV`: Lamp's Android app in the game's
 `Lamp/Android` (never `Android/`, which `Parts.folders` reads as a wish's Android app), `GameAndroid`, built and installed
 like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
 to the page's `lampNativePad`; in a wish of several apps it also carries Lamp's Kotlin blocks and answers the page's
@@ -263,10 +284,10 @@ app, installed as a game). `make_app_for` on
 a game sets its places (`Store.kindPlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
 given as its entry's `places` in `make_app_for`'s `apps`, and a list without the game takes it away like any app of a wish (the "Wishes" guide; a game
 can also be added beside a wish's other apps, in Game/);
-Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
+Try On's "Play on … Too" for each place it hasn't got does the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
-first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox
-One's, a mid-range Android phone's, an iPhone's, an Xbox Series S's, an Xbox Series X's, this Mac's) ride with the request in
+first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (a Samsung or
+LG TV's, a Google TV streamer's, an Xbox One's, a mid-range Android phone's, an iPhone's, an Xbox Series S's, an Xbox Series X's, this Mac's) ride with the request in
 the device line (`DeviceNote`, `Rules.gamePlaces`), not in the prompt, since a place may be given at any time. The Xbox's is
 the console chosen under Try On, else the slowest of the person's (`GameKit.xboxModel`), as Device Portal names it: the
 integration's description says Xbox One on every console, so its `device-portal` step is the model step (`"model": true`,
@@ -368,10 +389,11 @@ such build).
 A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is something shown full screen and glanced at
 from across a room: a family calendar, a photo album, a dashboard, a clock. It's the TV app's page in `Web/`, with the
 same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, and it takes places as a game does (`addsPlaces`, the Mac
-always first): on the Mac, the iPhone and the iPad it's a Swift app of Lamp's own around the page
+always first, then any place a page goes): on the Mac, the iPhone and the iPad it's a Swift app of Lamp's own around the page
 (`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift, so it has the wand and the chat beside it), which
-zooms the page to the window; on a Samsung or LG TV it goes as a TV app does, and on the Xbox as the integration's web
-app. A TV app (`Platform.tv`) stays what it was, the TV its one place: a screen is its own kind, whose recipe refines
+zooms the page to the window; on Android and Android TV it's Lamp's Android app around the page, as a game's is, kept
+awake and not a game to the system (`GameAndroid.screenActivity`, `screenManifest`); on a Samsung or LG TV it goes as a
+TV app does, and on the Xbox as the integration's web app. A TV app (`Platform.tv`) stays what it was, the TV its one place: a screen is its own kind, whose recipe refines
 the TV's (a screen's folder holds a TV app's page as well as its mark, `.lamp-screen`). On the person's own iPhone or
 iPad the phone's Xcode project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as
 it does for a three.js game. Wherever it's shown the agent looks at it in the TV preview on the Mac

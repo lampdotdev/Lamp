@@ -16,10 +16,13 @@ stand alone after the rest and the Mac's hint last; a folder or a list of device
 another's files (`recipe.refines`) before that one and the Swift kinds last, since a Package.swift says less than another
 kind's own mark.
 
-Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, a TV or a device through its
-integration. Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
+Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, Android TV, a Samsung or LG TV
+or a device through its integration. A kind whose app is a page (a three.js game, a screen) doesn't list its own: its
+places are wherever Lamp has a host for a web engine (`Places.pagePlaces`, "Pages and their hosts" in the devices
+guide). Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
 destination (`onIOS`, `onAndroid`, `onTV`, `onDevice`), so a kind that opens where another does (an Android TV app on
-Android's emulator and devices) gets all of that from its file and a line in `Targets.all`. A new place to open is a new
+Android's devices, in the TV emulator: `onAndroid` holds for Android TV too, and `Destination.emulator` says which
+emulator) gets all of that from its file and a line in `Targets.all`. A new place to open is a new
 `Destination` and its paths in `Store`.
 
 
@@ -28,7 +31,7 @@ Android's emulator and devices) gets all of that from its file and a line in `Ta
 What each device can run is one table of facts, `Places` (`Sources/Lamp/Places/Places.swift`): a row per device
 (this Mac, iPhone and iPad, Apple Watch, Apple TV, Vision Pro, Android phones and tablets, Android TV, Samsung and LG
 TVs), then a row per device integration that declares apps, read from its JSON's `supports` ("web", "native") or, when
-it says nothing, from what its `app` declares. Each row says whether a **web** build (a page in a host of Lamp's) and a
+it says nothing, from what its `app` declares. Each row says whether a **web** build (a page in a host of Lamp's, and which: `PageHost`) and a
 **native** build (the device's own code: `apple`, `android`, `android-tv` or the integration's) can exist there, and how
 each gets onto the device, or why it can't. It holds facts only, never a preference: which make and which devices an
 app gets is the agent's choice. `IntegrationCheck.problems` refuses a `supports` that names a make the integration has
