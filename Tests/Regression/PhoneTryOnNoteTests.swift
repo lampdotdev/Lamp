@@ -28,6 +28,11 @@ final class PhoneTryOnNoteTests: XCTestCase {
         XCTAssertEqual(TeamLimits.problem(for: app, on: "Test iPhone", team: "ABCDE12345", free: ["ABCDE12345"]),
                        "Tags uses NFC and Siri, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on Test iPhone. Choose a simulator under Try On to keep working, or ask Lamp to take them out.")
         XCTAssertNil(TeamLimits.problem(for: app, on: "Test iPhone", team: "ABCDE12345", free: []))
+        // What only the iPhone takes doesn't hold up the Mac half of an app for both.
+        try #"{"timeSensitive": true}"#.write(to: dir.appendingPathComponent("capabilities.json"), atomically: true, encoding: .utf8)
+        let both = LampProject(id: "tags", name: "Tags", exe: "Tags", dir: dir, platform: .universal)
+        XCTAssertEqual(TeamLimits.refused(in: both, for: .ios), ["Time Sensitive notifications"])
+        XCTAssertEqual(TeamLimits.refused(in: both, for: .mac), [])
     }
 
     func testAChosenPhoneThatsListedIsWhereTryOnIsSet() {

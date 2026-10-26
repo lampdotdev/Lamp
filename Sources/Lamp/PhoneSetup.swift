@@ -475,8 +475,9 @@ extension PhoneSetup.Context {
     /// build that is signed for the team; the simulator's copy isn't, so there an account is asked for only
     /// by an app for both, and a paid one by nothing.
     init(for project: LampProject, phone: String?, building: Bool = false) {
-        let signed = building && (phone != nil || (project.platform.target.macSignedForTeam && !project.onIOS))
-        let paidFor = signed ? TeamLimits.refused(in: project) : []
+        // Signed for the team: the phone's copy, or the Mac half of an app for both, each with what that platform takes.
+        let paidFor = !building ? [] : phone != nil ? TeamLimits.refused(in: project, for: .ios)
+            : project.platform.target.macSignedForTeam && !project.onIOS ? TeamLimits.refused(in: project, for: .mac) : []
         self.init(family: project.family, phone: phone, requiresPhoneTools: project.hasIOS,
                   requiresTeam: project.platform.target.macSignedForTeam, requiresPaidTeam: !paidFor.isEmpty, paidFor: paidFor)
     }

@@ -345,9 +345,10 @@ enum DeviceNote {
             }
             return line
         }
+        // What a free team can't sign, said for any app with an iPhone half wherever Try On points (an app for both on this
+        // Mac is signed for the team too), since it changes what to declare.
+        let freeTeam = project.hasIOS && PhoneTools.xcodeFreeTeams().contains(Devices.team) ? " " + TeamLimits.agentLine : ""
         if project.onIOS {
-            // What a free team can't sign, said wherever the app may go on the person's phone, since it changes what to declare.
-            let freeTeam = PhoneTools.xcodeFreeTeams().contains(Devices.team) ? " " + TeamLimits.agentLine : ""
             if let udid = project.device {
                 // Chosen, but not in the list (away, or the lookup failed): still where Play puts the app.
                 guard let phone = phones.first(where: { $0.udid == udid }) else {
@@ -368,7 +369,7 @@ enum DeviceNote {
             return line + freeTeam
         }
         let mac = store.thisMac ?? Device.thisMac()
-        return GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent)."
+        return (GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent).") + freeTeam
     }
 
     /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's

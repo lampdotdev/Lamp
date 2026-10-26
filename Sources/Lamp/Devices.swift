@@ -327,9 +327,9 @@ enum Devices {
     /// Why an app can't be built for `place` (the person's phone, this Mac), or nil when it can: it uses what Apple
     /// signs only for a team in its Developer Program (`TeamLimits`), so with a free account's team Xcode's build would
     /// fail at signing.
-    static func membershipProblem(for project: LampProject, on place: String, team: String = Devices.team,
+    static func membershipProblem(for project: LampProject, on place: String, platform: Destination = .ios, team: String = Devices.team,
                                   free: Set<String> = PhoneTools.xcodeFreeTeams()) -> String? {
-        TeamLimits.problem(for: project, on: place, team: team, free: free)
+        TeamLimits.problem(for: project, on: place, platform: platform, team: team, free: free)
     }
 
     /// What Try On is set to and what Lamp's device lookup returned, for an iPhone preview result once per turn. The
