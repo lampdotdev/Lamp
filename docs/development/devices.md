@@ -21,7 +21,7 @@ before (`Integrations.mark`: done by hand or not, by whether it needed hands on 
 device's model and version, and keeps the mark while the step's text is unchanged.
 
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
-`DeviceHTTP` (only the address the device was found at, which must be private or link-local and never loopback, so
+`DeviceHTTP` (only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses (`DeviceAddress.thisMac`), so
 nothing reaches Lamp's gateway; a path that stays a path; no redirect; the answer cut off at `limit`; a password only
 for the device's own challenge, in the scheme declared, once: `Guardian`; over HTTPS, with `https: true`, the device's
 own certificate is kept the first time per port and a different one refused, as SSH host keys are, `DeviceTLS`;

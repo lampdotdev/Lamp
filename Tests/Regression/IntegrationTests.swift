@@ -125,11 +125,13 @@ final class IntegrationTests: XCTestCase {
     // MARK: http
 
     func testRequestsGoOnlyToTheDeviceOnThePersonsNetwork() throws {
-        for address in ["192.168.1.20", "10.0.0.5", "172.20.1.1", "169.254.3.4", "fd12::1", "fe80::1"] {
+        for address in ["192.168.1.20", "10.0.0.5", "172.20.1.1", "169.254.3.4", "fd12::1", "fe80::1:2:3:4"] {
             XCTAssertTrue(DeviceAddress.isPrivate(address), address)
         }
-        // Never this Mac (Lamp's gateway is there), the internet, or a name that could lead anywhere.
-        for address in ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"] {
+        // Never this Mac (Lamp's gateway is there), by loopback or by its own address on the network, the internet, or a
+        // name that could lead anywhere.
+        let own = DeviceAddress.thisMac().filter { $0.count == 4 }.map { $0.map(String.init).joined(separator: ".") }
+        for address in ["127.0.0.1", "::1", "8.8.8.8", "172.32.0.1", "roku.local", "example.com", "0.0.0.0", "::ffff:127.0.0.1"] + own {
             XCTAssertFalse(DeviceAddress.isPrivate(address), address)
             XCTAssertThrowsError(try DeviceHTTP.url(address: address, port: 80, path: "/"), address)
         }

@@ -12,9 +12,16 @@ import Network
 // MARK: - The device's address
 
 enum DeviceAddress {
-    /// A private or link-local address: where a device in the person's home is. Never this Mac itself (loopback),
-    /// which would reach Lamp's own gateway and the apps' ports, and never a name, which could be made to lead anywhere.
+    /// A private or link-local address: where a device in the person's home is. Never this Mac itself, by loopback or
+    /// by any of its own addresses on the network, which would reach Lamp's own gateway (it listens on the network
+    /// while a device app needs it) and the apps' ports; and never a name, which could be made to lead anywhere.
     static func isPrivate(_ address: String) -> Bool {
+        guard onNetwork(address) else { return false }
+        let raw = IPv4Address(address).map { $0.rawValue } ?? IPv6Address(address).map { $0.rawValue }
+        return raw.map { !thisMac().contains($0) } ?? false
+    }
+
+    private static func onNetwork(_ address: String) -> Bool {
         if let v4 = IPv4Address(address) {
             let b = [UInt8](v4.rawValue)
             switch (b[0], b[1]) {
@@ -32,6 +39,25 @@ enum DeviceAddress {
             return false
         }
         return false
+    }
+
+    /// This Mac's own addresses on every interface, read each time: they change as it moves between networks.
+    static func thisMac() -> Set<Data> {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return [] }
+        defer { freeifaddrs(list) }
+        var own: Set<Data> = []
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let address = pointer.pointee.ifa_addr else { continue }
+            switch Int32(address.pointee.sa_family) {
+            case AF_INET:
+                own.insert(address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin_addr) { Data($0) } })
+            case AF_INET6:
+                own.insert(address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin6_addr) { Data($0) } })
+            default: continue
+            }
+        }
+        return own
     }
 
     struct NotOnNetwork: LocalizedError {
