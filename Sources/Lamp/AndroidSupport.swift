@@ -950,23 +950,30 @@ extension Template {
      *     LampWish.peer("tv")?.status?.reason                    // why not, in words to show as they are: "Open the TV app on your TV.",
      *                                                            // "The TV app was last open 5 min ago. Open it on your TV."
      *     LampWish.peer("tv")?.status?.lastSeen                  // when it was last open on this device (ms since 1970), or since when while it is
-     *     LampWish.send(mapOf("score" to 3), to = "tv")          // JSON to one app; false (with why in the log) when it wasn't sent
+     *     LampWish.peer("screen")?.copies                        // where it's open now, one copy for each device: .id, .device, .since
+     *     LampWish.send(mapOf("score" to 3), to = "tv")          // JSON to one app (each copy of it open now); false (with why in the log) when it wasn't sent
+     *     LampWish.send(mapOf("score" to 3), to = copy.id)       // to one copy of an app: "screen.k3j9x0ab"
      *     LampWish.send(mapOf("round" to 2))                     // to every other app of the wish
      *     LampWish.onMessage { from, data -> … }                 // what another app sent: who, and its JSON (a JSONObject, JSONArray, String, Number or Boolean)
+     *     LampWish.onMessage { from, data, copy -> … }           // and which copy of it, to answer that one alone
      *     val status by LampWish.status.collectAsState()         // this app's link: status.state (CONNECTING, CONNECTED, ALONE, AWAY, ENDED) and status.reason
      *     LampWish.me                                            // this app's own peer name
+     *     LampWish.copy                                          // this copy's own: the app open on this device ("screen.k3j9x0ab")
      *     val values by LampWish.values.collectAsState()        // the values the wish's apps share, kept on each device
      *     LampWish.set("list", listOf("milk", "eggs"))           // sets one here and in every other app, now or when they next meet;
      *                                                            // null removes it; false (with why in the log) when it wasn't set
      *     LampWish.onChange { key, value, from -> … }            // a value changed, here (from == me) or in another app
      *     val sending = LampWish.sendFile(bytes, "photo.jpg", "image/jpeg", to = "tv")
-     *                                                            // up to 64 MB to one app: sending.sent, .state (flows), .cancel(), .finished()
-     *     LampWish.onFile { from, file -> … }                    // a file another app sent: who, and file.name, .type, .bytes
+     *                                                            // up to 64 MB to one copy: sending.sent, .state (flows), .cancel(), .finished()
+     *     LampWish.onFile { from, file -> … }                    // a file another app sent: who, and file.name, .type, .bytes, .copy
      *     LampWishStatus()                                       // a ready-made composable of all that: one line for each other app
      *     LampWishStatus("tv")                                   // the TV app's line alone
      *
      * A `State` is one of the values above, and more may come: use `when` with an `else`. An open app built by an older
-     * Lamp is OUT_OF_DATE, still open, with a reason saying to open it from Lamp. Show a `reason` as it is
+     * Lamp is OUT_OF_DATE, still open, with a reason saying to open it from Lamp. An app can be open on several devices at
+     * once (a screen on the kitchen iPad and on the TV): each is a copy of it, all reach the others and keep the same
+     * values, a message to the app goes to every copy, and a file goes to one copy, the one opened last unless you name a
+     * copy's `id`; another copy of this same app is in `apps` while it's open. Show a `reason` as it is
      * rather than words of your own; it changes as time goes by ("5 min ago"). A message is for apps open now; values
      * are for what must outlast an app being closed: each is JSON of at most `valueLimit` (8 KB), all of them
      * `valuesLimit` (64 KB), read back as messages are (a JSONObject, JSONArray, String, Number or Boolean), and where
@@ -1004,16 +1011,19 @@ extension Template {
          *  while this app was, on this device. */
         data class Status(val state: State, val reason: String, val lastSeen: Long? = null)
         /** `peer` is its name (its folder in the wish, lowercased); `kind` the device word the tools use for it; `device`
-         *  where it runs, once it has been open. */
-        data class Peer(val peer: String, val kind: String, val name: String, val device: String, val status: Status) {
+         *  where it runs, once it has been open; `copies` where it's open now, one for each device, the one opened first first. */
+        data class Peer(val peer: String, val kind: String, val name: String, val device: String, val status: Status, val copies: List<Copy> = emptyList()) {
             val isOpen: Boolean get() = status.state == State.CONNECTED || status.state == State.OUT_OF_DATE
         }
+        /** An app open on one device: messages and files can go to it alone by its `id` ("screen.k3j9x0ab"). `since` is
+         *  ms since 1970. */
+        data class Copy(val id: String, val device: String, val since: Long)
         const val messageLimit = 16 * 1024
         const val valueLimit = 8 * 1024
         const val valuesLimit = 64 * 1024
         /** What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-         *  2 brought values, 3 files; an app from before says none, which counts as 1. */
-        private const val wire = 3
+         *  2 brought values, 3 files, 4 copies of one app on several devices; an app from before says none, which counts as 1. */
+        private const val wire = 4
 
         private val appsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
         private val peersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
@@ -1030,12 +1040,23 @@ extension Template {
         val values: kotlinx.coroutines.flow.StateFlow<Map<String, Any>> get() { start(); ensureValues(); return valuesFlow }
         @Volatile var me: String = ""
             private set
+        /** This device's id for the app, made the first time it runs and kept with what it keeps of the wish, so the app
+         *  open here and on another device at once are two copies, and this one opened again is the same one. Read before
+         *  anything says it: the link to Lamp's room starts off the main thread. */
+        private val copyID: String by lazy {
+            val kept = try { keptFile?.takeIf { it.exists() }?.let { JSONObject(it.readText()).optString("copy") } } catch (e: Exception) { null }
+            kept?.takeIf { isName("a.$it") } ?: (1..8).map { "abcdefghijklmnopqrstuvwxyz0123456789"[java.security.SecureRandom().nextInt(36)] }.joinToString("")
+        }
+        /** This copy's peer name: the app's own, then this device's id for it. */
+        val copy: String get() = if (me.isEmpty()) "" else "$me.$copyID"
+        /** Which app a peer name is a copy of. */
+        private fun appOf(peer: String): String = peer.substringBefore('.')
 
         private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
         private val lock = ReentrantLock()
         private var begun = false
         private var polling: kotlinx.coroutines.Job? = null
-        private val listeners = mutableListOf<(String, Any?) -> Unit>()
+        private val listeners = mutableListOf<(String, Any?, String) -> Unit>()
         @Volatile private var saidAway = false
         private val device: String get() = if (LampInstall.onDevice) "Android device" else "Android emulator"
 
@@ -1051,10 +1072,12 @@ extension Template {
         private var lampAway = false
         private var alone = false
         private val undeliveredSaid = mutableSetOf<String>()
-        /** The apps in Lamp's room now, by peer name: the device they said, since when, and what they speak (`wire`). */
+        /** The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what they
+         *  speak (`wire`). An app built before copies is in it by its name alone. */
         private val relayPresent = mutableMapOf<String, Triple<String, Long, Int>>()
-        /** A value as it was last set, and when: by the clock of the app that set it, then the count within that
-         *  millisecond, then that app's name, so every app orders two settings the same way. A removed one is kept,
+        /** A value as it was last set, and when: by the clock of the copy that set it, then the count within that
+         *  millisecond, then that copy's peer name, so every copy orders two settings the same way, two copies of one app
+         *  included. A removed one is kept,
          *  without its value, so an older setting from an app that was away doesn't bring it back. */
         private class Entry(val value: Any?, val ms: Long, val n: Int, val peer: String) {
             fun isLater(than: Entry): Boolean = if (ms != than.ms) ms > than.ms else if (n != than.n) n > than.n else peer > than.peer
@@ -1095,9 +1118,11 @@ extension Template {
         private val told = mutableMapOf<String, List<String>>()
         private val dialing = mutableSetOf<String>()
         private val nextDial = mutableMapOf<String, Pair<Long, Int>>()
+        /** Since when each copy has been open, by its peer name. */
         private val openSince = mutableMapOf<String, Long>()
         /** When each app was last open, kept on the device so it's still known after this app was closed. */
         private val lastSeen = mutableMapOf<String, Long>()
+        private val appsOpen = mutableSetOf<String>()
         /** The apps the wish asks for that Lamp hasn't made yet. */
         private var waiting: Set<String> = emptySet()
         /** What this app last told Lamp's room of its link, for the builder to see. */
@@ -1107,7 +1132,7 @@ extension Template {
         private var networks: List<String> = emptyList()
         @Volatile private var routes: Map<String, Direct> = emptyMap()
         @Volatile private var relayed: Set<String> = emptySet()
-        /** What each other open app speaks, for `set`, which is called from anywhere. */
+        /** What each other open copy speaks, for `set`, which is called from anywhere. */
         @Volatile private var wires: Map<String, Int> = emptyMap()
 
         /** This link to Lamp, which holds the app's socket to the wish's room and carries what goes each way unread, and
@@ -1220,11 +1245,23 @@ extension Template {
             }
         }
 
-        /** The wish's app with this peer name, open or not; null when the wish has no such app. */
-        fun peer(id: String): Peer? { start(); return appsFlow.value.firstOrNull { it.peer == id } }
+        /** The wish's app with this peer name (or the app a copy's name is of), open or not; null when the wish has no such app. */
+        fun peer(id: String): Peer? { start(); return appsFlow.value.firstOrNull { it.peer == appOf(id) } }
+
+        /** The copies a message for `peer` goes to: the one it names, or every open copy of the app it names, or with none
+         *  every open copy of every other app. */
+        private fun copiesFor(peer: String?): List<String> {
+            val open = appsFlow.value
+            if (peer == null) return open.flatMap { app -> app.copies.map { it.id } }
+            val app = open.firstOrNull { it.peer == appOf(peer) } ?: return emptyList()
+            return if ('.' in peer) app.copies.map { it.id }.filter { it == peer } else app.copies.map { it.id }
+        }
 
         /** Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent, on the main thread. */
-        fun onMessage(handler: (from: String, data: Any?) -> Unit) { start(); lock.withLock { listeners.add(handler) } }
+        fun onMessage(handler: (from: String, data: Any?) -> Unit) { start(); lock.withLock { listeners.add { from, data, _ -> handler(from, data) } } }
+
+        /** The same, with which copy of the app sent it (its `id`, "screen.k3j9x0ab"), to answer that copy alone. */
+        fun onMessage(handler: (from: String, data: Any?, copy: String) -> Unit) { start(); lock.withLock { listeners.add(handler) } }
 
         /**
          * Sets a value the wish's apps share (anything `send` takes; null removes it), here at once and in each other app
@@ -1250,21 +1287,22 @@ extension Template {
                 }
                 val now = System.currentTimeMillis()
                 clock = if (now > clock.first) now to 0 else if (clock.second < Entry.counts) clock.first to clock.second + 1 else clock.first + 1 to 0
-                Entry(kept, clock.first, clock.second, me).also { entries[key] = it; publishValues() }
+                Entry(kept, clock.first, clock.second, copy).also { entries[key] = it; publishValues() }
             }
             keepValues()
-            notifyChanged(listOf(key to kept), me)
-            for (app in peersFlow.value) if (wireOf(app.peer) >= 2) share(mapOf(key to entry), app.peer)
+            notifyChanged(listOf(key to kept), copy)
+            for (each in copiesFor(null)) if (wireOf(each) >= 2) share(mapOf(key to entry), each)
             return true
         }
 
         /** Hears every change to the wish's values: its name, the new value (null when removed), and the peer name of the
-         *  app that set it, this one's own (`me`) for a change made here. */
+         *  app that set it, this one's own (`me`) for a change made here or by another copy of this app. */
         fun onChange(handler: (key: String, value: Any?, from: String) -> Unit) { start(); lock.withLock { changeListeners.add(handler) } }
 
         /**
-         * Sends `data` to one of the wish's apps, or with no `to` to all of them; false, with the reason in the app's
-         * log, when it won't be sent. It goes on its way at once; a failure on the way is logged.
+         * Sends `data` to one of the wish's apps (each copy of it open now) or one copy, or with no `to` to all of them;
+         * false, with the reason in the app's log, when it won't be sent. It goes on its way at once; a failure on the way
+         * is logged.
          */
         fun send(data: Any?, to: String? = null): Boolean {
             start()
@@ -1273,16 +1311,16 @@ extension Template {
                 if (!saidAway) { saidAway = true; Log.e("LampWish", "$what wasn't sent: not connected (${stateFlow.value}). Check state and peers before sending.") }
                 return false
             }
-            if (to != null && peer(to)?.isOpen != true) {
-                Log.e("LampWish", "$what wasn't sent: that app isn't open now (open: ${peersFlow.value.map { it.peer }}).")
+            val targets = copiesFor(to)
+            if (to != null && targets.isEmpty()) {
+                Log.e("LampWish", "$what wasn't sent: that app isn't open now (open: ${copiesFor(null)}).")
                 return false
             }
             val value = try { LampAI.jsonValue(data) } catch (e: Exception) {
                 Log.e("LampWish", "$what wasn't sent: ${e.message}")
                 return false
             }
-            // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
-            val targets = if (to != null) listOf(to) else peersFlow.value.map { it.peer }
+            // Measured as it goes through Lamp's room to each copy, with its name: the longest, when it's for several.
             val body = JSONObject().put("t", "send").put("data", value).put("to", targets.maxByOrNull { it.toByteArray().size } ?: "")
             val size = body.toString().toByteArray().size
             if (size > messageLimit) {
@@ -1349,32 +1387,40 @@ extension Template {
             // Values set before this app knew its own name take it now, so two apps' settings never tie.
             val named = me.isNotEmpty() && valuesLock.withLock {
                 val unnamed = entries.filterValues { it.peer.isEmpty() }
-                for ((key, entry) in unnamed) entries[key] = Entry(entry.value, entry.ms, entry.n, me)
+                for ((key, entry) in unnamed) entries[key] = Entry(entry.value, entry.ms, entry.n, copy)
                 unnamed.isNotEmpty()
             }
             if (named) keepValues()
-            val list = roster.filter { it.id != me }.map { app ->
-                val direct = directs[app.id]?.takeIf { it.ready }
-                val inRoom = relayPresent[app.id]
-                val open = !closed && (direct != null || inRoom != null)
-                if (open) {
+            // Every copy open either way, this one aside: an app is open while any copy of it is.
+            val open = if (closed) emptySet() else (relayPresent.keys + directs.filterValues { it.ready }.keys) - copy
+            for (id in open) if (openSince[id] == null) { openSince[id] = relayPresent[id]?.second ?: now; arrived.add(id) }
+            openSince.keys.retainAll(open)
+            for (id in open) (directs[id]?.takeIf { it.ready }?.device ?: relayPresent[id]?.first)?.takeIf { it.isNotEmpty() }?.let { devices[id] = it }
+            wires = open.associateWith { id -> directs[id]?.takeIf { it.ready }?.wire ?: relayPresent[id]?.third ?: 1 }
+            // This app itself is listed only while another copy of it is open.
+            val list = roster.filter { app -> app.id != me || open.any { appOf(it) == me } }.map { app ->
+                val copies = open.filter { appOf(it) == app.id }.map { Copy(it, devices[it] ?: "", openSince[it] ?: now) }
+                    .sortedWith(compareBy<Copy> { it.since }.thenBy { it.id })
+                val isOpen = copies.isNotEmpty()
+                if (isOpen) {
                     // Open, so made, whatever a list kept from before said.
                     waiting = waiting - app.id
-                    if (openSince[app.id] == null) { openSince[app.id] = inRoom?.second ?: now; arrived.add(app.id) }
-                    (direct?.device ?: inRoom?.first)?.takeIf { it.isNotEmpty() }?.let { devices[app.id] = it }
-                } else if (openSince.remove(app.id) != null) {
+                    appsOpen.add(app.id)
+                } else if (appsOpen.remove(app.id)) {
                     lastSeen[app.id] = now
                     keep()
                 }
-                val peerWire = direct?.wire ?: inRoom?.third ?: wire
-                val status = if (open && peerWire != wire) Status(State.OUT_OF_DATE, outOfDate(app.name, peerWire < wire), openSince[app.id])
-                    else if (open) Status(State.CONNECTED, "", openSince[app.id])
+                // Out of date only when no copy speaks what this one does.
+                val spoken = copies.map { wireOf(it.id) }
+                val peerWire = if (wire in spoken) wire else spoken.firstOrNull() ?: wire
+                val since = copies.firstOrNull()?.since
+                val status = if (isOpen && peerWire != wire) Status(State.OUT_OF_DATE, outOfDate(app.name, peerWire < wire), since)
+                    else if (isOpen) Status(State.CONNECTED, "", since)
                     else Status(State.NOT_OPEN, notOpen(app.name, app.kind, lastSeen[app.id], app.id in waiting, now), lastSeen[app.id])
-                Peer(app.id, app.kind, app.name, devices[app.id] ?: "", status)
+                Peer(app.id, app.kind, app.name, copies.lastOrNull()?.device ?: "", status, copies)
             }
             routes = directs.filterValues { it.ready }.toMap()
             relayed = relayPresent.keys.toSet()
-            wires = roster.associate { app -> app.id to (directs[app.id]?.takeIf { it.ready }?.wire ?: relayPresent[app.id]?.third ?: 1) }
             val next = when {
                 closed -> State.ENDED
                 alone -> State.ALONE
@@ -1388,15 +1434,18 @@ extension Template {
             if (next == State.CONNECTED) saidAway = false
             appsFlow.value = list
             peersFlow.value = list.filter { it.isOpen }
-            // An app no longer open takes the files on their way to it and from it with it.
-            for (app in list) if (!app.isOpen) dropFiles("${app.name.replaceFirstChar { it.uppercase() }} closed.") { key, _ -> key.startsWith(app.peer + "\t") }
+            // A copy no longer open takes the files on their way to it and from it with it.
+            for (app in roster) dropFiles("${app.name.replaceFirstChar { it.uppercase() }} closed.") { key, _ ->
+                val peer = key.substringBefore("\t")
+                appOf(peer) == app.id && peer !in open
+            }
             report()
-            // An app that has just come is told every value this one has, and tells this one its own, so the two agree
+            // A copy that has just come is told every value this one has, and tells this one its own, so the two agree
             // again whichever was open meanwhile.
             for (id in arrived) if (wireOf(id) >= 2) share(valuesLock.withLock { entries.toMap() }, id)
         }
 
-        /** What another open app speaks: 1 for an app from before values, which says nothing of it. */
+        /** What another open copy speaks: 1 for an app from before values, which says nothing of it. */
         private fun wireOf(peer: String): Int = wires[peer] ?: 1
 
         // MARK: Values
@@ -1533,9 +1582,25 @@ extension Template {
             if (changed.isEmpty()) return
             keepValues()
             notifyChanged(changed, from)
+            pass(valuesLock.withLock { changed.mapNotNull { (key, _) -> entries[key]?.let { key to it } }.toMap() }, from)
         }
 
-        private fun notifyChanged(changed: List<Pair<String, Any?>>, from: String) {
+        /** Settings taken from one copy go on to the others open now that it may not reach: those this one reaches
+         *  straight, and those in Lamp's room when it isn't there itself. Two copies that only dial (two TVs) reach each
+         *  other's values through an app that listens this way when Lamp is closed. A copy that has a setting already
+         *  takes nothing from it, so it goes no further. */
+        private fun pass(settings: Map<String, Entry>, from: String) {
+            if (settings.isEmpty()) return
+            val ways = routes
+            val inRoom = relayed
+            for (each in copiesFor(null)) {
+                if (each == from || wireOf(each) < 2) continue
+                if (each in ways || (from !in inRoom && each in inRoom)) share(settings, each)
+            }
+        }
+
+        private fun notifyChanged(changed: List<Pair<String, Any?>>, peer: String) {
+            val from = appOf(peer)
             scope.launch(Dispatchers.Main) {
                 val handlers = lock.withLock { changeListeners.toList() }
                 for ((key, value) in changed) for (handler in handlers) {
@@ -1613,12 +1678,12 @@ extension Template {
         }
 
         private fun setRoster(list: List<JSONObject>) {
-            val given = list.mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
+            val given = list.mapNotNull { app -> app.optString("peer").takeIf { isName(it) && '.' !in it }?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
             if (given.isEmpty()) return
             val changed = given.map { it.id }.sorted() != roster.map { it.id }.sorted()
             roster = given
             waiting = list.filter { it.optBoolean("waiting") }.map { it.optString("peer") }.toSet()
-            for (id in directs.keys.toList()) if (given.none { it.id == id }) directs[id]?.let(::drop)
+            for (id in directs.keys.toList()) if (given.none { it.id == appOf(id) }) directs[id]?.let(::drop)
             keep()
             // Where each app listens follows its place in the list: a changed list moves this one's.
             if (changed) listen(again = true)
@@ -1633,7 +1698,7 @@ extension Template {
             val file = keptFile ?: return
             val at = JSONObject().apply { for ((peer, places) in told) put(peer, JSONArray(places)) }
             val seen = JSONObject().apply { for ((peer, at) in lastSeen) put(peer, at) }
-            val kept = JSONObject().put("me", me).put("at", at).put("seen", seen)
+            val kept = JSONObject().put("me", me).put("copy", copyID).put("at", at).put("seen", seen)
                 .put("apps", JSONArray(roster.map { app ->
                     JSONObject().put("peer", app.id).put("kind", app.kind).put("name", app.name).apply { if (app.id in waiting) put("waiting", true) }
                 }))
@@ -1641,20 +1706,23 @@ extension Template {
         }
 
         private fun restore() {
-            val kept = try { keptFile?.takeIf { it.exists() }?.let { JSONObject(it.readText()) } } catch (e: Exception) { null } ?: return
+            val kept = try { keptFile?.takeIf { it.exists() }?.let { JSONObject(it.readText()) } } catch (e: Exception) { null } ?: return keep()
             if (me.isEmpty()) me = kept.optString("me")
+            val madeNow = kept.optString("copy") != copyID
             kept.optJSONObject("at")?.let { at -> for (peer in at.keys()) told[peer] = (0 until (at.optJSONArray(peer)?.length() ?: 0)).map { at.getJSONArray(peer).optString(it) } }
             kept.optJSONObject("seen")?.let { seen -> for (peer in seen.keys()) seen.optLong(peer).takeIf { it > 0 }?.let { lastSeen[peer] = it } }
             val apps = jsonList(kept.optJSONArray("apps"))
             waiting = apps.filter { it.optBoolean("waiting") }.map { it.optString("peer") }.toSet()
             roster = apps.mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
             alone = roster.size < 2 && roster.isNotEmpty()
+            // The copy's id, made just now, is kept from the start.
+            if (madeNow) keep()
             rebuild()
         }
 
-        /** Where another app was reached or said it listens, the latest first. */
+        /** Where another copy was reached or said it listens, the latest first. */
         private fun remember(peer: String, places: List<String>) {
-            if (peer == me || places.isEmpty()) return
+            if (peer == me || peer == copy || places.isEmpty()) return
             val list = places.filter { it.isNotEmpty() }.toMutableList()
             for (place in told[peer].orEmpty()) if (place !in list) list.add(place)
             told[peer] = list.take(6)
@@ -1671,8 +1739,9 @@ extension Template {
         /**
          * Sends a file (up to 64 MB) to one of the wish's apps that's open now, in pieces, the straight way when there is
          * one, else through Lamp's room; the transfer says how far it's got, and ends failed, with why, when it didn't get
-         * there. Two go to each app at a time: send a third once one has finished (`transfer.finished()`). Call it from
-         * anywhere.
+         * there. It goes to one copy: the one `to` names ("screen.k3j9x0ab"), or for an app open on several devices the one
+         * opened last. Two go to each copy at a time: send a third once one has finished (`transfer.finished()`). Call it
+         * from anywhere.
          */
         fun sendFile(bytes: ByteArray, name: String, type: String = "application/octet-stream", to: String): LampTransfer {
             start()
@@ -1681,7 +1750,8 @@ extension Template {
             return transfer
         }
 
-        /** Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole, on the main thread. */
+        /** Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
+         *  copy of the app sent it), on the main thread. */
         fun onFile(handler: (from: String, file: LampFile) -> Unit) { start(); lock.withLock { fileListeners.add(handler) } }
 
         /** A file on its way to another app, on the way it started on: a file's pieces and acknowledgements can't change ways
@@ -1706,7 +1776,9 @@ extension Template {
         private val incoming = mutableMapOf<String, Incoming>()
         private val fileListeners = mutableListOf<(String, LampFile) -> Unit>()
 
-        private fun startFile(transfer: LampTransfer, bytes: ByteArray, type: String, peer: String) {
+        private fun startFile(transfer: LampTransfer, bytes: ByteArray, type: String, given: String) {
+            // One copy: the one named, else the one opened last.
+            val peer = if ('.' in given) given else peer(given)?.copies?.lastOrNull()?.id ?: given
             val name = transfer.name
             // Cancelled before it could start: nothing goes.
             if (transfer.cancelled) return transfer.end(LampTransfer.State.Failed("The file was cancelled."))
@@ -1714,12 +1786,13 @@ extension Template {
                 Log.e("LampWish", "the file \"$name\" wasn't sent: $reason")
                 transfer.end(LampTransfer.State.Failed(reason))
             }
-            val app = appsFlow.value.firstOrNull { it.peer == peer }
-            val title = app?.name?.replaceFirstChar { it.uppercase() } ?: peer
+            val app = appsFlow.value.firstOrNull { it.peer == appOf(peer) }
+            val title = app?.name?.replaceFirstChar { it.uppercase() } ?: given
             when {
                 bytes.size > fileLimit -> return failed("The file is too big to send: 64 MB at most.")
-                app == null -> return failed("The wish has no app called \"$peer\".")
+                app == null -> return failed("The wish has no app called \"$given\".")
                 !app.isOpen || stateFlow.value != State.CONNECTED -> return failed(app.status.reason.ifEmpty { "$title isn't open now." })
+                app.copies.none { it.id == peer } -> return failed("That copy of ${app.name} isn't open now.")
                 wireOf(peer) < 3 -> return failed(outOfDate(app.name, true))
                 outgoing.keys.count { it.startsWith(peer + "\t") } >= fileTransfers -> return failed("Another file to ${app.name} is still on its way: send this one once it's there.")
             }
@@ -1843,12 +1916,12 @@ extension Template {
         private fun finished(key: String, id: Int, file: Incoming, peer: String) {
             incoming.remove(key)
             if (file.size == 0) fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", 0), peer, file.via)
-            val done = LampFile(file.name, file.type, file.data)
+            val done = LampFile(file.name, file.type, file.data, peer)
             val handlers = lock.withLock { fileListeners.toList() }
-            for (handler in handlers) try { handler(peer, done) } catch (e: Exception) { Log.e("LampWish", "a file handler failed: ${e.message}") }
+            for (handler in handlers) try { handler(appOf(peer), done) } catch (e: Exception) { Log.e("LampWish", "a file handler failed: ${e.message}") }
         }
 
-        /** The files on their way that `gone` picks (by the other app's peer name and id, and the way each goes) end, with why. */
+        /** The files on their way that `gone` picks (by the other copy's peer name and id, and the way each goes) end, with why. */
         private fun dropFiles(reason: String, gone: (String, Direct?) -> Boolean) {
             for ((key, file) in outgoing.toList()) if (gone(key, file.via)) { outgoing.remove(key); file.transfer.end(LampTransfer.State.Failed(reason)) }
             for ((key, file) in incoming.toList()) if (gone(key, file.via)) incoming.remove(key)
@@ -1867,12 +1940,12 @@ extension Template {
             while (kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive != false) {
                 try {
                     if (current == null) {
-                        val answer = LampAI.post("/app/wish/open", JSONObject().put("device", device), 30_000)
+                        val answer = LampAI.post("/app/wish/open", JSONObject().put("device", device).put("copy", copyID), 30_000)
                         if (answer.optBoolean("alone")) {
                             withContext(Dispatchers.Main) {
                                 lampAway = false
                                 alone = true
-                                answer.optJSONObject("me")?.let { mine -> me = mine.optString("peer", me); setRoster(listOf(mine)) }
+                                answer.optJSONObject("me")?.let { mine -> me = appOf(mine.optString("peer", me)); setRoster(listOf(mine)) }
                                 rebuild()
                             }
                             delay((answer.optLong("renew", 300) * 1000).coerceAtLeast(5000))
@@ -1880,7 +1953,7 @@ extension Template {
                         }
                         withContext(Dispatchers.Main) {
                             alone = false
-                            me = answer.optString("peer", me)
+                            me = appOf(answer.optString("peer", me))
                             setRoster(jsonList(answer.optJSONArray("apps")))
                         }
                         val opened = Link(answer.optInt("link"))
@@ -1889,7 +1962,7 @@ extension Template {
                         opened.hello = nonce to tag
                         current = opened
                         link = opened
-                        post(opened, listOf(JSONObject().put("text", JSONObject().put("t", "hello").put("tag", encode(tag)).put("peer", me).put("nonce", encode(nonce)).toString())))
+                        post(opened, listOf(JSONObject().put("text", JSONObject().put("t", "hello").put("tag", encode(tag)).put("peer", copy).put("nonce", encode(nonce)).toString())))
                     }
                     val live = current ?: continue
                     val answer = LampAI.post("/app/wish/poll", JSONObject().put("link", live.number), 40_000)
@@ -1956,7 +2029,7 @@ extension Template {
             val theirs = try { java.util.Base64.getDecoder().decode(challenge.optString("nonce")) } catch (e: Exception) { return false }
             val proof = try { java.util.Base64.getDecoder().decode(challenge.optString("proof")) } catch (e: Exception) { return false }
             if (server.toByteArray().size !in 1..32 || theirs.size != 16) return false
-            val transcript = transcript(hello.second, me, server, hello.first, theirs)
+            val transcript = transcript(hello.second, copy, server, hello.first, theirs)
             if (!MessageDigest.isEqual(proof, derive("lamp-wish server", key, transcript))) return false
             current.hello = null
             current.opener = Sealer(derive("lamp-wish s2c", key, transcript))
@@ -1989,7 +2062,7 @@ extension Template {
                     lampAway = false
                     relayIn = true
                     reported = ""
-                    me = m.optString("peer", me)
+                    m.optString("peer").takeIf(::isName)?.let { me = appOf(it) }
                     setRoster(jsonList(m.optJSONArray("apps")))
                     relayPresent.clear()
                     for (seen in jsonList(m.optJSONArray("peers"))) present(seen)
@@ -2030,7 +2103,7 @@ extension Template {
 
         private fun deliver(from: String, data: Any?) {
             val handlers = lock.withLock { listeners.toList() }
-            for (handler in handlers) try { handler(from, data) } catch (e: Exception) { Log.e("LampWish", "a message handler failed: ${e.message}") }
+            for (handler in handlers) try { handler(appOf(from), data, from) } catch (e: Exception) { Log.e("LampWish", "a message handler failed: ${e.message}") }
         }
 
         /** Where this app listens, for Lamp's room to tell the others, who keep it for when Lamp is closed. */
@@ -2063,8 +2136,8 @@ extension Template {
             for (app in appsFlow.value) if (app.isOpen) lastSeen[app.peer] = now
             beats += 1
             if (beats % 12 == 0 && peersFlow.value.isNotEmpty()) keep()
-            // Once a minute each open app is told what this one's values add up to, so one that missed a setting asks.
-            if (beats % 12 == 0) for (app in peersFlow.value) if (wireOf(app.peer) >= 2) share(emptyMap(), app.peer, JSONObject().put("sum", digest()))
+            // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
+            if (beats % 12 == 0) for (each in copiesFor(null)) if (wireOf(each) >= 2) share(emptyMap(), each, JSONObject().put("sum", digest()))
             rebuild()
             val mine = addresses()
             if (mine != networks) { networks = mine; lookAgain() } else reach()
@@ -2079,12 +2152,14 @@ extension Template {
             listen()
             look()
             val now = System.currentTimeMillis()
-            for (app in roster) {
-                if (app.id == me || directs[app.id]?.ready == true || app.id in dialing) continue
-                val wait = nextDial[app.id]
+            // Every copy known of: found on the network, in Lamp's room, or reached before. A copy of this app on another
+            // device is dialled as any other app is.
+            for (peer in (found.keys + told.keys + relayPresent.keys).sorted()) {
+                if (peer == me || peer == copy || roster.none { it.id == appOf(peer) } || directs[peer]?.ready == true || peer in dialing) continue
+                val wait = nextDial[peer]
                 if (wait != null && wait.first > now) continue
-                val places = (listOfNotNull(found[app.id]) + told[app.id].orEmpty()).distinct()
-                if (places.isNotEmpty()) dial(app.id, places)
+                val places = (listOfNotNull(found[peer]) + told[peer].orEmpty()).distinct()
+                if (places.isNotEmpty()) dial(peer, places)
             }
         }
 
@@ -2094,8 +2169,9 @@ extension Template {
             reach()
         }
 
-        /** Dials another app at each place in turn until one answers and proves it holds the wish's key; tried again later,
-         *  less often each time it fails, and at once when it's found anew. */
+        /** Dials another copy at each place in turn until one answers and proves it holds the wish's key; tried again later,
+         *  less often each time it fails, and at once when it's found anew. Whichever copy of that app answers is taken (an
+         *  address can change hands), and kept as the copy it said it is. */
         private fun dial(peer: String, places: List<String>) {
             if (closed) { dialing.remove(peer); return }
             val place = places.firstOrNull() ?: run {
@@ -2118,7 +2194,9 @@ extension Template {
                         if (worked) {
                             dialing.remove(peer)
                             nextDial.remove(peer)
-                            remember(peer, listOf("$host:$port"))
+                            // Another copy answered where this one was looked for: what was kept of the old one goes.
+                            if (direct.peer != peer) told.remove(peer)
+                            remember(direct.peer, listOf("$host:$port"))
                         } else {
                             dial(peer, places.drop(1))
                         }
@@ -2132,7 +2210,8 @@ extension Template {
         private fun listen(again: Boolean = false) {
             if (again) stopListening()
             if (me.isEmpty()) return
-            val name = serviceName(me) ?: return
+            // Each copy adds its own id to the app's name, so the app's copies on several devices are each found.
+            val name = serviceName(me)?.let { "$it-$copyID" } ?: return
             if (server != null || System.currentTimeMillis() - listenerTried < 30_000) return
             listenerTried = System.currentTimeMillis()
             val wanted = port(me, roster.map { it.id })
@@ -2211,7 +2290,7 @@ extension Template {
             val nonce = random(16)
             val tag = derive("lamp-wish tag", key).copyOf(8)
             direct.hello = nonce to tag
-            direct.send(JSONObject().put("t", "hello").put("tag", encode(tag)).put("peer", me).put("nonce", encode(nonce)).toString(), seal = false)
+            direct.send(JSONObject().put("t", "hello").put("tag", encode(tag)).put("peer", copy).put("nonce", encode(nonce)).toString(), seal = false)
         }
 
         // The same handshake as Lamp's room, the app that listens taking the relay's side and naming itself.
@@ -2222,12 +2301,14 @@ extension Template {
             if (kind == "beat") return
             val decode = { name: String -> try { java.util.Base64.getDecoder().decode(said.optString(name)) } catch (e: Exception) { null } }
             val hello = direct.hello
-            if (direct.dialled && direct.sealer == null && kind == "challenge" && hello != null && said.optString("peer") == direct.peer) {
+            val server = said.optString("peer")
+            if (direct.dialled && direct.sealer == null && kind == "challenge" && hello != null && isName(server) && server != copy && appOf(server) == appOf(direct.peer)) {
                 val theirs = decode("nonce")
                 val proof = decode("proof")
                 if (theirs != null && theirs.size == 16 && proof != null) {
-                    val transcript = transcript(hello.second, me, direct.peer, hello.first, theirs)
+                    val transcript = transcript(hello.second, copy, server, hello.first, theirs)
                     if (!MessageDigest.isEqual(proof, derive("lamp-wish server", key, transcript))) return drop(direct)
+                    direct.peer = server
                     direct.hello = null
                     direct.send(JSONObject().put("t", "proof").put("proof", encode(derive("lamp-wish client", key, transcript))).toString(), seal = false)
                     direct.opener = Sealer(derive("lamp-wish s2c", key, transcript))
@@ -2240,13 +2321,13 @@ extension Template {
                 val tag = decode("tag")
                 val peer = said.optString("peer")
                 val theirs = decode("nonce")
-                if (tag != null && MessageDigest.isEqual(tag, derive("lamp-wish tag", key).copyOf(8)) && isName(peer) && peer != me &&
-                    roster.any { it.id == peer } && theirs != null && theirs.size == 16) {
+                if (tag != null && MessageDigest.isEqual(tag, derive("lamp-wish tag", key).copyOf(8)) && isName(peer) && peer != me && peer != copy &&
+                    roster.any { it.id == appOf(peer) } && theirs != null && theirs.size == 16) {
                     val ours = random(16)
-                    val transcript = transcript(tag, peer, me, theirs, ours)
+                    val transcript = transcript(tag, peer, copy, theirs, ours)
                     direct.peer = peer
                     direct.transcript = transcript
-                    direct.send(JSONObject().put("t", "challenge").put("peer", me).put("nonce", encode(ours))
+                    direct.send(JSONObject().put("t", "challenge").put("peer", copy).put("nonce", encode(ours))
                         .put("proof", encode(derive("lamp-wish server", key, transcript))).toString(), seal = false)
                     return
                 }
@@ -2271,7 +2352,7 @@ extension Template {
                 "join" -> if (!direct.dialled && !direct.ready) {
                     direct.device = m.optString("device").take(40)
                     direct.wire = m.optInt("wire", 1)
-                    direct.send(JSONObject().put("t", "welcome").put("peer", me).put("device", device).put("wire", wire).toString(), seal = true)
+                    direct.send(JSONObject().put("t", "welcome").put("peer", copy).put("device", device).put("wire", wire).toString(), seal = true)
                     ready(direct)
                 }
                 "welcome" -> if (direct.dialled && !direct.ready) {
@@ -2285,14 +2366,14 @@ extension Template {
             }
         }
 
-        /** A link proved both ways. Two apps that both listen may each have dialled the other: the one the app with the
-         *  earlier name dialled is kept on both sides, so they agree without saying. */
+        /** A link proved both ways. Two copies that both listen may each have dialled the other: the one the copy with the
+         *  earlier peer name dialled is kept on both sides, so they agree without saying. */
         private fun ready(direct: Direct) {
             if (closed) return drop(direct)
             opening.remove(direct)
             val other = directs[direct.peer]
             if (other != null && other !== direct && other.ready) {
-                val keepNew = direct.dialled == (me < direct.peer)
+                val keepNew = direct.dialled == (copy < direct.peer)
                 if (!keepNew) { val done = direct.done; direct.done = null; done?.invoke(true); return drop(direct) }
                 other.done = null
                 drop(other)
@@ -2356,11 +2437,12 @@ extension Template {
                 override fun onStopDiscoveryFailed(type: String, error: Int) {}
                 override fun onServiceFound(info: android.net.nsd.NsdServiceInfo) {
                     scope.launch(Dispatchers.Main) {
-                        if (roster.any { it.id != me && serviceName(it.id) == info.serviceName }) { toResolve.addLast(info); resolveNext() }
+                        val peer = copyNamed(info.serviceName)
+                        if (peer != null && peer != copy) { toResolve.addLast(info); resolveNext() }
                     }
                 }
                 override fun onServiceLost(info: android.net.nsd.NsdServiceInfo) {
-                    scope.launch(Dispatchers.Main) { roster.firstOrNull { serviceName(it.id) == info.serviceName }?.let { found.remove(it.id) } }
+                    scope.launch(Dispatchers.Main) { copyNamed(info.serviceName)?.let { found.remove(it) } }
                 }
             }
             try { nsd?.discoverServices(serviceType, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, made); discovery = made } catch (e: Exception) {}
@@ -2382,12 +2464,12 @@ extension Template {
                     override fun onResolveFailed(info: android.net.nsd.NsdServiceInfo, error: Int) { scope.launch(Dispatchers.Main) { next() } }
                     override fun onServiceResolved(info: android.net.nsd.NsdServiceInfo) {
                         scope.launch(Dispatchers.Main) {
-                            val app = roster.firstOrNull { it.id != me && serviceName(it.id) == info.serviceName }
+                            val peer = copyNamed(info.serviceName)?.takeIf { it != copy }
                             val host = (info.host as? java.net.Inet4Address)?.hostAddress
-                            if (app != null && host != null) {
-                                val fresh = found[app.id] == null
-                                found[app.id] = "$host:${info.port}"
-                                if (fresh) { nextDial.remove(app.id); reach() }
+                            if (peer != null && host != null) {
+                                val fresh = found[peer] == null
+                                found[peer] = "$host:${info.port}"
+                                if (fresh) { nextDial.remove(peer); reach() }
                             }
                             next()
                         }
@@ -2408,13 +2490,25 @@ extension Template {
 
         private fun serviceName(peer: String): String? = wishKey?.let { hex(derive("lamp-wish service", it, peer.toByteArray(Charsets.UTF_8)).copyOf(8)) }
 
+        /** The copy a name found on the network is: an app of the wish's, by its name, then the copy's id. */
+        private fun copyNamed(name: String): String? {
+            val app = roster.firstOrNull { serviceName(it.id) == name.substringBefore('-') } ?: return null
+            val id = name.substringAfter('-', "")
+            return if ('-' in name && isName("a.$id")) "${app.id}.$id" else null
+        }
+
         /** This device's addresses on its networks, IPv4, not the loopback. */
         private fun addresses(): List<String> = try {
             java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }
                 .flatMap { it.inetAddresses.toList() }.filterIsInstance<java.net.Inet4Address>().mapNotNull { it.hostAddress }.sorted()
         } catch (e: Exception) { emptyList() }
 
-        private fun isName(name: String) = name.toByteArray().size in 1..32 && name.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }
+        /** A peer's name: an app's ("tv"), or a copy's, the app's then a dot and the copy's id ("tv.k3j9x0ab"), 32 bytes at most. */
+        private fun isName(name: String): Boolean {
+            val parts = name.split('.')
+            return name.toByteArray().size in 1..32 && parts.size in 1..2 && parts.none { it.isEmpty() } &&
+                parts[0].all { it in 'a'..'z' || it in '0'..'9' || it == '-' } && parts.drop(1).all { p -> p.all { it in 'a'..'z' || it in '0'..'9' } }
+        }
         private fun isPlace(host: String) = host.length in 1..253 && host.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' || it == '.' }
 
         private fun jsonList(list: JSONArray?): List<JSONObject> = (0 until (list?.length() ?: 0)).mapNotNull { list?.optJSONObject(it) }
@@ -2599,7 +2693,8 @@ extension Template {
     }
 
     /** A file another app of the wish sent (`LampWish.onFile`). */
-    class LampFile(val name: String, val type: String, val bytes: ByteArray)
+    /** `copy` is which copy of the app sent it ("screen.k3j9x0ab"), to send one back to that copy alone. */
+    class LampFile(val name: String, val type: String, val bytes: ByteArray, val copy: String = "")
 
     /**
      * How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on your

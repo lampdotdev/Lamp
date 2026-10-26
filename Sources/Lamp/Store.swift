@@ -10093,7 +10093,7 @@ final class Store: ObservableObject {
         let apps = apps(of: wish)
         switch route {
         case "/app/wish/open":
-            return await WishProxies.open(project, wish: wish, apps: apps)
+            return await WishProxies.open(project, copy: body["copy"] as? String ?? "", wish: wish, apps: apps)
         case "/app/wish/poll":
             return await WishProxies.poll(project, link: body["link"] as? Int ?? 0)
         case "/app/wish/send":

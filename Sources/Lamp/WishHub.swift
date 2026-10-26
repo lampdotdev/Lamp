@@ -128,7 +128,7 @@ final class WishClaims: @unchecked Sendable {
 enum WishRooms {
     /// What this Lamp's apps of a wish say to each other, numbered as LampSupport.swift, LampSupport.kt and lamp.js number
     /// it (`wire` in each): an app in the room that says less was built by an earlier Lamp.
-    static let wire = 3
+    static let wire = 4
 
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }
@@ -283,6 +283,9 @@ enum WishRooms {
 enum WishProxies {
     final class Proxy {
         let app: String
+        /// Which copy of the app it holds the socket for: an app open on two Android devices at once has one each. An
+        /// app built before copies says none.
+        let copy: String
         let room: String
         let link: Int
         var task: URLSessionWebSocketTask?
@@ -292,8 +295,9 @@ enum WishProxies {
         var beat: Timer?
         /// What the app sent, waiting its turn: each goes once the one before it has, so they reach the relay in order.
         var sending: Task<Void, Never>?
-        init(app: String, room: String, link: Int) {
+        init(app: String, copy: String, room: String, link: Int) {
             self.app = app
+            self.copy = copy
             self.room = room
             self.link = link
         }
@@ -310,23 +314,29 @@ enum WishProxies {
     /// so the room tells the others it left, within seconds, as it does for an app holding its own socket.
     static var grace: TimeInterval = 4
 
+    /// By app and copy (`slot`).
     private static var proxies: [String: Proxy] = [:]
+    private static func slot(_ app: String, _ copy: String) -> String { app + "\t" + copy }
+    /// The app's proxy on this link, whichever copy it's for.
+    private static func proxy(_ project: LampProject, link: Int?) -> Proxy? { proxies.values.first { $0.app == project.id && $0.link == link } }
     private static var links = 0
 
     static func lastAsked(room: String) -> Date? { proxies.values.filter { $0.room == room }.map(\.lastPoll).max() }
 
-    /// Opens the app's socket to its wish's room, closing any it had, and says which link it is, with what `/app/wish`
-    /// says (alone, which peer it is).
-    static func open(_ project: LampProject, wish: LampProject, apps: [LampProject]) async -> (Int, [String: Any]) {
-        if let old = proxies[project.id] { close(old); proxies[project.id] = nil }
+    /// Opens the socket to its wish's room for this copy of the app, closing any it had, and says which link it is, with
+    /// what `/app/wish` says (alone, which peer it is).
+    static func open(_ project: LampProject, copy: String = "", wish: LampProject, apps: [LampProject]) async -> (Int, [String: Any]) {
+        let copy = WishChannel.isName("a." + copy) ? copy : ""
+        let slot = slot(project.id, copy)
+        if let old = proxies[slot] { close(old); proxies[slot] = nil }
         var (status, answer) = await WishRooms.answer(for: project, wish: wish, apps: apps, host: "127.0.0.1")
         guard status == 200, answer["alone"] as? Bool != true else { return (status, answer) }
         guard let socket = (answer["socket"] as? String).flatMap(URL.init(string:)) else {
             return (503, ["error": "Lamp couldn't say where the wish's apps meet."])
         }
         links += 1
-        let proxy = Proxy(app: project.id, room: WishRooms.key(for: wish), link: links)
-        proxies[project.id] = proxy
+        let proxy = Proxy(app: project.id, copy: copy, room: WishRooms.key(for: wish), link: links)
+        proxies[slot] = proxy
         let task = URLSession.shared.webSocketTask(with: socket)
         task.maximumMessageSize = WishChannel.pieceLimit + 1024   // a file's piece, sealed
         proxy.task = task
@@ -340,7 +350,7 @@ enum WishProxies {
                 guard proxy.task === task else { return }
                 if proxy.waiter == nil, Date().timeIntervalSince(proxy.lastPoll) > wait + grace {
                     close(proxy)
-                    if proxies[proxy.app] === proxy { proxies[proxy.app] = nil }
+                    if proxies[slot] === proxy { proxies[slot] = nil }
                     return
                 }
                 ticks += 1
@@ -356,7 +366,7 @@ enum WishProxies {
     /// for a sealed message, and `{"closed": code}` when the socket went; waiting a while for the first. A link that isn't
     /// the app's now is answered 409, and the app opens a new one.
     static func poll(_ project: LampProject, link: Int) async -> (Int, [String: Any]) {
-        guard let proxy = proxies[project.id], proxy.link == link else { return (409, ["error": "That link to the wish's apps is over: open another."]) }
+        guard let proxy = proxy(project, link: link) else { return (409, ["error": "That link to the wish's apps is over: open another."]) }
         proxy.lastPoll = Date()
         if !proxy.events.isEmpty || proxy.task == nil { return (200, ["events": take(proxy)]) }
         // One poll waits at a time: a second one ends the first with nothing, since the app has moved on.
@@ -377,7 +387,7 @@ enum WishProxies {
     /// Sends what the app said on this link, in order: its handshake's `text`s, and its sealed messages (`data`, base64),
     /// each as one message on the socket, as the app would on its own.
     static func send(_ project: LampProject, body: [String: Any]) async -> (Int, [String: Any]) {
-        guard let proxy = proxies[project.id], proxy.link == body["link"] as? Int, let task = proxy.task else {
+        guard let proxy = proxy(project, link: body["link"] as? Int), let task = proxy.task else {
             return (409, ["error": "That link to the wish's apps is over: open another."])
         }
         var messages: [URLSessionWebSocketTask.Message] = []
@@ -468,15 +478,23 @@ enum WishNote {
         let apps = store.apps(of: wish)
         let waiting = Parts.waiting(in: wish, parts: apps.filter { $0.id != wish.id })
         guard apps.count + waiting.count >= 2 else { return "" }
-        let present = Dictionary(WishRooms.presence(of: wish).compactMap { member in (member["peer"] as? String).map { ($0, member) } },
-                                 uniquingKeysWith: { a, _ in a })
+        // Each member is one copy of an app: the app open on one device ("screen.k3j9x0ab"), or an app built before copies
+        // by its name alone.
+        let present = Dictionary(grouping: WishRooms.presence(of: wish)) { member in
+            (member["app"] as? String) ?? (member["peer"] as? String).map(WishChannel.app(of:)) ?? ""
+        }
         return apps.map { app in
             let name = Parts.name(of: app.platform)
             let peer = WishRooms.peer(app, in: wish)
             var line = "\(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(peer)\"): \(store.isOpen(app) ? "open" : "not open")"
-            if let member = present[peer] {
+            let copies = present[peer] ?? []
+            if copies.count > 1 { line += ", open on \(copies.count) devices at once" }
+            if copies.isEmpty { line += ", not in the room" }
+            return line + copies.map { member in
+                var line = ""
                 let since = (member["since"] as? Int).map { Date(timeIntervalSince1970: Double($0) / 1000).formatted(date: .omitted, time: .shortened) } ?? "?"
                 line += ", in the wish's room as \"\(member["device"] as? String ?? "")\" since \(since)"
+                if copies.count > 1, let id = member["peer"] as? String { line += " (copy \"\(id)\")" }
                 // Built by an earlier Lamp: its wish's other apps show it as out of date and share no values, files or game
                 // controls with it,
                 // which opening it from Lamp mends by building it again.
@@ -494,10 +512,8 @@ enum WishNote {
                 } else if link["state"] != nil {
                     line += ", straight to none"
                 }
-            } else {
-                line += ", not in the room"
-            }
-            return line
+                return line
+            }.joined()
         }.joined(separator: "; ") + waiting.map { app in
             let name = Parts.name(of: app.kind)
             return "; \(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(Parts.folder(waiting: app.kind, in: wish.dir).lowercased())\"): not made yet"

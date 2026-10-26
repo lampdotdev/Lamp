@@ -441,11 +441,13 @@ enum GameAndroid {
             val status = status?.value ?: return
             val list = JSONArray()
             for (peer in apps) {
+                val copies = JSONArray()
+                for (each in peer.copies) copies.put(JSONObject().put("id", each.id).put("device", each.device).put("since", each.since))
                 list.put(JSONObject().put("peer", peer.peer).put("kind", peer.kind).put("name", peer.name).put("device", peer.device)
-                    .put("open", peer.isOpen).put("status", JSONObject().put("state", peer.status.state.name).put("reason", peer.status.reason)
+                    .put("open", peer.isOpen).put("copies", copies).put("status", JSONObject().put("state", peer.status.state.name).put("reason", peer.status.reason)
                         .put("lastSeen", peer.status.lastSeen ?: JSONObject.NULL)))
             }
-            tell(JSONObject().put("t", "state").put("me", LampWish.me).put("apps", list)
+            tell(JSONObject().put("t", "state").put("me", LampWish.me).put("copy", LampWish.copy).put("apps", list)
                 .put("status", JSONObject().put("state", status.state.name).put("reason", status.reason)))
         }
 
@@ -514,8 +516,8 @@ enum GameAndroid {
             private fun hearWish() {
                 if (heardWish) return
                 heardWish = true
-                LampWish.onMessage { from, data ->
-                    current?.get()?.tell(JSONObject().put("t", "message").put("from", from).put("data", data ?: JSONObject.NULL))
+                LampWish.onMessage { from, data, copy ->
+                    current?.get()?.tell(JSONObject().put("t", "message").put("from", from).put("copy", copy).put("data", data ?: JSONObject.NULL))
                 }
                 // Who made each change; the page says to its onChange every value that differs from its copy.
                 LampWish.onChange { key, value, from ->
@@ -527,7 +529,7 @@ enum GameAndroid {
                 if (heardFiles) return
                 heardFiles = true
                 LampWish.onFile { from, file ->
-                    current?.get()?.tell(JSONObject().put("t", "file").put("from", from).put("name", file.name).put("type", file.type)
+                    current?.get()?.tell(JSONObject().put("t", "file").put("from", from).put("copy", file.copy).put("name", file.name).put("type", file.type)
                         .put("data", Base64.encodeToString(file.bytes, Base64.NO_WRAP)))
                 }
             }

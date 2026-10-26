@@ -38,6 +38,12 @@ own comment there before using it.
   or iPhone, `localNetworkDenied`: the person turned off Local Network for it). An open app built by an earlier Lamp is
   `outOfDate`: still open, with a reason saying to open it from Lamp. More states may come: treat any you don't name as
   not connected.
+- An app can be open on several devices at once (a screen on the kitchen iPad, the TV and a photo frame): each is a
+  copy of it, and every copy reaches the others and keeps the same `values`. `peer("screen").copies` lists where it's
+  open now (`id`, `device`, `since`); another copy of this same app shows in `peers` while it's open. A message to an app
+  goes to every copy of it; a file goes to one copy, the one opened last unless `to` names a copy's `id`. The third
+  argument of `onMessage` (`copy`) and `file.copy` say which copy sent it, to answer that one alone. Put what every
+  screen shows in `values`, so a copy opened later catches up by itself.
 - A game in Lamp's own preview can't reach the others: there `Lamp.wish` is `away`, with a reason saying so. Write the
   sharing the same way for every place, and keep the game or screen whole without it.
 - `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line

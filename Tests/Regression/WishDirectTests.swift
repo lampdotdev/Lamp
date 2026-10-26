@@ -79,6 +79,107 @@ final class WishDirectTests: XCTestCase {
         XCTAssertGreaterThan(heard("mac2.txt").count, 5, "both ways")
     }
 
+    /// One app open on several devices at once (a screen on an iPad and on a TV) is a copy of it on each: here the TV
+    /// app as a Swift program and as a TV page, with a Mac app. With Lamp, each sees the others, both copies included; a
+    /// value set on any reaches the rest; and once Lamp goes, a value set on either copy still reaches the other, over the
+    /// links straight to the apps that listen.
+    func testTwoCopiesOfOneAppAndAnotherAppSeeEachOtherAndShareValuesWithAndWithoutLamp() async throws {
+        let relay = Relay(key: SymmetricKey(size: .bits256))
+        let started: UInt16? = await withCheckedContinuation { done in relay.start { done.resume(returning: $0) } }
+        let port = try XCTUnwrap(started)
+        let key = WishChannel.random(32)
+        relay.configureRoom("wish:copies", key: key, apps: ["mac": ("mac", "the Mac app"), "tv": ("tv", "the TV app")])
+        defer { relay.stop() }
+
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-copies-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        // Says which copies it sees as that changes, sets its own value once it sees all three apps open, sets
+        // LAMP_LATER after LAMP_LATER_AT seconds, and says what it holds at the end.
+        let harness = """
+            @main struct Copies {
+                @MainActor static func main() {
+                    setvbuf(stdout, nil, _IONBF, 0)
+                    let env = ProcessInfo.processInfo.environment
+                    let wish = LampWish.shared
+                    let start = Date(), end = start.addingTimeInterval(Double(env["LAMP_SECONDS"]!)!)
+                    var seen = "", set = false, later = false
+                    while Date() < end {
+                        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                        let now = wish.peers.flatMap { $0.copies.map(\\.id) }.sorted().joined(separator: ",")
+                        if now != seen { seen = now; print("sees \\(now)") }
+                        if !set, wish.peers.flatMap(\\.copies).count == 2 { set = true; print("set \\(wish.set(env["LAMP_NAME"]!, 1))") }
+                        if !later, let at = Double(env["LAMP_LATER_AT"] ?? ""), Date().timeIntervalSince(start) > at {
+                            later = true
+                            print("later \\(wish.set(env["LAMP_LATER"]!, 2))")
+                        }
+                    }
+                    let held = (try? JSONSerialization.data(withJSONObject: wish.values, options: .sortedKeys)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
+                    print("me \\(wish.copy) values \\(held)")
+                }
+            }
+            """
+        try WishNativeTests.program(main: harness).write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.copies</string>"
+            + Template.wishKeyPlistLines(key) + "</dict></plist>"
+        try plist.write(to: work.appendingPathComponent("wish.plist"), atomically: true, encoding: .utf8)
+        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o copies main.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker wish.plist 2>&1", in: work)
+        XCTAssertEqual(built.status, 0, built.output)
+
+        let suite = "lamp-wish-copies-\(UUID().uuidString)"
+        defer { for each in ["mac", "tv"] { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-\(each)") } }
+        func run(_ me: String, name: String, later: String) -> Task<String, Never> {
+            let command = "LAMP_SOCKET='ws://127.0.0.1:\(port)/' LAMP_APPS=mac,tv LAMP_DEFAULTS=\(suite)-\(me) LAMP_PEER=\(me) LAMP_NAME=\(name) "
+                + "LAMP_LATER=\(later) LAMP_LATER_AT=16 LAMP_SECONDS=26 ./copies 2>&1"
+            return Task.detached { TestShell.run(command, in: work).output }
+        }
+        let begun = Date()
+        let mac = run("mac", name: "m", later: "m2")
+        let tv = run("tv", name: "t", later: "t2")
+
+        // The other copy of the TV app: a TV page, which Lamp gives the key and the room through its bridge.
+        let page = PageWithSockets()
+        page.context.evaluateScript("""
+            window.webkit = { messageHandlers: { lampGateway: {} } };
+            var answer = { socket: 'ws://127.0.0.1:\(port)/', peer: 'tv', key: '\(key.base64EncodedString())', peers: [],
+                           apps: [{ peer: 'mac', kind: 'mac', name: 'the Mac app' }, { peer: 'tv', kind: 'tv', name: 'the TV app' }] };
+            var lampThere = true;
+            LampAI = { _post: function () { return lampThere ? Promise.resolve(answer) : Promise.reject(new Error("Couldn't reach Lamp.")); } };
+            """)
+        page.context.evaluateScript(TVTemplate.wishJS)
+        page.context.evaluateScript("""
+            var set = false;
+            Lamp.wish.onApps(function (list) {
+              var n = 0; list.forEach(function (a) { n += a.copies.length; });
+              if (n === 2 && !set) { set = true; Lamp.wish.set('p', 1); }
+            });
+            Lamp.wish.start();
+            function held() { var v = Lamp.wish.values(), o = {}; Object.keys(v).sort().forEach(function (k) { o[k] = v[k]; }); return JSON.stringify(o); }
+            function seen() { var l = []; Lamp.wish.peers().forEach(function (a) { a.copies.forEach(function (c) { l.push(c.id); }); }); return l.sort().join(','); }
+            """)
+        func js(_ script: String) -> String { page.context.evaluateScript(script)?.toString() ?? "" }
+        let all = #"{"m":1,"p":1,"t":1}"#
+        for _ in 0..<150 where js("held()") != all { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(js("held()"), all, "with Lamp, the page has every app's value: \(js("JSON.stringify([Lamp.wish.state(), seen(), said.slice(0, 6)])"))")
+        let pageCopy = js("Lamp.wish.copy()")
+        XCTAssertTrue(pageCopy.hasPrefix("tv."), pageCopy)
+        XCTAssertTrue(js("seen()").contains("mac.") && js("seen()").contains("tv."), "the page sees the Mac app and the other copy of its own: \(js("seen()"))")
+        XCTAssertEqual(relay.members(of: "wish:copies").count, 3, "both copies of the TV app are in the room at once: \(relay.members(of: "wish:copies"))")
+
+        // Lamp goes; each sets another value: the copies and the Mac app still all end with every one, straight.
+        page.context.evaluateScript("lampThere = false;")
+        relay.stop()
+        try await Task.sleep(for: .seconds(max(1, 19 - Date().timeIntervalSince(begun))))
+        page.context.evaluateScript("Lamp.wish.set('p2', 2);")
+        let after = #"{"m":1,"m2":2,"p":1,"p2":2,"t":1,"t2":2}"#
+        let (macSaid, tvSaid) = await (mac.value, tv.value)
+        XCTAssertTrue(macSaid.contains("values \(after)"), "the Mac app: \(macSaid)")
+        XCTAssertTrue(tvSaid.contains("values \(after)"), "the TV app's other copy: \(tvSaid)")
+        XCTAssertEqual(js("held()"), after, "the page: \(js("JSON.stringify([Lamp.wish.state(), seen(), said.slice(0, 6)])"))")
+        XCTAssertTrue(macSaid.contains("sees \(pageCopy)") || macSaid.contains(pageCopy), "the Mac app saw the page as a copy of its own: \(macSaid)")
+        page.end()
+    }
+
     /// The talker built with the wish's key in its Info.plist, as Lamp installs an app of a wish.
     static func talkerBuilt(key: Data) throws -> URL {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-direct-\(UUID().uuidString)")
