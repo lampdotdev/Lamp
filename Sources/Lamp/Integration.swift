@@ -395,7 +395,8 @@ enum Placeholders {
             // What the person typed, a sign-in and Lamp's public key (which has spaces) aren't held to the alphabet, nor
             // is text being typed, which in a path is encoded down to letters and digits so it can't change the path.
             let secret = name.hasPrefix("field:") || name == "signIn" || name == "sshKey"
-            if !secret, name != "text", value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
+            let typed = name == "text" && [.path, .form, .body].contains(place)
+            if !secret, !typed, value.unicodeScalars.contains(where: { !safe.contains($0) }) || value.count > 512 { throw Unsafe(name: name) }
             if name == "text", place == .path {
                 out += value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")) ?? ""
                 continue
