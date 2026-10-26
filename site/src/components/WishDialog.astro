@@ -62,6 +62,12 @@ const { place } = Astro.props;
       >
         Already have Lamp? Open it with this wish
       </button>
+      <!-- A wish shared with its file: the exact one, for someone who has Lamp, which reviews it before it opens. -->
+      <a
+        data-file
+        hidden
+        class="mt-2.5 text-[15px] font-medium text-[#b04e0a] underline decoration-[#b04e0a]/40 underline-offset-4 transition hover:decoration-[#b04e0a]"
+      ></a>
     </div>
   </div>
 </dialog>
@@ -88,7 +94,8 @@ const { place } = Astro.props;
   text.addEventListener("input", fit);
 
   // A wish whose words name its device (the TV, a watch) needs no platform: Lamp goes by the words.
-  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string };
+  type Idea = { name: string; about: string; wish: string; platform?: string; picture: string; icon: string; file?: string; fileSize?: number };
+  const fileLink = dialog.querySelector<HTMLAnchorElement>("[data-file]")!;
   const device = dialog.querySelector<HTMLElement>("[data-device]")!;
   const stage = dialog.querySelector<HTMLElement>("[data-stage]")!;
   const picture = dialog.querySelector<HTMLImageElement>("[data-picture]")!;
@@ -119,6 +126,13 @@ const { place } = Astro.props;
     device.hidden = !current.platform || current.platform === "Mac";
     device.textContent = `In Lamp, choose ${current.platform} before you send this wish.`;
     text.value = current.wish;
+    // The exact wish, as a file Lamp opens, on a Mac (where Lamp runs) and only when the sharer sent it.
+    fileLink.hidden = !current.file || openLink.hidden;
+    if (current.file) {
+      fileLink.href = current.file;
+      const size = current.fileSize ? ` (${Math.max(1, Math.round(current.fileSize / 1_000_000))} MB)` : "";
+      fileLink.textContent = `Or get this exact one, to open in Lamp${size}`;
+    }
     go.textContent = "Download Lamp";
     if (requirement) requirement.hidden = true;
     dialog.showModal();
@@ -160,6 +174,8 @@ const { place } = Astro.props;
         : "Copy your wish, and paste it into Lamp when it's ready.";
     });
   });
+
+  fileLink.addEventListener("click", () => { if (current) track("idea_file", { idea: current.name, place: from }); });
 
   openLink.addEventListener("click", () => {
     const link = wishLink(text.value);

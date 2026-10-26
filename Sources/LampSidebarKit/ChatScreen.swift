@@ -1209,7 +1209,7 @@ struct WishLinkPanel: View {
     }
 
     private static func values(of card: SidebarWishLink) -> WishLinkCard.Values {
-        WishLinkCard.Values(name: card.name, line: card.line, words: card.words, includePicture: card.includePicture)
+        WishLinkCard.Values(name: card.name, line: card.line, words: card.words, includePicture: card.includePicture, includeFile: card.includeFile ?? false)
     }
 
     private var changed: Bool {
@@ -1217,8 +1217,11 @@ struct WishLinkPanel: View {
         let typed = SidebarWishLinkValues(name: values.name.trimmingCharacters(in: .whitespacesAndNewlines),
                                           line: values.line.trimmingCharacters(in: .whitespacesAndNewlines),
                                           words: values.words.trimmingCharacters(in: .whitespacesAndNewlines),
-                                          includePicture: values.includePicture)
-        return typed != shown || (values.includePicture && card.newPicture)
+                                          includePicture: values.includePicture, includeFile: values.includeFile)
+        // The file is the wish as it is now, so a link that carries it is always worth sending again.
+        return typed != SidebarWishLinkValues(name: shown.name, line: shown.line, words: shown.words, includePicture: shown.includePicture,
+                                              includeFile: shown.includeFile ?? false)
+            || (values.includePicture && card.newPicture) || values.includeFile
     }
 
     var body: some View {
@@ -1231,9 +1234,11 @@ struct WishLinkPanel: View {
                          stage: card.sending ? .sending : card.problem.map(WishLinkCard.Stage.failed) ?? .editing,
                          copied: card.copied && !changed,
                          retake: card.canRetake ? { link.send(.wishLink(.retake)) } : nil, retaking: card.retaking,
+                         canIncludeFile: card.canIncludeFile ?? false,
                          share: {
                              link.send(.wishLink(.share(SidebarWishLinkValues(name: values.name, line: values.line, words: values.words,
-                                                                               includePicture: values.includePicture))))
+                                                                               includePicture: values.includePicture,
+                                                                               includeFile: values.includeFile))))
                          },
                          copy: { link.send(.wishLink(.copy)) }, stop: { link.send(.wishLink(.stop)) },
                          close: { link.send(.wishLink(.close)) }, width: nil)

@@ -737,6 +737,8 @@ public struct SidebarWishLink: Codable, Equatable {
     public var line: String
     public var words: String
     public var includePicture: Bool
+    public var includeFile: Bool?
+    public var canIncludeFile: Bool?
     public var revision: Int
     /// The picture, small enough to send with the chat, and the icon.
     public var picture: Data?
@@ -752,13 +754,16 @@ public struct SidebarWishLink: Codable, Equatable {
     public var retaking: Bool
     public var limits: [Int]
 
-    public init(name: String, line: String, words: String, includePicture: Bool, revision: Int, picture: Data?, icon: Data?,
+    public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false, canIncludeFile: Bool = false,
+                revision: Int, picture: Data?, icon: Data?,
                 link: String?, shown: SidebarWishLinkValues?, newPicture: Bool, sending: Bool, problem: String?, copied: Bool,
                 canRetake: Bool, retaking: Bool, limits: [Int]) {
         self.name = name
         self.line = line
         self.words = words
         self.includePicture = includePicture
+        self.includeFile = includeFile
+        self.canIncludeFile = canIncludeFile
         self.revision = revision
         self.picture = picture
         self.icon = icon
@@ -779,12 +784,14 @@ public struct SidebarWishLinkValues: Codable, Equatable {
     public var line: String
     public var words: String
     public var includePicture: Bool
+    public var includeFile: Bool?
 
-    public init(name: String, line: String, words: String, includePicture: Bool) {
+    public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool? = nil) {
         self.name = name
         self.line = line
         self.words = words
         self.includePicture = includePicture
+        self.includeFile = includeFile
     }
 }
 

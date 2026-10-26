@@ -765,6 +765,9 @@ enum Gallery {
         wishLink("Shared, changed since", link: true, changed: true),
         wishLink("Beside the app", link: true, copied: true, width: nil),
         wishLink("Beside the app, new link", width: nil),
+        wishLink("With the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true), canIncludeFile: true),
+        wishLink("Beside the app, with the wish itself", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+                 canIncludeFile: true, width: nil),
     ]
 
     private static let diskMapLine = "Shows where your disk space goes, as rings that fill in while it measures."
@@ -772,7 +775,7 @@ enum Gallery {
 
     private static func wishLink(_ name: String, values: WishLinkCard.Values? = nil, picture: Bool = true, retake: Bool = true,
                                  stage: WishLinkCard.Stage = .editing, link: Bool = false, copied: Bool = false,
-                                 changed: Bool = false, width: CGFloat? = 480) -> Entry {
+                                 changed: Bool = false, canIncludeFile: Bool = false, width: CGFloat? = 480) -> Entry {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
@@ -780,7 +783,7 @@ enum Gallery {
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
-                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false,
+                stage: stage, copied: copied, retake: retake ? {} : nil, retaking: false, canIncludeFile: canIncludeFile,
                 share: {}, copy: {}, stop: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)

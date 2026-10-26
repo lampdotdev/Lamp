@@ -12,12 +12,15 @@ public struct WishLinkCard: View {
         public var line: String
         public var words: String
         public var includePicture: Bool
+        /// The wish itself goes with the link, for anyone with Lamp to open that exact one.
+        public var includeFile: Bool
 
-        public init(name: String, line: String, words: String, includePicture: Bool) {
+        public init(name: String, line: String, words: String, includePicture: Bool, includeFile: Bool = false) {
             self.name = name
             self.line = line
             self.words = words
             self.includePicture = includePicture
+            self.includeFile = includeFile
         }
 
         /// The card can share only a wish with a name and words.
@@ -58,6 +61,8 @@ public struct WishLinkCard: View {
     /// Takes the picture again, while the app is open on this Mac; nil otherwise.
     let retake: (() -> Void)?
     let retaking: Bool
+    /// The wish can go with its link as a file (its kind can be shared as one): the card offers it.
+    let canIncludeFile: Bool
     /// Copy Link the first time, Update Link after a change: shares what's on the card and copies the link.
     let share: () -> Void
     let copy: () -> Void
@@ -67,7 +72,7 @@ public struct WishLinkCard: View {
     let width: CGFloat?
 
     public init(icon: NSImage?, picture: NSImage?, values: Binding<Values>, limits: Limits, link: String?, changed: Bool,
-                stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, share: @escaping () -> Void,
+                stage: Stage, copied: Bool, retake: (() -> Void)?, retaking: Bool, canIncludeFile: Bool = false, share: @escaping () -> Void,
                 copy: @escaping () -> Void, stop: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
         self.icon = icon
         self.picture = picture
@@ -79,6 +84,7 @@ public struct WishLinkCard: View {
         self.copied = copied
         self.retake = retake
         self.retaking = retaking
+        self.canIncludeFile = canIncludeFile
         self.share = share
         self.copy = copy
         self.stop = stop
@@ -98,7 +104,9 @@ public struct WishLinkCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Share a Link to This Wish").font(.title3.bold())
                     // What the person accepts by sharing: who sees it, and that nothing else goes.
-                    Text("Anyone with the link sees what's here, and can make the wish with Lamp. Nothing else leaves your Mac.")
+                    Text(values.includeFile && canIncludeFile
+                         ? "Anyone with the link sees what's here, and anyone with Lamp can open this exact wish: its code and files go too."
+                         : "Anyone with the link sees what's here, and can make the wish with Lamp. Nothing else leaves your Mac.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -123,6 +131,11 @@ public struct WishLinkCard: View {
                     .accessibilityLabel("The wish")
             }
             .disabled(sending)
+            if canIncludeFile {
+                Toggle("Include the wish itself, so people with Lamp get this exact one", isOn: $values.includeFile)
+                    .toggleStyle(.checkbox)
+                    .help("Its code and files go with the link, as when you share the wish as a file. Lamp checks them for keys first. Never your chat or the app's data.")
+            }
             if let link { linkRow(link) }
             if case .failed(let message) = stage {
                 Label {

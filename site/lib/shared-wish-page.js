@@ -67,6 +67,7 @@ export function wishPage(template, wish, { origin }) {
   const card = JSON.stringify({
     id: wish.id, name: wish.name, about: wish.line, wish: wish.words,
     picture: wish.picture?.url ?? "", icon: wish.icon?.url ?? "",
+    ...(wish.file?.url ? { file: wish.file.url, fileSize: wish.file.size } : {}),
   }).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   return head
     .replace("</head>", () => `${previewTags(wish, origin)}</head>`)
