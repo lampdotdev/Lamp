@@ -81,20 +81,13 @@ enum Publish {
 
     // MARK: The page
 
-    /// Where the page's Open in Lamp goes: the wish as a shared file beside the page, its Share Link (only the idea) when
-    /// its kind can't be shared as a file yet (a game), or, with neither, Lamp's own site.
-    enum OpenInLamp: Equatable {
-        case file(String)
-        case link(URL)
-        case lamp
-
-        var href: String {
-            switch self {
-            case .file(let name): name
-            case .link(let url): url.absoluteString
-            case .lamp: "https://lamp.dev"
-            }
-        }
+    /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), which Publish makes when the wish has none:
+    /// that page works for someone without Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it
+    /// with this wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file
+    /// goes beside the page too, when its kind can be shared as one (not a game yet), for the README's download.
+    struct OpenInLamp: Equatable {
+        var link: URL?
+        var file: String?
     }
 
     /// What will go up, staged in a folder of its own, checked.
@@ -107,7 +100,7 @@ enum Publish {
     }
 
     /// Stages the page for `repo` at `url`: refused, with why, when the wish can't leave this Mac.
-    static func stage(_ project: LampProject, url: String) throws -> Staged {
+    static func stage(_ project: LampProject, url: String, link: URL?) throws -> Staged {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
@@ -132,18 +125,16 @@ enum Publish {
         let index = site.appendingPathComponent("index.html")
         guard let html = try? String(contentsOf: index, encoding: .utf8) else { throw Failure(message: "\(project.name) has no page to publish.") }
 
-        // Open in Lamp: the wish itself, as a file Lamp opens, beside the page. Made as any shared file is, so it's held
-        // to the same checks and carries the credits with this wish at the end of the chain. A kind Lamp can't share as a
-        // file yet (a game) goes up without one, and Open in Lamp is its Share Link, if it has one.
-        let open: OpenInLamp
+        // The wish itself, as a file Lamp opens, beside the page, made as any shared file is, so it's held to the same
+        // checks and carries the credits with this wish at the end of the chain. A kind Lamp can't share as a file yet (a
+        // game) goes up without one.
+        var open = OpenInLamp(link: link)
         if project.platform.target.recipe.shareRefusal == nil {
             let fileName = slug(project.name) + ".lampapp"
             let shared = try Sharing.export(project)
             defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
             try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
-            open = .file(fileName)
-        } else {
-            open = WishLink.kept(for: project).map { .link($0.url) } ?? .lamp
+            open.file = fileName
         }
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
@@ -181,10 +172,12 @@ enum Publish {
             parts.append("Based on \(name)" + (source.author.map { " by \(escaped($0))" } ?? ""))
         }
         if !credits.generated.isEmpty { parts.append(escaped(Credits.generatedLine(credits.generated.count))) }
-        switch open {
-        case .file(let name): parts.append("<a href=\"\(escaped(name))\" download>Open in Lamp</a>")
-        case .link(let url): parts.append("<a href=\"\(escaped(url.absoluteString))\" target=\"_blank\" rel=\"noopener\">Make it with Lamp</a>")
-        case .lamp: parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
+        if let link = open.link {
+            parts.append("<a href=\"\(escaped(link.absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
+        } else if let file = open.file {
+            parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
+        } else {
+            parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
         }
         let bar = """
 
@@ -230,15 +223,10 @@ enum Publish {
         if !credits.remixOf.isEmpty {
             text += "Remixed from " + credits.remixOf.map { $0.name + ($0.starter != nil ? " (a Lamp starter)" : "") }.joined(separator: ", then ") + ".\n\n"
         }
-        switch open {
-        case .file(let name):
-            text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev). To change it, download [\(name)](\(name)) and open it with Lamp: "
-                + "it's yours to remix, with the credits above kept.\n\n"
-        case .link(let link):
-            text += "## Make it with Lamp\n\nMade with [Lamp](https://lamp.dev). [Make your own](\(link.absoluteString)) from the same wish.\n\n"
-        case .lamp:
-            text += "Made with [Lamp](https://lamp.dev).\n\n"
-        }
+        text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev)."
+        if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
+        if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
+        text += "\n\n"
         text += "`lamp-game.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
         return text
     }
@@ -263,7 +251,12 @@ enum Publish {
         let git = FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/git") ? "/opt/homebrew/bin/git" : "/usr/bin/git"
         let site = staged.folder
         let identity = ["-c", "user.name=\(login)", "-c", "user.email=\(login)@users.noreply.github.com"]
-        for arguments in [["init", "-q", "-b", "main"], ["add", "-A"], identity + ["commit", "-q", "-m", "Publish \(project.name)"]] {
+        // A try after a failed one finds the page committed already, and pushes that commit again.
+        var committed = false
+        if FileManager.default.fileExists(atPath: site.appendingPathComponent(".git").path) {
+            committed = await Subprocess.run(git, ["rev-parse", "--verify", "-q", "HEAD"], cwd: site, timeout: 10).ok
+        }
+        for arguments in committed ? [] : [["init", "-q", "-b", "main"], ["add", "-A"], identity + ["commit", "-q", "-m", "Publish \(project.name)"]] {
             let ran = await Subprocess.run(git, arguments, cwd: site, timeout: 120)
             guard ran.ok else { throw Failure(message: "Couldn't prepare the page: \(ran.output.trimmed.suffix(200))") }
         }
@@ -356,7 +349,7 @@ enum Publish {
             let repo: String
             if let known = kept?.repo { repo = known } else { repo = await freeName(for: project, login: login, gh: gh) }
             do {
-                let staged = try await Task.detached(priority: .userInitiated) { try Publish.stage(project, url: Publish.pageURL(repo)) }.value
+                let staged = try await Task.detached(priority: .userInitiated) { try Publish.stage(project, url: Publish.pageURL(repo), link: WishLink.kept(for: project)?.url) }.value
                 guard cards[project.id] != nil else {
                     try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                     return
@@ -393,6 +386,16 @@ enum Publish {
         Task {
             do {
                 let id = project.id
+                // Open in Lamp is the wish's Share Link, made now if it has none, and the page is staged again with it.
+                var staged = staged
+                if staged.open.link == nil {
+                    set(project, .publishing("Making its Share Link…"))
+                    let link = try await shareLink(for: project, icon: card.icon)
+                    let again = try await Task.detached(priority: .userInitiated) { try Publish.stage(project, url: Publish.pageURL(repo), link: link) }.value
+                    try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
+                    staged = again
+                    cards[project.id]?.staged = again
+                }
                 let page = try await Publish.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew) { step in
                     Task { @MainActor in PublishCards.shared.cards[id]?.stage = .publishing(step) }
                 }
@@ -407,6 +410,24 @@ enum Publish {
                 set(project, .failed(error.localizedDescription))
             }
         }
+    }
+
+    /// The wish's Share Link, made with what Share Link would start from (its name, line, first request, picture and
+    /// icon) when it has none. The person changes what it shows from Share Link… as for any.
+    private func shareLink(for project: LampProject, icon: Data?) async throws -> URL {
+        if let kept = WishLink.kept(for: project) { return kept.url }
+        let picture = WishLink.picture(of: project)
+        let line = WishLink.line(of: project)
+        let asked = WishLink.firstRequest(of: project, store: Store.shared).trimmed
+        let words = WishLink.Words(name: WishLink.clip(project.name, WishLink.Limit.name), line: line,
+                                   words: WishLink.clip(asked.isEmpty ? line : asked, WishLink.Limit.words),
+                                   picture: picture.map(WishLinkCards.digest))
+        let (jpeg, png) = await Task.detached(priority: .userInitiated) {
+            (picture.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(icon))
+        }.value
+        let shared = try await WishLink.publish(words, picture: jpeg, icon: png, replacing: nil)
+        WishLink.keep(shared, for: project)
+        return shared.url
     }
 
     func fix(_ project: LampProject) {
@@ -452,8 +473,11 @@ enum Publish {
         var notes = ShareCheck.notes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
+        // Where its Open in Lamp goes: the Share Link it has, or the one Publish makes.
+        let link = card.staged?.open.link ?? WishLink.kept(for: project)?.url
+        let openInLamp = link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString } ?? "A new Share Link on lamp.dev"
         return SidebarPublish(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo,
-                              page: card.page?.url, credit: credits.basedOn, notes: notes, size: size, copied: card.copied,
+                              page: card.page?.url, credit: credits.basedOn, openInLamp: openInLamp, notes: notes, size: size, copied: card.copied,
                               republish: card.page != nil, canPublish: card.canPublish)
     }
 }

@@ -31,6 +31,8 @@ public struct PublishCard: View {
     /// The page's address, once it's up (from now or before).
     let page: String?
     let credit: String?
+    /// Where the page's Open in Lamp goes.
+    let openInLamp: String?
     let notes: [String]
     let size: String?
     let copied: Bool
@@ -45,7 +47,7 @@ public struct PublishCard: View {
     let close: () -> Void
     let width: CGFloat?
 
-    public init(icon: NSImage?, name: String, stage: Stage, repo: String?, page: String?, credit: String?, notes: [String],
+    public init(icon: NSImage?, name: String, stage: Stage, repo: String?, page: String?, credit: String?, openInLamp: String?, notes: [String],
                 size: String?, copied: Bool, republish: Bool, canPublish: Bool, publish: @escaping () -> Void, fix: @escaping () -> Void,
                 openPage: @escaping () -> Void, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
         self.icon = icon
@@ -54,6 +56,7 @@ public struct PublishCard: View {
         self.repo = repo
         self.page = page
         self.credit = credit
+        self.openInLamp = openInLamp
         self.notes = notes
         self.size = size
         self.copied = copied
@@ -94,6 +97,7 @@ public struct PublishCard: View {
                     if let repo { row("Goes to", "github.com/" + repo) }
                     if let page { row("Page", page) }
                     if let credit { row("Credit", credit) }
+                    if let openInLamp { row("Open in Lamp", openInLamp) }
                     if let size { row("Files", size) }
                 }
                 ForEach(notes, id: \.self) { note in
@@ -117,7 +121,7 @@ public struct PublishCard: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label).foregroundStyle(.secondary).frame(width: 64, alignment: .leading)
+            Text(label).foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
             Text(value).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
             Spacer(minLength: 0)
         }

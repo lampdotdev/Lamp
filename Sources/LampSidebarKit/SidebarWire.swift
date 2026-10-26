@@ -806,6 +806,8 @@ public struct SidebarPublish: Codable, Equatable {
     public var repo: String?
     public var page: String?
     public var credit: String?
+    /// Where the page's Open in Lamp goes (the wish's Share Link, or the one Publish will make).
+    public var openInLamp: String?
     public var notes: [String]
     public var size: String?
     public var copied: Bool
@@ -813,14 +815,15 @@ public struct SidebarPublish: Codable, Equatable {
     /// Publish can be pressed: it's ready, or a try failed and can be made again.
     public var canPublish: Bool
 
-    public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, notes: [String],
-                size: String?, copied: Bool, republish: Bool, canPublish: Bool) {
+    public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, openInLamp: String?,
+                notes: [String], size: String?, copied: Bool, republish: Bool, canPublish: Bool) {
         self.name = name
         self.icon = icon
         self.stage = stage
         self.repo = repo
         self.page = page
         self.credit = credit
+        self.openInLamp = openInLamp
         self.notes = notes
         self.size = size
         self.copied = copied

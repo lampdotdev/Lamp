@@ -129,7 +129,7 @@ private struct Chat: View {
             if let card = state.publish {
                 ScrollView {
                     PublishCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo,
-                                page: card.page, credit: card.credit, notes: card.notes, size: card.size, copied: card.copied,
+                                page: card.page, credit: card.credit, openInLamp: card.openInLamp, notes: card.notes, size: card.size, copied: card.copied,
                                 republish: card.republish, canPublish: card.canPublish, publish: { link.send(.publish(.publish)) }, fix: { link.send(.publish(.fix)) },
                                 openPage: { link.send(.publish(.openPage)) }, copy: { link.send(.publish(.copy)) },
                                 close: { link.send(.publish(.close)) }, width: nil)
