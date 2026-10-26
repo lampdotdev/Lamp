@@ -23,17 +23,17 @@ enum Sharing {
     /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes. 9: it's an Android app, its
     /// Kotlin, manifest, resources and build file in app/. 10: it may be a wish of several apps, each other app in its
     /// folder (`parts` in the manifest, `Parts`), or a TV app, its web files in Web/ and Phone/ (`TVFiles`).
-    static let formatVersion = 10
+    static let formatVersion = 11
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
     /// app a 6, only one with a share extension a 7 and only one with a 3D scene an 8, so an app with none of them still opens in an older
     /// Lamp, and a Lamp that would build the app without one of them says to update instead. An Android app is a 9
     /// whatever it has: a Lamp from before would look for Swift and find none. A wish of several apps, and a TV app,
-    /// are a 10 the same way: a Lamp from before would open the app at the root alone, or find no code.
+    /// are a 10 the same way: a Lamp from before would open the app at the root alone, or find no code. A game is an 11.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
                        share: Bool = false, scene: Bool = false, parts: Bool = false) -> Int {
-        parts || platform.target.recipe.language == .web ? 10
+        platform.target.recipe.language == .game ? 11 : parts || platform.target.recipe.language == .web ? 10
             : platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.reaches(.ios) || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
@@ -185,6 +185,9 @@ enum Sharing {
         let parts = found.filter { $0.id != root.id }
         for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
+            if app.platform == .game, GameKit.engine(app) != .web {
+                throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share games written in C++.")
+            }
         }
         // Others' work in it goes only with its licence and credit, and work with no licence doesn't go at all.
         let credits = Credits.load(project)
@@ -308,6 +311,9 @@ enum Sharing {
             for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
         case .web:
             let files = TVFiles.list(in: project.dir)
+            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
+        case .game:
+            let files = GameFiles.list(in: project.dir)
             for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
         default:
             for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
@@ -555,7 +561,7 @@ enum Sharing {
                              description: String?, fileCount: Int) throws -> Package {
         let language = platform.target.recipe.language
         let android = language == .kotlin ? AndroidFiles.list(in: folder) : nil
-        let web = language == .web ? TVFiles.list(in: folder) : nil
+        let web = language == .web ? TVFiles.list(in: folder) : language == .game ? GameFiles.list(in: folder) : nil
         let appCode = android?.code ?? web?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
         guard !appCode.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         // A widget's and a share extension's code is read whatever number the file gives itself: the number is
@@ -660,6 +666,8 @@ enum Sharing {
             try AndroidFiles.install(package, into: project)
         } else if package.platform.target.recipe.language == .web {
             try TVFiles.install(package, into: project)
+        } else if package.platform.target.recipe.language == .game {
+            try GameFiles.install(package, into: project)
         } else {
             let sources = project.dir.appendingPathComponent("Sources")
             for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
@@ -1337,6 +1345,12 @@ extension Sharing {
                 add(AndroidFiles.detected(in: app) + (hidesEncodedText(everything) ? [encodedData] : []))
             case .web:
                 add(TVFiles.detected(in: app.sources))
+            case .game:
+                // The page's reach as a TV app's page is read, and the Swift beside it (Native.swift) as any app's.
+                let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+                add(TVFiles.detected(in: app.sources) + checklist.filter { item in
+                    item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { swift.contains($0) }
+                })
             default:
                 add(checklist.filter { item in
                     item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }

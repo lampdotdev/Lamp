@@ -104,3 +104,51 @@ extension Sharing {
         """
     }
 }
+
+/// A three.js game's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as code
+/// and its models, pictures and sounds as data, and the Swift that answers the page's calls of the device
+/// (Sources/Native.swift) as code too. Never Lamp's runtime beside the page (lamp-game.js, lamp.js, three/) or the app
+/// around it, which the Mac that opens the file writes itself (`GameKit.write`), never a hidden file or a link. A C++ game
+/// isn't shared: Lamp makes no new ones (`GameKit.engine(for:)`).
+enum GameFiles {
+    static let native = "Sources/Native.swift"
+
+    /// Lamp's own files in a game's Web/, by their path in the app.
+    static func isLamps(_ relative: String) -> Bool {
+        relative == "\(GameKit.webFolder)/lamp-game.js" || relative == "\(GameKit.webFolder)/lamp.js"
+            || relative.hasPrefix("\(GameKit.webFolder)/three/")
+    }
+
+    static func list(in root: URL) -> (code: [URL], data: [URL]) {
+        let fm = FileManager.default
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
+        var code: [URL] = [], data: [URL] = []
+        if let items = fm.enumerator(at: root.appendingPathComponent(GameKit.webFolder), includingPropertiesForKeys: Array(keys)) {
+            for case let url as URL in items {
+                if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+                let values = try? url.resourceValues(forKeys: keys)
+                guard values?.isRegularFile == true, values?.isSymbolicLink != true, !isLamps(Sharing.relativePath(of: url, in: root)) else { continue }
+                if TVFiles.codeExtensions.contains(url.pathExtension.lowercased()) { code.append(url) } else { data.append(url) }
+            }
+        }
+        let swift = root.appendingPathComponent(native)
+        if let values = try? swift.resourceValues(forKeys: keys), values.isRegularFile == true, values.isSymbolicLink != true { code.append(swift) }
+        return (code, data)
+    }
+
+    /// Puts a shared game's page in place of the game's, and its Native.swift when the file has one, then Lamp's own
+    /// files around them, which make the folder a three.js game.
+    static func install(_ package: Sharing.Package, into project: LampProject) throws {
+        let fm = FileManager.default
+        try? fm.removeItem(at: project.dir.appendingPathComponent(GameKit.webFolder))
+        for file in package.sources + package.webData {
+            let relative = package.path(of: file)
+            guard !relative.contains(".."), relative == native || relative.hasPrefix(GameKit.webFolder + "/"), !isLamps(relative) else { continue }
+            let target = project.dir.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
+        try GameKit.write(for: project)
+    }
+}

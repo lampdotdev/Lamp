@@ -8,8 +8,7 @@ import LampSidebarKit
 /// for its plays.
 ///
 /// What goes up is the game's page (Web/) as the app plays it, with a credit bar over it ("Based on Slop New York by
-/// Mr.doob", and Open in Lamp: the wish as a shared file beside the page, or for a kind Lamp can't share as a file yet,
-/// such as a game, its Share Link), the wish's credits.json, a README saying what
+/// Mr.doob", and Open in Lamp, the wish's Share Link), the wish's credits.json, a README saying what
 /// it is, what it's based on and under which licences, and the shared file itself, made by `Sharing.export` and so held
 /// to the same checks (`ShareCheck`). The page is searched for keys and secrets the same way before anything leaves.
 /// The person sees all of it on the card (`PublishCard`) and confirms before anything goes up.
@@ -83,9 +82,8 @@ enum Publish {
 
     /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), once the person has made one (the card offers
     /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
-    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"), where a file beside
-    /// the page means nothing to a browser without Lamp. With no link, Lamp's site. The wish as a shared file
-    /// goes beside the page too, when its kind can be shared as one (not a game yet), for the README's download.
+    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). With no link, the
+    /// wish as a shared file, which goes beside the page either way, for the README's download: the exact game.
     struct OpenInLamp: Equatable {
         var link: URL?
         var file: String?
@@ -127,16 +125,12 @@ enum Publish {
         guard let html = try? String(contentsOf: index, encoding: .utf8) else { throw Failure(message: "\(project.name) has no page to publish.") }
 
         // The wish itself, as a file Lamp opens, beside the page, made as any shared file is, so it's held to the same
-        // checks and carries the credits with this wish at the end of the chain. A kind Lamp can't share as a file yet (a
-        // game) goes up without one.
-        var open = OpenInLamp(link: link)
-        if project.platform.target.recipe.shareRefusal == nil {
-            let fileName = slug(project.name) + ".lampapp"
-            let shared = try Sharing.export(project)
-            defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
-            try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
-            open.file = fileName
-        }
+        // checks and carries the credits with this wish at the end of the chain.
+        let fileName = slug(project.name) + ".lampapp"
+        let shared = try Sharing.export(project)
+        defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
+        try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
+        let open = OpenInLamp(link: link, file: fileName)
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 
