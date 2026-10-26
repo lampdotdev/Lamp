@@ -12,11 +12,14 @@ final class PhoneSlotsTests: XCTestCase {
           {"bundleIdentifier": "dev.lamp.app.steps.abcde12345", "builtByDeveloper": true, "removable": true},
           {"bundleIdentifier": "dev.lamp.dev.app.timer.abcde12345", "builtByDeveloper": true, "removable": true},
           {"bundleIdentifier": "dev.lamp.app.paid.fghij67890", "builtByDeveloper": true, "removable": true},
+          {"bundleIdentifier": "com.example.tool.abcde12345", "builtByDeveloper": true, "removable": true},
           {"bundleIdentifier": "com.example.store", "builtByDeveloper": false, "removable": true}
         ]}}
         """#
         let team = PhoneSlots.teamApps(PhoneSlots.developerApps(in: Data(listing.utf8)), team: "ABCDE12345")
+        // Lamp's own only: another developer's app of the same team is never offered.
         XCTAssertEqual(team, ["dev.lamp.app.notes.abcde12345", "dev.lamp.app.steps.abcde12345", "dev.lamp.dev.app.timer.abcde12345"])
+        XCTAssertTrue(PhoneSlots.isLampApp("dev.lamp.dev.nice-worktree.app.timer.abcde12345"))
         let now = Date()
         let notes = PhoneSlots.Known(bundleID: "dev.lamp.app.notes.abcde12345", expires: now.addingTimeInterval(5 * 86400))
         let steps = PhoneSlots.Known(bundleID: "dev.lamp.app.steps.abcde12345", expires: now.addingTimeInterval(6 * 86400))

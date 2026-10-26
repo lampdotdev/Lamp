@@ -9402,20 +9402,38 @@ final class Store: ObservableObject {
         guard let line = logs[project.id]?.first(where: { $0.id == id }), let udid = line.retryPhone,
               !line.text.hasPrefix(PhoneSlotLine.done) else { return }
         let other = line.text
-        do {
-            try await Devices.uninstall(other, from: udid)
-        } catch {
-            let failure = error as? PhoneFailure
-            log(project, .error, failure?.message ?? error.localizedDescription)
-            return
+        // The app coming off is held as a turn holds it, so a renewal or install of it can't put it back meanwhile.
+        if let held = projects.first(where: { app in
+            app.id != project.id && (PhoneRenewals.record(for: app).map { $0.bundleID == other && $0.udid == udid } ?? (app.hasIOS && app.deviceBundleID(team: Devices.team) == other))
+        }) {
+            guard begin(held) != nil else {
+                log(project, .status, "\(held.name) is busy just now. Press Take It Off again in a moment.")
+                return
+            }
+            defer { finish(held) }
+            guard await takeOff(other, from: udid, for: project) else { return }
+            // Only the copy on this phone: the same app kept on another phone goes on being renewed there.
+            if PhoneRenewals.record(for: held)?.udid == udid { PhoneRenewals.forget(held) }
+        } else {
+            guard await takeOff(other, from: udid, for: project) else { return }
         }
-        for app in projects where PhoneRenewals.record(for: app)?.bundleID == other { PhoneRenewals.forget(app) }
         if var lines = logs[project.id], let index = lines.firstIndex(where: { $0.id == id }) {
             lines[index].text = PhoneSlotLine.done + other
             logs[project.id] = lines
             saveChat(project)
         }
         await retryPhone(project, udid: udid)
+    }
+
+    /// Uninstalls `bundleID` from the phone for the slot card, saying in `project`'s chat when it couldn't.
+    private func takeOff(_ bundleID: String, from udid: String, for project: LampProject) async -> Bool {
+        do {
+            try await Devices.uninstall(bundleID, from: udid)
+            return true
+        } catch {
+            log(project, .error, (error as? PhoneFailure)?.message ?? error.localizedDescription)
+            return false
+        }
     }
 
     /// Once per app, after it first goes on a phone with a free account's seven-day profile: the card offering to keep it

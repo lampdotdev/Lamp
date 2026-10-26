@@ -16,9 +16,16 @@ enum PhoneSlots {
         return apps.filter { $0["builtByDeveloper"] as? Bool == true }.compactMap { $0["bundleIdentifier"] as? String }
     }
 
-    /// Those signed for `team`: Lamp's apps end in ".<team>", lowercased as bundle ids are.
+    /// Lamp's apps signed for `team`: in a Lamp's own namespace (`isLampApp`), ending in ".<team>", lowercased as bundle
+    /// ids are. Another developer's app of the same team ends the same way, so the namespace is what makes it Lamp's.
     static func teamApps(_ bundleIDs: [String], team: String) -> [String] {
-        bundleIDs.filter { $0.hasSuffix("." + team.lowercased()) }
+        bundleIDs.filter { isLampApp($0) && $0.hasSuffix("." + team.lowercased()) }
+    }
+
+    /// Whether the bundle id is an app any Lamp on this Mac made (`Edition.appBundlePrefix`): the release's "dev.lamp.app.",
+    /// Lamp Dev's "dev.lamp.dev.app.", or an instance's "dev.lamp.dev.<instance>.app.".
+    static func isLampApp(_ bundleID: String) -> Bool {
+        bundleID.range(of: #"^dev\.lamp\.(dev\.([a-z0-9-]+\.)?)?app\."#, options: .regularExpression) != nil
     }
 
     /// One of the person's apps Lamp knows on the phone: its bundle id there, and when its copy runs out.
