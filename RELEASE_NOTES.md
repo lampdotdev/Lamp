@@ -5,6 +5,19 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.22.0
+
+- Put your iPhone apps on your phone with a free Apple account, no paid membership needed. Apple lets such an app open
+  for seven days; Lamp now puts it back every day by itself, so it keeps opening.
+- Check "Keep apps on your phones opening" in Settings → Building (or press Keep It Opening in the chat) and Lamp opens
+  out of sight when you log in and stays running with its window closed, so this happens without you.
+- If an app has stopped opening anyway, Lamp says so in its chat with Retry, under your phone in Settings and in Try On.
+- A free account takes three apps per phone: before a fourth, Lamp asks which of its apps to take off.
+- Lamp tells you, and the agent, what a free account can't do (iCloud, NFC, Siri, Apple's weather, Time Sensitive
+  notifications) before anything is built, and a newly added free account gets the steps to finish setting it up.
+- Move to a paid membership whenever you like: if your team changes, Lamp replaces the old copy on your phone.
+- A file dropped on the desk's bar is attached instead of typed.
+
 ## 0.21.1
 
 - A game for an Xbox Series X or S is made for that console, which draws far more than an Xbox One, and Lamp calls
