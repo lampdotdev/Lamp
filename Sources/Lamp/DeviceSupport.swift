@@ -384,7 +384,7 @@ enum DeviceSupport {
           waiting({ status: m.status, body: m.body });
         };
         bridge = { postMessage: function (m) {
-          return new Promise(function (resolve) { var id = ++askId; asked[id] = resolve; gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body })); });
+          return new Promise(function (resolve) { var id = ++askId; asked[id] = resolve; gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout })); });
         } };
       }
       var preferred = null;
@@ -481,7 +481,7 @@ enum DeviceSupport {
         var done;
         if (bridge) {
           // The TV preview on the Mac answers for Lamp itself.
-          done = bridge.postMessage({ path: path, body: JSON.stringify(body) }).then(function (r) {
+          done = bridge.postMessage({ path: path, body: JSON.stringify(body), timeout: timeout }).then(function (r) {
             var reply = {};
             try { reply = JSON.parse(r.body) || {}; } catch (e) {}
             return { status: r.status, reply: reply };

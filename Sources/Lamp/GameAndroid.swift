@@ -197,8 +197,10 @@ enum GameAndroid {
                 val id = call.optInt("id")
                 val path = call.optString("path")
                 val body = call.optString("body", "{}")
+                // The page's own wait for an answer (a status check's few seconds, a question's minutes).
+                val timeout = call.optInt("timeout", 240_000).coerceIn(1_000, 240_000)
                 thread {
-                    val (status, text) = if (path in routes) post(files, path, body) else 404 to JSONObject().put("error", "Not found").toString()
+                    val (status, text) = if (path in routes) post(files, path, body, timeout) else 404 to JSONObject().put("error", "Not found").toString()
                     val answer = JSONObject().put("id", id).put("status", status).put("body", text).toString()
                     web.post { reply.postMessage(answer) }
                 }
@@ -209,7 +211,8 @@ enum GameAndroid {
 
         /** Plain HTTP on the Mac's own network, on a socket, as the Kotlin building blocks speak it: each way to the Mac
          *  Lamp wrote down in turn, and all of them once more after a moment, in case Lamp is just starting. */
-        private fun post(files: File, path: String, body: String): Pair<Int, String> {
+        private fun post(files: File, path: String, body: String, timeout: Int): Pair<Int, String> {
+            val deadline = System.currentTimeMillis() + timeout
             val install = try { JSONObject(File(files, "lamp-install.json").readText()) } catch (e: Exception) {
                 return failure("This copy of the app wasn't opened from Lamp, so it can't use AI. Open it from Lamp on your Mac.")
             }
@@ -219,22 +222,24 @@ enum GameAndroid {
             for (attempt in 0 until 2) {
                 for (i in 0 until list.length()) {
                     val route = list.optJSONObject(i) ?: continue
+                    val left = (deadline - System.currentTimeMillis()).toInt()
+                    if (left <= 0) break
                     try {
-                        return exchange(route, path, token, bytes)
+                        return exchange(route, path, token, bytes, left)
                     } catch (e: Exception) {
                         continue
                     }
                 }
-                if (attempt == 0) Thread.sleep(3000)
+                if (attempt == 0 && deadline - System.currentTimeMillis() > 3000) Thread.sleep(3000) else break
             }
             return failure(if (install.optBoolean("device")) "Couldn't reach Lamp on your Mac. Keep this device on the same Wi‑Fi as the Mac, with Lamp open, and try again."
                            else "Couldn't reach Lamp. Open Lamp on your Mac and try again.")
         }
 
-        private fun exchange(route: JSONObject, path: String, token: String, body: ByteArray): Pair<Int, String> {
+        private fun exchange(route: JSONObject, path: String, token: String, body: ByteArray, timeout: Int): Pair<Int, String> {
             Socket().use { socket ->
-                socket.connect(InetSocketAddress(route.getString("address"), route.getInt("port")), 4000)
-                socket.soTimeout = 240_000
+                socket.connect(InetSocketAddress(route.getString("address"), route.getInt("port")), minOf(4000, timeout))
+                socket.soTimeout = timeout
                 val head = "POST $path HTTP/1.1\r\nHost: ${route.getString("host")}\r\nAuthorization: Bearer $token\r\n" +
                     "Content-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
                 socket.getOutputStream().apply { write(head.toByteArray()); write(body); flush() }
