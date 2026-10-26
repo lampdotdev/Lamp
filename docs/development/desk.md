@@ -12,7 +12,11 @@ Trash does (`WishDrag`). Everything someone makes with Lamp is a **wish** in wha
 be made of an app, a widget, a menu bar item, a watch app, so "app" stays where it means that piece. A wish is
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
-setup checks as anything typed in a chat. A click on a wish (or Return, or Open on its menu) opens it to use and
+setup checks as anything typed in a chat. Its chat doesn't pop up out of nowhere: the bar lifts off the desk and
+grows into the chat's window, lit in the colours of the smoke an app being changed shows (`LampTransition.Look.hues`),
+with a few sparks rising off it, and the chat fades in where it lands (`WishArrival`, drawn in a window of its own
+over the desk, so the chat is laid out once, at its real size). Where the person asked for less motion it opens at
+once. A click on a wish (or Return, or Open on its menu) opens it to use and
 change at once (`Store.open(fromDesk:)`), always with its chat beside whatever shows it: a Mac app with windows opens with
 its chat beside it (`Store.change`, below; a notification's click goes the same way, `Store.openChat`); a wish that opens
 no Mac window is used (`Store.use`) with its chat in Lamp's panel, beside the simulator, the emulator or Lamp's preview

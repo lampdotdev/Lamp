@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 
 /// A wish made on the desk doesn't pop its chat up out of nowhere: the bar it was typed in lifts off the desk and
-/// grows into the chat's window, lit in the colours of the smoke an app being changed shows, with a few sparks rising off it, and the chat
-/// fades in where it lands. Drawn in a window of its own over the desk, so the chat itself is laid out once, at its
-/// real size, rather than at every step of the way.
+/// grows into the chat's window, lit in the colours of the smoke an app being changed shows, with a few sparks rising
+/// off it, and the chat fades in where it lands. Drawn in a window of its own over the desk, so the chat itself is
+/// laid out once, at its real size, rather than at every step of the way.
 @MainActor
 enum WishArrival {
     /// Where a wish was just typed (the desk's bar, on screen) and what was typed, for the chat that opens for it.
