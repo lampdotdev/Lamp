@@ -313,7 +313,8 @@ struct WishDesk: View {
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, url.isFileURL else { return }
+                    // Files only: a folder would show as attached, but only files go with the wish.
+                    guard let url, url.isFileURL, (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return }
                     Task { @MainActor in if !store.deskAttachments.contains(url) { store.deskAttachments.append(url) } }
                 }
             }
