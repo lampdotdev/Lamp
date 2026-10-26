@@ -169,7 +169,13 @@ made of the package (a compile error) needs nothing more. `stop` ends the app wh
 `home` when there's no `stop`, or the device refuses it), and for a wrapped package it also ends the copy on the device
 before an update goes over it, with the values of the copy that's there. `type` types into a keyboard on the device's
 screen, run once per character with `{text}` that character (a Roku's `/keypress/Lit_{text}`). `log` reads a log the app keeps on the device (a file) for the
-builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted.
+builder, for a device with no log to stream. `remove` takes the app off the device when its wish is deleted. With `app`,
+each of `stop`, `remove` and `type` is there or named in `"lacks": ["type"]` when the device has no way to do it, so
+Lamp can tell one forgotten from one that can't be; and every picture the scaffold names is in `files` or `icons`, and
+`rules` names each library in `support`. `known` is Lamp's: once the device is set up, the person can have Lamp try the
+integration on it (a test app put on, opened, pictured, pressed, typed into, stopped, put on again while open, and taken
+off), and a run that passes marks the bridge with the device's model. What the run found comes back to you with the
+next request in the device's setup conversation: fix the integration from the device's own words and send it again.
 
 ```json
 "bridge": {

@@ -178,6 +178,15 @@ struct Integration: Codable, Hashable {
         var type: [IntegrationAction]?
         /// Lamp's names for a remote's keys ("home", "up", "select", "back") to the device's own.
         var keys: [String: String]?
+        /// What the device has no way to do, of `stop`, `remove` and `type`, said outright: an app kind's bridge has each
+        /// or lacks it, so a forgotten one is told apart from one the device can't do (`IntegrationCheck.lifecycle`).
+        var lacks: [String]?
+        /// How Lamp knows the bridge works: set by Lamp alone, once a test run passed on a device (`IntegrationProbe`),
+        /// with that device's model and version; kept while the bridge is unchanged.
+        var known: Known?
+
+        /// The bridge without Lamp's mark, to tell whether it changed.
+        var unmarked: Bridge { var bridge = self; bridge.known = nil; return bridge }
     }
 
     /// What's built for it: a kind Lamp owns, or one the integration declares.
@@ -483,7 +492,8 @@ enum IntegrationCheck {
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
-                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map]),
+                               "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
+                               "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
             "kinds": .map, "certificateRoot": .leaf,
         ])
@@ -683,6 +693,61 @@ enum IntegrationCheck {
             say("certificateRoot is the path the device serves its root certificate at, over HTTPS on the port the bridge uses: \"/config/rootcertificate\".")
         }
         for source in integration.sources ?? [] where !isWebPage(source) { say("sources: \"\(source)\" isn't an https page.") }
+        if submitted {
+            if integration.bridge?.known != nil { say("bridge.known is Lamp's: it marks the bridge once a test run passes on a device. Leave it out.") }
+            problems += lifecycle(integration)
+        }
+        return problems
+    }
+
+    static let lackable: Set<String> = ["stop", "remove", "type"]
+
+    /// What an integration that makes apps must have for its apps to live on the device as people expect: ended by
+    /// Stop, taken off when their wish is deleted, typed into, with the pictures its scaffold names drawn and its
+    /// building blocks named in its rules. Asked of every integration the builder hands Lamp, and of the ones Lamp
+    /// ships (their test); not of one kept before this was asked, which would otherwise vanish from the person's Lamp.
+    static func lifecycle(_ integration: Integration) -> [String] {
+        guard let declared = integration.app?.declared else { return [] }
+        var problems: [String] = []
+        func say(_ text: String) { problems.append(text) }
+        let bridge = integration.bridge
+        let lacks = Set(bridge?.lacks ?? [])
+        for name in lacks.subtracting(lackable).sorted() { say("bridge.lacks: \"\(name)\" isn't one Lamp asks about; it's for \"stop\", \"remove\" and \"type\".") }
+        let has: [String: Bool] = ["stop": bridge?.stop?.isEmpty == false, "remove": bridge?.remove?.isEmpty == false, "type": bridge?.type?.isEmpty == false]
+        for name in lacks.intersection(lackable).sorted() where has[name] == true { say("bridge.lacks says the device can't \(name), but bridge.\(name) is there: keep one.") }
+        if has["stop"] == false, !lacks.contains("stop") {
+            say("bridge.stop ends the app when the person presses Stop (an exit request, or the device's own way to close it). Write it, or put \"stop\" in bridge.lacks if the device has none; Lamp then presses home.")
+        }
+        if has["remove"] == false, !lacks.contains("remove") {
+            say("bridge.remove takes the app off the device when its wish is deleted. Write it, or put \"remove\" in bridge.lacks if the device has no way.")
+        }
+        if has["type"] == false, !lacks.contains("type"), !(bridge?.keys ?? [:]).isEmpty {
+            say("bridge.type types into the device's on-screen keyboard, a character at a time with {text}. Write it, or put \"type\" in bridge.lacks if the device can't take typed text.")
+        }
+        // Every picture the scaffold names is in it or drawn by Lamp: one named and never written leaves the device
+        // showing nothing in its place, as a Roku's tile was.
+        let drawn = Set((declared.icons ?? [:]).keys), written = Set(declared.files.keys)
+        let pattern = try! NSRegularExpression(pattern: #"[A-Za-z0-9_./-]+\.(?:png|jpg|jpeg)\b"#)
+        var named: Set<String> = []
+        for text in declared.files.values {
+            for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard let range = Range(match.range, in: text) else { continue }
+                var path = String(text[range])
+                for prefix in ["pkg:/", "./", "/"] where path.hasPrefix(prefix) { path.removeFirst(prefix.count) }
+                if isAppPath(path) { named.insert(path) }
+            }
+        }
+        for path in named.subtracting(drawn).subtracting(written).sorted() {
+            say("app.declared.files names \(path), which nothing writes: list it in app.declared.icons with its size so Lamp draws the app's icon there, or don't name it.")
+        }
+        // The rules are the builder's only guide: Lamp's blocks they don't mention go unused, and the device's own
+        // way gets written instead (a Roku app saving with roRegistrySection beside LampStore).
+        for (library, path) in (declared.support ?? [:]).sorted(by: { $0.key < $1.key }) {
+            let last = (path as NSString).lastPathComponent
+            if !declared.rules.contains(path), !declared.rules.contains(last) {
+                say("app.declared.rules don't mention \(path), Lamp's \(library) library: say where it is and that the app uses it.")
+            }
+        }
         return problems
     }
 

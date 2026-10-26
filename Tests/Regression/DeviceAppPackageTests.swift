@@ -12,7 +12,22 @@ final class DeviceAppPackageTests: XCTestCase {
         for file in files {
             let data = try Data(contentsOf: file)
             XCTAssertEqual(IntegrationCheck.unknownKeys(data) + IntegrationCheck.problems(data, submitted: false), [], file.lastPathComponent)
+            // And the whole lifecycle a builder's integration is held to.
+            XCTAssertEqual(IntegrationCheck.lifecycle(try JSONDecoder().decode(Integration.self, from: data)), [], file.lastPathComponent)
         }
+    }
+
+    /// A builder's integration that makes apps says how they're stopped, removed and typed into, or that the device can't.
+    func testAnAppKindsLifecycleIsWholeOrSaidToBeMissing() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Devices/roku.json")
+        var roku = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: file))
+        roku.bridge?.stop = nil
+        XCTAssertTrue(IntegrationCheck.lifecycle(roku).contains { $0.hasPrefix("bridge.stop") })
+        roku.bridge?.lacks = ["stop"]
+        XCTAssertEqual(IntegrationCheck.lifecycle(roku), [])
+        roku.app?.declared?.icons = nil
+        XCTAssertTrue(IntegrationCheck.lifecycle(roku).contains { $0.contains("images/icon_focus_hd.png") })
     }
 
     /// Windows names a package by a short id of its publisher; the bridge launches it by that name.

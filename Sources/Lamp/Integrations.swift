@@ -59,6 +59,8 @@ enum Integrations {
             step.known = Integration.Known(how: .read, source: source)
             integration.steps[index] = step
         }
+        // A test run's mark stays with a bridge that hasn't changed.
+        if let known = before?.bridge?.known, before?.bridge?.unmarked == integration.bridge?.unmarked { integration.bridge?.known = known }
         write(integration)
         return (integration, [])
     }

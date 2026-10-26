@@ -18,7 +18,17 @@ a body, never a path or a command, and a command's values are quoted for the she
 folder (`Integrations.folder`), beside those Lamp ships in `Resources/Devices` (the Xbox's and the Roku's), which win over a written one with the same id, and whose id `device_integration` refuses.
 The model can only say a step was read (`known.how` "read", with its source); Lamp marks it Checked by Lamp or Worked
 before (`Integrations.mark`: done by hand or not, by whether it needed hands on the device) once its check passes on a device, with that
-device's model and version, and keeps the mark while the step's text is unchanged.
+device's model and version, and keeps the mark while the step's text is unchanged. An integration the builder sends with an
+`app` is held to a whole lifecycle (`IntegrationCheck.lifecycle`): `stop`, `remove` and `type` each there or named in
+`bridge.lacks`, every picture its scaffold names written or drawn (`icons`), and each `support` library named in its
+rules; one kept before this was asked is still read, and Lamp's shipped ones pass it (their test). Once a device is set
+up, its setup window offers a test run (`IntegrationProbe`, `DeviceTrialCard`): the integration's own scaffold made in
+Lamp's `Probes/` folder and taken through Lamp's own ways with an app (`DeviceApps.install`, `picture`, `press` on the
+arrows and select only, `type`, `stop`, an install over the open copy, and `DeviceApps.remove`), holding the device as
+an install does, stopping at the first stage that fails and taking the app off again. Its report goes with the next
+request of the device's setup conversation (`Agent.deviceSetupNote`), whatever the engine, and a run that passes marks
+the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while the bridge is unchanged, never written
+to a shipped integration).
 
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
 `DeviceHTTP` (only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses (`DeviceAddress.thisMac`), so
