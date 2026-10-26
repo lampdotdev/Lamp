@@ -619,8 +619,8 @@ enum IntegrationCheck {
                 say("bridge.keys[\(key)] must map a lowercase name to the device's name for the key, in letters and digits.")
             }
             if bridge.logs?.contains(where: { $0.stream == nil }) == true { say("bridge.logs is a stream, and nothing else.") }
-            if let type = bridge.type, !type.contains(where: { $0.http.map { Placeholders.names(in: $0.path + ($0.body ?? "")).contains("text") } ?? false }) {
-                say("bridge.type must send {text}, the character it types, in a request's path or body.")
+            if let type = bridge.type, !type.contains(where: { $0.http.map { Placeholders.names(in: ([$0.path, $0.body ?? ""] + ($0.form ?? [:]).values).joined()).contains("text") } ?? false }) {
+                say("bridge.type must send {text}, the character it types, in a request's path, form or body.")
             }
         }
 

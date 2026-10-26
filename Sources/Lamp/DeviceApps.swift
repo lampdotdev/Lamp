@@ -317,13 +317,15 @@ enum DeviceApps {
         _ = try await IntegrationRunner(integration: integration, device: device).run(use, extra: values(project).merging(["key": name]) { $1 })
     }
 
-    /// Types text on the device's screen through the bridge's `type`, a character at a time.
-    static func type(_ text: String, in project: LampProject, on device: Device) async throws {
+    /// Types text on the device's screen through the bridge's `type`, a character at a time, while `stillWanted` says
+    /// the app is still the one there and the turn still running.
+    static func type(_ text: String, in project: LampProject, on device: Device, stillWanted: @MainActor () -> Bool) async throws {
         guard let integration = integration(for: project), let type = integration.bridge?.type, !type.isEmpty else {
             throw Failure(message: "Lamp can't type on the \(device.name): its integration doesn't say how.")
         }
         let runner = IntegrationRunner(integration: integration, device: device)
         for character in text {
+            guard await stillWanted() else { throw Failure(message: "Stopped.") }
             _ = try await runner.run(type, extra: values(project).merging(["text": String(character)]) { $1 })
         }
     }
@@ -357,6 +359,16 @@ enum DeviceApps {
         if !pending { try? Data(project.id.utf8).write(to: lastOnDevice(device.id), options: .atomic) }
     }
 
+    /// The devices an app is going on or coming off now: one at a time on each, since an install replaces what's there.
+    @MainActor private static var busy: Set<String> = []
+
+    @MainActor static func take(_ id: String) async {
+        while busy.contains(id) { try? await Task.sleep(for: .milliseconds(300)) }
+        busy.insert(id)
+    }
+
+    @MainActor static func release(_ id: String) { busy.remove(id) }
+
     /// Where Lamp notes which app it last put on a device: a Roku has one developer channel, which each install replaces.
     private static func lastOnDevice(_ id: String) -> URL {
         Edition.supportFolder.appendingPathComponent("Device Builds").appendingPathComponent("last-\(MSIX.publisherID(id)).txt")
@@ -381,6 +393,9 @@ enum DeviceApps {
         for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix("installed-") && name.hasSuffix(".device") {
             guard let id = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8),
                   let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) else { continue }
+            // Never while an install is putting another app there: its ownership is checked and the copy removed in one go.
+            await take(id)
+            defer { release(id) }
             let runner = IntegrationRunner(integration: integration, device: device)
             // A package that isn't wrapped has no names of its own: the device keeps one copy (a Roku's developer channel).
             guard integration.app?.declared?.wrap != nil else {
