@@ -595,6 +595,8 @@ enum Sharing {
         var family: DeviceFamily?
         /// The folder the file had it in, which it's made in when that's a folder for its kind. Nil from before it was kept.
         var folder: String?
+        /// The licence texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
+        var licences: [String]?
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
@@ -604,7 +606,8 @@ enum Sharing {
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
-        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder))
+        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder,
+                                                    licences: part.package.licences.map { relativePath(of: $0, in: part.package.folder) }))
         try note.write(to: folder.appendingPathComponent("lamp-part.json"))
     }
 
@@ -617,7 +620,10 @@ enum Sharing {
               let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
                                       identity: nil, description: nil, fileCount: 0) else { return nil }
         let folder = note.folder.flatMap { Parts.folder($0, canHold: note.platform) ? $0 : nil } ?? Parts.folder(for: note.platform)
-        return Package.Part(folder: folder, package: package)
+        var app = package
+        app.licences = (note.licences ?? []).filter(Credits.isLicenceFile).map { kept.appendingPathComponent($0) }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map { $0.isRegularFile == true && $0.isSymbolicLink != true } == true }
+        return Package.Part(folder: folder, package: app)
     }
 
     /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
