@@ -1350,11 +1350,12 @@ extension TVTemplate {
             var ownOpen = false;
             for (id in open) if (appOf(id) === mine) ownOpen = true;
             if (ownOpen && !copiesSeen) { copiesSeen = true; keep(); setTimeout(lookAgain, 0); }
-            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open.
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // long as none ever was; once one has been, not reaching it is said as for any other app.
             var none = true;
             for (id in open) none = false;
             if (started) {
-              var s = (alone || (roster.length === 1 && none)) ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
+              var s = (alone || (roster.length === 1 && none && !copiesSeen)) ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
               if (s === 'connected') away = false;
               if (s !== state || reason !== null) setState(s);
             }

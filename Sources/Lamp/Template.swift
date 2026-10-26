@@ -14877,8 +14877,9 @@ enum Template {
                 keep()
                 DispatchQueue.main.async { MainActor.assumeIsolated { self.lookAgain() } }
             }
-            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open.
-            let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty)) ? .alone
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // long as none ever was; once one has been, not reaching it is said as for any other app.
+            let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty && !copiesSeen)) ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected
                 : localNetworkDenied ? .localNetworkDenied : lampAway ? .away : .connecting
             // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find

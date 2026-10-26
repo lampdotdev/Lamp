@@ -1430,8 +1430,9 @@ extension Template {
             }
             val next = when {
                 closed -> State.ENDED
-                // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open.
-                alone || (roster.size == 1 && open.isEmpty()) -> State.ALONE
+                // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+                // long as none ever was; once one has been, not reaching it is said as for any other app.
+                alone || (roster.size == 1 && open.isEmpty() && !copiesSeen) -> State.ALONE
                 relayIn || directs.values.any { it.ready } -> State.CONNECTED
                 lampAway -> State.AWAY
                 else -> State.CONNECTING
