@@ -259,11 +259,14 @@ enum Devices {
     /// profile runs out. Throws a `PhoneFailure` the person can act on, or why the copy couldn't be signed.
     static func renew(_ project: LampProject, record: PhoneRenewals.Record) async throws -> Date {
         let app = PhoneRenewals.keptApp(for: project)
-        guard FileManager.default.fileExists(atPath: app.path) else { throw Failure(message: "Lamp no longer has the copy that's on the phone. Press Play to put the app there again.") }
+        let signing = PhoneRenewals.keptSigning(for: project)
+        guard FileManager.default.fileExists(atPath: app.path), FileManager.default.fileExists(atPath: signing.path) else {
+            throw Failure(message: "Lamp no longer has the copy that's on the phone. Press Play to put the app there again.")
+        }
         var output: [String] = []
         let plan: TeamSigning.Plan, planDir: URL
         do {
-            (plan, planDir) = try await TeamSigning.plan(for: project, team: record.team, place: .iphone, destination: "id=\(record.udid)", renew: true) { output.append($0) }
+            (plan, planDir) = try await TeamSigning.plan(for: project, team: record.team, place: .iphone, destination: "id=\(record.udid)", renewing: signing) { output.append($0) }
         } catch {
             throw PhoneFailure(stage: .build, output: output.joined(separator: "\n") + "\n" + error.localizedDescription)
         }

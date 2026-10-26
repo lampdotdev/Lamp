@@ -42,11 +42,16 @@ enum PhoneRenewals {
     /// Whether the person is to be told the app on their phone stopped opening: it ran out and hasn't been told yet.
     static func shouldTell(_ record: Record, now: Date) -> Bool { record.expires < now && record.told != record.expires }
 
+    /// Whether `project`'s copy on its phone has stopped opening.
+    static func hasExpired(_ project: LampProject, now: Date = Date()) -> Bool { (record(for: project)?.expires).map { $0 < now } ?? false }
+
     // MARK: Kept on disk
 
     static func folder(for project: LampProject) -> URL { Devices.signingFolder(for: project).appendingPathComponent("OnPhone") }
     static func recordURL(for project: LampProject) -> URL { folder(for: project).appendingPathComponent("record.json") }
     static func keptApp(for project: LampProject) -> URL { folder(for: project).appendingPathComponent("App.app") }
+    /// The project Lamp signed the kept copy from (`TeamSigning.snapshot`).
+    static func keptSigning(for project: LampProject) -> URL { folder(for: project).appendingPathComponent("Signing") }
 
     static func record(for project: LampProject) -> Record? {
         (try? Data(contentsOf: recordURL(for: project))).flatMap { try? JSONDecoder().decode(Record.self, from: $0) }
@@ -63,7 +68,8 @@ enum PhoneRenewals {
         guard let expires = await TeamSigning.expiry(of: app.appendingPathComponent("embedded.mobileprovision")) else { return }
         try? fm.createDirectory(at: folder(for: project), withIntermediateDirectories: true)
         try? fm.removeItem(at: keptApp(for: project))
-        guard (try? fm.moveItem(at: app, to: keptApp(for: project))) != nil else { return }
+        guard (try? TeamSigning.snapshot(for: project, place: .iphone, to: keptSigning(for: project))) != nil,
+              (try? fm.moveItem(at: app, to: keptApp(for: project))) != nil else { return }
         save(Record(udid: udid, bundleID: project.deviceBundleID(team: team), team: team, expires: expires), for: project)
     }
 

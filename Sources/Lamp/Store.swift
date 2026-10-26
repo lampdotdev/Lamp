@@ -8178,8 +8178,12 @@ final class Store: ObservableObject {
 
     /// Retry the phone operation alone: an account or device problem is never sent to the coding agent.
     func retryPhone(_ project: LampProject, udid: String) async {
-        guard let current = projects.first(where: { $0.id == project.id }), current.device == udid,
-              let owner = begin(current) else { return }
+        guard let current = projects.first(where: { $0.id == project.id }) else { return }
+        // A renewal that didn't work: the kept copy goes back on the phone it's on, wherever Try On points now.
+        if let record = PhoneRenewals.record(for: current), record.udid == udid, current.device != udid || PhoneRenewals.hasExpired(current) {
+            return await renewPhoneApp(current, retried: true)
+        }
+        guard current.device == udid, let owner = begin(current) else { return }
         defer { finish(current) }
         _ = await installOnDevice(current, owner: owner, udid: udid)
     }
@@ -9367,37 +9371,48 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Puts each app back on the person's phone whose profile runs out soon (`PhoneRenewals`), one at a time and never
-    /// while a turn has the app, without opening it or saying anything while it works. The person hears of it only when
-    /// the app has stopped opening and Lamp couldn't put it back: in its chat, with Retry, and in a notification.
+    /// Puts each app back on the person's phone whose profile runs out soon (`PhoneRenewals`), one at a time, without
+    /// opening it or saying anything while it works. The person hears of it only when the app has stopped opening and
+    /// Lamp couldn't put it back: in its chat, with Retry, and in a notification.
     func renewPhoneApps() async {
         guard !renewingPhoneApps else { return }
         renewingPhoneApps = true
         defer { renewingPhoneApps = false }
         for project in projects where project.hasIOS {
-            guard var record = PhoneRenewals.record(for: project), PhoneRenewals.isDue(record, now: Date()),
-                  turns[project.id] == nil else { continue }
-            do {
-                record.expires = try await Devices.renew(project, record: record)
-                record.failedAt = nil
-                record.failure = nil
-                record.told = nil
-                PhoneRenewals.save(record, for: project)
-            } catch {
-                let failure = error as? PhoneFailure
-                record.failedAt = Date()
-                record.failure = failure?.cause.rawValue
-                if PhoneRenewals.shouldTell(record, now: Date()), exists(project) {
-                    record.told = record.expires
-                    let name = devices.first { $0.udid == record.udid }?.name ?? "your phone"
-                    let message = "\(project.name) on \(name) stopped opening: Apple lets an app signed with your account open for a limited time, and Lamp couldn't put it back. "
-                        + (failure?.message ?? error.localizedDescription)
-                    if let output = failure?.output, !output.isEmpty { log(project, .detail, output) }
-                    log(project, .error, message, retryPhone: record.udid)
-                    Notifier.shared.post(for: project, subtitle: "Stopped opening on \(name)", body: message)
-                }
-                PhoneRenewals.save(record, for: project)
+            guard let record = PhoneRenewals.record(for: project), PhoneRenewals.isDue(record, now: Date()) else { continue }
+            await renewPhoneApp(project, retried: false)
+        }
+    }
+
+    /// Puts `project`'s kept copy back on the phone it's on. It holds the app as a turn does, so a request or Play
+    /// waits for it rather than signing or installing over it, and an app a turn has is left for the next pass. `retried`:
+    /// the person pressed Retry, so a failure is said again.
+    private func renewPhoneApp(_ project: LampProject, retried: Bool) async {
+        guard begin(project) != nil else { return }
+        defer { finish(project) }
+        // Read now that Lamp holds the app: an install just before may have kept a newer copy.
+        guard var record = PhoneRenewals.record(for: project) else { return }
+        do {
+            record.expires = try await Devices.renew(project, record: record)
+            record.failedAt = nil
+            record.failure = nil
+            record.told = nil
+            PhoneRenewals.save(record, for: project)
+            if retried { log(project, .status, "\(project.name) is back on \(devices.first { $0.udid == record.udid }?.name ?? "your phone")") }
+        } catch {
+            let failure = error as? PhoneFailure
+            record.failedAt = Date()
+            record.failure = failure?.cause.rawValue
+            if (retried || PhoneRenewals.shouldTell(record, now: Date())), exists(project) {
+                record.told = record.expires
+                let name = devices.first { $0.udid == record.udid }?.name ?? "your phone"
+                let message = "\(project.name) on \(name) stopped opening: Apple lets an app signed with your account open for a limited time, and Lamp couldn't put it back. "
+                    + (failure?.message ?? error.localizedDescription)
+                if let output = failure?.output, !output.isEmpty { log(project, .detail, output) }
+                log(project, .error, message, retryPhone: record.udid)
+                if !retried { Notifier.shared.post(for: project, subtitle: "Stopped opening on \(name)", body: message) }
             }
+            PhoneRenewals.save(record, for: project)
         }
     }
 
