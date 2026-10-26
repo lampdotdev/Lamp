@@ -2331,8 +2331,12 @@ final class Store: ObservableObject {
     /// The last look on the network was refused by macOS: Lamp isn't allowed on the local network, or the person hasn't
     /// answered yet. Where a look was asked for, a line says so with the way to allow it.
     @Published private(set) var localNetworkRefused = false
-    /// A look on the network has been made since Lamp opened: before one, the TVs and devices are as kept, not found.
+    /// A look on the network has been made since Lamp opened, and what it found is in `devices`: before one, the TVs
+    /// and devices are as kept, not found.
     private var lookedOnNetwork = false
+    /// A look on the network is going on now, or is to follow the one going on.
+    private var lookingOnNetwork: Bool { (lookingForDevices && lookIsOnNetwork) || lookAgain == true }
+    private var lookIsOnNetwork = false
     /// Privacy & Security, where the person chooses Local Network and allows Lamp: System Settings has no link to
     /// Local Network's own page.
     static let localNetworkSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
@@ -2345,6 +2349,7 @@ final class Store: ObservableObject {
     func refreshDevices(network: Bool = true) {
         guard !lookingForDevices else { lookAgain = (lookAgain ?? false) || network; return }
         lookingForDevices = true
+        lookIsOnNetwork = network
         Task {
             async let apple = Devices.list()
             async let android = Adb.devices()
@@ -2353,7 +2358,6 @@ final class Store: ObservableObject {
                 // What answers on the network: one search, which the TVs and the integrations share.
                 let scan = await Integrations.Scan.now()
                 localNetworkRefused = scan.refused
-                lookedOnNetwork = true
                 async let tvs = TVs.devices(answers: scan.answers)
                 async let integrated = Integrations.devices(scan: scan)
                 let kits = await apple + android + tvs
@@ -2365,6 +2369,7 @@ final class Store: ObservableObject {
                 found = await apple + android + networkDevicesAsLeft()
             }
             if found != devices { devices = found }
+            if network { lookedOnNetwork = true }
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
@@ -3474,10 +3479,11 @@ final class Store: ObservableObject {
                 }
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
-            // A wish that opens on a TV or a device is told whether Lamp finds it there (`DeviceNote`), which only a look
-            // on the network can say: Lamp opens without one, so the first request to such a wish makes it.
-            if !lookedOnNetwork, project.openPlaces.contains(where: { $0 == .tv || $0 == .device }) {
-                refreshDevices()
+            // A wish that opens on a TV or a device, or has a part that does (a screen or a game beside its Mac app), is
+            // told whether Lamp finds it there (`DeviceNote`), which only a look on the network can say: Lamp opens
+            // without one, so the first request to such a wish makes it, or waits for the one going on.
+            if !lookedOnNetwork, ([project] + parts(of: project)).contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
+                if !lookingOnNetwork { refreshDevices() }
                 await waitForLook(seconds: 8)
             }
             var worked = false
