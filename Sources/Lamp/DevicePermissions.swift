@@ -8,8 +8,10 @@ enum DevicePermissions {
     struct Kept: Codable, Equatable {
         var always: [String] = []
         var once: String?
-        /// Each device's address (or `.local` name), from the card that asked about it: what a command may reach once
-        /// the device is allowed.
+        /// Where the device allowed once was, for as long as that lasts.
+        var onceAddress: String?
+        /// Each always-allowed device's address (or `.local` name), from the card that asked about it: what a command may
+        /// reach.
         var addresses: [String: String] = [:]
         /// The address a card that's up was asked for, kept apart until the person allows it.
         var asked: [String: String] = [:]
@@ -44,7 +46,7 @@ enum DevicePermissions {
     /// The addresses of the devices the agent may change now.
     static func allowedAddresses(_ wish: LampProject) -> Set<String> {
         let kept = kept(wish)
-        return Set(allowed(wish).compactMap { kept.addresses[$0]?.lowercased() })
+        return Set(kept.always.compactMap { kept.addresses[$0]?.lowercased() } + (kept.onceAddress.map { [$0.lowercased()] } ?? []))
     }
 
     /// The card is up: the device's address is noted, to be allowed with it.
@@ -58,11 +60,11 @@ enum DevicePermissions {
     static func answer(_ choice: String, about device: String, for wish: LampProject) {
         var kept = kept(wish)
         let address = kept.asked.removeValue(forKey: device)
-        if choice == allowOnce || choice == allowAlways(device) {
-            // The address the card was for, now allowed: an earlier one for the same name is the person's no longer.
+        if choice == allowOnce { (kept.once, kept.onceAddress) = (device, address) }
+        if choice == allowAlways(device) {
+            // The address the card was for, now allowed for good: an earlier one for the same name is no longer.
             kept.addresses[device] = address
-            if choice == allowOnce { kept.once = device }
-            if choice == allowAlways(device), !kept.always.contains(device) { kept.always.append(device) }
+            if !kept.always.contains(device) { kept.always.append(device) }
         }
         save(kept, for: wish)
     }
@@ -71,7 +73,7 @@ enum DevicePermissions {
     static func endOnce(for wish: LampProject) {
         var kept = kept(wish)
         guard kept.once != nil else { return }
-        kept.once = nil
+        (kept.once, kept.onceAddress) = (nil, nil)
         save(kept, for: wish)
     }
 

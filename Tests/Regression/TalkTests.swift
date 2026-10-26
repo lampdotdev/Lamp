@@ -75,6 +75,12 @@ final class TalkTests: XCTestCase {
         DevicePermissions.asking(about: "Living Room TV", at: "10.0.0.121", for: wish)
         DevicePermissions.answer(DevicePermissions.notNow, about: "Living Room TV", for: wish)
         XCTAssertEqual(DevicePermissions.allowedAddresses(wish), ["10.0.0.120"])
+        // Allowed once there: for now only, and the lasting grant stays where it was.
+        DevicePermissions.asking(about: "Living Room TV", at: "10.0.0.121", for: wish)
+        DevicePermissions.answer(DevicePermissions.allowOnce, about: "Living Room TV", for: wish)
+        XCTAssertEqual(DevicePermissions.allowedAddresses(wish), ["10.0.0.120", "10.0.0.121"])
+        DevicePermissions.endOnce(for: wish)
+        XCTAssertEqual(DevicePermissions.allowedAddresses(wish), ["10.0.0.120"])
         XCTAssertEqual(DevicePermissions.devicesChanged(by: "curl -X POST http://10.0.0.120:8060/keypress/Home && curl -d x http://10.0.0.99:1400/x"),
                        ["10.0.0.120", "10.0.0.99"])
     }
