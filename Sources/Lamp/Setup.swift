@@ -934,11 +934,26 @@ struct DevicesSection: View {
     @AppStorage(PhoneRenewals.staysOpenKey) private var keepOpening = false
     @State private var adding = false
     @State private var forgetting: Device?
+    @State private var showingEverything = false
 
     var body: some View {
+        let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
         Section("Your Devices") {
-            ForEach([store.thisMac].compactMap { $0 } + store.devices) { device in
-                row(device)
+            // What Lamp makes apps for or controls, then what it could learn, then the rest of the network, folded.
+            ForEach(list.works + list.couldLearn) { device in
+                row(device, controls: list.controls[device.id])
+            }
+            if !list.others.isEmpty || list.unnamed > 0 {
+                DisclosureGroup(isExpanded: $showingEverything) {
+                    ForEach(list.others) { host in hostRow(host) }
+                    if list.unnamed > 0 {
+                        Text(list.unnamed == 1 ? "1 more with a private address, most likely a phone, tablet or computer"
+                             : "\(list.unnamed) more with private addresses, most likely phones, tablets and computers")
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Text("Everything Else on Your Network (\(list.others.count + list.unnamed))")
+                }
             }
             if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused() }
             HStack {
@@ -955,7 +970,7 @@ struct DevicesSection: View {
                 }
             }
         }
-        .onAppear { store.refreshDevices() }
+        .onAppear { store.refreshDevices(everything: true) }
         .sheet(isPresented: $adding) { AddDeviceSheet() }
         .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
             Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
@@ -994,7 +1009,20 @@ struct DevicesSection: View {
         store.refreshDevices()
     }
 
-    private func row(_ device: Device) -> some View {
+    /// A host nothing of Lamp's works with: what it is, and the names it goes by on the network, on this Mac only.
+    private func hostRow(_ host: NetworkHost) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: host.isGateway ? "wifi.router" : "network").foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(HomeNetwork.label(host))
+                Text((host.names.prefix(2) + [host.address]).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .help(HomeNetwork.facts(host))
+    }
+
+    private func row(_ device: Device, controls: String? = nil) -> some View {
         let setup = device.setup(team: team)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
@@ -1009,6 +1037,8 @@ struct DevicesSection: View {
             }
             Spacer()
             switch setup {
+            case _ where controls != nil:
+                Text("Apps can control it").foregroundStyle(.secondary).help(controls ?? "")
             case _ where device.isAway:
                 Text(device.status).foregroundStyle(.secondary)
                     .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
@@ -1076,7 +1106,8 @@ struct AddDeviceSheet: View {
     /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet. Phones
     /// and tablets have their own rows above, whose setup windows take each one further, so a wireless one isn't here.
     private var waiting: [Device] {
-        store.devices.filter { ($0.kind.isTV || $0.kind == .other) && $0.reach == .network && $0.setup() != .ready }
+        let controlled = HomeNetwork.List(devices: store.devices, hosts: store.hosts).controls
+        return store.devices.filter { ($0.kind.isTV || $0.kind == .other) && $0.reach == .network && $0.setup() != .ready && controlled[$0.id] == nil }
     }
 
     var body: some View {
@@ -1117,7 +1148,7 @@ struct AddDeviceSheet: View {
                             Text(waiting.isEmpty ? "Nothing new found." : "").foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Look Again") { store.refreshDevices() }.controlSize(.small).disabled(store.lookingForDevices)
+                        Button("Look Again") { store.refreshDevices(everything: true) }.controlSize(.small).disabled(store.lookingForDevices)
                     }
                 }
                 .padding(.leading, 30)
@@ -1129,7 +1160,7 @@ struct AddDeviceSheet: View {
         }
         .padding(20)
         .frame(width: 440)
-        .onAppear { store.refreshDevices() }
+        .onAppear { store.refreshDevices(everything: true) }
     }
 
     private func kind(_ name: String, symbol: String, how: String, setUp: @escaping () -> Void) -> some View {

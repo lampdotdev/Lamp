@@ -21,7 +21,8 @@ enum DeviceAddress {
         return raw.map { !thisMac().contains($0) } ?? false
     }
 
-    private static func onNetwork(_ address: String) -> Bool {
+    /// A private or link-local address, this Mac's own included.
+    static func onNetwork(_ address: String) -> Bool {
         if let v4 = IPv4Address(address) {
             let b = [UInt8](v4.rawValue)
             switch (b[0], b[1]) {

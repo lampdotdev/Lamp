@@ -171,9 +171,17 @@ struct Device: Identifiable, Hashable {
         case .lgTV:
             return developerMode ? .ready : .needs("Turn on Developer Mode on it")
         case .other:
-            guard integration != nil else { return .needs("Lamp doesn't know it yet") }
+            guard integration != nil else { return .needs("Lamp could learn to work with this") }
             return Integrations.next(for: self).map { .needs($0.title) } ?? .ready
         }
+    }
+
+    /// What it is rather than what it's called, for one found on the network that Lamp doesn't know yet: the name a
+    /// device gives itself there is often a person's, and this one is written into its setup conversation's folder.
+    var plainName: String {
+        guard id.hasPrefix("found:") else { return name }
+        if maker.isEmpty || model.localizedCaseInsensitiveContains(maker) { return model.nilIfEmpty ?? "Device" }
+        return model.isEmpty || model == maker ? maker : "\(maker) \(model)"
     }
 
     /// The model and software, in one line for a list: "iPhone 16 Pro Max · iOS 27".
