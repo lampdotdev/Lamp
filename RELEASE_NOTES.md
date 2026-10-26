@@ -5,6 +5,17 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.23.0
+
+- Your iPhone and Mac apps can control your Roku: a button that opens Netflix, YouTube or a show, the remote's keys,
+  typing into its search, and on a Roku TV its power, volume and inputs. Nothing goes on the Roku; turn on Settings →
+  System → Advanced system settings → Control by mobile apps.
+- Roku apps have their icon and splash screen, close when you press Stop, and come off the Roku when you delete the
+  wish.
+- Lamp types into a Roku app's keyboard and can press every button on the remote when it tries an app.
+- Setting up a Roku is quicker: press Continue and Lamp presses the remote's keys that turn on developer mode.
+- A setup step that has worked on a real device says Worked before.
+
 ## 0.22.0
 
 - Put your iPhone apps on your phone with a free Apple account, no paid membership needed. Apple lets such an app open
