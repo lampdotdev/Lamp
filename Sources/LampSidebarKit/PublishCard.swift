@@ -81,7 +81,7 @@ public struct PublishCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Publish \(name) as a Web Page").font(.title3.bold())
                     // What the person accepts by publishing: who sees it, and where it goes.
-                    Text("Anyone can play it in a browser and open it in Lamp. It goes up as a public repository on your GitHub account.")
+                    Text("Anyone can play it in a browser. It goes up as a public repository on your GitHub account.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

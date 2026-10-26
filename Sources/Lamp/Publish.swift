@@ -8,7 +8,8 @@ import LampSidebarKit
 /// for its plays.
 ///
 /// What goes up is the game's page (Web/) as the app plays it, with a credit bar over it ("Based on Slop New York by
-/// Mr.doob", and Open in Lamp, the wish as a shared file beside the page), the wish's credits.json, a README saying what
+/// Mr.doob", and Open in Lamp: the wish as a shared file beside the page, or for a kind Lamp can't share as a file yet,
+/// such as a game, its Share Link), the wish's credits.json, a README saying what
 /// it is, what it's based on and under which licences, and the shared file itself, made by `Sharing.export` and so held
 /// to the same checks (`ShareCheck`). The page is searched for keys and secrets the same way before anything leaves.
 /// The person sees all of it on the card (`PublishCard`) and confirms before anything goes up.
@@ -80,13 +81,29 @@ enum Publish {
 
     // MARK: The page
 
+    /// Where the page's Open in Lamp goes: the wish as a shared file beside the page, its Share Link (only the idea) when
+    /// its kind can't be shared as a file yet (a game), or, with neither, Lamp's own site.
+    enum OpenInLamp: Equatable {
+        case file(String)
+        case link(URL)
+        case lamp
+
+        var href: String {
+            switch self {
+            case .file(let name): name
+            case .link(let url): url.absoluteString
+            case .lamp: "https://lamp.dev"
+            }
+        }
+    }
+
     /// What will go up, staged in a folder of its own, checked.
     struct Staged {
         let folder: URL          // its parent is removed with it
         let files: Int
         let bytes: Int
         let credits: Credits
-        let fileName: String     // the shared file beside the page
+        let open: OpenInLamp
     }
 
     /// Stages the page for `repo` at `url`: refused, with why, when the wish can't leave this Mac.
@@ -116,16 +133,23 @@ enum Publish {
         guard let html = try? String(contentsOf: index, encoding: .utf8) else { throw Failure(message: "\(project.name) has no page to publish.") }
 
         // Open in Lamp: the wish itself, as a file Lamp opens, beside the page. Made as any shared file is, so it's held
-        // to the same checks and carries the credits with this wish at the end of the chain.
-        let fileName = slug(project.name) + ".lampapp"
-        let shared = try Sharing.export(project)
-        defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
-        try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
+        // to the same checks and carries the credits with this wish at the end of the chain. A kind Lamp can't share as a
+        // file yet (a game) goes up without one, and Open in Lamp is its Share Link, if it has one.
+        let open: OpenInLamp
+        if project.platform.target.recipe.shareRefusal == nil {
+            let fileName = slug(project.name) + ".lampapp"
+            let shared = try Sharing.export(project)
+            defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
+            try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
+            open = .file(fileName)
+        } else {
+            open = WishLink.kept(for: project).map { .link($0.url) } ?? .lamp
+        }
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 
-        try Data(withCreditBar(html, credits: credits, file: fileName).utf8).write(to: index)
-        try Data(readme(for: project, credits: chain, url: url, file: fileName).utf8).write(to: site.appendingPathComponent("README.md"))
+        try Data(withCreditBar(html, credits: credits, open: open).utf8).write(to: index)
+        try Data(readme(for: project, credits: chain, url: url, open: open).utf8).write(to: site.appendingPathComponent("README.md"))
         // Served as files are, with nothing taken out for Jekyll (folders that start with _ included).
         try Data().write(to: site.appendingPathComponent(".nojekyll"))
 
@@ -139,7 +163,7 @@ enum Publish {
         // GitHub refuses a file over 100 MB, and a Pages site over 1 GB.
         guard bytes < 900_000_000 else { throw Failure(message: "\(project.name) is too big to publish as a page.") }
         done = true
-        return Staged(folder: site, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, fileName: fileName)
+        return Staged(folder: site, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open)
     }
 
     static func escaped(_ text: String) -> String {
@@ -150,14 +174,18 @@ enum Publish {
     /// The page with Lamp's credit bar over it: what it's based on, linked, and Open in Lamp. It starts at the top in the
     /// middle, over the game's loading, and after a few seconds settles into a thin line on the bottom edge, where a
     /// game's own controls rarely are, so it never sits over a button the game draws.
-    static func withCreditBar(_ html: String, credits: Credits, file: String) -> String {
+    static func withCreditBar(_ html: String, credits: Credits, open: OpenInLamp) -> String {
         var parts: [String] = []
         if let source = credits.upstream.first {
             let name = source.url.map { "<a href=\"\(escaped($0))\" target=\"_blank\" rel=\"noopener\">\(escaped(source.name))</a>" } ?? escaped(source.name)
             parts.append("Based on \(name)" + (source.author.map { " by \(escaped($0))" } ?? ""))
         }
         if !credits.generated.isEmpty { parts.append(escaped(Credits.generatedLine(credits.generated.count))) }
-        parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
+        switch open {
+        case .file(let name): parts.append("<a href=\"\(escaped(name))\" download>Open in Lamp</a>")
+        case .link(let url): parts.append("<a href=\"\(escaped(url.absoluteString))\" target=\"_blank\" rel=\"noopener\">Make it with Lamp</a>")
+        case .lamp: parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
+        }
         let bar = """
 
             <div id="lamp-credit">\(parts.joined(separator: " · "))</div>
@@ -178,7 +206,7 @@ enum Publish {
     }
 
     /// The repository's README: what the page is, where to play it, what it's based on and under which licences.
-    static func readme(for project: LampProject, credits: Credits, url: String, file: String) -> String {
+    static func readme(for project: LampProject, credits: Credits, url: String, open: OpenInLamp) -> String {
         var text = "# \(project.name)\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
         text += "**Play it:** \(url)\n\n"
@@ -202,8 +230,15 @@ enum Publish {
         if !credits.remixOf.isEmpty {
             text += "Remixed from " + credits.remixOf.map { $0.name + ($0.starter != nil ? " (a Lamp starter)" : "") }.joined(separator: ", then ") + ".\n\n"
         }
-        text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev). To change it, download [\(file)](\(file)) and open it with Lamp: "
-            + "it's yours to remix, with the credits above kept.\n\n"
+        switch open {
+        case .file(let name):
+            text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev). To change it, download [\(name)](\(name)) and open it with Lamp: "
+                + "it's yours to remix, with the credits above kept.\n\n"
+        case .link(let link):
+            text += "## Make it with Lamp\n\nMade with [Lamp](https://lamp.dev). [Make your own](\(link.absoluteString)) from the same wish.\n\n"
+        case .lamp:
+            text += "Made with [Lamp](https://lamp.dev).\n\n"
+        }
         text += "`lamp-game.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
         return text
     }

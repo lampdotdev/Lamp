@@ -167,8 +167,10 @@ it; signed out, Sign In to GitHub… runs `gh auth login --web` in Terminal and 
 Before anything goes up the card shows what will: the repository (the wish's name, made public; a name the account
 already has gets a number), the credit, the licence notes, the AI pictures and the size, all worked out by staging the
 page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it with Lamp's credit bar over it ("Based on
-Slop New York by Mr.doob · Open in Lamp", fading back after a few seconds), the wish as a shared file beside it (made by
-`Sharing.export`, so held to its checks, and the page's Open in Lamp), credits.json with this wish at the end of the
+Slop New York by Mr.doob · Open in Lamp", settling into a thin line on the bottom edge after a few seconds), the wish as a
+shared file beside it (made by `Sharing.export`, so held to its checks, and the page's Open in Lamp; a kind Lamp can't
+share as a file yet, a game among them, goes up without one, and the bar's link is the wish's Share Link, "Make it with
+Lamp", or with none "Made with Lamp" to lamp.dev, `Publish.OpenInLamp`), credits.json with this wish at the end of the
 chain, a README with the credits and licences, and `.nojekyll`; the staged page is searched for secrets again. The push
 signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits for GitHub's build. Where a
 wish's page went is kept in Lamp's folder (`Published Pages.json`), so Update Page puts the wish as it is now in its
