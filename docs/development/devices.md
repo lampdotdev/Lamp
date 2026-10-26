@@ -153,7 +153,9 @@ turns off Chromium's rule that holds a page's sound back until the first button 
 left an Xbox web app silent until then. The page
 is https at `https://lamp.example/`, so lamp.js reaches Lamp's plain-http gateway through the host (`http` web
 messages, only to Lamp's own paths), and a claim tries the Mac's IPv4 addresses first: the console reaches the
-`.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. The page's console, uncaught
+`.local` name over IPv6, which the claim, opened for the device's IPv4 address, refuses. A game's or a screen's page of
+a wish talks to the wish's other apps through the host too: it opens the page's `ws://` links to the home network
+and passes their frames (`ws` web messages), while the page keeps the wish's handshake and seals (the "Wishes" guide). The page's console, uncaught
 errors and the host's own lines go to `LocalState\log.txt`, which the bridge's `log` reads, so `look_at_app` with
 `on_device` (which a web kind with a preview now honours) shows how the app really runs. A controller in WebView2
 sends its buttons as key presses named "Unidentified" with Edge's old key codes; lamp.js renames them before the page

@@ -247,8 +247,8 @@ enum GameKit {
                 try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
             } else {
                 try DeviceSupport.writeDeclared(for: project)
-                // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where it says it can't
-                // reach the others yet.
+                // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where the page is the
+                // wish's peer itself and the host opens its links.
                 if Template.talksToOtherApps(project) {
                     try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
                 }
@@ -682,9 +682,8 @@ extension Agent.Rules {
 
     - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
     messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
-    its score. That works where it's played on the Mac, an iPhone or an iPad and Android; played on the Xbox, and in \
-    Lamp's preview of it, `Lamp.wish` is 'away' with a reason saying it can't reach them there yet, so the game stays \
-    whole without them. Its players still play with a controller, the keyboard or the touch controls Lamp draws: it \
+    its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. In Lamp's preview \
+    of it `Lamp.wish` is 'away' with a reason saying it can't reach them there, so the game stays whole without them. Its players still play with a controller, the keyboard or the touch controls Lamp draws: it \
     has no `Lamp.controllers`, so the wish's other apps send it messages rather than joining as players.
     """
 
@@ -692,8 +691,7 @@ extension Agent.Rules {
     static let screenAmongApps = placesAmongApps("screen", verb: "shown") + """
 
     - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
-    values and files, wherever it's shown but the Xbox, where `Lamp.wish` is 'away' with a reason saying it can't reach \
-    them there yet. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
+    values and files, wherever it's shown, the Xbox included. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
     another app sends shows where the screen is shown.
     """
 

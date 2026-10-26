@@ -239,6 +239,10 @@ enum DeviceApps {
         if !DeviceSupport.libraries(for: project).isEmpty, let address = device.address {
             DeviceSupport.Claims.shared.open(project.id, from: address)
         }
+        // A game's or a screen's page of a wish asks for its wish's key too, as a TV app's does: open from minutes before
+        // the upload, and again once it's open, since an Xbox's install can take longer than that.
+        let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.talksToOtherApps(project) ? device.address : nil
+        if let claimsKey { WishClaims.shared.open(project.id, from: claimsKey) }
         if let logs = bridge.logs, !logs.isEmpty {
             // A device with nothing listening on its log's port still takes the app.
             run.streams = (try? await runner.run(logs).streams) ?? []
@@ -288,6 +292,7 @@ enum DeviceApps {
             }
         }
         await runner.putBack(changed)
+        if let claimsKey { WishClaims.shared.renew(project.id, from: claimsKey) }
         return run
     }
 
