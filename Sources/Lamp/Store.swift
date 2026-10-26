@@ -2331,6 +2331,10 @@ final class Store: ObservableObject {
     /// A look has been made since Lamp opened, and what it found is in `devices`: before one, the person's devices are
     /// only the TVs and devices Lamp keeps, as not found, and no phone.
     private var looked = false
+    /// The first look Lamp made on the network was refused while macOS's question was up: the wait for the person's
+    /// answer and the look after it, which a wish waits for (`lookAgainOnceAllowed`).
+    private var answerAwaited: Task<Void, Never>?
+    static let localNetworkAskedKey = "localNetworkAsked"
     /// Privacy & Security, where the person chooses Local Network and allows Lamp: System Settings has no link to
     /// Local Network's own page.
     static let localNetworkSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
@@ -2350,6 +2354,10 @@ final class Store: ObservableObject {
             // What answers on the network: one search, which the TVs and the integrations share.
             let scan = await Integrations.Scan.now()
             localNetworkRefused = scan.refused
+            // Refused the first time is macOS's question still up; refused after it is the person's answer.
+            let firstAsked = scan.refused && !UserDefaults.standard.bool(forKey: Self.localNetworkAskedKey)
+            UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
+            if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed() } }
             async let tvs = TVs.devices(answers: scan.answers)
             async let integrated = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
@@ -2408,7 +2416,24 @@ final class Store: ObservableObject {
         let before = Set(devices.filter { $0.kind.isTV || $0.kind == .other }.map(\.id))
         refreshDevices()
         await waitForLook(seconds: 8)
+        await answerAwaited?.value
         return devices.contains { ($0.kind.isTV || $0.kind == .other) && !$0.isAway && !before.contains($0.id) }
+    }
+
+    /// A look that was the first to ask macOS about the local network heard nothing while its question was up: Lamp
+    /// waits a little for the person's answer and, given Allow, looks again, so what the wish is told comes from a look
+    /// that could see. A refusal after the first is the person's Don't Allow, which isn't waited on.
+    private func lookAgainOnceAllowed(seconds: Double = 30) async {
+        defer { answerAwaited = nil }
+        let until = Date().addingTimeInterval(seconds)
+        while Date() < until {
+            try? await Task.sleep(for: .seconds(1))
+            if !(await DeviceProbe.localNetworkDenied()) {
+                refreshDevices()
+                await waitForLook(seconds: 8)
+                return
+            }
+        }
     }
 
     /// Checked every fifth of a second rather than awaited: the look's own task can't be cut short, and waiting on it
@@ -3466,6 +3491,7 @@ final class Store: ObservableObject {
             if !looked, ([project] + parts(of: project)).contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
                 if !lookingForDevices { refreshDevices() }
                 await waitForLook(seconds: 8)
+                await answerAwaited?.value
             }
             var worked = false
             var result = TurnResult(end: .failed, watched: true)

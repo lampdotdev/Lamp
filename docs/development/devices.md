@@ -128,7 +128,9 @@ chat's, `SidebarCommand.tryOnOpened`), pairing, a device's setup, Play on a phon
 Xbox, `device_integration`; a wish named for a phone, a TV or a device (`AppName.Suggestion.forPhone`, `forDevice`, then
 `Store.lookForWish`, which names the wish again when the look found a TV or device Lamp didn't know); and the first
 request to a wish that opens on a TV or a device, or has a part that does, whose device line says whether Lamp finds it.
-A turn's note on the person's phone asks devicectl only when the app is set to open on one. Never as Lamp opens or as a
+A turn's note on the person's phone asks devicectl only when the app is set to open on one. The first look Lamp makes hears nothing while macOS's question is up, so a wish's look that
+was the first to ask waits up to half a minute for the answer and, given Allow, looks again before the agent starts
+(`lookAgainOnceAllowed`, `localNetworkAsked`); a refusal after that is the person's Don't Allow, not waited on. Never as Lamp opens or as a
 wish starts: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
 and devices as not found). A look macOS refused (`DeviceProbe.search`: nothing
 answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
