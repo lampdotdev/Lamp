@@ -345,13 +345,16 @@ enum DeviceNote {
             }
             return line
         }
+        // What a free team can't sign, said for any app with an iPhone half wherever Try On points (an app for both on this
+        // Mac is signed for the team too), since it changes what to declare.
+        let freeTeam = project.hasIOS && PhoneTools.xcodeFreeTeams().contains(Devices.team) ? " " + TeamLimits.agentLine : ""
         if project.onIOS {
             if let udid = project.device {
                 // Chosen, but not in the list (away, or the lookup failed): still where Play puts the app.
                 guard let phone = phones.first(where: { $0.udid == udid }) else {
-                    return "Try On points at one of the person's phones, which Lamp's device list didn't return; Play still puts the app there once it's connected."
+                    return "Try On points at one of the person's phones, which Lamp's device list didn't return; Play still puts the app there once it's connected." + freeTeam
                 }
-                return "Try On points at the person's \(phone.name): \(phone.forAgent)."
+                return "Try On points at the person's \(phone.name): \(phone.forAgent)." + freeTeam
             }
             let simulator = project.simulator.flatMap { udid in store.simulators.first { $0.udid == udid } }
             var line = simulator.map { "Try On points at the \($0.name) simulator, \($0.family.os) \($0.runtime.map(String.init).joined(separator: "."))." }
@@ -363,10 +366,10 @@ enum DeviceNote {
                 let state = phone.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(phone.setup().words.lowercased()))"
                 line += " The person's \(phone.name) (\(phone.forAgent)) is \(state)."
             }
-            return line
+            return line + freeTeam
         }
         let mac = store.thisMac ?? Device.thisMac()
-        return GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent)."
+        return (GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent).") + freeTeam
     }
 
     /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's

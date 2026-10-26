@@ -310,16 +310,9 @@ struct WishDesk: View {
             .strokeBorder(Color.primary.opacity(barFocused || dropTargeted ? 0.18 : 0.1), lineWidth: 1))
         .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
         // Files dropped on the bar are attached to the wish; a wish's own icon dropped here isn't a file.
-        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    // Files only: a folder would show as attached, but only files go with the wish.
-                    guard let url, url.isFileURL, (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return }
-                    Task { @MainActor in if !store.deskAttachments.contains(url) { store.deskAttachments.append(url) } }
-                }
-            }
-            return true
-        }
+        .overlay(FileDrop(targeted: $dropTargeted) { urls in
+            for url in urls where !store.deskAttachments.contains(url) { store.deskAttachments.append(url) }
+        })
         // A click into a bar Lamp already focused is the person's too.
         .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
     }
@@ -1167,6 +1160,92 @@ struct DeskTrash: View {
 /// Delete… does once asked (the Trash gives it back); in the Dock or the Applications folder it's the app itself;
 /// anywhere else it's the wish's shared file, as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
 /// a double click and the menu stay SwiftUI's: the drag is started from the window's own mouse events.
+/// Where files are dropped on the desk's bar. Its text field would take a dropped file itself and type its path, so
+/// an AppKit view lies over the bar to take it first: a drop goes to the view registered for it, while a click passes
+/// through to the field. Takes files from Finder, a screenshot's thumbnail (a file promised, not yet written) and a
+/// picture from a browser or Photos (saved as a PNG). Folders aren't taken: only files go with a wish.
+struct FileDrop: NSViewRepresentable {
+    @Binding var targeted: Bool
+    let dropped: @MainActor ([URL]) -> Void
+
+    func makeNSView(context: Context) -> Catcher { Catcher() }
+
+    func updateNSView(_ view: Catcher, context: Context) {
+        view.targeted = { targeted = $0 }
+        view.dropped = dropped
+    }
+
+    final class Catcher: NSView {
+        var targeted: (Bool) -> Void = { _ in }
+        var dropped: @MainActor ([URL]) -> Void = { _ in }
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            registerForDraggedTypes([.fileURL, .png, .tiff] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+            // A wish's own icon carries no file, and isn't this view's to take.
+            guard Self.takes(sender.draggingPasteboard) else { return [] }
+            targeted(true)
+            return .copy
+        }
+        override func draggingExited(_ sender: NSDraggingInfo?) { targeted(false) }
+        override func draggingEnded(_ sender: NSDraggingInfo) { targeted(false) }
+
+        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+            let pasteboard = sender.draggingPasteboard
+            guard Self.takes(pasteboard) else { return false }
+            let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+            if !files.isEmpty {
+                dropped(files)
+                return true
+            }
+            if let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver], !promises.isEmpty {
+                let folder = Self.folder()
+                for promise in promises {
+                    // Received off the main queue: the source may still be writing the file (a large picture from Photos).
+                    promise.receivePromisedFiles(atDestination: folder, operationQueue: Self.receiving) { [dropped] url, error in
+                        if error == nil { Task { @MainActor in dropped([url]) } }
+                    }
+                }
+                return true
+            }
+            guard let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return false }
+            let url = Self.folder().appendingPathComponent("Dropped image.png")
+            guard (try? png.write(to: url)) != nil else { return false }
+            dropped([url])
+            return true
+        }
+
+        private static let receiving: OperationQueue = {
+            let queue = OperationQueue()
+            queue.qualityOfService = .userInitiated
+            return queue
+        }()
+
+        private static func takes(_ pasteboard: NSPasteboard) -> Bool {
+            // A wish's icon is dragged as a file promised too (to the Finder), but it isn't one to attach.
+            guard !(pasteboard.types ?? []).contains(NSPasteboard.PasteboardType(DeskArrangement.wishType.identifier)) else { return false }
+            return pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+                || pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self])
+                || NSImage.canInit(with: pasteboard)
+        }
+
+        /// A folder of its own for each drop, so two pictures dropped with the same name don't land on one file.
+        private static func folder() -> URL {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-dropped/\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return folder
+        }
+    }
+}
+
 struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
     let project: LampProject

@@ -4015,7 +4015,7 @@ final class Store: ObservableObject {
     /// The Mac half of an app for both is signed for the person's team, so one that keeps data in iCloud
     /// can't be built there on a free account (`Devices.membershipProblem`). Nil anywhere else.
     private func macMembershipProblem(_ project: LampProject) -> String? {
-        project.platform == .universal && !project.onIOS ? Devices.membershipProblem(for: project, on: "this Mac") : nil
+        project.platform == .universal && !project.onIOS ? Devices.membershipProblem(for: project, on: "this Mac", platform: .mac) : nil
     }
 
     /// Returns false when the agent couldn't run at all (bad key, no credit, …), after telling the user why.

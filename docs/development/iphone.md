@@ -121,8 +121,8 @@ come from its folder name and the team), which Xcode builds with automatic signi
 the certificate and profiles with the account signed in to Xcode (Lamp never holds the account); each piece of the
 real build, matched by its id, then gets that piece's profile and the entitlements Xcode signed it with, and a build
 holding a piece Lamp's project doesn't, or a program or library that isn't a piece's own (`TeamSigning.checkCode`),
-isn't signed. Nothing the agent wrote is read for it. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
-launches the app with `--console`, so what it prints reaches the app's log. The signed copy installed is kept, with when its profile runs out (`PhoneRenewals`, in the signing folder), and Lamp puts it back before then (`Store.renewPhoneApps`: at launch, every quarter of an hour and when the Mac wakes, within two days of the end, never while a turn has the app): Lamp's project is planned again with new profiles (`TeamSigning.plan(renew:)`, which removes Xcode's own copies of the app's profiles so it makes new ones), the same copy signed with them and installed over itself, never opened, which keeps the app's data (`Devices.renew`). A free account's profiles last seven days, a paid one's a year. A failure is tried again within the hour when the phone was away or locked, a day later otherwise; only once the app has stopped opening is the person told, once, in its chat with Retry and in a notification. Renewals run while Lamp is open. `PhoneRenewalLiveTests` renews on a real phone (opt-in). The agent's looks stay on the
+isn't signed. Nothing the agent wrote is read for it. The bundle id carries the team (`deviceBundleID(team:)`). What a free account's team can't sign (iCloud, NFC, Siri, WeatherKit, Time Sensitive notifications) is listed once, in `TeamLimits`: the setup check names it before a build signed for the team (`PhoneSetup.Context.paidFor`), the build says it (`Devices.membershipProblem`), and the request's device line tells the agent while the team is free (`TeamLimits.agentLine`, the same for every engine). Xcode lists a newly added account's team only once it has a development certificate, so an account with none (`PhoneTools.xcodeAccountsWithoutTeams`) is told how to make one, in the setup check and under the team in Settings → Building. `devicectl` installs and
+launches the app with `--console`, so what it prints reaches the app's log. The signed copy installed is kept, with when its profile runs out (`PhoneRenewals`, in the signing folder), and Lamp puts it back before then (`Store.renewPhoneApps`: at launch, every quarter of an hour and when the Mac wakes, within two days of the end, holding the app as a turn does so nothing signs or installs over it): the project Lamp signed the kept copy from, kept with it (`TeamSigning.snapshot`), is planned again with new profiles (`TeamSigning.plan(renewing:)`, which removes Xcode's own copies of the app's profiles so it makes new ones), never the app's folder as it is now, the same copy signed with them and installed over itself, never opened, which keeps the app's data (`Devices.renew`). A free account's profiles last seven days, a paid one's a year. A failure is tried again within the hour when the phone was away or locked, a day later otherwise; only once the app has stopped opening is the person told, once, in its chat with Retry (which puts the kept copy back on its own phone, wherever Try On points now) and in a notification. Renewals run while Lamp is open. `PhoneRenewalLiveTests` renews on a real phone (opt-in). The agent's looks stay on the
 simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the
 gateway also listens on the network while some app is set to open on a phone (`Store.syncLocalNetwork`), marks those
@@ -137,6 +137,18 @@ folder, where the agent's commands read it, so the secret must never be there to
 what the gateway would with the provider directly (chat completions with the JSON retry, systemone
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
+
+**A free Apple account** (a Personal Team, `PhoneTools.xcodeFreeTeams`) signs for the person's own phones too, within
+Apple's limits, which `FreeTeamProbeLiveTests` finds by planning Lamp's own project for such a team (opt-in:
+`LAMP_FREE_TEAM=<team> LAMP_FREE_TEAM_DEVICE=<udid>`; every probe reuses one app id, so a run costs two of the team's ten
+ids a week). What it found with Xcode 27: a profile lasts seven days; HealthKit, HomeKit and app groups (a widget's)
+sign; NFC, Siri, iCloud with push, WeatherKit and Time Sensitive notifications are refused, each with Apple's "Personal
+development teams … do not support the … capability". Planning again returns the same profile while Xcode's copy of it
+is kept (in `~/Library/Developer/Xcode/UserData/Provisioning Profiles`); with that copy removed, Xcode makes a new one
+good for seven days from then, so a renewal can come before the old one runs out. An app signed again and installed over
+itself keeps its data. `devicectl device info apps` marks what a developer built (`builtByDeveloper`), and Lamp's bundle
+ids end in the team, so the apps a team has on a phone can be counted. Xcode lists a newly added account's team in its
+settings, where Lamp reads teams, only once the team has a development certificate.
 
 **On Apple TV and Vision Pro**: an iPhone app, and the iPhone half of an app for both, can open on the Apple TV or Vision
 Pro simulator, chosen under Try On as the iPad is (`DeviceFamily.appletv`, `.vision`; not for a game, whose kit is

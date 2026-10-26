@@ -48,6 +48,8 @@ Health, NFC, Siri, nearby phones and background work need a declaration first: w
 root, e.g. `{"healthkit": true, "nfc": true, "siri": true, "weather": true, "homekit": true, "timeSensitive": true,
 "backgroundModes": ["audio", "location"], "bonjourServices": ["_myapp._tcp", "_myapp._udp"], "backgroundTasks":
 ["com.example.refresh"]}`, and Lamp signs the app for them and declares them.
+With a free Apple account Apple won't sign NFC, Siri, `weather`, `timeSensitive` or iCloud; the request's device line
+says when the person's team is a free one, and then those stay out.
 
 - Modes: audio, location, fetch, processing, remote-notification, bluetooth-central, bluetooth-peripheral.
 - `bonjourServices` are the service types MultipeerConnectivity browses for (both _tcp and _udp of the same name, up
