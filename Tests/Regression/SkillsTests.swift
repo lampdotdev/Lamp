@@ -48,16 +48,16 @@ final class SkillsTests: XCTestCase {
             XCTAssertNil(skill.name.range(of: #"[^a-z0-9-]"#, options: .regularExpression), name)
         }
         // The integrations' skill and the one on controlling the person's devices are named by the devices' rule, in every
-        // prompt, rather than in the list, and the one on how a wish's apps share data by its rule in the prompt of a wish
-        // of several apps only; every other one is offered to some prompt.
+        // prompt, rather than in the list; every other one is offered to some prompt. How an app's copies and a wish's
+        // apps share data is offered to every kind that carries `LampWish`, which is every kind but a device's.
         let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
-        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "wish-links"])) }
-        XCTAssertEqual(Skills.offered(.android), ["android-design"])
-        XCTAssertEqual(Skills.offered(.tv), ["phone-controllers"])
+        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control"])) }
+        XCTAssertEqual(Skills.offered(.android), ["android-design", "wish-links"])
+        XCTAssertEqual(Skills.offered(.tv), ["phone-controllers", "wish-links"])
         XCTAssertEqual(Skills.offered(.device), [])
-        XCTAssertEqual(Skills.offered(.iphone), ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch"])
+        XCTAssertEqual(Skills.offered(.iphone), ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
         // An app for both has the Mac half's menu bar and the iPhone half's widgets, but no desktop widget or 3D.
-        XCTAssertEqual(Skills.offered(.universal), ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch"])
+        XCTAssertEqual(Skills.offered(.universal), ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
         // The sidebar's page is offered wherever the prompt has the sidebar's rule, an app for both included.
         XCTAssertEqual(Skills.offered(.universal, sidebar: true).last, "chrome-sidebar")
     }

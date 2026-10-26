@@ -154,10 +154,9 @@ enum TVTemplate {
     /// LG's TVs and in the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
     static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS + wishJS }
 
-    /// lamp.js as an app is given it: with `Lamp.wish` only for a TV app with others in its wish
-    /// (`Template.talksToOtherApps`), so a TV app on its own is written as it was before the block existed.
+    /// lamp.js as an app is given it: with `Lamp.wish` for a TV app that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.talksToOtherApps(project) ? lampJS
+        Template.carriesWish(project) ? lampJS
             : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
     }
 
@@ -1118,7 +1117,7 @@ extension TVTemplate {
          * Lamp.wish.onMessage(fn(from, data, copy))   what another app sent: its peer name, its JSON, and which copy of it
          *                                     sent it, to answer that one alone
          * Lamp.wish.state(), status()        this app's link: 'connecting', 'connected', 'alone' (the wish has no other
-         *                                     app), 'away' (neither Lamp nor another app of the wish is reachable), 'ended';
+         *                                     app and no other copy of this one is open), 'away' (neither Lamp nor another app of the wish is reachable), 'ended';
          *                                     status() is { state, reason }
          * Lamp.wish.onState(fn(state, status))   fn now and whenever this app's link changes
          * Lamp.wish.me()                     this app's own peer name
@@ -1206,6 +1205,9 @@ extension TVTemplate {
           // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the
           // wish's key; a message goes the straight way when there is one. So the apps go on talking with Lamp closed.
           var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
+          // Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then a page
+          // whose wish has no other app doesn't look for its copies on the network.
+          var copiesSeen = false;
           // Copies (each app on one device) by their peer name, apps by theirs: lastSeen and appsOpen.
           var directs = {}, dialing = {}, nextDial = {}, told = {}, openSince = {}, lastSeen = {}, devices = {}, appsOpen = {};
           var apps = [], lastOpen = '[]', swept = 0, here = null, pending = [], epoch = 0;
@@ -1345,8 +1347,14 @@ extension TVTemplate {
             if (padHooks) for (var q = 0; q < arrived.length; q++) sendPad(arrived[q], { t: 'host' });
             // This page's own state first: code that hears an app arrive in peers sends to it at once, and must find this
             // page connected when it does.
+            var ownOpen = false;
+            for (id in open) if (appOf(id) === mine) ownOpen = true;
+            if (ownOpen && !copiesSeen) { copiesSeen = true; keep(); setTimeout(lookAgain, 0); }
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open.
+            var none = true;
+            for (id in open) none = false;
             if (started) {
-              var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
+              var s = (alone || (roster.length === 1 && none)) ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
               if (s === 'connected') away = false;
               if (s !== state || reason !== null) setState(s);
             }
@@ -1615,7 +1623,7 @@ extension TVTemplate {
               if (waiting[a.peer]) kept.waiting = true;
               list.push(kept);
             }
-            storage(n, { me: mine, copy: copyId, apps: list, at: told, seen: lastSeen });
+            storage(n, { me: mine, copy: copyId, copies: copiesSeen, apps: list, at: told, seen: lastSeen });
           }
           function restore() {
             if (restored || !key) return;
@@ -1628,7 +1636,8 @@ extension TVTemplate {
               if (!mine && isName(k.me)) mine = k.me;
               if (k.at && typeof k.at === 'object') for (var id in k.at) if (isName(id) && k.at[id] instanceof Array) told[id] = k.at[id].slice(0, 6);
               if (k.seen && typeof k.seen === 'object') for (var p in k.seen) if (isName(p) && typeof k.seen[p] === 'number') lastSeen[p] = k.seen[p];
-              if (!roster.length && k.apps instanceof Array) { setRoster(k.apps); alone = roster.length < 2 && roster.length > 0; }
+              if (k.copies === true) copiesSeen = true;
+              if (!roster.length && k.apps instanceof Array) setRoster(k.apps);
             }
             // The copy's id, made just now, is kept from the start.
             if (made) keep();
@@ -2202,7 +2211,7 @@ extension TVTemplate {
             return false;
           }
           function reach() {
-            if (!started || alone || !key || !mine || roster.length < 2) return;
+            if (!started || alone || !key || !mine || (roster.length < 2 && !copiesSeen)) return;
             var now = Date.now(), missing = [], me = myCopy(), id, i, ownSeen = false, tried = {}, placed = {};
             // Each copy known of, in Lamp's room or reached before, where it was reached or said it listens.
             var known = {};

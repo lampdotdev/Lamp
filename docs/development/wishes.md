@@ -306,9 +306,7 @@ before copies (wire 3 or less) joins by its app's name alone, as a copy of that 
 take it so, and it's shown as out of date, but it doesn't know the new copies' names (it sees them as no app of the
 wish, so it shows the others as not open and its messages to them don't arrive), so it's rebuilt when opened from Lamp,
 as any app of an earlier wire is: `LampWishVersion`, `Template.androidWishOutdated` and a TV app's install on open.
-Copies are of an app of a wish of several: an app on its own carries no `LampWish` (below), so the same app on two
-devices with no other app in its wish doesn't share values; giving it the block would bring the Local Network question
-to every app on its own.
+An app with no other app in its wish has copies too (the same app on two iPhones), with a room of its own (below).
 `WishNote` gives each copy in the room its own line. Every
 library has the same shape: `peers` (open now), `peer(id)` (any app of the wish, open or not, nil for none), each with a
 `status` (`state`, a `reason` in the words to show, `lastSeen`), and the app's own `status`; a state is a value more may be
@@ -328,7 +326,7 @@ tells the agent to show it but the `wish-links` skill. Each app tells Lamp's roo
 keeps what came only until the next poll (an app that falls 256 behind has its link ended, since a sealed message can't be
 skipped) and lets the socket go when the app has stopped polling. A room is opened the
 first time an app of the wish asks, told the wish's apps again when they change (`WishRooms.sync`, from
-`Store.syncLocalNetwork`), and ended when the wish is gone, has no other app, or has had nobody in it and nobody asking for
+`Store.syncLocalNetwork`), and ended when the wish is gone, has no app, or has had nobody in it and nobody asking for
 fifteen minutes, so the relay process runs only while a game or a room needs it (`ControllerRelay` keeps rooms beside
 sessions, and starts the relay for either). Where a wish's apps are is asked of `Store.apps(of:)` and `Store.wish(of:)`
 alone, and a wish is alone when it has fewer than two apps, so nothing in the hub knows which app is at the root. The relay says who is in each room on its output as that changes
@@ -379,7 +377,7 @@ apps…") only when neither way reaches anyone. An app reaches the others only w
 background doesn't, and an Android app only while its activity is open. `WishDirectTests` runs two Swift apps through
 Lamp's relay going away and opening again without it, a TV page finding a Mac app by its port with no Lamp, and two
 copies of one app (a Swift program and a TV page) with a Mac app seeing each other and sharing values with Lamp and
-after it's gone. A TV's own
+after it's gone, and two copies of an app on its own doing the same. A TV's own
 address on Tizen and webOS is untried on real TVs.
 
 Beside messages, which are for apps open now, the apps of a wish share **values** (`LampWish.values`, `set`, `onChange`
@@ -450,18 +448,23 @@ fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an 
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`
 in all three libraries and `WishRooms.wire` together whenever what they say changes in a way an older app would misread.
 
-A wish of one app, which
-is most wishes and every starter, gets none of it: `LampWish` is written into an app's building blocks only when its wish
-has or asks for other apps (`Template.talksToOtherApps`: its parts, or its list of apps, `LampProject.apps`, counting apps
-and not devices, so one app for the Mac and the iPhone is one). The first app of a wish meant to be several has it from its
-first build, while the others wait for this Mac to be able to build them: the wish's key, a room that lists the apps still
-to be made as not open (`WishRooms.described`, `Parts.waiting`), the pointer in its prompt and the skill with its requests,
-so it's written to talk to them from the start. An app on its own's LampSupport.swift, LampSupport.kt and lamp.js are what they would be
-without the hub, the channel's crypto and the direct links included (no listener, no Bonjour or NSD, so no Local Network
-question), its prompt has no rule and its requests no line about the hub, no key is made for it and none goes in its install
-(`Store.wishKey(for:)` is nil), its iPhone Info.plist names no Bonjour type, no room is opened for it and so nothing starts
-the relay, and `BuildStamp` leaves the block out and stamps no fingerprint of it, so no app is built again for code it
-doesn't carry (`WishHubStaysOutTests`).
+A wish of one app, which is most wishes and every starter, carries `LampWish` too (`Template.carriesWish`: every app
+that holds one), since any app may be open on several devices at once and its copies share values through it: its key,
+a room of its own once it asks (`WishRooms.answer` answers `alone` only for a wish with no app), its iPhone Info.plist's
+Bonjour type, its install's key, and `BuildStamp`'s fingerprint of the block (a starter's prebuilt copy is stamped with
+it too, `BuildStamp.stamp`). Every kind but a device's offers the `wish-links` skill in its prompt's list, which is also
+named with the requests of an app whose code uses `LampWish`. What's for a wish of several apps alone still goes by
+`Template.talksToOtherApps` (its parts, or its list of apps, `LampProject.apps`, counting apps and not devices, so one
+app for the Mac and the iPhone is one): the rule in the prompt (`Rules.wishTalk`), naming the skill with every request,
+and the builder's note (`WishNote`). The first app of a wish meant to be several has all of it from its first build,
+while the others wait for this Mac to be able to build them: a room that lists the apps still to be made as not open
+(`WishRooms.described`, `Parts.waiting`), the pointer in its prompt and the skill with its requests, so it's written to
+talk to them from the start. An app with no other app in its wish is `alone` (no reason to show) while no other copy
+of it is open, and doesn't look for its copies on the network (no listener, no Bonjour or NSD, so no Local Network
+question on a Mac) until Lamp's room has shown it another copy of itself, which it keeps on the device (`copies`
+beside `copy`): copies of an app on its own first meet through Lamp, and after that also straight. Only apps that use
+`LampWish` ask Lamp for a room at all, since the block starts the first time it's used. `WishHubStaysOutTests` holds
+an app on its own to carrying the block without the rule or the note.
 
 A wish's iPhone or Mac app that steers its TV app's game (buttons, sticks, files to the TV) can do so as a player of
 `Lamp.controllers`, with `LampController` in LampSupport, which rides on `LampWish`; the prompt offers it beside plain

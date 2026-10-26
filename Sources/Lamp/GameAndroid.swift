@@ -24,7 +24,7 @@ enum GameAndroid {
     static func write(for project: LampProject) throws {
         let package = Template.androidPackage(for: project)
         let kotlin = "\(folder)/app/src/main/kotlin/" + package.replacingOccurrences(of: ".", with: "/")
-        let talks = Template.talksToOtherApps(project)
+        let talks = Template.carriesWish(project)
         try Template.write(Template.androidSettingsGradle, to: "\(folder)/settings.gradle.kts", for: project)
         try Template.write(talks ? Template.androidRootBuildGradle : rootBuildGradle, to: "\(folder)/build.gradle.kts", for: project)
         try Template.write(Template.androidGradleProperties, to: "\(folder)/gradle.properties", for: project)

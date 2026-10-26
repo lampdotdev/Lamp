@@ -58,7 +58,8 @@ enum Skills {
     /// offered to its prompt alone, and a TV app's page for phones to the TV prompt. `device-integrations` isn't
     /// listed: every prompt's rule for devices (`Agent.deviceRules`) names it.
     static func offered(_ platform: Platform, sidebar: Bool = false) -> [String] {
-        platform.target.guidance.skills() + (sidebar ? ["chrome-sidebar"] : [])
+        // Every kind but a device's carries `LampWish`, for its wish's other apps and its own copies on other devices.
+        platform.target.guidance.skills() + (platform == .device ? [] : ["wish-links"]) + (sidebar ? ["chrome-sidebar"] : [])
     }
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
@@ -99,6 +100,7 @@ enum Skills {
             (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part.platform)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(for: part.platform))\" in look_at_app and use_app)")
         }
         if Template.talksToOtherApps(project) { found.append(("wish-links", "this wish is more than one app: the ways its apps can share data")) }
+        else if appSwift(of: project, matches: #"\bLampWish\b"#) { found.append(("wish-links", "its code uses LampWish")) }
         if !project.makesNoApp, DevicePermissions.reachesDevices(project) { found.append(("device-control", "its code reaches the person's devices")) }
         if offered.contains("app-kinds"), !project.makesNoApp, Template.isScaffold(project) { found.append(("app-kinds", "it's a new app, still to be given its kind")) }
         if offered.contains("chrome-sidebar"), Template.hasSidebarPage(project) { found.append(("chrome-sidebar", "it has a sidebar page in Chrome")) }

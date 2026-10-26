@@ -91,40 +91,8 @@ final class WishDirectTests: XCTestCase {
         relay.configureRoom("wish:copies", key: key, apps: ["mac": ("mac", "the Mac app"), "tv": ("tv", "the TV app")])
         defer { relay.stop() }
 
-        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-copies-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let work = try Self.copiesBuilt(key: key)
         defer { try? FileManager.default.removeItem(at: work) }
-        // Says which copies it sees as that changes, sets its own value once it sees all three apps open, sets
-        // LAMP_LATER after LAMP_LATER_AT seconds, and says what it holds at the end.
-        let harness = """
-            @main struct Copies {
-                @MainActor static func main() {
-                    setvbuf(stdout, nil, _IONBF, 0)
-                    let env = ProcessInfo.processInfo.environment
-                    let wish = LampWish.shared
-                    let start = Date(), end = start.addingTimeInterval(Double(env["LAMP_SECONDS"]!)!)
-                    var seen = "", set = false, later = false
-                    while Date() < end {
-                        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-                        let now = wish.peers.flatMap { $0.copies.map(\\.id) }.sorted().joined(separator: ",")
-                        if now != seen { seen = now; print("sees \\(now)") }
-                        if !set, wish.peers.flatMap(\\.copies).count == 2 { set = true; print("set \\(wish.set(env["LAMP_NAME"]!, 1))") }
-                        if !later, let at = Double(env["LAMP_LATER_AT"] ?? ""), Date().timeIntervalSince(start) > at {
-                            later = true
-                            print("later \\(wish.set(env["LAMP_LATER"]!, 2))")
-                        }
-                    }
-                    let held = (try? JSONSerialization.data(withJSONObject: wish.values, options: .sortedKeys)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
-                    print("me \\(wish.copy) values \\(held)")
-                }
-            }
-            """
-        try WishNativeTests.program(main: harness).write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
-        let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.copies</string>"
-            + Template.wishKeyPlistLines(key) + "</dict></plist>"
-        try plist.write(to: work.appendingPathComponent("wish.plist"), atomically: true, encoding: .utf8)
-        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o copies main.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker wish.plist 2>&1", in: work)
-        XCTAssertEqual(built.status, 0, built.output)
 
         let suite = "lamp-wish-copies-\(UUID().uuidString)"
         defer { for each in ["mac", "tv"] { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-\(each)") } }
@@ -178,6 +146,75 @@ final class WishDirectTests: XCTestCase {
         XCTAssertEqual(js("held()"), after, "the page: \(js("JSON.stringify([Lamp.wish.state(), seen(), said.slice(0, 6)])"))")
         XCTAssertTrue(macSaid.contains("sees \(pageCopy)") || macSaid.contains(pageCopy), "the Mac app saw the page as a copy of its own: \(macSaid)")
         page.end()
+    }
+
+    /// Two copies of an app with no other app in its wish (the same app on two iPhones) meet in Lamp's room, share values,
+    /// and once they've met look for each other on the network, so a value set after Lamp has gone still reaches the
+    /// other copy.
+    func testTwoCopiesOfAnAppOnItsOwnShareValuesWithAndWithoutLamp() async throws {
+        let relay = Relay(key: SymmetricKey(size: .bits256))
+        let started: UInt16? = await withCheckedContinuation { done in relay.start { done.resume(returning: $0) } }
+        let port = try XCTUnwrap(started)
+        let key = WishChannel.random(32)
+        relay.configureRoom("wish:solo", key: key, apps: ["iphone": ("iphone", "the iPhone app")])
+        defer { relay.stop() }
+        let work = try Self.copiesBuilt(key: key)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let suite = "lamp-wish-solo-\(UUID().uuidString)"
+        defer { for each in ["a", "b"] { UserDefaults.standard.removePersistentDomain(forName: "\(suite)-\(each)") } }
+        func run(_ phone: String) -> Task<String, Never> {
+            let command = "LAMP_SOCKET='ws://127.0.0.1:\(port)/' LAMP_APPS=iphone LAMP_DEFAULTS=\(suite)-\(phone) LAMP_PEER=iphone LAMP_SEE=1 "
+                + "LAMP_NAME=\(phone) LAMP_LATER=\(phone)2 LAMP_LATER_AT=16 LAMP_SECONDS=24 ./copies 2>&1"
+            return Task.detached { TestShell.run(command, in: work).output }
+        }
+        let a = run("a"), b = run("b")
+        // Lamp goes once they've met.
+        for _ in 0..<100 where relay.members(of: "wish:solo").count < 2 { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(relay.members(of: "wish:solo").count, 2, "both copies in the room at once")
+        try await Task.sleep(for: .seconds(6))
+        relay.stop()
+        let (aSaid, bSaid) = await (a.value, b.value)
+        let all = #"values {"a":1,"a2":2,"b":1,"b2":2}"#
+        XCTAssertTrue(aSaid.contains(all), aSaid)
+        XCTAssertTrue(bSaid.contains(all), bSaid)
+    }
+
+    /// Says which copies it sees as that changes, sets its own value (LAMP_NAME) once it sees LAMP_SEE copies of other
+    /// apps or of its own (2 unless said), sets LAMP_LATER after LAMP_LATER_AT seconds, and says what it holds at the end:
+    /// built with the wish's key in its Info.plist.
+    static func copiesBuilt(key: Data) throws -> URL {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-wish-copies-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let harness = """
+            @main struct Copies {
+                @MainActor static func main() {
+                    setvbuf(stdout, nil, _IONBF, 0)
+                    let env = ProcessInfo.processInfo.environment
+                    let wish = LampWish.shared
+                    let start = Date(), end = start.addingTimeInterval(Double(env["LAMP_SECONDS"]!)!), see = Int(env["LAMP_SEE"] ?? "2")!
+                    var seen = "", set = false, later = false
+                    while Date() < end {
+                        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+                        let now = wish.peers.flatMap { $0.copies.map(\\.id) }.sorted().joined(separator: ",")
+                        if now != seen { seen = now; print("sees \\(now)") }
+                        if !set, wish.peers.flatMap(\\.copies).count == see { set = true; print("set \\(wish.set(env["LAMP_NAME"]!, 1))") }
+                        if !later, let at = Double(env["LAMP_LATER_AT"] ?? ""), Date().timeIntervalSince(start) > at {
+                            later = true
+                            print("later \\(wish.set(env["LAMP_LATER"]!, 2))")
+                        }
+                    }
+                    let held = (try? JSONSerialization.data(withJSONObject: wish.values, options: .sortedKeys)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
+                    print("me \\(wish.copy) \\(wish.state.rawValue) values \\(held)")
+                }
+            }
+            """
+        try WishNativeTests.program(main: harness).write(to: work.appendingPathComponent("main.swift"), atomically: true, encoding: .utf8)
+        let plist = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>dev.lamp.test.copies</string>"
+            + Template.wishKeyPlistLines(key) + "</dict></plist>"
+        try plist.write(to: work.appendingPathComponent("wish.plist"), atomically: true, encoding: .utf8)
+        let built = TestShell.run(Shell.compatibleSDK + "xcrun swiftc -parse-as-library -o copies main.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker wish.plist 2>&1", in: work)
+        XCTAssertEqual(built.status, 0, built.output)
+        return work
     }
 
     /// The talker built with the wish's key in its Info.plist, as Lamp installs an app of a wish.

@@ -292,9 +292,17 @@ enum Template {
         return groups.count >= 2
     }
 
-    /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
+    /// Whether an app carries `LampWish`, the block for reaching its wish's other apps and its own other copies: every
+    /// app does, since any app may be open on several devices at once (two iPhones, a screen on an iPad and a TV), and
+    /// its copies share values through it. What's for a wish of several apps alone (the rule in the prompt that points
+    /// to the `wish-links` skill, the builder's note of where each app is) still goes by `talksToOtherApps`. An app on
+    /// its own looks for its copies on the network only once Lamp's room has shown it one, so an app on one device
+    /// never asks for Local Network.
+    static func carriesWish(_ project: LampProject) -> Bool { project.holdsApp || talksToOtherApps(project) }
+
+    /// LampSupport.swift as an app is given it: with `LampWish` for an app that carries it (`carriesWish`).
     static func lampSupportSwift(for project: LampProject) -> String {
-        talksToOtherApps(project) ? lampSupportSwift : withoutWish(lampSupportSwift)
+        carriesWish(project) ? lampSupportSwift : withoutWish(lampSupportSwift)
     }
 
     /// The Swift building blocks without `LampWish` (and `LampController`, files and all, which ride on it): what an app
@@ -14446,7 +14454,7 @@ enum Template {
             static let connecting = State(rawValue: "connecting")
             /// This app is with the others; another app is open and reachable.
             static let connected = State(rawValue: "connected")
-            /// This app's wish has no other app.
+            /// This app's wish has no other app, and no other copy of this one is open.
             static let alone = State(rawValue: "alone")
             /// This app can't reach Lamp, nor any other app of the wish.
             static let away = State(rawValue: "away")
@@ -14522,6 +14530,10 @@ enum Template {
         private var relayIn = false
         private var lampAway = false
         private var alone = false
+        /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
+        /// app with no other app in its wish doesn't look for its copies on the network, so an app on one device never
+        /// asks for Local Network.
+        private var copiesSeen = false
         /// The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what
         /// they speak (`wire`). An app built before copies is in it by its name alone.
         private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
@@ -14860,7 +14872,13 @@ enum Template {
                              lastSeen: lastSeen[app.id])
                 return Peer(id: app.id, copies: copies, kind: app.kind, name: app.name, device: copies.last?.device ?? "", status: status)
             }
-            let next: State = closed ? .ended : alone ? .alone
+            if !copiesSeen, open.contains(where: { Self.app(of: $0) == me }) {
+                copiesSeen = true
+                keep()
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.lookAgain() } }
+            }
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open.
+            let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty)) ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected
                 : localNetworkDenied ? .localNetworkDenied : lampAway ? .away : .connecting
             // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
@@ -15135,7 +15153,7 @@ enum Template {
                 return kept
             }
             let seen = lastSeen.mapValues { Int($0.timeIntervalSince1970 * 1000) }
-            let kept: [String: Any] = ["me": me, "copy": copyID, "apps": apps, "at": told, "seen": seen]
+            let kept: [String: Any] = ["me": me, "copy": copyID, "copies": copiesSeen, "apps": apps, "at": told, "seen": seen]
             UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: kept), forKey: keptKey)
         }
 
@@ -15153,7 +15171,7 @@ enum Template {
             roster = apps.compactMap { app in
                 (app["peer"] as? String).map { ($0, app["kind"] as? String ?? "", app["name"] as? String ?? $0) }
             }
-            alone = roster.count < 2 && !roster.isEmpty
+            copiesSeen = kept["copies"] as? Bool == true
             rebuild()
         }
 
@@ -15667,7 +15685,7 @@ enum Template {
         /// Listens, looks for the others and dials the ones it can reach: as it starts, on each beat for those whose time
         /// to try again has come, and at once whenever something changed (`lookAgain`).
         private func reach() {
-            guard !closed, !alone, Self.key != nil, !me.isEmpty, roster.count >= 2 else { return }
+            guard !closed, !alone, Self.key != nil, !me.isEmpty, roster.count >= 2 || copiesSeen else { return }
             listen()
             browse()
             let now = Date()
@@ -16168,7 +16186,7 @@ enum Template {
 
     /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
     /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
-    /// dot of its colour. Nothing while this app is alone in its wish. Give a peer name for that app's line alone. It
+    /// dot of its colour. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
     /// takes the font and colours of where it's put, so style it as the rest of the app; or show `LampWish`'s own
     /// `status` and `peer(_:)?.status` in a view of your own.
     struct LampWishStatus: View {

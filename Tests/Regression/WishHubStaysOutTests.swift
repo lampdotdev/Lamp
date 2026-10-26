@@ -1,89 +1,53 @@
 import XCTest
 @testable import Lamp
 
-/// A wish of one app, which is most wishes and every starter, gets nothing from the wish hub: no rule about it in the
-/// agent's prompt, no line about it with the request, none of its code in the app's building blocks (so no size, and
-/// nothing that could ask for a permission), no key for the wish's apps' link, and no room at the relay. An app with
-/// others in its wish gets all of it.
+/// Every app carries `LampWish`, since any app may be open on several devices at once (two iPhones, a screen on an iPad
+/// and a TV) and its copies share values through it: an app on its own has the block in its building blocks (and a key
+/// and a room, `WishHubTests`). What's for a wish of several apps stays out of an app on its own: the rule about them in the agent's prompt
+/// and the line about them with each request.
 @MainActor
 final class WishHubStaysOutTests: XCTestCase {
     private let kinds: [Platform] = [.mac, .iphone, .universal, .android, .tv, .game, .screen]
-    private let hubWords = ["LampWish", "Lamp.wish", "wish's room", "wish's apps right now", "/app/wish", "lamp-wish", "x25519"]
 
     private func project(_ kind: Platform, partOf wish: String? = nil) -> LampProject {
         LampProject(id: wish.map { "\($0).\(kind.rawValue)" } ?? "solo\(kind.rawValue)", name: "Solo", exe: "Solo",
                     dir: URL(fileURLWithPath: "/tmp/solo/\(kind.rawValue)"), platform: kind, partOf: wish)
     }
 
-    func testAnAppOnItsOwnIsToldNothingOfTheHub() {
+    func testAnAppOnItsOwnIsToldNothingOfTheWishsOtherApps() {
         for kind in kinds {
             let alone = project(kind)
             let prompt = Agent.systemPrompt(for: alone) + Agent.tryRules
-            for word in hubWords { XCTAssertFalse(prompt.contains(word), "\(kind.rawValue)'s prompt names \(word)") }
+            XCTAssertFalse(prompt.contains(Agent.Rules.wishTalk.trimmingCharacters(in: .whitespacesAndNewlines)), "\(kind.rawValue)'s prompt has the rule for a wish of several")
             XCTAssertEqual(WishNote.line(for: alone, store: .shared), "", "no line about the wish's apps with \(kind.rawValue)'s requests")
         }
     }
 
-    func testAnAppOnItsOwnCarriesNoneOfTheHubsCode() {
+    func testAnAppOnItsOwnCarriesTheBlockForItsCopies() {
         for kind in kinds {
-            let alone = project(kind), several = project(kind, partOf: "pair")
+            let alone = project(kind)
             XCTAssertFalse(Template.talksToOtherApps(alone))
-            XCTAssertNil(Store.shared.wishKey(for: alone), "no key is made for an app on its own")
-            XCTAssertTrue(Template.talksToOtherApps(several))
+            XCTAssertTrue(Template.carriesWish(alone), kind.rawValue)
             switch kind {
-            case .android:
-                for word in hubWords { XCTAssertFalse(Template.androidSupportKotlin(for: alone).contains(word), word) }
-                XCTAssertNil(Template.androidInstallValues(for: alone, onDevice: false, wishKey: Store.shared.wishKey(for: alone))["wishKey"])
-                XCTAssertTrue(Template.androidSupportKotlin(for: several).contains("object LampWish"))
-            case .tv:
-                for word in hubWords { XCTAssertFalse(TVTemplate.lampJS(for: alone).contains(word), word) }
-                XCTAssertTrue(TVTemplate.lampJS(for: several).contains("window.Lamp.wish = api"))
-            case .game, .screen:
-                // The page's script, and the Swift around it on the Mac and the iPhone, which answers its `Lamp.wish`.
-                let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                let page = try! String(contentsOf: repo.appendingPathComponent("Resources/GameKit/apple/LampPage.swift"), encoding: .utf8)
-                let script = { (app: LampProject) in kind == .game ? GameKit.lampJS(for: app) : TVTemplate.lampJS(for: app) }
-                for word in hubWords + [Template.wishKeyName] {
-                    XCTAssertFalse(Template.lampSupportSwift(for: alone).contains(word), "\(kind.rawValue): \(word)")
-                    XCTAssertFalse(GameKit.pageText(page, for: alone).contains(word), "\(kind.rawValue)'s page bridge: \(word)")
-                    XCTAssertFalse(script(alone).contains(word), "\(kind.rawValue)'s lamp.js: \(word)")
-                }
-                XCTAssertTrue(Template.lampSupportSwift(for: several).contains("final class LampWish"), kind.rawValue)
-                XCTAssertTrue(GameKit.pageText(page, for: several).contains("final class LampPageWish"), kind.rawValue)
-                XCTAssertTrue(script(several).contains("window.Lamp.wish = api"), kind.rawValue)
-            default:
-                for word in hubWords + [Template.wishKeyName] { XCTAssertFalse(Template.lampSupportSwift(for: alone).contains(word), "\(kind.rawValue): \(word)") }
-                XCTAssertTrue(Template.lampSupportSwift(for: several).contains("final class LampWish"), kind.rawValue)
+            case .android: XCTAssertTrue(Template.androidSupportKotlin(for: alone).contains("object LampWish"))
+            case .tv: XCTAssertTrue(TVTemplate.lampJS(for: alone).contains("window.Lamp.wish = api"))
+            case .game: XCTAssertTrue(GameKit.lampJS(for: alone).contains("window.Lamp.wish = api"))
+            default: XCTAssertTrue(Template.lampSupportSwift(for: alone).contains("final class LampWish"), kind.rawValue)
             }
         }
-        // What says whether an app built by an earlier Lamp is out of date leaves the block out, so no app is built again
-        // for code it doesn't carry.
-        XCTAssertFalse(Template.withoutWish(Template.lampSupportSwift).contains("LampWish"))
-        XCTAssertEqual(Template.lampSupportSwift.count - Template.withoutWish(Template.lampSupportSwift).count,
-                       Template.lampSupportSwift(for: project(.mac, partOf: "pair")).count - Template.lampSupportSwift(for: project(.mac)).count)
     }
 
-    /// An app of several built with an earlier `LampWish` is built again when it's opened from Lamp, so "out of date"
-    /// in its wish's other apps goes once it is; an app on its own is never built again for the block.
-    func testOnlyAnAppOfSeveralIsBuiltAgainForTheBlock() {
+    /// An app built with an earlier `LampWish`, or before every app carried it, is built again when it's opened from Lamp.
+    func testAnAppBuiltWithAnEarlierBlockIsBuiltAgain() {
         let current = BuildStamp.current
         let earlier = BuildStamp(lamp: current.lamp, support: current.support, wish: "0000")
         let unstamped = BuildStamp(lamp: current.lamp, support: current.support)
         for kind: Platform in [.mac, .iphone] {
-            XCTAssertFalse(earlier.isOutdated(for: project(kind)), kind.rawValue)
-            XCTAssertFalse(unstamped.isOutdated(for: project(kind)), kind.rawValue)
-            XCTAssertTrue(earlier.isOutdated(for: project(kind, partOf: "pair")), kind.rawValue)
-            XCTAssertTrue(unstamped.isOutdated(for: project(kind, partOf: "pair")), "built before the block was stamped: \(kind.rawValue)")
-            XCTAssertFalse(BuildStamp(lamp: current.lamp, support: current.support, wish: BuildStamp.currentWish).isOutdated(for: project(kind, partOf: "pair")))
+            for app in [project(kind), project(kind, partOf: "pair")] {
+                XCTAssertTrue(earlier.isOutdated(for: app), app.id)
+                XCTAssertTrue(unstamped.isOutdated(for: app), "built before the block was stamped: \(app.id)")
+                XCTAssertFalse(BuildStamp(lamp: current.lamp, support: current.support, wish: BuildStamp.currentWish).isOutdated(for: app))
+            }
         }
-    }
-
-    func testAnAppOnItsOwnOpensNoRoom() async {
-        WishRooms.forgetAll()
-        let alone = project(.mac)
-        let (status, answer) = await WishRooms.answer(for: alone, wish: alone, apps: [alone], host: "127.0.0.1")
-        XCTAssertEqual(status, 200)
-        XCTAssertEqual(answer["alone"] as? Bool, true)
-        XCTAssertTrue(ControllerRelay.roomKeys.isEmpty, "no room, so nothing starts the relay")
     }
 }

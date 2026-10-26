@@ -122,8 +122,9 @@ final class WishClaims: @unchecked Sendable {
 /// The builder is told the same block in every language (`Agent.Rules.wishTalk`) and, at the end of each request, where
 /// each app of the wish is: open or not, in the room or not (`WishNote`).
 ///
-/// A wish of one app gets none of this: no rule, no line, no code in its building blocks (`Template.talksToOtherApps`),
-/// no key and no room.
+/// A wish of one app has a room too, for its copies on several devices (two iPhones, a screen on an iPad and a TV),
+/// and its building blocks carry the code (`Template.carriesWish`); what's for a wish of several apps alone is the rule
+/// in the prompt and the builder's note.
 @MainActor
 enum WishRooms {
     /// What this Lamp's apps of a wish say to each other, numbered as LampSupport.swift, LampSupport.kt and lamp.js number
@@ -169,13 +170,11 @@ enum WishRooms {
     /// What an app of a wish is told when it asks (`/app/wish`): the relay's socket by the name it reached Lamp at, which
     /// peer it is, and who is in the room now; nothing that lets it in, which is the wish's key the app was given when it
     /// was put on its device. The TV preview, whose page asks through its bridge on this Mac and was put nowhere, is
-    /// given the key here (`preview`). An app whose wish has no other app is told it's alone, and asks again later in
-    /// case one is added.
+    /// given the key here (`preview`). A wish of one app has a room all the same, for the app's copies.
     static func answer(for project: LampProject, wish: LampProject, apps: [LampProject], host: String, preview: Bool = false) async -> (Int, [String: Any]) {
         let me = describe(project, in: wish)
         let roster = described(apps, in: wish)
-        // Alone: a wish of one app, whether it's at the wish's root or in a folder of its own.
-        guard roster.count >= 2 else { return (200, ["alone": true, "renew": 300, "me": me]) }
+        guard !roster.isEmpty else { return (200, ["alone": true, "renew": 300, "me": me]) }
         let key = key(for: wish)
         asked[key] = Date()
         ControllerRelay.openRoom(key, wishKey: WishKeys.key(for: wish), apps: roster)
@@ -203,7 +202,7 @@ enum WishRooms {
     }
 
     static func claim(for wish: LampProject, apps: [LampProject], publicKey: Data) -> (Int, [String: Any]) {
-        guard described(apps, in: wish).count >= 2 else { return (200, ["alone": true]) }
+        guard !described(apps, in: wish).isEmpty else { return (200, ["alone": true]) }
         guard let theirs = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: publicKey) else { return (400, ["error": "That key can't be used."]) }
         let mine = Curve25519.KeyAgreement.PrivateKey()
         guard let shared = try? mine.sharedSecretFromKeyAgreement(with: theirs) else { return (400, ["error": "That key can't be used."]) }
@@ -225,14 +224,14 @@ enum WishRooms {
     /// Who is in the wish's room now, as the relay last said.
     static func presence(of wish: LampProject) -> [[String: Any]] { ControllerRelay.presence[key(for: wish)] ?? [] }
 
-    /// Kept in step with the list of apps (each wish with its apps, `Store.apps(of:)`): a room whose wish is gone, or
-    /// alone now, ends; one whose apps changed is told them again.
+    /// Kept in step with the list of apps (each wish with its apps, `Store.apps(of:)`): a room whose wish is gone, or has
+    /// no app now, ends; one whose apps changed is told them again.
     static func sync(_ wishes: [(wish: LampProject, apps: [LampProject])]) {
         let byKey = Dictionary(wishes.map { (key(for: $0.wish), $0) }, uniquingKeysWith: { a, _ in a })
         for key in ControllerRelay.roomKeys {
             guard let entry = byKey[key] else { end(key); continue }
             let roster = described(entry.apps, in: entry.wish)
-            guard roster.count >= 2 else { end(key); continue }
+            guard !roster.isEmpty else { end(key); continue }
             ControllerRelay.openRoom(key, wishKey: WishKeys.key(for: entry.wish), apps: roster)
         }
         expire()

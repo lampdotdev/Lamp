@@ -39,9 +39,9 @@ extension Template {
 
     /// Whether an Android app of several in a wish was built with Lamp's code of an earlier Lamp: its LampSupport.kt
     /// isn't what this Lamp writes, so opening it from Lamp builds it again, as a Mac app's stamp does (`BuildStamp`),
-    /// and the "out of date" its wish's other apps show for it goes. An app on its own is left as it is.
+    /// and the "out of date" its wish's other apps show for it goes.
     static func androidWishOutdated(_ project: LampProject) -> Bool {
-        guard talksToOtherApps(project) else { return false }
+        guard carriesWish(project) else { return false }
         let now = androidSupportKotlin(for: project).replacingOccurrences(of: "{{PACKAGE}}", with: androidPackage(for: project))
         return AppFile.read(project.dir.appendingPathComponent(androidSupportPath(for: project)), in: project) != Data(now.utf8)
     }
@@ -66,10 +66,9 @@ extension Template {
         return values
     }
 
-    /// LampSupport.kt as an app is given it: with `LampWish` only for an app with others in its wish
-    /// (`talksToOtherApps`), so an Android app on its own is written as it was before the block existed.
+    /// LampSupport.kt as an app is given it: with `LampWish` for an app that carries it (`carriesWish`).
     static func androidSupportKotlin(for project: LampProject) -> String {
-        talksToOtherApps(project) ? androidSupportKotlin : withoutWish(kotlin: androidSupportKotlin)
+        carriesWish(project) ? androidSupportKotlin : withoutWish(kotlin: androidSupportKotlin)
     }
 
     static func withoutWish(kotlin: String) -> String {
@@ -993,7 +992,7 @@ extension Template {
                 val CONNECTING = State("connecting")
                 /** This app is with the others; another app is open and reachable. */
                 val CONNECTED = State("connected")
-                /** This app's wish has no other app. */
+                /** This app's wish has no other app, and no other copy of this one is open. */
                 val ALONE = State("alone")
                 /** This app can't reach Lamp, nor any other app of the wish. */
                 val AWAY = State("away")
@@ -1071,6 +1070,9 @@ extension Template {
         private var relayIn = false
         private var lampAway = false
         private var alone = false
+        /** Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an app
+         *  with no other app in its wish doesn't look for its copies on the network. */
+        private var copiesSeen = false
         private val undeliveredSaid = mutableSetOf<String>()
         /** The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what they
          *  speak (`wire`). An app built before copies is in it by its name alone. */
@@ -1421,9 +1423,15 @@ extension Template {
             }
             routes = directs.filterValues { it.ready }.toMap()
             relayed = relayPresent.keys.toSet()
+            if (!copiesSeen && open.any { appOf(it) == me }) {
+                copiesSeen = true
+                keep()
+                scope.launch(Dispatchers.Main) { lookAgain() }
+            }
             val next = when {
                 closed -> State.ENDED
-                alone -> State.ALONE
+                // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open.
+                alone || (roster.size == 1 && open.isEmpty()) -> State.ALONE
                 relayIn || directs.values.any { it.ready } -> State.CONNECTED
                 lampAway -> State.AWAY
                 else -> State.CONNECTING
@@ -1698,7 +1706,7 @@ extension Template {
             val file = keptFile ?: return
             val at = JSONObject().apply { for ((peer, places) in told) put(peer, JSONArray(places)) }
             val seen = JSONObject().apply { for ((peer, at) in lastSeen) put(peer, at) }
-            val kept = JSONObject().put("me", me).put("copy", copyID).put("at", at).put("seen", seen)
+            val kept = JSONObject().put("me", me).put("copy", copyID).put("copies", copiesSeen).put("at", at).put("seen", seen)
                 .put("apps", JSONArray(roster.map { app ->
                     JSONObject().put("peer", app.id).put("kind", app.kind).put("name", app.name).apply { if (app.id in waiting) put("waiting", true) }
                 }))
@@ -1714,7 +1722,7 @@ extension Template {
             val apps = jsonList(kept.optJSONArray("apps"))
             waiting = apps.filter { it.optBoolean("waiting") }.map { it.optString("peer") }.toSet()
             roster = apps.mapNotNull { app -> app.optString("peer").takeIf(::isName)?.let { App(it, app.optString("kind"), app.optString("name", it)) } }
-            alone = roster.size < 2 && roster.isNotEmpty()
+            copiesSeen = kept.optBoolean("copies")
             // The copy's id, made just now, is kept from the start.
             if (madeNow) keep()
             rebuild()
@@ -2148,7 +2156,7 @@ extension Template {
         /** Listens, looks for the others and dials the ones it can reach: as it starts, on each beat for those whose time
          *  to try again has come, and at once whenever something changed (`lookAgain`). */
         private fun reach() {
-            if (closed || alone || wishKey == null || me.isEmpty() || roster.size < 2) return
+            if (closed || alone || wishKey == null || me.isEmpty() || (roster.size < 2 && !copiesSeen)) return
             listen()
             look()
             val now = System.currentTimeMillis()
@@ -2698,7 +2706,7 @@ extension Template {
 
     /**
      * How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on your
-     * iPhone."), or what keeps this app from them, with a dot of its colour. Nothing while this app is alone in its wish.
+     * iPhone."), or what keeps this app from them, with a dot of its colour. Nothing while this app is alone, with no other app or copy open.
      * Give a peer name for that app's line alone. It takes the text style of where it's put (LocalTextStyle), so style it
      * as the rest of the app; or show LampWish's own `status` and `peer(id)?.status` in a composable of your own.
      */

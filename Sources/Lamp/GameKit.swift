@@ -173,18 +173,18 @@ enum GameKit {
     }
 
     /// lamp.js as a game is given it: Lamp's web building blocks, and `Lamp.wish`, the TV app's block for the wish's
-    /// other apps, only for a game with others in its wish (`Template.talksToOtherApps`).
+    /// other apps and its own other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.talksToOtherApps(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
+        Template.carriesWish(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
     }
 
     /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the block makes one to hang from.
     static let wishJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.wishJS
 
-    /// The page's bridge as an app is given it: with the page's way to `LampWish` only for an app with others in its
-    /// wish (`Template.talksToOtherApps`), since only such an app's LampSupport.swift has `LampWish`.
+    /// The page's bridge as an app is given it: with the page's way to `LampWish` for an app that carries it
+    /// (`Template.carriesWish`), since only such an app's LampSupport.swift has `LampWish`.
     static func pageText(_ text: String, for project: LampProject) -> String {
-        Template.talksToOtherApps(project) ? text : withoutWish(page: text)
+        Template.carriesWish(project) ? text : withoutWish(page: text)
     }
 
     static func withoutWish(page text: String) -> String {
@@ -262,7 +262,7 @@ enum GameKit {
                 try DeviceSupport.writeDeclared(for: project)
                 // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where the page is the
                 // wish's peer itself and the host opens its links.
-                if Template.talksToOtherApps(project) {
+                if Template.carriesWish(project) {
                     try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
                 }
             }
