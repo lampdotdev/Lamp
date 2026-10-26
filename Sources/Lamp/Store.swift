@@ -1731,7 +1731,7 @@ final class Store: ObservableObject {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]
             guard body?["method"] as? String == "tools/call",
                   let name = (body?["params"] as? [String: Any])?["name"] as? String else { return nil }
-            let allowed: Set<String> = ["device_integration", "read_skill", "ask", "progress", "read_notes", "save_notes"]
+            let allowed: Set<String> = ["device_integration", "network_devices", "read_skill", "ask", "progress", "read_notes", "save_notes"]
             guard !allowed.contains(name), !FileTools.names.contains(name) else { return nil }
             return (200, ["jsonrpc": "2.0", "id": body?["id"] ?? NSNull(),
                           "result": ["content": [["type": "text", "text": refusal.1["error"] as! String]], "isError": true]])
@@ -2367,6 +2367,15 @@ final class Store: ObservableObject {
         // Checked every fifth of a second rather than awaited: the look's own task can't be cut short, and waiting on
         // it in a group would wait for it to end, however long that took.
         let until = Date().addingTimeInterval(5)
+        while lookingForDevices, Date() < until { try? await Task.sleep(for: .milliseconds(200)) }
+        return devices
+    }
+
+    /// The devices `network_devices` answers with: a fresh look unless one ended in the last half minute, waited for
+    /// as long as a look takes (the agent asked, and the answer is no use without it).
+    func devicesNow() async -> [Device] {
+        if !lookingForDevices, devicesLookedAt.map({ Date().timeIntervalSince($0) > 30 }) ?? true { refreshDevices() }
+        let until = Date().addingTimeInterval(20)
         while lookingForDevices, Date() < until { try? await Task.sleep(for: .milliseconds(200)) }
         return devices
     }
@@ -5359,6 +5368,7 @@ final class Store: ObservableObject {
             case "offer_setup": (status, answer) = agentOffer(arguments, for: project)
             case "make_app_for": (status, answer) = await agentKind(arguments, for: project)
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
+            case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
             case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
             default:
@@ -9769,7 +9779,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/connectors", "/agent/network", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -10054,6 +10064,7 @@ final class Store: ObservableObject {
         if route == "/agent/connectors" {
             return Connectors.answer((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:], for: project)
         }
+        if route == "/agent/network" { return await NetworkDevices.answer() }
         if route == "/agent/approve" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             // One of the agent's file tools, about to touch something outside the app's folder or in its runtime folder.

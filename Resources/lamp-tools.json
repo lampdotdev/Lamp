@@ -488,6 +488,21 @@
     }
   },
   {
+    "name": "network_devices",
+    "label": "Look around the network",
+    "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "device_integration",
     "label": "Device integration",
     "description": "Hands Lamp a device's integration: how to find it, read who it is, set it up, and put software on it, as data in the format the device-integrations skill gives (read it first). Lamp checks it and answers with what's wrong, to fix and send again; once it's taken, Lamp looks for the device and shows the person its setup steps itself.",

@@ -339,6 +339,26 @@ enum DeviceProbe {
         let usn: String
     }
 
+    /// Whether macOS keeps Lamp off the local network (Privacy & Security → Local Network turned off for it, or its
+    /// question not answered yet): a search can't even be sent then, where on a quiet network it's sent and nothing
+    /// answers.
+    static func localNetworkRefused() -> Bool {
+        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(1900).bigEndian
+        address.sin_addr.s_addr = inet_addr("239.255.255.250")
+        let message = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"
+        let sent = message.withCString { text in
+            withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            }
+        }
+        return sent < 0 && (errno == EHOSTUNREACH || errno == EPERM || errno == EACCES)
+    }
+
     /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
     static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
         await Task.detached { search(target, seconds: seconds) }.value
