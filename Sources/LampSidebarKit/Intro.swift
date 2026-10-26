@@ -228,15 +228,16 @@ extension ChatLook {
         }
 
         public var body: some View {
-            HStack(spacing: 10) {
-                mark.frame(width: 20, height: 20)
+            // Set as the steps under it are (their font, symbol column and indent), so a part reads as one of the
+            // chat's lines rather than a heading above them: the rule and the mark say it's a part.
+            HStack(spacing: 6) {
+                mark.frame(width: 16, height: 16)
                 // A long part wraps rather than losing its end; the rule takes what room is left.
                 Text(title)
-                    .fontWeight(state == .later ? .regular : .semibold)
-                    .foregroundStyle(state == .later ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
+                    .foregroundStyle(state == .later ? AnyShapeStyle(.tertiary) : state == .now ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                     .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
-                if let time { Text(time).font(.caption).foregroundStyle(.secondary).fixedSize() }
+                if let time { Text(time).font(.caption).foregroundStyle(.tertiary).fixedSize() }
                 if let chevron {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
@@ -245,23 +246,28 @@ extension ChatLook {
                 }
                 Rectangle().fill(.quaternary).frame(minWidth: 12, maxHeight: 1)
             }
+            .font(ChatLook.stepFont)
+            .padding(.leading, ChatLook.stepIndent)
             .contentShape(Rectangle())
-            .padding(.top, 18).padding(.bottom, 6)
+            .padding(.top, 12).padding(.bottom, 4)
             .accessibilityElement(children: .combine)
         }
+
+        /// Where a part's mark is centred, which the line down its steps goes through.
+        static let markCentre = ChatLook.stepIndent + 8
 
         @ViewBuilder
         private var mark: some View {
             if working {
-                ProgressView().controlSize(.small)
+                ProgressView().controlSize(.mini)
             } else if state == .done {
-                Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(.white, .green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, .green)
             } else if finishing {
-                Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])).foregroundStyle(.tertiary)
+                Circle().strokeBorder(style: StrokeStyle(lineWidth: 1.2, dash: [2, 2])).foregroundStyle(.tertiary).padding(1)
             } else {
                 let color: Color = state == .now ? .accentColor : .secondary
-                Circle().strokeBorder(color.opacity(state == .now ? 1 : 0.5), lineWidth: 1.5)
-                    .overlay { Text("\(number)").font(.system(size: 11, weight: .bold)).foregroundStyle(color.opacity(state == .now ? 1 : 0.7)) }
+                Circle().strokeBorder(color.opacity(state == .now ? 1 : 0.5), lineWidth: 1.2).padding(1)
+                    .overlay { Text("\(number)").font(.system(size: 9, weight: .semibold)).foregroundStyle(color.opacity(state == .now ? 1 : 0.7)) }
             }
         }
     }
@@ -290,7 +296,7 @@ extension ChatLook {
                     .pointingHand()
                     .help(open ? "Hide the parts" : "Show the parts")
                     .accessibilityHint(open ? "Hides the parts" : "Shows the parts")
-                    if open { chapters.padding(.leading, 30).transition(.opacity) }
+                    if open { chapters.padding(.leading, ChatLook.stepSymbolRoom).transition(.opacity) }
                     if let answer = build.answer { ChatLook.AgentText(answer).padding(.top, 12) }
                 } else {
                     chapters
@@ -306,9 +312,9 @@ extension ChatLook {
                         if piece.state != .later {
                             part(piece)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.leading, 14).padding(.bottom, 4)
+                                .padding(.leading, ChatLook.stepSymbolRoom).padding(.bottom, 4)
                                 .overlay(alignment: .leading) {
-                                    Rectangle().fill(.quaternary).frame(width: 1.5).padding(.leading, 9)
+                                    Rectangle().fill(.quaternary).frame(width: 1.5).padding(.leading, ChapterHeading.markCentre - 0.75)
                                 }
                         }
                     } else {
@@ -326,7 +332,7 @@ extension ChatLook {
                     if finishing == .now, let activity = build.finishingActivity {
                         ChatLook.ActivityText(activity, since: build.finishingSince ?? Date())
                             .font(ChatLook.stepFont).foregroundStyle(.secondary)
-                            .padding(.leading, 30)
+                            .padding(.leading, ChatLook.stepIndent + ChatLook.stepSymbolRoom)
                     }
                 }
             }
