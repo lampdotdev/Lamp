@@ -8764,6 +8764,10 @@ final class Store: ObservableObject {
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
         let capabilities = Template.Capabilities.load(project)
         capabilities.apply(to: app, for: project)
+        // Who the wish is based on, in the About window: macOS shows Credits.html from the bundle under the app's name.
+        let creditsPage = resources.appendingPathComponent("Credits.html")
+        try? fm.removeItem(at: creditsPage)
+        if let page = Credits.load(project).aboutPage { try Data(page.utf8).write(to: creditsPage) }
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
         if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {

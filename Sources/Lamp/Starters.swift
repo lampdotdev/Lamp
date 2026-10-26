@@ -219,6 +219,10 @@ enum Starters {
             }
         }
         try fm.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
+        // Its credits, the work it's built on (credits.json in the starter's folder), with the starter itself as the
+        // first wish it was remixed from.
+        let credits = Credits.read(starter.folder.appendingPathComponent(Credits.file)) ?? Credits()
+        try Credits.arrive(credits.remixed(from: Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent)), in: project)
         let icon = starter.folder.appendingPathComponent(iconFolder)
         for made in iconFiles(of: project) {
             let shipped = icon.appendingPathComponent(made.lastPathComponent)
