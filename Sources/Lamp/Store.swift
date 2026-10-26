@@ -5602,7 +5602,11 @@ final class Store: ObservableObject {
                 return (400, ["error": "Say in `doing` what you'd press or change on it, 12 words at most."])
             }
             let wish = wish(of: project)
-            if DevicePermissions.kept(wish).always.contains(device) { return (200, ["text": "The person already allows \(device) for this wish: go ahead."]) }
+            // Allowed always: still so at its address now, which may have changed since the card (a router hands out new ones).
+            if DevicePermissions.kept(wish).always.contains(device) {
+                DevicePermissions.asking(about: device, at: address, for: wish)
+                return (200, ["text": "The person already allows \(device) for this wish: go ahead."])
+            }
             if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
             DevicePermissions.asking(about: device, at: address, for: wish)
             let ask = DevicePermissions.card(device: device, doing: doing)
