@@ -219,6 +219,8 @@ enum GameAndroid {
         // The first controller, as the page's pad 0 is: sticks -1 to 1 (up positive), triggers 0 to 1, buttons as Lamp's bits.
         private var lx = 0f; private var ly = 0f; private var rx = 0f; private var ry = 0f; private var lt = 0f; private var rt = 0f
         private var down = 0
+        // The controller's USB vendor, so the page names its buttons as they're marked (a PlayStation's shapes).
+        private var vendor = 0
         private var sent = ""
 
         @SuppressLint("SetJavaScriptEnabled")
@@ -309,6 +311,7 @@ enum GameAndroid {
             val code = if (event.keyCode == KeyEvent.KEYCODE_BACK) KeyEvent.KEYCODE_BUTTON_B else event.keyCode
             val b = bit(code)
             if (b != 0 && (fromController(event) || event.keyCode == KeyEvent.KEYCODE_BACK)) {
+                if (fromController(event)) vendor = event.device?.vendorId ?: 0
                 down = if (event.action == KeyEvent.ACTION_DOWN) down or b else down and b.inv()
                 send()
                 return true
@@ -320,6 +323,7 @@ enum GameAndroid {
 
         override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
             if (!event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.action != MotionEvent.ACTION_MOVE) return super.dispatchGenericMotionEvent(event)
+            vendor = event.device?.vendorId ?: 0
             lx = dead(event.getAxisValue(MotionEvent.AXIS_X)); ly = -dead(event.getAxisValue(MotionEvent.AXIS_Y))
             rx = dead(event.getAxisValue(MotionEvent.AXIS_Z)); ry = -dead(event.getAxisValue(MotionEvent.AXIS_RZ))
             lt = maxOf(event.getAxisValue(MotionEvent.AXIS_LTRIGGER), event.getAxisValue(MotionEvent.AXIS_BRAKE))
@@ -333,7 +337,7 @@ enum GameAndroid {
         }
 
         private fun send() {
-            val now = "$lx,$ly,$rx,$ry,$lt,$rt,$down"
+            val now = "$lx,$ly,$rx,$ry,$lt,$rt,$down,$vendor"
             if (now == sent) return
             sent = now
             web.evaluateJavascript("window.lampNativePad&&lampNativePad($now)", null)

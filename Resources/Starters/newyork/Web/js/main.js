@@ -1,5 +1,5 @@
 // Lamp's game runtime first: in Lamp's preview it sets the clock and random numbers before anything reads them.
-import { game, save, load } from '../lamp-game.js';
+import { game, save, load, input, onInput, label, glyph, BUTTON, STICK, TRIGGER } from '../lamp-game.js';
 import * as THREE from 'three/webgpu';
 import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, vec3, smoothstep } from 'three/tsl';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
@@ -299,33 +299,59 @@ async function initApp() {
     onCloseMap: () => mapSystem.toggleFullMap(false)
   });
 
-  // Keyboard guide for each mode: [keys, action]
+  // The guide to each mode's controls, written once: the keys the city reads (by their codes, as controllers.js and the
+  // keydown handler below have them) and the controller's buttons, sticks and triggers (as gamepad-controls.js reads
+  // Lamp's pad). It shows the half for what the player is holding, named and drawn by Lamp's runtime.
+  const orbit = { keys: ['Drag'], pad: [STICK.RIGHT], does: 'Orbit' };
   const controlHints = {
-    person: [[['W', 'S'], 'Walk / Run'], [['A', 'D'], 'Turn'], [['Space'], 'Jump'], [['Drag'], 'Orbit']],
-    car: [[['W', 'S'], 'Drive / Reverse'], [['A', 'D'], 'Steer'], [['B'], 'Horn'], [['Drag'], 'Orbit']],
-    cyclist: [[['W', 'S'], 'Pedal / Brake'], [['A', 'D'], 'Lean & Turn'], [['Drag'], 'Orbit']],
-    helicopter: [[['W', 'S'], 'Pitch'], [['A', 'D'], 'Yaw'], [['Space', 'E'], 'Ascend'], [['Q', 'C'], 'Descend']]
+    person: [{ keys: ['KeyW', 'KeyS'], does: 'Walk / Run' }, { keys: ['KeyA', 'KeyD'], does: 'Turn' },
+      { pad: [STICK.LEFT], does: 'Walk / Run & turn' }, { keys: ['Space'], pad: [BUTTON.A], does: 'Jump' }, orbit],
+    car: [{ keys: ['KeyW', 'KeyS'], pad: [TRIGGER.RT, TRIGGER.LT], does: 'Drive / Reverse' },
+      { keys: ['KeyA', 'KeyD'], pad: [STICK.LEFT], does: 'Steer' }, { keys: ['KeyB'], does: 'Horn' }, orbit],
+    cyclist: [{ keys: ['KeyW', 'KeyS'], pad: [TRIGGER.RT, TRIGGER.LT], does: 'Pedal / Brake' },
+      { keys: ['KeyA', 'KeyD'], pad: [STICK.LEFT], does: 'Lean & Turn' }, orbit],
+    helicopter: [{ keys: ['KeyW', 'KeyS'], does: 'Pitch' }, { keys: ['KeyA', 'KeyD'], does: 'Yaw' },
+      { pad: [STICK.LEFT], does: 'Pitch & Yaw' }, { keys: ['Space', 'KeyE'], pad: [TRIGGER.RT], does: 'Ascend' },
+      { keys: ['KeyQ', 'KeyC'], pad: [TRIGGER.LT], does: 'Descend' }]
   };
   // Top speeds in mph (controllers.js caps them at 8.2, 36, 19 & 52 m/s): full scale of the speed meter
   const topSpeedMph = { person: 18, car: 81, cyclist: 43, helicopter: 116 };
 
-  function renderControlHints(mode) {
+  // Keys in the city's own keycaps; a controller's buttons as the runtime draws them for that controller.
+  function renderControlHints(mode, on = input()) {
     if (!elControlsHint) return;
-    const items = (controlHints[mode] || []).map(([keys, action]) => {
+    const pad = on.kind === 'controller';
+    const items = (controlHints[mode] || []).filter((hint) => pad ? hint.pad : hint.keys).map((hint) => {
       const item = document.createElement('span');
       item.className = 'hint';
-      for (const key of keys) {
+      for (const what of pad ? hint.pad : hint.keys) {
+        if (pad) {
+          const badge = glyph(what, on);
+          if (badge) item.appendChild(badge);
+          continue;
+        }
         const kbd = document.createElement('kbd');
-        kbd.textContent = key;
+        kbd.textContent = label(what, on);
         item.appendChild(kbd);
       }
-      const label = document.createElement('span');
-      label.className = 'hint-label';
-      label.textContent = action;
-      item.appendChild(label);
+      const words = document.createElement('span');
+      words.className = 'hint-label';
+      words.textContent = hint.does;
+      item.appendChild(words);
       return item;
     });
     elControlsHint.replaceChildren(...items);
+  }
+
+  // The keys named on the HUD's buttons (data-key, a key's code) and, with a controller, the button that does the same
+  // (data-pad); a key with no button on the controller is hidden then (style.css, by body[data-input]).
+  function relabelKeys(on) {
+    document.body.dataset.input = on.kind;
+    for (const kbd of document.querySelectorAll('kbd[data-key], kbd[data-pad]')) {
+      const badge = on.kind === 'controller' && kbd.dataset.pad ? glyph(BUTTON[kbd.dataset.pad], on) : null;
+      if (badge) kbd.replaceChildren(badge);
+      else if (kbd.dataset.key) kbd.textContent = label(kbd.dataset.key, on);
+    }
   }
 
   // The taxi-yellow pill under the selected mode glides from button to button
@@ -608,6 +634,13 @@ async function initApp() {
 
   // Initialize the UI and chase camera around the restored player, or the default taxi on a first visit.
   selectMode(controllerManager.activeMode);
+  // The HUD names what the player is holding, and changes as soon as they pick up something else.
+  onInput((on) => {
+    relabelKeys(on);
+    renderControlHints(controllerManager.activeMode, on);
+    touchControls.updateAvailability();
+    placeModeIndicator();
+  });
   selectCamera('chase', true);
   selectTime('golden');
   // the web fonts change the buttons' widths once they arrive

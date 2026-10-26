@@ -251,7 +251,14 @@ A game is drawn with three.js (`GameKit.Engine.web`, written in its `.lamp-game`
 place has a web view, and on the Xbox a game installed as a game gets enough of the console. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
-controls on a touch screen) and three.js in `Web/three` beside it. On the Mac and iOS the Swift around it is
+controls on a touch screen) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
+its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
+console starts on its controller, a touch screen on touch, the Mac and the preview on the keyboard, and it follows the
+last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick or trigger for it: the
+keyboard's names come from the same table `keyboardPad` reads, and the touch controls' from the one they're drawn
+with, so neither can drift. On a Switch controller a prompt names the letter printed on the button, which isn't the
+Xbox's in that place: BUTTON.A is the bottom button, marked B there. The game's rules say to write the controls once as
+actions and build every prompt and help screen from them (`Rules.gameWebKit`); New York is the worked example. On the Mac and iOS the Swift around it is
 `LampWebGame.swift` (a web view serving the bundle's Web/ at `lamp-game://app/`, its log into the app's log, sound with
 no tap first), built by `GameKit.webBuildSh`; on the Xbox it goes as the integration's web app ("xbox-one", the package
 its declared step makes, `Web/lamp.js` written then), installed as a game. The agent's preview of it is

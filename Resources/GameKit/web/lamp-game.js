@@ -6,10 +6,11 @@
 // device, the keyboard as the first pad, and on a touch screen the touch controls it draws. Lamp's preview runs the same
 // page out of sight from a script of the controller's moves, at exactly 1/60 s a frame with the same random numbers
 // every play, so use frame.dt, random() and save()/load() from here, never requestAnimationFrame, Math.random, the
-// clock or localStorage yourself.
+// clock or localStorage yourself. What the player is holding (a controller, and whose, the keyboard or the touch screen)
+// is input(), and label() and glyph() name and draw a button for it, so a prompt never names one the player hasn't got.
 //
 //   import * as THREE from 'three';
-//   import { game, BUTTON, random, sound, log } from './lamp-game.js';
+//   import { game, BUTTON, STICK, random, sound, log, label, glyph, onInput } from './lamp-game.js';
 //   const renderer = new THREE.WebGLRenderer({ antialias: true });
 //   game({ renderer, async init() { … }, frame(f) { … renderer.render(scene, camera); } });
 
@@ -18,6 +19,9 @@ export const WIDTH = 1920, HEIGHT = 1080;
 // The controller's buttons, as bits of a pad's down, pressed and released.
 export const BUTTON = { A: 1, B: 2, X: 4, Y: 8, LB: 16, RB: 32, MENU: 64, VIEW: 128, UP: 256, DOWN: 512, LEFT: 1024, RIGHT: 2048,
                         LSTICK: 4096, RSTICK: 8192 };
+// The sticks and triggers, for `label` and `glyph` (a pad reads them as lx, ly, rx, ry, lt and rt).
+export const STICK = { LEFT: 'stick-left', RIGHT: 'stick-right' };
+export const TRIGGER = { LT: 'lt', RT: 'rt' };
 
 const preview = window.lampPreview || null;   // set by Lamp's preview before the page runs
 const logs = [];
@@ -195,16 +199,21 @@ window.addEventListener('keydown', e => { if (!e.isTrusted) return; keys.add(e.c
 window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(e.code); });
 window.addEventListener('blur', () => keys.clear());
 
+// The keyboard as a pad: the keys for each button and for each way a stick or trigger goes, the first the one a
+// prompt names (`label`).
+const KEYS = { [BUTTON.A]: ['Space', 'Enter'], [BUTTON.B]: ['Escape', 'Backspace'], [BUTTON.X]: ['KeyF'], [BUTTON.Y]: ['KeyR'],
+               [BUTTON.LB]: ['KeyQ'], [BUTTON.RB]: ['KeyE'], [BUTTON.MENU]: ['KeyP'], [BUTTON.VIEW]: ['Tab'],
+               [BUTTON.UP]: ['ArrowUp'], [BUTTON.DOWN]: ['ArrowDown'], [BUTTON.LEFT]: ['ArrowLeft'], [BUTTON.RIGHT]: ['ArrowRight'] };
+const STICK_KEYS = { left: { up: ['KeyW', 'ArrowUp'], left: ['KeyA', 'ArrowLeft'], down: ['KeyS', 'ArrowDown'], right: ['KeyD', 'ArrowRight'] },
+                     right: { up: ['KeyI'], left: ['KeyJ'], down: ['KeyK'], right: ['KeyL'] } };
+const TRIGGER_KEYS = { lt: ['KeyZ'], rt: ['KeyC'] };
+
 function keyboardPad() {
-    const k = c => keys.has(c);
-    const pad = { lx: (k('KeyD') || k('ArrowRight') ? 1 : 0) - (k('KeyA') || k('ArrowLeft') ? 1 : 0),
-                  ly: (k('KeyW') || k('ArrowUp') ? 1 : 0) - (k('KeyS') || k('ArrowDown') ? 1 : 0),
-                  rx: (k('KeyL') ? 1 : 0) - (k('KeyJ') ? 1 : 0), ry: (k('KeyI') ? 1 : 0) - (k('KeyK') ? 1 : 0),
-                  lt: k('KeyZ') ? 1 : 0, rt: k('KeyC') ? 1 : 0, down: 0 };
-    const map = { Space: BUTTON.A, Enter: BUTTON.A, Escape: BUTTON.B, Backspace: BUTTON.B, KeyF: BUTTON.X, KeyR: BUTTON.Y,
-                  KeyQ: BUTTON.LB, KeyE: BUTTON.RB, KeyP: BUTTON.MENU, Tab: BUTTON.VIEW,
-                  ArrowUp: BUTTON.UP, ArrowDown: BUTTON.DOWN, ArrowLeft: BUTTON.LEFT, ArrowRight: BUTTON.RIGHT };
-    for (const code in map) if (keys.has(code)) pad.down |= map[code];
+    const any = codes => codes.some(c => keys.has(c)), axis = (plus, minus) => (any(plus) ? 1 : 0) - (any(minus) ? 1 : 0);
+    const l = STICK_KEYS.left, r = STICK_KEYS.right;
+    const pad = { lx: axis(l.right, l.left), ly: axis(l.up, l.down), rx: axis(r.right, r.left), ry: axis(r.up, r.down),
+                  lt: any(TRIGGER_KEYS.lt) ? 1 : 0, rt: any(TRIGGER_KEYS.rt) ? 1 : 0, down: 0 };
+    for (const bit in KEYS) if (any(KEYS[bit])) pad.down |= Number(bit);
     return pad;
 }
 
@@ -222,10 +231,11 @@ function gamepadPad(g) {
 
 // The first controller as an app around the page reads it itself (Lamp's Android app, whose WebView doesn't promise
 // the Gamepad API): sticks -1 to 1 with up positive, triggers 0 to 1, buttons as BUTTON bits.
+// `vendor` is the controller's USB vendor, which an app from before it was sent leaves out.
 let nativePad = null;
 // All at rest is no controller in hand (one that went away sends that), so the touch controls can come back.
-window.lampNativePad = (lx, ly, rx, ry, lt, rt, down) => {
-    nativePad = down || lx || ly || rx || ry || lt || rt ? { connected: true, lx, ly, rx, ry, lt, rt, down } : null;
+window.lampNativePad = (lx, ly, rx, ry, lt, rt, down, vendor) => {
+    nativePad = down || lx || ly || rx || ry || lt || rt ? { connected: true, lx, ly, rx, ry, lt, rt, down, vendor } : null;
 };
 
 function merge(pad, more) {
@@ -306,19 +316,177 @@ function buildTouch() {
     };
     // Kept clear of a phone's rounded corners and its camera (the safe area).
     const at = (x, side, y, edge) => `${side}:calc(${x}px + env(safe-area-inset-${side}));${edge}:calc(${y}px + env(safe-area-inset-${edge}))`;
-    button(BUTTON.A, 'A', at(110, 'right', 40, 'bottom'));
-    button(BUTTON.B, 'B', at(40, 'right', 110, 'bottom'));
-    button(BUTTON.X, 'X', at(180, 'right', 110, 'bottom'));
-    button(BUTTON.Y, 'Y', at(110, 'right', 180, 'bottom'));
-    button(BUTTON.LB, 'LB', at(30, 'left', 20, 'top'), true);
-    button(BUTTON.VIEW, '⧉', at(90, 'left', 20, 'top'), true);
-    button(BUTTON.MENU, '≡', at(90, 'right', 20, 'top'), true);
-    button(BUTTON.RB, 'RB', at(30, 'right', 20, 'top'), true);
+    const face = bit => TOUCH_FACES[bit] || NAMES.xbox[nameOf(bit)];
+    button(BUTTON.A, face(BUTTON.A), at(110, 'right', 40, 'bottom'));
+    button(BUTTON.B, face(BUTTON.B), at(40, 'right', 110, 'bottom'));
+    button(BUTTON.X, face(BUTTON.X), at(180, 'right', 110, 'bottom'));
+    button(BUTTON.Y, face(BUTTON.Y), at(110, 'right', 180, 'bottom'));
+    button(BUTTON.LB, face(BUTTON.LB), at(30, 'left', 20, 'top'), true);
+    button(BUTTON.VIEW, face(BUTTON.VIEW), at(90, 'left', 20, 'top'), true);
+    button(BUTTON.MENU, face(BUTTON.MENU), at(90, 'right', 20, 'top'), true);
+    button(BUTTON.RB, face(BUTTON.RB), at(30, 'right', 20, 'top'), true);
     document.body.append(touchLayer);
 }
 if (touchScreen) window.addEventListener('pointerdown', () => { if (!touchShown) { touchShown = true; showTouch(); } }, { capture: true });
 function showTouch() { if (!drawsTouch) return; if (!touchLayer) buildTouch(); touchLayer.style.display = 'block'; touchShown = true; }
 function hideTouch() { if (touchLayer) touchLayer.style.display = 'none'; touchShown = false; }
+
+// MARK: What the player plays with, and what to call its buttons
+
+// The input the player used last: a controller (and whose), the keyboard (with the mouse) or the touch screen. A
+// console starts on its controller, a touch screen on touch, the Mac and Lamp's preview on the keyboard; it changes as
+// soon as the player presses a key, touches the screen or moves a controller.
+const xboxHost = !preview && (!!(window.chrome && window.chrome.webview) || /Xbox/i.test(navigator.userAgent));
+let current = preview ? { kind: 'keyboard' } : xboxHost ? { kind: 'controller', family: 'xbox' } : touchScreen ? { kind: 'touch' } : { kind: 'keyboard' };
+// The controller's own name, for the one difference within a family a prompt shows (a DualShock's Share button).
+let padName = '';
+const listeners = new Set();
+
+export function input() { return Object.assign({}, current); }
+// Calls `changed(input())` now and again each time the player takes up another input, to draw the prompts and help
+// for it; returns a function that stops it.
+export function onInput(changed) {
+    listeners.add(changed);
+    try { changed(input()); } catch (e) { log(`Error: ${e.message}`); }
+    return () => listeners.delete(changed);
+}
+
+function use(kind, family, name = '') {
+    if (preview) return;
+    padName = name;
+    if (current.kind === kind && current.family === family) return;
+    current = family ? { kind, family } : { kind };
+    const spoken = { xbox: 'an Xbox controller', playstation: 'a PlayStation controller', switch: 'a Switch controller', other: 'a controller' };
+    log(`Lamp: playing with ${family ? spoken[family] : 'the ' + kind}.`);
+    for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); }
+}
+
+// Whose controller it is, from the name the browser gives it (with its USB vendor in Chrome's), or from the vendor
+// Lamp's Android app sends. On a console, and from an app that doesn't say, it's an Xbox controller.
+function familyOf(id) {
+    if (xboxHost) return 'xbox';
+    if (/054c|playstation|dualshock|dualsense/i.test(id)) return 'playstation';
+    if (/057e|nintendo|pro controller|joy-?con/i.test(id)) return 'switch';
+    if (/045e|xbox|xinput|microsoft/i.test(id)) return 'xbox';
+    return 'other';
+}
+const vendorFamily = vendor => !vendor ? 'xbox' : ({ 0x054c: 'playstation', 0x057e: 'switch', 0x045e: 'xbox' })[vendor] || 'other';
+
+if (!preview) {
+    window.addEventListener('keydown', e => { if (e.isTrusted) use('keyboard'); }, { capture: true });
+    window.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') use('touch'); else if (e.pointerType === 'mouse') use('keyboard');
+    }, { capture: true, passive: true });
+}
+
+// What a prompt names each part of the pad by. A Switch controller's letters are the other way round from an Xbox's,
+// and BUTTON.A is a place (the bottom face button, as the Gamepad API's standard layout has it), so on a Switch it's
+// the button marked B: a prompt names the letter printed on the button to press, never the one in the same place
+// on an Xbox, or the player presses the wrong one.
+const NAMES = {
+    xbox: { A: 'A', B: 'B', X: 'X', Y: 'Y', LB: 'LB', RB: 'RB', LT: 'LT', RT: 'RT', MENU: 'Menu', VIEW: 'View', LSTICK: 'LS', RSTICK: 'RS',
+            UP: 'D-pad up', DOWN: 'D-pad down', LEFT: 'D-pad left', RIGHT: 'D-pad right', STICK_L: 'Left stick', STICK_R: 'Right stick' },
+    playstation: { A: '✕', B: '○', X: '□', Y: '△', LB: 'L1', RB: 'R1', LT: 'L2', RT: 'R2', MENU: 'Options', VIEW: 'Create', LSTICK: 'L3', RSTICK: 'R3' },
+    switch: { A: 'B', B: 'A', X: 'Y', Y: 'X', LB: 'L', RB: 'R', LT: 'ZL', RT: 'ZR', MENU: '+', VIEW: '−' },
+    touch: { MENU: 'Menu', VIEW: 'View' },
+};
+// What the touch controls draw on a button whose name is a word.
+const TOUCH_FACES = { [BUTTON.MENU]: '≡', [BUTTON.VIEW]: '⧉' };
+const nameOf = what => typeof what === 'number' ? Object.keys(BUTTON).find(name => BUTTON[name] === what)
+    : ({ [STICK.LEFT]: 'STICK_L', [STICK.RIGHT]: 'STICK_R', [TRIGGER.LT]: 'LT', [TRIGGER.RT]: 'RT' })[what];
+const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+// A key's name as it's printed on the key, from its code (KeyboardEvent.code).
+function keyName(code) {
+    const named = { Space: 'Space', Enter: mac ? 'Return' : 'Enter', Escape: 'Esc', Backspace: mac ? 'Delete' : 'Backspace', Tab: 'Tab',
+                    ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', ShiftLeft: 'Shift', ShiftRight: 'Shift',
+                    ControlLeft: 'Ctrl', ControlRight: 'Ctrl', AltLeft: mac ? 'Option' : 'Alt', AltRight: mac ? 'Option' : 'Alt',
+                    MetaLeft: mac ? '⌘' : 'Win', MetaRight: mac ? '⌘' : 'Win', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/' };
+    return named[code] || (/^(Key|Digit|Numpad)(.+)$/.exec(code) || [])[2] || code;
+}
+
+function keysFor(name) {
+    if (name === 'STICK_L' || name === 'STICK_R') {
+        const s = STICK_KEYS[name === 'STICK_L' ? 'left' : 'right'];
+        return [s.up[0], s.left[0], s.down[0], s.right[0]];
+    }
+    if (name === 'LT' || name === 'RT') return [TRIGGER_KEYS[name.toLowerCase()][0]];
+    const codes = KEYS[BUTTON[name]];
+    return codes ? [codes[0]] : null;
+}
+
+// What to call a button (BUTTON.A…), a stick (STICK.LEFT) or a trigger (TRIGGER.RT) on the input the player is using
+// (or the one given): "A", "✕", "Space", "W A S D". A key's code ('KeyH'), for a page that reads keys itself, is that
+// key's name whatever the input. null when the input has nothing for it (no key for a stick's click, no touch button
+// the game didn't ask for), so the prompt is left out.
+export function label(what, on = current) {
+    const name = nameOf(what);
+    if (!name) return typeof what === 'string' ? keyName(what) : null;
+    if (on.kind === 'keyboard') { const codes = readsKeyboard ? keysFor(name) : null; return codes ? codes.map(keyName).join(' ') : null; }
+    if (on.kind === 'touch') {
+        if (!drawsTouch) return null;
+        if (name === 'STICK_L') return NAMES.xbox.STICK_L;
+        if (name === 'STICK_R') return touchButtons & BUTTON.RSTICK ? NAMES.xbox.STICK_R : null;
+        const bit = BUTTON[name];
+        return bit && bit < BUTTON.UP && (touchButtons & bit) ? NAMES.touch[name] || NAMES.xbox[name] : null;
+    }
+    if (on.family === 'playstation' && name === 'VIEW' && /dualshock|05c4|09cc/i.test(padName)) return 'Share';
+    return (NAMES[on.family] || {})[name] || NAMES.xbox[name];
+}
+
+// A badge for a button, stick or trigger as the player's input draws it (an Xbox controller's coloured round letters,
+// a PlayStation controller's shapes, a key's keycap), sized to the text around it: a <span> to put in a prompt or
+// a help screen, or null where `label` is.
+const FACE_COLOURS = { xbox: { A: '#5dc21e', B: '#f04e3e', X: '#2f8ee8', Y: '#f2b51d' },
+                       playstation: { A: '#9aaeff', B: '#ff6b70', X: '#f48fd6', Y: '#3fd5b0' } };
+export function glyph(what, on = current) {
+    const text = label(what, on);
+    if (text == null) return null;
+    const name = nameOf(what), el = document.createElement('span');
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', text);
+    el.style.cssText = 'display:inline-flex;gap:.18em;vertical-align:middle;line-height:1;white-space:nowrap';
+    const badge = (content, css) => {
+        const b = document.createElement('span');
+        b.textContent = content;
+        b.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:1.7em;min-width:1.7em;'
+            + 'padding:0 .4em;font:700 .8em/1 -apple-system,system-ui,"Segoe UI",sans-serif;letter-spacing:0;' + css;
+        el.append(b);
+    };
+    if (on.kind === 'keyboard' || !name) {
+        // A key: a light keycap with its lower edge, one for each key a stick takes.
+        for (const key of text.split(' ')) badge(key, 'border-radius:.35em;background:linear-gradient(#fdfdfe,#e3e4e8);color:#1d1d22;'
+            + 'border:1px solid #a9abb3;border-bottom-width:.2em;box-shadow:0 1px 2px rgba(0,0,0,.35)' + (key.length > 1 ? ';padding:0 .55em' : ''));
+        return el;
+    }
+    const dark = 'background:#18191d;color:#fff;border:.12em solid rgba(255,255,255,.28);box-shadow:0 1px 3px rgba(0,0,0,.45);';
+    if (on.kind === 'touch') {
+        const face = TOUCH_FACES[BUTTON[name]] || text;
+        badge(name.startsWith('STICK') ? '' : face, 'border-radius:50%;background:rgba(255,255,255,.22);color:#fff;'
+            + (name.startsWith('STICK') ? 'border:.12em solid rgba(255,255,255,.45)' : 'border:0'));
+        return el;
+    }
+    const family = on.family;
+    if (['A', 'B', 'X', 'Y'].includes(name)) {
+        const colour = (FACE_COLOURS[family] || {})[name] || '#fff';
+        badge(text, dark + `border-radius:50%;padding:0;color:${colour};` + (family === 'playstation' ? 'font-size:.95em' : ''));
+    } else if (name.startsWith('STICK')) {
+        // A stick: a ring with its side's letter in it.
+        badge(name === 'STICK_L' ? 'L' : 'R', dark + 'border-radius:50%;padding:0;box-shadow:inset 0 0 0 .2em #18191d,inset 0 0 0 .3em rgba(255,255,255,.35)');
+    } else if (['UP', 'DOWN', 'LEFT', 'RIGHT'].includes(name)) {
+        badge(({ UP: '↑', DOWN: '↓', LEFT: '←', RIGHT: '→' })[name], dark + 'border-radius:.3em;padding:0');
+    } else if (name === 'LT' || name === 'RT') {
+        badge(text, dark + 'border-radius:.75em .75em .3em .3em');
+    } else if (name === 'LB' || name === 'RB') {
+        badge(text, dark + 'border-radius:.3em .3em .6em .6em');
+    } else if (family === 'xbox' && (name === 'MENU' || name === 'VIEW')) {
+        badge(name === 'MENU' ? '≡' : '⧉', dark + 'border-radius:50%;padding:0');
+    } else {
+        // Menu and View by their words (Options, Create, + and −), and a stick's click.
+        badge(text, dark + 'border-radius:.85em;' + (text.length > 2 ? 'font-size:.62em;text-transform:uppercase;letter-spacing:.04em' : ''));
+    }
+    return el;
+}
 
 // MARK: The frame
 
@@ -333,11 +501,15 @@ function readPads() {
     const found = scripted ? [] : Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(g => g && g.connected);
     // The touch controls are there from the start, step aside once a controller is played with (a connected one alone
     // may only be the simulator passing the Mac's through), and come back when the screen is touched.
+    const played = found.find(inUse);
+    const nativeInUse = nativePad && (nativePad.down || [nativePad.lx, nativePad.ly, nativePad.rx, nativePad.ry].some(a => Math.abs(a) > 0.3));
     if (touchScreen && !scripted) {
         if (seenControllers === -1) showTouch();
-        const nativeInUse = nativePad && (nativePad.down || [nativePad.lx, nativePad.ly, nativePad.rx, nativePad.ry].some(a => Math.abs(a) > 0.3));
-        if (touchShown && (found.some(inUse) || nativeInUse)) hideTouch();
+        if (touchShown && (played || nativeInUse)) hideTouch();
     }
+    // The controller played with is the input now (and in the preview it stays the keyboard).
+    if (played) use('controller', familyOf(played.id), played.id);
+    else if (nativeInUse) use('controller', vendorFamily(nativePad.vendor));
     if (!scripted && found.length !== seenControllers) { seenControllers = found.length; log(`Lamp: ${found.length} controller${found.length === 1 ? '' : 's'} connected.`); }
     for (let i = 0; i < 4; i++) {
         let pad = found[i] ? gamepadPad(found[i]) : { connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0 };

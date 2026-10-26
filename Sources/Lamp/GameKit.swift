@@ -770,7 +770,16 @@ extension Agent.Rules {
     triggers, P Menu, Tab View) or the touch controls Lamp draws on a phone or tablet (a left stick, and the buttons \
     `touch` names: BUTTON.A | BUTTON.B | BUTTON.MENU unless you say otherwise, BUTTON.RSTICK for a right stick; keep \
     a game playable with those few on a phone). B is the game's, for back or cancel, and Menu for pause. Draw text \
-    and menus as HTML over the canvas (a fixed div, large type) or into the scene; the preview pictures both. Shake \
+    and menus as HTML over the canvas (a fixed div, large type) or into the scene; the preview pictures both. \
+    The player may hold an Xbox, PlayStation or Switch controller, the keyboard or the touch screen, and switches as \
+    they play, so never write a key's or a button's name: write the controls once, as actions mapped to the pad \
+    (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), read the pad \
+    through them, and show how to play (the controls as play starts, and a help screen on the title or pause menu) \
+    and every prompt from them with lamp-game.js's `label(CONTROLS.jump)` \
+    (the words: "A", "✕", "Space") and `glyph(CONTROLS.jump)` (that button's badge as the player's input draws it, an \
+    element to put in the text), inside `onInput(draw)`, which draws now and again whenever the player takes up \
+    another input (`input()` says which). Both are null where that input has nothing for it: leave that line out. A \
+    page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. Shake \
     the controller with `rumble(0, low, high, seconds)`. Log events with `log()`, a line per event, never per \
     frame. Plain modern JavaScript, nothing loaded from the network.
     """
