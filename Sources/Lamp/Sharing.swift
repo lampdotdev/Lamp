@@ -949,7 +949,9 @@ extension Sharing {
     /// pieces is put back together: strings that are nothing but base64, written close together, are read as
     /// one, in the order they're written. Pieces written far apart or joined in another order, and other encodings (hex, numbers, a
     /// reversed or scrambled string), are beyond a search like this; the AI review reads that code.
-    static func hidesEncodedText(_ code: String) -> Bool {
+    /// `joining` off looks only for long runs, not for short pieces that read as text joined: in a large data file (a
+    /// map's thousands of street names) some pieces always do.
+    static func hidesEncodedText(_ code: String, joining: Bool = true) -> Bool {
         // A literal handed straight to the decoder, however short.
         if code.contains(#/base64Encoded:\s*#*"/#) { return true }
         let quote = UInt8(ascii: "\"")
@@ -963,7 +965,7 @@ extension Sharing {
                 continue
             }
             if encodes(run) { return true }
-            if before == quote, byte == quote, !run.isEmpty {
+            if joining, before == quote, byte == quote, !run.isEmpty {
                 // Pieces are written close together (`"…" + "…"`, one `let` a line); words far apart in the
                 // code, joined, can read as text by chance.
                 if offset - run.count - lastPiece > 40 {
@@ -978,7 +980,7 @@ extension Sharing {
             before = byte
             run.removeAll(keepingCapacity: true)
         }
-        return encodes(run) || joinedReadsAsText(pieces, from: starts)
+        return encodes(run) || joining && joinedReadsAsText(pieces, from: starts)
     }
 
     /// Joined pieces are decoded from the start of one of them, as the app joining them would: read from
@@ -1352,8 +1354,14 @@ extension Sharing {
                 let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                     .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
-                add(TVFiles.detected(in: app.sources) + checklist.filter { item in
-                    item == encodedData ? hidesEncodedText(swift) : item.patterns.contains { swift.contains($0) }
+                // Pieces joined are looked for in files of code, not in a large file of data (over 100 KB, a map's or a
+                // level's), where long runs still are.
+                let hidden = app.sources.contains { file in
+                    guard let text = try? String(contentsOf: file, encoding: .utf8) else { return false }
+                    return hidesEncodedText(text, joining: text.utf8.count <= 100_000)
+                }
+                add(TVFiles.detected(in: app.sources).filter { $0 != encodedData } + (hidden ? [encodedData] : []) + checklist.filter { item in
+                    item != encodedData && item.patterns.contains { swift.contains($0) }
                 })
             default:
                 add(checklist.filter { item in
