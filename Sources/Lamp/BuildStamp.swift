@@ -15,11 +15,10 @@ struct BuildStamp: Equatable {
     /// killed when it asks, until it's built again. And the build's App Intents step: an app built before it
     /// has none of its intents where the system looks for them. And the chat Lamp puts in a Mac app's window
     /// (`Sidebar`): an app installed with an earlier one shows that until it's built again. It leaves out `LampWish`,
-    /// which only an app of several in a wish is given (`Template.talksToOtherApps`): an app on its own must never be
-    /// built again for a block it doesn't have.
+    /// which has a fingerprint of its own (`wish`), given to every app that carries it (`Template.carriesWish`).
     var support: String?
-    /// A fingerprint of `LampWish`, on an app of several in a wish only: one built with an earlier block is built again
-    /// when it's opened from Lamp, so the "out of date" its wish's other apps show for it goes once it is.
+    /// A fingerprint of `LampWish`, on an app that carries it: one built with an earlier block is built again when it's
+    /// opened from Lamp, so the "out of date" its wish's other apps and its own other copies show for it goes once it is.
     var wish: String? = nil
 
     private static let lampKey = "LampVersion"
@@ -73,27 +72,29 @@ struct BuildStamp: Equatable {
         else { return }
         info[lampKey] = current.lamp
         info[supportKey] = current.support
-        info[wishKey] = Template.talksToOtherApps(project) ? currentWish : nil
+        info[wishKey] = Template.carriesWish(project) ? currentWish : nil
         guard let out = try? PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0) else { return }
         try? AppFolder.write(out, to: url, in: project.dir)
     }
 
-    /// Stamps an app outside any app's folder (a starter's prebuilt copy in Lamp's own bundle, as it's being built).
+    /// Stamps an app outside any app's folder (a starter's prebuilt copy in Lamp's own bundle, as it's being built). A
+    /// starter is an app on its own, which carries `LampWish` as every app does (`Template.carriesWish`).
     static func stamp(_ app: URL) {
         let url = infoPlist(of: app)
         guard let info = NSMutableDictionary(contentsOf: url) else { return }
         info[lampKey] = current.lamp
         info[supportKey] = current.support
+        info[wishKey] = currentWish
         info.write(to: url, atomically: true)
     }
 
     /// Built by a Lamp whose app code differs from this one's.
     var isOutdated: Bool { support != Self.current.support }
 
-    /// Out of date for this app: built by a Lamp whose app code differs, or, for an app of several in a wish, whose
+    /// Out of date for this app: built by a Lamp whose app code differs, or, for an app that carries `LampWish`, whose
     /// `LampWish` does.
     func isOutdated(for project: LampProject) -> Bool {
-        isOutdated || (Template.talksToOtherApps(project) && wish != Self.currentWish)
+        isOutdated || (Template.carriesWish(project) && wish != Self.currentWish)
     }
 
     /// What built the app, to follow "built with": "Lamp 0.2.0", "an older version of Lamp".

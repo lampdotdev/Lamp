@@ -105,9 +105,8 @@ final class WishChannelTests: XCTestCase {
         let sealed = Data(base64Encoded: answer["sealed"] as? String ?? "")!
         let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: Data(base64Encoded: answer["nonce"] as? String ?? "")!), ciphertext: sealed.dropLast(16), tag: sealed.suffix(16))
         XCTAssertNil(try? AES.GCM.open(box, using: sealing))
-        // A point every secret comes out zero for is refused, and a wish of one app has no key to claim.
+        // A point every secret comes out zero for is refused.
         XCTAssertEqual(WishRooms.claim(for: wish, apps: [wish, phone], publicKey: Data(count: 32)).0, 400)
-        XCTAssertEqual(WishRooms.claim(for: wish, apps: [wish], publicKey: ours).1["alone"] as? Bool, true)
     }
 
     /// The claim of a wish's key is answered once, for minutes: someone on the network who rewrites the page's public

@@ -286,7 +286,7 @@ enum DeviceApps {
         defer { Task { @MainActor in Store.shared.puttingOnDevice(project.id, false) } }
         // A game's or a screen's page of a wish asks for its wish's key too, as a TV app's does: open from minutes before
         // the upload, and again once it's open, since an Xbox's install can take longer than that.
-        let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.talksToOtherApps(project) ? device.address : nil
+        let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.carriesWish(project) ? device.address : nil
         if let claimsKey { WishClaims.shared.open(project.id, from: claimsKey) }
         if let logs = bridge.logs, !logs.isEmpty {
             // A device with nothing listening on its log's port still takes the app.

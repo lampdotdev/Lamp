@@ -154,10 +154,9 @@ enum TVTemplate {
     /// LG's TVs and in the preview, whose browsers are about Chrome 79's age, so it's plain ES5.
     static var lampJS: String { DeviceSupport.webJS + remoteJS + controllersJS + wishJS }
 
-    /// lamp.js as an app is given it: with `Lamp.wish` only for a TV app with others in its wish
-    /// (`Template.talksToOtherApps`), so a TV app on its own is written as it was before the block existed.
+    /// lamp.js as an app is given it: with `Lamp.wish` for a TV app that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.talksToOtherApps(project) ? lampJS
+        Template.carriesWish(project) ? lampJS
             : DeviceSupport.webJS + remoteJS.replacingOccurrences(of: wishLine, with: "") + controllersJS
     }
 
@@ -1103,6 +1102,7 @@ extension TVTemplate {
          * Lamp.wish.peers()                  the wish's other apps open now: [{ peer: 'iphone', kind, name, device, status }]
          * Lamp.wish.apps()                   every other app of the wish, open or not
          * Lamp.wish.peer('iphone')           that app, open or not ({ ..., open, status }); null when the wish has none
+         * Lamp.wish.peer('screen').copies    where it's open now, one for each device: [{ id: 'screen.k3j9x0ab', device, since }]
          * Lamp.wish.peer('iphone').status    { state: 'connected', 'outOfDate' or 'notOpen', reason, lastSeen }: show reason as it is
          *                                     ("Open the iPhone app on your iPhone.", "The iPhone app was last open 5 min
          *                                     ago. Open it on your iPhone."); lastSeen is when it was last open on this
@@ -1110,23 +1110,28 @@ extension TVTemplate {
          * Lamp.wish.onPeers(fn(list))        fn now and whenever any app's status changes (the open ones)
          * Lamp.wish.onApps(fn(list))         fn now and whenever any app's status changes, open or not, its reason
          *                                     included ("5 min ago" becoming "6 min ago"): every app, as apps() gives them
-         * Lamp.wish.send(data, 'iphone')     JSON to one app; false (with why in the console) when it wasn't sent
+         * Lamp.wish.send(data, 'iphone')     JSON to one app (each copy of it open now); false (with why in the console)
+         *                                     when it wasn't sent
+         * Lamp.wish.send(data, copy.id)      to one copy of an app: 'screen.k3j9x0ab'
          * Lamp.wish.send(data)               to every other app of the wish
-         * Lamp.wish.onMessage(fn(from, data))   what another app sent: its peer name and its JSON
+         * Lamp.wish.onMessage(fn(from, data, copy))   what another app sent: its peer name, its JSON, and which copy of it
+         *                                     sent it, to answer that one alone
          * Lamp.wish.state(), status()        this app's link: 'connecting', 'connected', 'alone' (the wish has no other
-         *                                     app), 'away' (neither Lamp nor another app of the wish is reachable), 'ended';
+         *                                     app and no other copy of this one is open), 'away' (neither Lamp nor another app of the wish is reachable), 'ended';
          *                                     status() is { state, reason }
          * Lamp.wish.onState(fn(state, status))   fn now and whenever this app's link changes
          * Lamp.wish.me()                     this app's own peer name
+         * Lamp.wish.copy()                   this copy's: the app open on this device ('screen.k3j9x0ab')
          * Lamp.wish.values()                 the values the wish's apps share, kept on each device: { list: [...], ... };
          *                                     those kept here come once the page knows its wish, with onChange
          * Lamp.wish.set('list', value)       sets one here and in every other app, now or when they next meet; null
          *                                     removes it; false (with why in the console) when it wasn't set
          * Lamp.wish.onChange(fn(key, value, from))   a value changed, here (from is me()) or in another app
          * Lamp.wish.sendFile(data, 'iphone', { name, type })   a File, Blob, ArrayBuffer, bytes or text, up to 64 MB, to
-         *                                     one app open now (two at a time to each); gives a transfer: onProgress(fn(sent,
-         *                                     size)), cancel(), done (a Promise that fails with why it didn't get there)
-         * Lamp.wish.onFile(fn(from, file))   another app is sending a file: file.name, .type, .size,
+         *                                     one copy open now: the one named, or the app's opened last (two at a time to
+         *                                     each); gives a transfer: onProgress(fn(sent, size)), cancel(), done (a Promise
+         *                                     that fails with why it didn't get there)
+         * Lamp.wish.onFile(fn(from, file, copy))   another app is sending a file: file.name, .type, .size, .copy (which copy sent it),
          *                                     file.onProgress(fn(received, size)), file.cancel(), file.done.then(fn(arrayBuffer))
          * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; anything bigger goes with sendFile
          * Lamp.wish.valueLimit, valuesLimit  8192 and 65536: the most bytes one value, and all of them, take as JSON
@@ -1137,7 +1142,9 @@ extension TVTemplate {
          * More states may come: compare with the names above and treat any other as not connected. An open app built by
          * an older Lamp is 'outOfDate', still open, with a reason saying to open it from Lamp. Show a reason as it
          * is rather than words of your own (it changes as time goes by: "5 min ago"), and keep the app usable while an app
-         * isn't open. A message or a file is for apps open now; values are for what must outlast an app being closed, and
+         * isn't open. An app can be open on several devices at once (a screen on the kitchen iPad and on the TV): each is a
+         * copy of it, all reach the others and keep the same values, and another copy of this same app is in apps() while
+         * it's open. A message or a file is for apps open now; values are for what must outlast an app being closed, and
          * where two apps set one while apart, the later setting wins in both. A phone steering this app as a game
          * controller is Lamp.controllers (above), not this; the wish's own apps that do (LampController) join
          * Lamp.controllers through this, the same way as everything else here.
@@ -1146,8 +1153,9 @@ extension TVTemplate {
           'use strict';
           var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
           // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-          // 2 brought values, 3 files and a game's controls; an app from before says none, which counts as 1.
-          var WIRE = 3;
+          // 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices; an app from before says
+          // none, which counts as 1.
+          var WIRE = 4;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
@@ -1155,6 +1163,15 @@ extension TVTemplate {
           var on = { peers: [], apps: [], message: [], state: [], change: [], file: [] };
           var started = false, socket = null, again = null, askTimer = null, beatTimer = null, heard = 0;
           var address = null, mine = '', state = 'connecting', reason = null, retry = 0, away = false, undeliveredSaid = {};
+          // This device's id for the app, made the first time it runs and kept with what it keeps of the wish: the app open
+          // here and on another device at once are two copies ('screen.k3j9x0ab'), and this one opened again is the same.
+          // Made when first needed: a page whose app around it is the peer is told its id instead.
+          var copyId = '';
+          function myCopy() {
+            if (!copyId && !host) { var b = C.random(8), abc = 'abcdefghijklmnopqrstuvwxyz0123456789'; for (var i = 0; i < 8; i++) copyId += abc.charAt(b[i] % 36); }
+            return mine ? mine + (copyId ? '.' + copyId : '') : '';
+          }
+          function appOf(peer) { return String(peer).split('.')[0]; }
           // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
           var hello = null, sent = 0, opened = 0, sendKey = null, openKey = null;
           var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
@@ -1188,7 +1205,11 @@ extension TVTemplate {
           // listens, else looked for on this network at the wish's port for it. Each is sealed the same way, with the
           // wish's key; a message goes the straight way when there is one. So the apps go on talking with Lamp closed.
           var relayIn = false, lampAway = false, alone = false, relayPresent = {}, roster = [], restored = false;
-          var directs = {}, dialing = {}, nextDial = {}, told = {}, openSince = {}, lastSeen = {}, devices = {};
+          // Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then a page
+          // whose wish has no other app doesn't look for its copies on the network.
+          var copiesSeen = false;
+          // Copies (each app on one device) by their peer name, apps by theirs: lastSeen and appsOpen.
+          var directs = {}, dialing = {}, nextDial = {}, told = {}, openSince = {}, lastSeen = {}, devices = {}, appsOpen = {};
           var apps = [], lastOpen = '[]', swept = 0, here = null, pending = [], epoch = 0;
           // The apps Lamp hasn't made yet, what this page last told Lamp's room of its link, and the status views to draw.
           var waiting = {}, reported = '', beats = 0, views = [], lastDrawn = '', lastApps = '[]';
@@ -1209,11 +1230,11 @@ extension TVTemplate {
             file.onProgress(function () { clearTimeout(watch); watch = setTimeout(stalled, 20000); });
             file.done.then(function () { clearTimeout(watch); }, function () { clearTimeout(watch); });
             if (key !== null) { if (padHooks && padPlayers[key]) padHooks.file(key, file); else file.cancel(); }
-            else if (on.file.length) emit('file', [route.peer, file]);
+            else if (on.file.length) { file.copy = route.peer; emit('file', [appOf(route.peer), file, route.peer]); }
             else file.cancel();
           });
           // The wish's own apps playing this app's game (LampController): joined to Lamp.controllers while it takes
-          // players, each controller of each app a player of its own ('w' + its app's peer name + ':' + its id).
+          // players, each controller of each copy a player of its own ('w' + its copy's peer name + ':' + its id).
           var padHooks = null, padPlayers = {};
           function padKey(peer, id) { return 'w' + peer + (typeof id === 'string' && /^[a-z0-9]{1,16}$/.test(id) ? ':' + id : ''); }
 
@@ -1229,11 +1250,25 @@ extension TVTemplate {
             emit('state', [state, status()]);
             draw();
           }
-          function copy(p) { return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open,
-                                      status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } }; }
+          function copy(p) {
+            var copies = [];
+            for (var i = 0; p.copies && i < p.copies.length; i++) copies.push({ id: p.copies[i].id, device: p.copies[i].device, since: p.copies[i].since });
+            return { peer: p.peer, kind: p.kind, name: p.name, device: p.device, open: p.open, copies: copies,
+                     status: { state: p.status.state, reason: p.status.reason, lastSeen: p.status.lastSeen } };
+          }
           function allOnes() { var list = []; for (var i = 0; i < apps.length; i++) list.push(copy(apps[i])); return list; }
           function openOnes() { var list = []; for (var i = 0; i < apps.length; i++) if (apps[i].open) list.push(copy(apps[i])); return list; }
-          function find(id) { for (var i = 0; i < apps.length; i++) if (apps[i].peer === id) return apps[i]; return null; }
+          function find(id) { var a = appOf(id); for (var i = 0; i < apps.length; i++) if (apps[i].peer === a) return apps[i]; return null; }
+          // The copies a message for `to` goes to: the one it names, or every open copy of the app it names, or with none every
+          // open copy of every other app.
+          function copiesFor(to) {
+            var list = [], i, j;
+            for (i = 0; i < apps.length; i++) {
+              if (to && apps[i].peer !== appOf(to)) continue;
+              for (j = 0; apps[i].copies && j < apps[i].copies.length; j++) if (!to || to.indexOf('.') < 0 || apps[i].copies[j].id === to) list.push(apps[i].copies[j].id);
+            }
+            return list;
+          }
           // Why another app isn't there, in the same words in every language Lamp's apps are written in: where to open
           // it, and when it was last open here when it has been.
           var PLACES = { tv: 'your TV', mac: 'your Mac', iphone: 'your iPhone', android: 'your Android device' };
@@ -1258,47 +1293,69 @@ extension TVTemplate {
           function connected(name) { return (name.indexOf('the ') === 0 ? name.slice(4) : name) + ' connected'; }
           function bytes(text) { try { return unescape(encodeURIComponent(text)).length; } catch (e) { return text.length * 3; } }
           function say(line) { if (window.console) console.error('Lamp.wish: ' + line); }
-          function isName(n) { return typeof n === 'string' && /^[a-z0-9-]{1,32}$/.test(n); }
+          // A peer's name: an app's ('tv'), or a copy's, the app's then a dot and the copy's id ('tv.k3j9x0ab'), 32 bytes at most.
+          function isName(n) { return typeof n === 'string' && n.length <= 32 && /^[a-z0-9-]+(\.[a-z0-9]+)?$/.test(n); }
           function hex(b) { var s = ''; for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? '0' : '') + b[i].toString(16); return s; }
 
           // The state and the list of apps, from what each way says now.
           function rebuild() {
-            var now = Date.now(), next = [], any = false, arrived = [], named = false;
+            var now = Date.now(), next = [], any = false, arrived = [], named = false, me = myCopy(), open = {}, id;
             // Values set before this page knew its own name take it now, so two apps' settings never tie.
-            if (mine) for (var k in entries) if (entries[k].c[2] === '') { entries[k].c = [entries[k].c[0], entries[k].c[1], mine]; named = true; }
+            if (mine) for (var k in entries) if (entries[k].c[2] === '') { entries[k].c = [entries[k].c[0], entries[k].c[1], me]; named = true; }
             if (named) keepValues();
+            // Every copy open either way, this one aside: an app is open while any copy of it is.
+            if (started) {
+              for (id in relayPresent) if (id !== me) open[id] = true;
+              for (id in directs) if (directs[id].ready && id !== me) open[id] = true;
+            }
+            for (id in open) if (!openSince[id]) { openSince[id] = relayPresent[id] && relayPresent[id].since || now; arrived.push(id); }
+            for (id in openSince) if (!open[id]) delete openSince[id];
+            for (id in open) {
+              var dev = directs[id] && directs[id].ready ? directs[id].device : relayPresent[id] ? relayPresent[id].device : '';
+              if (dev) devices[id] = dev;
+            }
             for (var i = 0; i < roster.length; i++) {
-              var a = roster[i];
-              if (a.peer === mine) continue;
-              var d = directs[a.peer] && directs[a.peer].ready ? directs[a.peer] : null, r = relayPresent[a.peer];
-              var open = started && (!!d || !!r);
-              if (open) {
+              var a = roster[i], copies = [], w = WIRE, speaks = false, anyWire = null;
+              for (id in open) if (appOf(id) === a.peer) copies.push({ id: id, device: devices[id] || '', since: openSince[id] });
+              // This app itself is listed only while another copy of it is open.
+              if (a.peer === mine && !copies.length) continue;
+              copies.sort(function (x, y) { return x.since !== y.since ? x.since - y.since : x.id < y.id ? -1 : 1; });
+              var isOpen = copies.length > 0;
+              if (isOpen) {
                 // Open, so made, whatever a list kept from before said.
                 delete waiting[a.peer];
-                if (!openSince[a.peer]) { openSince[a.peer] = r && r.since || now; arrived.push(a.peer); }
-                var dev = d ? d.device : r.device;
-                if (dev) devices[a.peer] = dev;
-              } else if (openSince[a.peer]) { delete openSince[a.peer]; lastSeen[a.peer] = now; keep(); }
-              var w = d ? d.wire : r ? r.wire : WIRE;
-              next.push({ peer: a.peer, kind: a.kind, name: a.name, device: devices[a.peer] || '', open: open,
-                          status: open && w !== WIRE ? { state: 'outOfDate', reason: outOfDate(a.name, w < WIRE), lastSeen: openSince[a.peer] }
-                                : open ? { state: 'connected', reason: '', lastSeen: openSince[a.peer] }
-                                       : { state: 'notOpen', reason: notOpen(a.name, a.kind, lastSeen[a.peer], waiting[a.peer], now), lastSeen: lastSeen[a.peer] || null } });
+                appsOpen[a.peer] = true;
+              } else if (appsOpen[a.peer]) { delete appsOpen[a.peer]; lastSeen[a.peer] = now; keep(); }
+              // Out of date only when no copy speaks what this one does.
+              for (var c = 0; c < copies.length; c++) { var cw = wireOf(copies[c].id); if (cw === WIRE) speaks = true; if (anyWire === null) anyWire = cw; }
+              if (!speaks && anyWire !== null) w = anyWire;
+              var since = isOpen ? copies[0].since : null;
+              next.push({ peer: a.peer, kind: a.kind, name: a.name, device: isOpen ? copies[copies.length - 1].device : '', open: isOpen, copies: copies,
+                          status: isOpen && w !== WIRE ? { state: 'outOfDate', reason: outOfDate(a.name, w < WIRE), lastSeen: since }
+                                : isOpen ? { state: 'connected', reason: '', lastSeen: since }
+                                         : { state: 'notOpen', reason: notOpen(a.name, a.kind, lastSeen[a.peer], waiting[a.peer], now), lastSeen: lastSeen[a.peer] || null } });
             }
             apps = next;
-            for (var id in directs) if (directs[id].ready) any = true;
-            // An app no longer open takes its files and its place in the game with it; one that has just come is told the
+            for (id in directs) if (directs[id].ready) any = true;
+            // A copy no longer open takes its files and its place in the game with it; one that has just come is told the
             // game takes players.
-            for (var g = 0; g < apps.length; g++) {
-              if (apps[g].open) continue;
-              dropRoutes(apps[g].peer, null, apps[g].name.charAt(0).toUpperCase() + apps[g].name.slice(1) + ' closed.');
-              for (var pk in padPlayers) if (padPlayers[pk].peer === apps[g].peer) { delete padPlayers[pk]; if (padHooks) padHooks.leave(pk); }
+            for (var rk in routes) if (!open[routes[rk].peer]) {
+              var gone = find(routes[rk].peer), title = gone ? gone.name.charAt(0).toUpperCase() + gone.name.slice(1) : 'The other app';
+              dropRoutes(routes[rk].peer, null, title + ' closed.');
             }
+            for (var pk in padPlayers) if (!open[padPlayers[pk].peer]) { delete padPlayers[pk]; if (padHooks) padHooks.leave(pk); }
             if (padHooks) for (var q = 0; q < arrived.length; q++) sendPad(arrived[q], { t: 'host' });
             // This page's own state first: code that hears an app arrive in peers sends to it at once, and must find this
             // page connected when it does.
+            var ownOpen = false;
+            for (id in open) if (appOf(id) === mine) ownOpen = true;
+            if (ownOpen && !copiesSeen) { copiesSeen = true; keep(); setTimeout(lookAgain, 0); }
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // long as none ever was; once one has been, not reaching it is said as for any other app.
+            var none = true;
+            for (id in open) none = false;
             if (started) {
-              var s = alone ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
+              var s = (alone || (roster.length === 1 && none && !copiesSeen)) ? 'alone' : (relayIn || any) ? 'connected' : lampAway ? 'away' : 'connecting';
               if (s === 'connected') away = false;
               if (s !== state || reason !== null) setState(s);
             }
@@ -1312,7 +1369,7 @@ extension TVTemplate {
             // again whichever was open meanwhile.
             for (var j = 0; j < arrived.length; j++) if (wireOf(arrived[j]) >= 2) share(entries, arrived[j]);
           }
-          // What another open app speaks: 1 for an app from before values, which says nothing of it.
+          // What another open copy speaks: 1 for an app from before values, which says nothing of it.
           function wireOf(id) {
             var d = directs[id];
             if (d && d.ready) return d.wire;
@@ -1365,20 +1422,21 @@ extension TVTemplate {
             var given = [];
             for (var i = 0; list && i < list.length; i++) {
               var a = list[i];
-              if (a && isName(a.peer)) given.push({ peer: a.peer, kind: a.kind || '', name: typeof a.name === 'string' ? a.name : a.peer });
+              if (a && isName(a.peer) && a.peer.indexOf('.') < 0) given.push({ peer: a.peer, kind: a.kind || '', name: typeof a.name === 'string' ? a.name : a.peer });
             }
             if (!given.length) return;
             roster = given;
             waiting = {};
             for (var w = 0; list && w < list.length; w++) if (list[w] && list[w].waiting === true && isName(list[w].peer)) waiting[list[w].peer] = true;
-            for (var id in directs) if (!inRoster(id)) drop(directs[id]);
+            for (var id in directs) if (!inRoster(appOf(id))) drop(directs[id]);
             keep();
             rebuild();
           }
           function inRoster(id) { for (var i = 0; i < roster.length; i++) if (roster[i].peer === id) return true; return false; }
 
-          // The values: every app orders two settings the same way, by the clock of the app that set it, then the count
-          // within that millisecond, then that app's name. Times within 2^50 ms and counts within a million, whole.
+          // The values: every copy orders two settings the same way, by the clock of the copy that set it, then the count
+          // within that millisecond, then that copy's peer name (two copies of one app included). Times within 2^50 ms and
+          // counts within a million, whole.
           var LATEST = 1125899906842624, COUNTS = 1000000, REMOVALS_KEPT = 30 * 24 * 3600 * 1000;
           function later(a, b) { return a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]; }
           function whole(x, most) { return typeof x === 'number' && x >= 0 && x % 1 === 0 && x <= most; }
@@ -1404,7 +1462,7 @@ extension TVTemplate {
           function valuesChanged(changed, from) {
             keepValues();
             // Each handler gets a copy, so changing it changes nothing kept.
-            for (var i = 0; i < changed.length; i++) emit('change', [changed[i][0], copyOf(changed[i][1]), from]);
+            for (var i = 0; i < changed.length; i++) emit('change', [changed[i][0], copyOf(changed[i][1]), appOf(from)]);
           }
           // What every setting this page has adds up to, sealed with the wish's key: two apps with the same say the same.
           function digest() {
@@ -1474,7 +1532,19 @@ extension TVTemplate {
               entries[key] = { v: v, c: e.c };
               changed.push([key, v]);
             }
-            if (changed.length) valuesChanged(changed, from);
+            if (changed.length) { valuesChanged(changed, from); pass(changed, from); }
+          }
+          // Settings taken from one copy go on to the others open now that it may not reach: those this page reaches
+          // straight, and those in Lamp's room when it isn't there itself. A copy that has a setting already takes nothing
+          // from it, so it goes no further.
+          function pass(changed, from) {
+            var settings = {}, any = false, list = copiesFor(null);
+            for (var i = 0; i < changed.length; i++) if (entries[changed[i][0]]) { settings[changed[i][0]] = entries[changed[i][0]]; any = true; }
+            if (!any) return;
+            for (var j = 0; j < list.length; j++) {
+              var id = list[j], straight = directs[id] && directs[id].ready;
+              if (id !== from && wireOf(id) >= 2 && (straight || (!relayPresent[from] && relayPresent[id]))) share(settings, id);
+            }
           }
           // Sends settings to another open app, the straight way when there is one, else through Lamp's room, a few at a
           // time so each message stays within what a message may be; extra goes with the last.
@@ -1554,21 +1624,27 @@ extension TVTemplate {
               if (waiting[a.peer]) kept.waiting = true;
               list.push(kept);
             }
-            storage(n, { me: mine, apps: list, at: told, seen: lastSeen });
+            storage(n, { me: mine, copy: copyId, copies: copiesSeen, apps: list, at: told, seen: lastSeen });
           }
           function restore() {
             if (restored || !key) return;
             restored = true;
             restoreValues();
-            var k = storage(keptName());
-            if (!k) return;
-            if (!mine && isName(k.me)) mine = k.me;
-            if (k.at && typeof k.at === 'object') for (var id in k.at) if (isName(id) && k.at[id] instanceof Array) told[id] = k.at[id].slice(0, 6);
-            if (k.seen && typeof k.seen === 'object') for (var p in k.seen) if (isName(p) && typeof k.seen[p] === 'number') lastSeen[p] = k.seen[p];
-            if (!roster.length && k.apps instanceof Array) { setRoster(k.apps); alone = roster.length < 2 && roster.length > 0; }
+            var k = storage(keptName()), made = !(k && typeof k.copy === 'string' && isName('a.' + k.copy));
+            if (!made) copyId = k.copy;
+            else myCopy();
+            if (k) {
+              if (!mine && isName(k.me)) mine = k.me;
+              if (k.at && typeof k.at === 'object') for (var id in k.at) if (isName(id) && k.at[id] instanceof Array) told[id] = k.at[id].slice(0, 6);
+              if (k.seen && typeof k.seen === 'object') for (var p in k.seen) if (isName(p) && typeof k.seen[p] === 'number') lastSeen[p] = k.seen[p];
+              if (k.copies === true) copiesSeen = true;
+              if (!roster.length && k.apps instanceof Array) setRoster(k.apps);
+            }
+            // The copy's id, made just now, is kept from the start.
+            if (made) keep();
           }
           function remember(id, places) {
-            if (id === mine || !(places instanceof Array)) return;
+            if (id === mine || id === myCopy() || !(places instanceof Array)) return;
             var list = [], had = told[id] || [], i;
             for (i = 0; i < places.length; i++) if (typeof places[i] === 'string' && places[i] && list.indexOf(places[i]) < 0) list.push(places[i]);
             if (!list.length) return;
@@ -1694,7 +1770,7 @@ extension TVTemplate {
             var i;
             if (m.t === 'welcome') {
               retry = 0; undeliveredSaid = {}; lampAway = false; relayIn = true; alone = false; reported = '';
-              if (isName(m.peer)) mine = m.peer;
+              if (isName(m.peer)) mine = appOf(m.peer);
               setRoster(m.apps || []);
               relayPresent = {};
               var list = m.peers || [];
@@ -1712,7 +1788,7 @@ extension TVTemplate {
               // The wish gained an app or lost one: the others keep what's known of them.
               setRoster(m.apps || []);
             } else if (m.t === 'message' && typeof m.from === 'string' && m.data !== undefined) {
-              emit('message', [m.from, m.data]);
+              emit('message', [appOf(m.from), m.data, m.from]);
             } else if (m.t === 'values' && isName(m.from)) {
               heardValues(m, m.from);
             } else if (m.t === 'pad' && isName(m.from) && m.m && typeof m.m === 'object') {
@@ -1743,7 +1819,7 @@ extension TVTemplate {
           function answer(m) {
             var theirs = C.fromBase64(m.nonce), proof = C.fromBase64(m.proof);
             if (!hello || typeof m.peer !== 'string' || m.peer.length < 1 || m.peer.length > 32 || !theirs || theirs.length !== 16 || !proof) return false;
-            var transcript = transcriptOf(hello.tag, mine, m.peer, hello.nonce, theirs);
+            var transcript = transcriptOf(hello.tag, myCopy(), m.peer, hello.nonce, theirs);
             if (!C.same(proof, C.derive('lamp-wish server', key, transcript))) return false;
             hello = null;
             socket.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
@@ -1780,7 +1856,7 @@ extension TVTemplate {
             heard = Date.now();
             s.onopen = function () {
               hello = { nonce: C.random(16), tag: C.derive('lamp-wish tag', key).subarray(0, 8) };
-              s.send(JSON.stringify({ t: 'hello', tag: C.toBase64(hello.tag), peer: mine, nonce: C.toBase64(hello.nonce) }));
+              s.send(JSON.stringify({ t: 'hello', tag: C.toBase64(hello.tag), peer: myCopy(), nonce: C.toBase64(hello.nonce) }));
             };
             s.onmessage = function (event) {
               if (socket !== s) return;
@@ -1825,14 +1901,14 @@ extension TVTemplate {
               if (!started) return;
               if (answer.alone) {
                 // The wish has no other app: nothing to join, until one is added.
-                if (answer.me && isName(answer.me.peer)) { mine = answer.me.peer; setRoster([answer.me]); }
+                if (answer.me && isName(answer.me.peer)) { mine = appOf(answer.me.peer); setRoster([answer.me]); }
                 alone = true; lampAway = false; rebuild();
                 askTimer = setTimeout(open, (answer.renew || 300) * 1000);
                 return;
               }
               if (bridge && answer.key) { key = C.fromBase64(answer.key); restore(); }
               if (!answer.socket || !answer.peer || !key || key.length !== 32) throw new Error(answer.error || 'Lamp did not say where the wish\'s apps meet.');
-              address = answer.socket; mine = answer.peer; alone = false;
+              address = answer.socket; mine = appOf(answer.peer); alone = false;
               setRoster(answer.apps || []);
               rebuild();
               connect();
@@ -1847,15 +1923,16 @@ extension TVTemplate {
             });
           }
 
-          // Straight to an app of the wish that listens: the same handshake as Lamp's room, that app taking the relay's
-          // side and naming itself, so only an app holding the wish's key answers it, and only the one it was dialled as.
-          // `failed` is called if it never gets ready, `settled` once it's over either way.
+          // Straight to a copy of an app of the wish that listens: the same handshake as Lamp's room, that copy taking the
+          // relay's side and naming itself, so only an app holding the wish's key answers it, and only a copy of the app it
+          // was dialled as (`id`: a copy's peer name, or an app's when it's looked for on the network); the link is then
+          // that copy's. `failed` is called if it never gets ready, `settled` once it's over either way.
           function attempt(id, place, failed, settled) {
             var ws, d, timer, mine_ = epoch;
             if (!started) return;
             try { ws = opener('ws://' + place + '/'); } catch (e) { return failed(); }
             ws.binaryType = 'arraybuffer';
-            d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null,
+            d = { ws: ws, peer: id, target: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null,
                   way: 'd' + (++links_) };
             function end() {
               if (d.over) return;
@@ -1865,7 +1942,7 @@ extension TVTemplate {
               try { ws.close(); } catch (e) {}
               var at = pending.indexOf(d);
               if (at >= 0) pending.splice(at, 1);
-              if (directs[id] === d) { delete directs[id]; rebuild(); }
+              if (directs[d.peer] === d) { delete directs[d.peer]; rebuild(); }
               // A try that stop() ended goes no further: nothing dials or sweeps on after it.
               else if (!d.ready && mine_ === epoch && started) failed();
             }
@@ -1874,7 +1951,7 @@ extension TVTemplate {
             timer = setTimeout(function () { if (!d.ready) end(); }, 4000);
             ws.onopen = function () {
               d.hello = { nonce: C.random(16), tag: C.derive('lamp-wish tag', key).subarray(0, 8) };
-              ws.send(JSON.stringify({ t: 'hello', tag: C.toBase64(d.hello.tag), peer: mine, nonce: C.toBase64(d.hello.nonce) }));
+              ws.send(JSON.stringify({ t: 'hello', tag: C.toBase64(d.hello.tag), peer: myCopy(), nonce: C.toBase64(d.hello.nonce) }));
             };
             ws.onmessage = function (event) { if (!d.over) { d.heard = Date.now(); directArrived(d, event.data); } };
             ws.onclose = ws.onerror = end;
@@ -1885,9 +1962,11 @@ extension TVTemplate {
               var m; try { m = JSON.parse(data); } catch (e) { m = null; }
               if (m && m.t === 'beat') return;
               var theirs = m && C.fromBase64(m.nonce), proof = m && C.fromBase64(m.proof);
-              if (m && m.t === 'challenge' && d.hello && !d.sendKey && m.peer === d.peer && theirs && theirs.length === 16 && proof) {
-                var transcript = transcriptOf(d.hello.tag, mine, d.peer, d.hello.nonce, theirs);
+              if (m && m.t === 'challenge' && d.hello && !d.sendKey && isName(m.peer) && appOf(m.peer) === appOf(d.target) && m.peer !== myCopy()
+                  && theirs && theirs.length === 16 && proof) {
+                var transcript = transcriptOf(d.hello.tag, myCopy(), m.peer, d.hello.nonce, theirs);
                 if (C.same(proof, C.derive('lamp-wish server', key, transcript))) {
+                  d.peer = m.peer;
                   d.hello = null;
                   d.ws.send(JSON.stringify({ t: 'proof', proof: C.toBase64(C.derive('lamp-wish client', key, transcript)) }));
                   d.sendKey = C.derive('lamp-wish c2s', key, transcript); d.openKey = C.derive('lamp-wish s2c', key, transcript);
@@ -1901,7 +1980,7 @@ extension TVTemplate {
               if (plain && plain[0] === 1 && d.ready) return piece(plain, d);
               if (plain) { try { said = JSON.parse(C.fromUtf8(plain)); } catch (e) {} }
               if (said && said.t === 'welcome' && !d.ready) return ready(d, said);
-              if (said && said.t === 'message' && d.ready && said.data !== undefined) return emit('message', [d.peer, said.data]);
+              if (said && said.t === 'message' && d.ready && said.data !== undefined) return emit('message', [appOf(d.peer), said.data, d.peer]);
               if (said && said.t === 'values' && d.ready) return heardValues(said, d.peer);
               if (said && said.t === 'pad' && d.ready && said.m && typeof said.m === 'object') return heardPad(said.m, d.peer);
               if (said && typeof said.t === 'string' && said.t.indexOf('file') === 0 && d.ready) return fileText(routeTo(d.peer, d), said);
@@ -1964,11 +2043,14 @@ extension TVTemplate {
             view.set(plain.subarray(at), 4);
             files.binary(routeTo(peer, d), view);
           }
-          // A file to another app open now, the straight way when there is one, else through Lamp's room.
-          function sendFile(peer, data, info, ch) {
-            var p = find(peer), d = directs[peer] && directs[peer].ready ? directs[peer] : null, why = null;
-            if (!p) why = 'the wish has no app called "' + peer + '".';
+          // A file to another copy open now, the straight way when there is one, else through Lamp's room: the one named, or
+          // the app's opened last.
+          function sendFile(given, data, info, ch) {
+            var p = find(given), peer = String(given).indexOf('.') < 0 && p && p.copies.length ? p.copies[p.copies.length - 1].id : given;
+            var d = directs[peer] && directs[peer].ready ? directs[peer] : null, why = null;
+            if (!p) why = 'the wish has no app called "' + given + '".';
             else if (!p.open || state !== 'connected') why = p.status.reason || p.name + ' is not open now.';
+            else if (copiesFor(peer).indexOf(peer) < 0) why = 'that copy of ' + p.name + ' is not open now.';
             else if (wireOf(peer) < 3) why = outOfDate(p.name, true);
             else if (!d && !(relayIn && relayPresent[peer] && socket && socket.readyState === 1 && sendKey)) why = p.name + ' is not reachable now.';
             if (why) {
@@ -2023,7 +2105,8 @@ extension TVTemplate {
             start: function (h) {
               padHooks = h;
               api.start();
-              for (var i = 0; i < apps.length; i++) if (apps[i].open) sendPad(apps[i].peer, { t: 'host' });
+              var list = copiesFor(null);
+              for (var i = 0; i < list.length; i++) sendPad(list[i], { t: 'host' });
             },
             stop: function () {
               var told = {};
@@ -2036,7 +2119,7 @@ extension TVTemplate {
             var at = pending.indexOf(d);
             if (at >= 0) pending.splice(at, 1);
             if (!started) { d.ready = true; return d.end(); }
-            var had = directs[d.peer], settled = d.settled;
+            var had = directs[d.peer], settled = d.settled, target = d.target;
             d.settled = null;
             if (settled) settled();
             if (had && had !== d && had.ready) { d.ready = true; d.over = true; try { d.ws.close(); } catch (e) {} return; }
@@ -2044,7 +2127,9 @@ extension TVTemplate {
             d.device = typeof welcome.device === 'string' ? welcome.device.slice(0, 40) : '';
             d.wire = typeof welcome.wire === 'number' ? welcome.wire : 1;
             directs[d.peer] = d;
-            delete dialing[d.peer]; delete nextDial[d.peer];
+            delete dialing[d.peer]; delete nextDial[d.peer]; delete dialing[target]; delete nextDial[target];
+            // Another copy answered where this one was looked for: what was kept of the old one goes.
+            if (target !== d.peer && target.indexOf('.') >= 0) { delete told[target]; keep(); }
             if (/^[0-9.]+:\d+$/.test(d.place)) remember(d.peer, [d.place]);
             rebuild();
           }
@@ -2066,11 +2151,12 @@ extension TVTemplate {
             var m = /^([A-Za-z0-9.-]{1,253}):(\d{1,5})$/.exec(p);
             return !!m && +m[2] > 0 && +m[2] < 65536 && (bridge || m[1].indexOf('127.') !== 0);
           }
+          // The wish's port for an app: every copy of it listens there, each on its own device.
           function port(id) {
             var ids = [], i;
             for (i = 0; i < roster.length; i++) ids.push(roster[i].peer);
             ids.sort();
-            var rank = ids.indexOf(id), d = C.derive('lamp-wish port', key);
+            var rank = ids.indexOf(appOf(id)), d = C.derive('lamp-wish port', key);
             return rank >= 0 && rank < 8 ? 20000 + ((d[0] << 8) | d[1]) % 1500 * 8 + rank : null;
           }
           function sweep(missing) {
@@ -2088,15 +2174,17 @@ extension TVTemplate {
             swept = Date.now();
             var at = 0, running = 0;
             for (i = 0; i < missing.length; i++) dialing[missing[i]] = true;
+            // Every address is tried, not just until one answers: an app may be open on several devices.
             function next() {
               while (running < 32 && at < list.length) {
-                var one = list[at++];
-                if (directs[one.id]) continue;
+                var one = list[at++], linked = false;
+                for (var l in directs) if (directs[l].place === one.place) linked = true;
+                if (linked) continue;
                 running++;
                 var done = function () { running--; next(); };
                 attempt(one.id, one.place, done, done);
               }
-              if (!running && at >= list.length) for (var j = 0; j < missing.length; j++) if (!directs[missing[j]]) dial(missing[j], []);
+              if (!running && at >= list.length) for (var j = 0; j < missing.length; j++) if (!openApp(missing[j])) dial(missing[j], []); else delete dialing[missing[j]];
             }
             next();
           }
@@ -2116,19 +2204,37 @@ extension TVTemplate {
               }
             } catch (e) {}
           }
+          // Whether a copy of an app is reached, either way.
+          function openApp(a) {
+            var id;
+            for (id in directs) if (directs[id].ready && appOf(id) === a && id !== myCopy()) return true;
+            for (id in relayPresent) if (appOf(id) === a && id !== myCopy()) return true;
+            return false;
+          }
           function reach() {
-            if (!started || alone || !key || !mine || roster.length < 2) return;
-            var now = Date.now(), missing = [];
-            for (var i = 0; i < roster.length; i++) {
-              var id = roster[i].peer;
-              if (id === mine || directs[id] || dialing[id]) continue;
-              if (nextDial[id] && nextDial[id].at > now) continue;
+            if (!started || alone || !key || !mine || (roster.length < 2 && !copiesSeen)) return;
+            var now = Date.now(), missing = [], me = myCopy(), id, i, ownSeen = false, tried = {}, placed = {};
+            // Each copy known of, in Lamp's room or reached before, where it was reached or said it listens.
+            var known = {};
+            for (id in told) known[id] = true;
+            for (id in relayPresent) known[id] = true;
+            for (id in known) {
+              if (id === me || id === mine || !inRoster(appOf(id))) continue;
+              if (appOf(id) === mine) ownSeen = true;
               var places = (told[id] || []).filter(placeOk);
-              // Where it was reached or said it listens, always; and once that has failed twice, the network as well.
-              if (!relayPresent[id] && (!places.length || (nextDial[id] && nextDial[id].tries >= 2))) missing.push(id);
+              if (places.length) placed[appOf(id)] = true;
+              if (nextDial[id] && nextDial[id].tries >= 2) tried[appOf(id)] = true;
+              if ((directs[id] && directs[id].ready) || dialing[id]) continue;
+              if (nextDial[id] && nextDial[id].at > now) continue;
               if (places.length) dial(id, places);
             }
-            // A sweep only for apps Lamp's room doesn't have either, and not more than once a minute.
+            // Once what was known has failed twice, the network as well, for an app no copy of which is reached either way
+            // (this one's own only when another copy of it was ever known), not more than once a minute.
+            for (i = 0; i < roster.length; i++) {
+              var a = roster[i].peer;
+              if ((a === mine && !ownSeen) || openApp(a) || dialing[a]) continue;
+              if (!placed[a] || tried[a]) missing.push(a);
+            }
             if (missing.length && now - swept > 60000) sweep(missing);
           }
           function lookAgain() { nextDial = {}; reach(); }
@@ -2150,8 +2256,9 @@ extension TVTemplate {
             for (var i = 0; i < apps.length; i++) if (apps[i].open) lastSeen[apps[i].peer] = now;
             beats++;
             if (beats % 12 === 0 && openOnes().length) keep();
-            // Once a minute each open app is told what this page's values add up to, so one that missed a setting asks.
-            if (beats % 12 === 0) for (var j = 0; j < apps.length; j++) if (apps[j].open && wireOf(apps[j].peer) >= 2) share({}, apps[j].peer, { sum: digest() });
+            // Once a minute each open copy is told what this page's values add up to, so one that missed a setting asks.
+            var each = copiesFor(null);
+            if (beats % 12 === 0) for (var j = 0; j < each.length; j++) if (wireOf(each[j]) >= 2) share({}, each[j], { sum: digest() });
             // A page without the wish's key keeps saying why (open, claim) rather than "Connecting…".
             if (key) rebuild();
             reach();
@@ -2193,6 +2300,7 @@ extension TVTemplate {
             apps: function () { api.start(); return allOnes(); },
             peer: function (id) { api.start(); var p = find(id); return p ? copy(p) : null; },
             me: function () { api.start(); return mine; },
+            copy: function () { api.start(); return myCopy(); },
             state: function () { api.start(); return state; },
             status: function () { api.start(); return status(); },
             messageLimit: MESSAGE, valueLimit: VALUE, valuesLimit: VALUES,
@@ -2215,9 +2323,10 @@ extension TVTemplate {
               if (v === null) v = undefined;
               clock = now > clock[0] ? [now, 0] : clock[1] < COUNTS ? [clock[0], clock[1] + 1] : [clock[0] + 1, 0];
               var one = {};
-              entries[key] = one[key] = { v: v, c: [clock[0], clock[1], mine] };
+              entries[key] = one[key] = { v: v, c: [clock[0], clock[1], myCopy()] };
               valuesChanged([[key, v]], mine);
-              for (var i = 0; i < apps.length; i++) if (apps[i].open && wireOf(apps[i].peer) >= 2) share(one, apps[i].peer);
+              var list = copiesFor(null);
+              for (var i = 0; i < list.length; i++) if (wireOf(list[i]) >= 2) share(one, list[i]);
               return true;
             },
             statusView: function (only) {
@@ -2237,14 +2346,14 @@ extension TVTemplate {
                 if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
                 return false;
               }
-              if (to) { var p = find(to); if (!p || !p.open) { say(what + ' was not sent: that app is not open now.'); return false; } }
+              var targets = copiesFor(to || null), viaRoom = [], longest = '';
+              if (to && !targets.length) { say(what + ' was not sent: that app is not open now.'); return false; }
               var frame = { t: 'send', data: data };
               if (to) frame.to = to;
               var text = JSON.stringify(frame);
               if (data === undefined || text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
-              var targets = to ? [to] : openOnes().map(function (o) { return o.peer; }), viaRoom = [], longest = '';
               for (var t = 0; t < targets.length; t++) if (bytes(targets[t]) > bytes(longest)) longest = targets[t];
-              // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
+              // Measured as it goes through Lamp's room to each copy, with its name: the longest, when it's for several.
               var measured = bytes(JSON.stringify({ t: 'send', data: data, to: longest }));
               if (measured > MESSAGE) { say(what + ' of ' + measured + ' bytes was not sent: a message between the wish\'s apps is at most ' + MESSAGE + ' bytes as JSON.'); return false; }
               // Each app the straight way when there is one, else through Lamp's room.
@@ -2254,7 +2363,7 @@ extension TVTemplate {
                 else if (relayPresent[targets[i]]) viaRoom.push(targets[i]);
               }
               if (viaRoom.length && socket && socket.readyState === 1 && sendKey) {
-                // To all of them in one when every app goes through the room, as it always did.
+                // To all of them in one when every copy goes through the room, as it always did.
                 if (!to && viaRoom.length === targets.length) seal(text);
                 else for (var k = 0; k < viaRoom.length; k++) seal(JSON.stringify({ t: 'send', data: data, to: viaRoom[k] }));
               }
@@ -2292,6 +2401,7 @@ extension TVTemplate {
               if (!m || typeof m !== 'object') return;
               if (m.t === 'state') {
                 if (typeof m.me === 'string') mine = m.me;
+                if (typeof m.copy === 'string' && m.copy.indexOf(mine + '.') === 0) copyId = m.copy.slice(mine.length + 1);
                 apps = m.apps instanceof Array ? m.apps : [];
                 if (m.status && (m.status.state !== state || m.status.reason !== reason)) setState(m.status.state, m.status.reason);
                 var said = JSON.stringify(openOnes());
@@ -2314,12 +2424,12 @@ extension TVTemplate {
                 }
                 for (var j = 0; j < said.length; j++) emit('change', [said[j][0], copyOf(said[j][1]), own(by, said[j][0]) ? by[said[j][0]] : mine]);
               } else if (m.t === 'message') {
-                emit('message', [m.from, m.data]);
+                emit('message', [m.from, m.data, m.copy || m.from]);
               } else if (m.t === 'file') {
                 var data = fromBase64(m.data || ''), size = data.length;
-                var file = { name: m.name, type: m.type, size: size, onProgress: function (fn) { try { fn(size, size); } catch (e) {} },
+                var file = { name: m.name, type: m.type, size: size, copy: m.copy || m.from, onProgress: function (fn) { try { fn(size, size); } catch (e) {} },
                              cancel: function () {}, done: Promise.resolve(data.buffer) };
-                emit('file', [m.from, file]);
+                emit('file', [m.from, file, m.copy || m.from]);
               } else if (m.t === 'transfer' && transfers[m.id]) {
                 var t = transfers[m.id];
                 t.sent = m.sent;
@@ -2352,7 +2462,7 @@ extension TVTemplate {
                 if (!away) { away = true; say(what + ' was not sent: not connected (' + state + '). Check state() and peers() before sending.'); }
                 return false;
               }
-              if (to) { var p = find(to); if (!p || !p.open) { say(what + ' was not sent: that app is not open now.'); return false; } }
+              if (to && !copiesFor(to).length) { say(what + ' was not sent: that app is not open now.'); return false; }
               var text = data === undefined ? undefined : JSON.stringify(data);
               if (text === undefined) { say(what + ' was not sent: it holds nothing JSON can.'); return false; }
               var measured = bytes(JSON.stringify({ t: 'send', data: data, to: to || '' })) + 32;

@@ -468,7 +468,7 @@ final class Store: ObservableObject {
     /// while the others it asks for are still to be made; nil for an app on its own, which gets nothing of the wish's
     /// apps' link.
     func wishKey(for project: LampProject) -> Data? {
-        guard Template.talksToOtherApps(project) else { return nil }
+        guard Template.carriesWish(project) else { return nil }
         return WishKeys.key(for: wish(of: project))
     }
     /// The wish a part belongs to, or the app itself when it's a wish.
@@ -7488,7 +7488,7 @@ final class Store: ObservableObject {
             // The app opened by this install asks for its token, which isn't in its package, and a wish's app for its
             // wish's key: that claim is open again once the app is open, since an install can take longer than it lasts.
             DeviceSupport.Claims.shared.open(project.id, from: record.address)
-            let claimsKey = Template.talksToOtherApps(project)
+            let claimsKey = Template.carriesWish(project)
             if claimsKey { WishClaims.shared.open(project.id, from: record.address) }
             do {
                 if record.isSamsung { try await TVs.installSamsung(project, staged: staged, on: record, say: say) }
@@ -8550,7 +8550,7 @@ final class Store: ObservableObject {
         }
         var lists = capabilities.lists
         // An app of a wish of several is found by the wish's other apps on the network, and finds them, by Bonjour.
-        if Template.talksToOtherApps(project), !(lists["NSBonjourServices"] ?? []).contains(Template.wishServiceType) {
+        if Template.carriesWish(project), !(lists["NSBonjourServices"] ?? []).contains(Template.wishServiceType) {
             lists["NSBonjourServices", default: []].append(Template.wishServiceType)
         }
         for (key, names) in lists.sorted(by: { $0.key < $1.key }) {
@@ -10017,7 +10017,7 @@ final class Store: ObservableObject {
         if route == "/app/wish/claim" {
             let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
             guard request.fromNetwork, let id = body["app"] as? String,
-                  let project = projects.first(where: { $0.id == id }), Template.talksToOtherApps(project),
+                  let project = projects.first(where: { $0.id == id }), Template.carriesWish(project),
                   let publicKey = (body["public"] as? String).flatMap({ Data(base64Encoded: $0) }) else {
                 return (403, ["error": "Lamp didn't just put this app here."])
             }
@@ -10100,7 +10100,7 @@ final class Store: ObservableObject {
         let apps = apps(of: wish)
         switch route {
         case "/app/wish/open":
-            return await WishProxies.open(project, wish: wish, apps: apps)
+            return await WishProxies.open(project, copy: body["copy"] as? String ?? "", wish: wish, apps: apps)
         case "/app/wish/poll":
             return await WishProxies.poll(project, link: body["link"] as? Int ?? 0)
         case "/app/wish/send":
