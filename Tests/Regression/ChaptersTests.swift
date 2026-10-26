@@ -23,6 +23,19 @@ final class ChaptersTests: XCTestCase {
         return part
     }
 
+    /// Just sent, before anything else is logged, a new app's chat is its request and an empty build: the build isn't
+    /// the request's line again, which the chat, listing its lines by id, drew twice.
+    func testAnEmptyFirstBuildIsNotTheRequestAgain() {
+        let request = LogLine(kind: .user, text: "A 3D game where I herd sheep into a pen")
+        let segments = Chapters.segments([request], progress: TurnProgress(newApp: true))
+        guard segments.count == 2, case .lines(let lines) = segments[0], case .build(let build) = segments[1] else { return XCTFail() }
+        XCTAssertEqual(lines.map(\.id), [request.id])
+        XCTAssertNotEqual(build.id, request.id)
+        XCTAssertEqual(build.id, Chapters.segments([request], progress: TurnProgress(newApp: true)).last.flatMap {
+            if case .build(let again) = $0 { return again.id } else { return nil }
+        })
+    }
+
     func testWritingALaterPartsFileMovesOnAndEverythingElseStays() {
         var progress = building()
         XCTAssertEqual(log(.progress, "Two apps: one for the TV, one for your phone. TV first.", in: &progress), 0)
