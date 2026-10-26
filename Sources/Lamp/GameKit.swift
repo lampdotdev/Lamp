@@ -93,6 +93,19 @@ enum GameKit {
         }
     }
 
+    /// The model of the Xbox a game goes to, as Device Portal names it ("Xbox Series X"): the one chosen under Try On,
+    /// else the slowest of the person's. Nil when that isn't known: no Xbox set up yet, or one whose setup hasn't reached
+    /// Device Portal (its description says Xbox One on every console).
+    static func xboxModel(for project: LampProject) -> String? {
+        let xboxes = Integrations.kept().filter { $0.integration == xbox }
+        if let chosen = xboxes.first(where: { $0.id == project.device }) { return Integrations.readModel(of: chosen) }
+        let models = xboxes.map(Integrations.readModel(of:))
+        guard !models.isEmpty, !models.contains(nil) else { return nil }
+        let known = models.compactMap { $0 }
+        return known.first { !$0.localizedCaseInsensitiveContains("Series") }
+            ?? known.first { !$0.localizedCaseInsensitiveContains("Series X") } ?? known.first
+    }
+
     /// The places as the person hears them: "your Mac, your iPhone or iPad and your Xbox".
     static func spoken(_ places: [Destination]) -> String {
         let names = places.map { $0 == .ios ? "your iPhone or iPad" : $0 == .android ? "your Android phone or tablet" : "your " + placeName($0) }
@@ -841,24 +854,45 @@ extension Agent.Rules {
     """
 
     /// Where a game is played and what that allows, for the request's device line: the weakest place's budget, in
-    /// what the preview counts (vertices for C++ on the kit, triangles for three.js).
+    /// what the preview counts (vertices for C++ on the kit, triangles for three.js). The Xbox's is the console the
+    /// game goes to, as Device Portal names it: a Series X or S gives a game far more than an Xbox One, whose budget
+    /// stands for any console Lamp doesn't know yet.
     static func gamePlaces(_ project: LampProject) -> String {
+        gamePlaces(project, xbox: project.openPlaces.contains(.device) ? GameKit.xboxModel(for: project) : nil)
+    }
+
+    static func gamePlaces(_ project: LampProject, xbox: String?) -> String {
         let places = project.openPlaces, web = GameKit.engine(project) == .web
-        let budget: String
+        // Slowest first; an iPhone, which has to stay cool on battery, below a Series S.
+        var budgets: [(rank: Int, words: String)] = []
         if places.contains(.device) {
-            budget = "an Xbox One's, the slowest console the game may run on, which gives a game in Developer Mode only part of its GPU: "
-                + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one THREE.InstancedMesh), MeshStandardMaterial or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
-                + ", textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"
-        } else if places.contains(.android) {
-            budget = "a mid-range Android phone's, far slower than an iPhone and drawing through its WebView: under about 300 draws and "
-                + (web ? "300,000 triangles" : "500,000 vertices") + " a frame, textures at most 1024 px, no shadow maps"
-        } else if places.contains(.ios) {
-            budget = "an iPhone's, which also has to stay cool on battery: under about 600 draws and "
-                + (web ? "500,000 triangles" : "1,000,000 vertices") + " a frame, textures at most 2048 px, one shadow map at most"
-        } else {
-            budget = "this Mac's, which draws far more than a console: under about 2,000 draws and "
-                + (web ? "2,000,000 triangles" : "4,000,000 vertices") + " a frame, textures at most 4096 px; shadows and a post-process pass are fine"
+            switch xbox {
+            case let model? where model.localizedCaseInsensitiveContains("Series X"):
+                budgets.append((4, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU" + (web ? ", drawn by its web view" : "") + ": "
+                    + (web ? "under about 1,000 draws and 1,000,000 triangles a frame (many copies of one shape as one THREE.InstancedMesh)" : "under about 1,500 draws and 2,000,000 vertices a frame")
+                    + ", textures at most 2048 px, one shadow map and a light post-process pass at most"))
+            case let model? where model.localizedCaseInsensitiveContains("Series"):
+                budgets.append((3, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU, about a third of a Series X's" + (web ? ", drawn by its web view" : "") + ": "
+                    + (web ? "under about 600 draws and 600,000 triangles a frame (many copies of one shape as one THREE.InstancedMesh)" : "under about 900 draws and 1,200,000 vertices a frame")
+                    + ", textures at most 2048 px, one shadow map at most, no post-processing"))
+            case let model:
+                budgets.append((0, (model.map { "the person's \($0)'s" } ?? "an Xbox One's, the slowest console the game may run on")
+                    + ", which gives a game in Developer Mode only part of its GPU: "
+                    + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one THREE.InstancedMesh), MeshStandardMaterial or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
+                    + ", textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"))
+            }
         }
+        if places.contains(.android) {
+            budgets.append((1, "a mid-range Android phone's, far slower than an iPhone and drawing through its WebView: under about 300 draws and "
+                + (web ? "300,000 triangles" : "500,000 vertices") + " a frame, textures at most 1024 px, no shadow maps"))
+        }
+        if places.contains(.ios) {
+            budgets.append((2, "an iPhone's, which also has to stay cool on battery: under about 600 draws and "
+                + (web ? "500,000 triangles" : "1,000,000 vertices") + " a frame, textures at most 2048 px, one shadow map at most"))
+        }
+        budgets.append((5, "this Mac's, which draws far more than a console: under about 2,000 draws and "
+            + (web ? "2,000,000 triangles" : "4,000,000 vertices") + " a frame, textures at most 4096 px; shadows and a post-process pass are fine"))
+        let budget = budgets.min { $0.rank < $1.rank }!.words
         return "It's played on \(GameKit.spoken(places).replacingOccurrences(of: "your ", with: "the person's ")), and Try On points at the \(GameKit.placeName(project.destination)) now. "
             + "Its budget is \(budget)."
     }

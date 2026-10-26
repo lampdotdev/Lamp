@@ -116,6 +116,17 @@ enum Integrations {
 
     static func kept(_ id: String) -> Kept? { kept().first { $0.id == id } }
 
+    /// A kept device's model: what its integration's model step read on it, else what it said of itself when it was found.
+    static func model(of kept: Kept) -> String { readModel(of: kept) ?? kept.model }
+
+    /// What a kept device's model step read on it: nil before that step has passed, or when its integration has none.
+    static func readModel(of kept: Kept) -> String? { readModel(of: kept, by: integration(kept.integration)) }
+
+    static func readModel(of kept: Kept, by integration: Integration?) -> String? {
+        guard let step = integration?.steps.first(where: { $0.model == true }) else { return nil }
+        return kept.reads[step.id]?.trimmed.nilIfEmpty
+    }
+
     /// Forgets a device Lamp set up, as the person asks in Settings: its record and what it read, the certificates kept for
     /// it and the keys in its folder, what was typed for it, and the commands approved on it. Found on the network
     /// again, it's a device to set up from the start.
@@ -248,8 +259,9 @@ enum Integrations {
             return value
         }
         let identity = integration.identity
-        guard let serial = await read(identity.id), let model = await read(identity.model) else { return nil }
+        guard let serial = await read(identity.id), var model = await read(identity.model) else { return nil }
         let id = "\(integration.id):\(serial)"
+        if let keptOne = kept(id) { model = Integrations.model(of: keptOne) }
         var device = Device(id: id, kind: .other, maker: integration.maker, model: model, modelID: await read(identity.modelID) ?? "",
                             name: await read(identity.name) ?? "\(integration.maker) \(model)", os: identity.os,
                             osVersion: await read(identity.osVersion) ?? "", reach: .network)
@@ -267,7 +279,7 @@ enum Integrations {
     }
 
     static func device(from kept: Kept, onNetwork: Bool) -> Device {
-        var device = Device(id: kept.id, kind: .other, maker: integration(kept.integration)?.maker ?? "", model: kept.model, modelID: kept.modelID,
+        var device = Device(id: kept.id, kind: .other, maker: integration(kept.integration)?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
                             name: kept.name, os: kept.os, osVersion: kept.osVersion, reach: .network)
         device.integration = kept.integration
         device.address = kept.address

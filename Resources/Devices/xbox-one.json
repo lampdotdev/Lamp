@@ -310,6 +310,7 @@
         "Use lamp as the user name, and pick a password",
         "Type that password here"
       ],
+      "model": true,
       "title": "Give Lamp the Device Portal password"
     }
   ],

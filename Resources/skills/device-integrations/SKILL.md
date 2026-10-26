@@ -127,6 +127,8 @@ The setup, in order. Each step is done when its `check` passes, never because an
 - `check`: every condition must hold. Each is one of `http` (answers 2xx; with `json` or `xml`, the value `equals` or
   `contains` something), `tcp` (a port that accepts a connection), `field` (the person typed it), `signedIn` (a
   `vendorSignIn` came back).
+- `model`: `true` when the value the check reads is the device's model, finer than what it says before it's set up
+  (an Xbox's description says Xbox One on every console; Device Portal's `/api/os/info` names the console).
 - Every setting of the device's that the bridge needs is a step of its own, checked on the device, so it's found in
   setup rather than when a builder first uses it: a Roku answers key presses only with Settings → System → Advanced
   system settings → Control by mobile apps set to Enabled, which its device-info says
