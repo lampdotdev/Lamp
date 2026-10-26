@@ -17,7 +17,7 @@ final class WishAppsTests: XCTestCase {
         XCTAssertEqual(Parts.kinds(for: ["tv", "mac", "iphone", "android"]), [.universal, .android, .tv])
     }
 
-    /// An Android app alone is still one app, and a device whose integration declares its apps still stands alone.
+    /// An Android app alone is still one app.
     func testOneKindAloneIsOneApp() throws {
         XCTAssertEqual(Parts.kinds(for: ["android"]), [.android])
         XCTAssertNil(Parts.kinds(for: ["android", "nothing-lamp-makes"]))
@@ -368,6 +368,20 @@ final class WishAppsKeptTests: XCTestCase {
         let wish = try Template.scaffold(name: "Tally", platform: .tv, in: root)
         XCTAssertNotEqual(IPhoneSetupLine.key(wish, wanted: .iphone, part: true), IPhoneSetupLine.key(wish, wanted: .android, part: true))
         XCTAssertEqual(IPhoneSetupLine.key(wish, wanted: .iphone, part: false), wish.id)
+    }
+
+    /// "Make it playable on my iPad and on our Roku too": a Roku app is one of the wish's apps, but it can't join the
+    /// wish's room yet, so the iPhone app beside it gets no link to it, and the Roku app gets `LampWish` saying it's away.
+    func testARokuAppIsAnAppOfTheWishOutsideItsRoom() throws {
+        var wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        wish.apps = [WishApp(kind: .iphone), WishApp(kind: .device, integration: "roku")]
+        try Template.saveMeta(wish)
+        XCTAssertTrue(Template.hasOtherApps(wish))
+        XCTAssertFalse(Template.talksToOtherApps(wish), "nothing to reach")
+        let roku = LampProject(id: wish.id + ".roku", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("Roku"),
+                               platform: .device, integration: "roku", partOf: wish.id)
+        XCTAssertFalse(Template.talksToOtherApps(roku))
+        XCTAssertTrue(Template.hasOtherApps(roku))
     }
 
     /// An Android app in Android/ is one of the wish's parts, found from its files as the others are.

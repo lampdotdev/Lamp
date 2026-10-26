@@ -336,7 +336,7 @@ enum Versions {
                 var listed = project
                 listed.apps = asked.map { kind in
                     let now = project.apps.first { $0.kind == kind }
-                    return WishApp(kind: kind, needs: now?.needs, places: now?.places)
+                    return WishApp(kind: kind, needs: now?.needs, places: now?.places, integration: now?.integration)
                 }
                 let apps = Parts.wanted(in: listed, parts: parts)
                 if apps != project.apps { project.apps = apps; changed = true }

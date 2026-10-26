@@ -414,7 +414,7 @@ enum DeviceNote {
         // folder has: they change with its places and with Try On, which no note of the wish's says.
         let own = project.holdsApp ? [line(for: project, store: .shared)] : []
         let placed = project.isPart ? [] : Store.shared.parts(of: project).filter(\.platform.addsPlaces).map { part in
-            "\(Parts.name(of: part.platform).prefix(1).uppercased() + Parts.name(of: part.platform).dropFirst()) in \(part.dir.lastPathComponent)/: "
+            "\(Parts.name(of: part).prefix(1).uppercased() + Parts.name(of: part).dropFirst()) in \(part.dir.lastPathComponent)/: "
                 + line(for: part, store: .shared)
         }
         // And every device of the person's Lamp knows, with what each can run, so an app is made for the ones they have:

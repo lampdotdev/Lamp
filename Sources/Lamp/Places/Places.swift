@@ -114,7 +114,8 @@ enum Places {
         return Place(id: integration.id, name: integration.name, words: [integration.id], destination: .device,
                      web: makes.contains(.web) ? reach : nil,
                      native: makes.contains(.native) ? .init(code: .integration, reach: reach) : nil,
-                     noWeb: "its integration declares no web app", noNative: "its integration declares no native app",
+                     // The device's own words for what it runs, when it says, so a refusal is the real reason.
+                     noWeb: integration.runs ?? "its integration declares no web app", noNative: integration.runs ?? "its integration declares no native app",
                      input: integration.input)
     }
 

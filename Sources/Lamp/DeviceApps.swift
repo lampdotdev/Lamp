@@ -52,6 +52,35 @@ enum DeviceApps {
 
     static func integration(for project: LampProject) -> Integration? { project.deviceIntegration.flatMap(Integrations.integration) }
 
+    // MARK: As one of a wish's apps
+
+    /// The folder a device's app is in among its wish's other apps: its device's name, in letters and digits ("Roku",
+    /// "Xbox"), which is also its name to the others (`WishRooms.peer`). Never one of the other kinds' folders, and nil
+    /// for an integration Lamp doesn't have or that declares no apps.
+    static func folder(for integration: String) -> String? {
+        guard let found = Integrations.integration(split(integration).integration), found.app?.declared != nil else { return nil }
+        let name = String(found.name.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) && $0.isASCII }.map(Character.init))
+        let base = name.isEmpty ? "Device" : name.prefix(1).uppercased() + name.dropFirst()
+        // The other kinds' folders, and what a wish's folder keeps of its own.
+        let taken = Set(Targets.all.compactMap { $0.part?.folder } + [Attachments.folder, "Lamp"])
+        return taken.contains(base) ? base + "App" : base
+    }
+
+    /// Every folder a device's app may be in: one per integration that declares apps.
+    static func folders() -> [String] {
+        Integrations.all().filter { $0.app?.declared != nil }.compactMap { folder(for: $0.id) }
+    }
+
+    /// The integration whose app lives in this folder of a wish.
+    static func integration(inFolder folder: String) -> Integration? {
+        Integrations.all().first { $0.app?.declared != nil && self.folder(for: $0.id) == folder }
+    }
+
+    /// Whether a part's folder holds a device's app, read without following a link: its marker, naming an integration.
+    static func isMade(_ dir: URL, wish: URL) -> Bool {
+        AppFile.read(dir.appendingPathComponent(marker), inFolder: wish, last: 1) != nil
+    }
+
     static func appKind(for project: LampProject) -> Integration.AppKind? { project.integration.flatMap(appKind) }
 
     /// The folder a device app's kind previews on this Mac (`app.declared.preview`), checked; nil when it has none.
@@ -536,7 +565,37 @@ extension Agent {
     }
 }
 
+extension Agent {
+    /// The rules for a device's app as one of a wish's apps, in its folder (Roku/, whose name says which integration):
+    /// the device's own rules for the files there, then how it stands beside the others.
+    static func devicePrompt(part folder: String, alone: Bool = false) -> String {
+        let integration = DeviceApps.integration(inFolder: folder)
+        let app = LampProject(id: "", name: "", exe: "", dir: URL(fileURLWithPath: "/"), platform: .device, integration: integration?.id)
+        let name = integration?.name ?? "the device"
+        let rules = [Rules.deviceEdit, Rules.deviceKind(integration), Rules.deviceBlocks(app), Rules.deviceAttachments, Rules.deviceTry(app),
+                     alone ? "" : Rules.deviceAmongApps]
+        let what = "an app for the person's \(name)\(integration?.kind.map { " (\($0))" } ?? ""), made, packaged and put on it as its integration declares"
+        return (Rules.partHeader(what, folder: folder) + "\n\nRules:\n" + rules.joined())
+            .replacingOccurrences(of: "{{DEVICE}}", with: name)
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a " + name)
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "puts it on the \(name) again and opens it")
+    }
+}
+
 extension Agent.Rules {
+    /// For a wish with a device's app beside its other apps: it can't reach them yet, so nothing of the wish leans on that,
+    /// and what does work today.
+    static let deviceAmongApps = """
+
+    - The {{DEVICE}} app is one of this wish's apps, in its own folder, but it can't reach the wish's other apps yet and \
+    they can't reach it: the link between a wish's apps doesn't run on {{A_DEVICE}} yet. Its `LampWish` (in its building \
+    blocks, beside LampAI) always says it's away, with that reason. So write each app to stand on its own: the \
+    {{DEVICE}} app keeps its own data with LampStore and gets what's new from the web or with LampAI, not from the other \
+    apps. Another app of the wish on the Mac or an iPhone can still drive it as a remote from the same network where Lamp \
+    has a block for the device (`LampRoku` for a Roku: its keys, and opening the app by launching "dev"), which needs no \
+    link. Tell the person in a sentence, once, that the two don't share data yet, and what each does meanwhile.
+    """
+
     static func deviceHeader(_ integration: Integration?, previews: Bool = false) -> String {
         let name = integration?.name ?? "a device"
         let watching = previews
@@ -585,6 +644,10 @@ extension Agent.Rules {
                     + "observe its `result` field, and show `result.error` when it's set. Lamp on the person's Mac answers while the device is on its Wi‑Fi "
                     + "with Lamp open. Text from outside the app goes in `options.data`, never into the prompt. Keep the package step zipping that folder. "
                     + "Read Lamp.brs's opening comment before using it; never call an AI service yourself. "
+                if let wish = DeviceSupport.wishFile(for: project) {
+                    rule += "\(wish) is `LampWish`, the wish's other apps: on this device it always says it's away, so show its reason "
+                        + "where the app would show them, and keep the app whole without them. "
+                }
             case .three:
                 let folder = "./" + DeviceSupport.pagePath(entry.path, page: DeviceApps.previewFolder(for: project)) + "/"
                 rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision), the 3D library, with its addons (controls, loaders, "

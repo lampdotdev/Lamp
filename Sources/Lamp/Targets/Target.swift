@@ -175,6 +175,19 @@ struct Target {
         var wishRule: String? = nil
         /// Whether a part's folder holds this kind, read without following a link.
         let isMade: (_ dir: URL, _ wish: URL) -> Bool
+        /// For a kind whose folder follows what it's made for rather than the kind alone (a device's app, its
+        /// integration's: Roku/), the folder for that integration; nil for none it knows. `folder` is then the one used
+        /// where nothing says which.
+        var folderFor: ((_ integration: String) -> String?)? = nil
+        /// Every other folder an app of the kind may be in: one per integration, for a device's app.
+        var moreFolders: () -> [String] = { [] }
+        /// Whether it joins the wish's room at Lamp's relay and so reaches the wish's other apps (`WishRooms`). One that
+        /// can't yet is left out of the room's list, so the others never wait for it, and isn't counted among the apps
+        /// that give the others `LampWish` (`Template.talksToOtherApps`).
+        var joinsWish = true
+
+        /// Every folder an app of the kind may be in.
+        var folders: [String] { [folder] + moreFolders().filter { $0 != folder } }
     }
 
     /// What this Mac needs to build the kind.

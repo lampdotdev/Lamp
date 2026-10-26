@@ -32,7 +32,10 @@ it says nothing, from what its `app` declares. Each row says whether a **web** b
 **native** build (the device's own code: `apple`, `android`, `android-tv` or the integration's) can exist there, and how
 each gets onto the device, or why it can't. It holds facts only, never a preference: which make and which devices an
 app gets is the agent's choice. `IntegrationCheck.problems` refuses a `supports` that names a make the integration has
-no files for.
+no files for. Its reason for a make it can't run is its own `runs` (what the device runs, in a sentence the person
+would follow: a Roku's says BrightScript channels and the remote, no pages, no 3D), so a game or a screen given a Roku as
+a place is refused with that (`Parts.asked(apps:)`), and the agent's rules (`deviceRules`) have it say so in its own
+words and offer what works: a simple version for the device as one of the wish's apps, or another place.
 
 A row claims a make only once a kind builds it there (`Places.kinds`, checked by `PlacesTests`): turning on a make
 before its host or recipe exists is refused by the test, not discovered by the person. The table reaches the agent as

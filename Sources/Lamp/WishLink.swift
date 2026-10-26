@@ -309,9 +309,13 @@ enum WishLink {
         }
     }
 
-    /// Whether the wish can go with its link as a file: its kind can be shared as one.
+    /// Whether the wish can go with its link as a file: each of its apps' kinds can be shared as one (a Roku app can't yet).
     static func canIncludeFile(_ project: LampProject) -> Bool {
-        project.platform.target.recipe.shareRefusal == nil && !(project.platform == .game && GameKit.engine(project) != .web)
+        var wish = project
+        wish.partFolders = Parts.folders(in: project.dir)
+        return ((wish.holdsApp ? [wish] : []) + Parts.load(wish)).allSatisfy { app in
+            app.platform.target.recipe.shareRefusal == nil && !(app.platform == .game && GameKit.engine(app) != .web)
+        }
     }
 
     func update(_ project: LampProject, values: WishLinkCard.Values) {

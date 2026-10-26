@@ -8,7 +8,7 @@ and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its
 its main one: any of them, the first included, is added, replaced or taken away on the person's word, and the wish keeps
 its name, chat and history. A wish's first app is made in the wish's own folder, as every wish made so far has it, until
 it's taken away or replaced; each other app is an app of its own kind in a folder of the wish's
-(`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
+(`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`, a device's app in its device's: `Roku/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. A wish whose folder holds no app of its own (its apps all in
 folders, `LampProject.holdsApp` false, read off its files each time so an Undo that brings the first app back has it
 again) is only the wish: it's no draft (`scaffolded`), and nothing builds, installs, opens or writes Lamp's own
@@ -69,8 +69,16 @@ build now (`Store.firstKind`: a TV app with an iPhone app, on a Mac without Xcod
 waiting), else the first; one read as a kind this Mac can't build yet is made a Mac app and still keeps its other apps on
 its list, so a missing tool holds back only the app that needs it.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
-`controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
-stands alone. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
+`controllerSession`, which find the wish's TV app wherever it is). A device's app made through its integration (a Roku
+channel) is one of a wish's apps like any other (family "device", one per wish), in a folder named for its device
+(`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, which `Part.folderFor` and
+`moreFolders` give, so `Parts.folders(in:)` looks in each), read as that integration's from its folder's marker
+(`Parts.load`), and kept on the wish's list with its integration (`WishApp.integration`), so one that waits is made for
+the right device (`addPart`'s `integration`). Its rules as a part are `Agent.devicePrompt(part:)` (the integration's
+rules for the files in its folder), its word in `look_at_app` and `use_app` is its folder's ("roku", `Parts.word(of:)`),
+and the chat names it by its device ("the Roku app", `Parts.name(of:)`, `Parts.menu(of:)`). A list that gives the wish
+another device's app replaces it rather than changing it in place (`Parts.plan`'s `integrations`), so its folder always
+names its device. It isn't shared yet (its kind's `shareRefusal`), so a wish with one isn't either. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
 its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). `make_app_for` sets the
 wish's apps as the list keeps them (`Parts.asked(apps:)`, `AppAsked`): one entry per app, its `kind` (what it is) and its
 `places` (where it runs beyond its kind's own device: a Mac app's "iphone" makes it the app for both, an iPhone app's
@@ -320,8 +328,22 @@ It says nothing about who should talk to whom. A stranger on the
 network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay and every app's own
 listener (below) take a proof only the wish's key makes, and Lamp's routes and relay run only while Lamp does. What one app
 of a wish says is readable by the wish's other apps and by Lamp's relay, which holds the key Lamp made and opens and seals
-again what it passes on, and by nothing else: on the network it's sealed, each link with keys of its own. A device app made
-through an integration has no `LampWish` yet.
+again what it passes on, and by nothing else: on the network it's sealed, each link with keys of its own.
+
+A device's app made through its integration (a Roku's) doesn't join the room yet (`Part.joinsWish`, `WishRooms.joins`):
+it's left out of the room's list (`WishRooms.described`), so the others never wait for it or show it as closed, it isn't
+counted among the apps that give an app `LampWish` (`Template.talksToOtherApps`: an iPhone app beside only a Roku app
+has none), and the builder's note says it can't reach the others (`WishNote`). Its own building blocks carry
+`LampWish.brs` while its wish has other apps (`Template.hasOtherApps`, `DeviceSupport.wishFile`): `LampWish_status()`
+always `away` with the reason, the peers empty, and `LampWish_send` and `LampWish_set` sending nothing, the shape the
+link will have, and the rules say to keep each app whole without it (`Agent.Rules.deviceAmongApps`, the `wish-links`
+skill), with `LampRoku` for steering it from a Mac or iPhone app meanwhile. What the link needs on a Roku: it has no
+WebSocket before Roku OS 16 (`roWebSocket`), so it would speak through Lamp's proxy routes as an Android app does
+(`/app/wish/open`, `send`, `poll`); HMAC-SHA256 is native (`roHMAC`), but `roEVPCipher`'s GCM is AES-128 only (Roku OS
+15.2 and later) where the room seals with AES-256-GCM, so the seal would be AES-256 in ECB (native) for the counter blocks
+with GHASH in BrightScript; and the key's claim seals to an X25519 key pair, which BrightScript lacks, so X25519 would be
+written in BrightScript (as lamp.js has it in ES5), in a Task node, held to CryptoKit by `WishChannelTests` like the others.
+The other way, Lamp holding the seal for the Roku over its token, would leave what the Roku says in clear on the network.
 
 Lamp's room is one way between a wish's apps; the other is straight between them (**direct links**), so they go on
 talking with Lamp closed, the Mac asleep or Lamp updating, as long as they're on the same network. A Mac, iPhone or Android

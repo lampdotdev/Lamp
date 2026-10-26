@@ -67,6 +67,8 @@ final class PlacesTests: XCTestCase {
         let roku = try XCTUnwrap(Places.row(for: try shipped("roku").integration))
         XCTAssertEqual(roku.native?.code, .integration)
         XCTAssertFalse(roku.runs(.web))
+        // A page asked of it is refused with what a Roku runs, in the integration's own words, never Lamp's.
+        XCTAssertTrue(roku.noWeb?.contains("BrightScript") == true)
     }
 
     func testAnIntegrationCantSupportWhatItHasNoFilesFor() throws {

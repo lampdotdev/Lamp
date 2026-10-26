@@ -128,7 +128,14 @@ enum DeviceSupport {
 
     private static func declaredPaths(for project: LampProject) -> [String] {
         return libraries(for: project).flatMap { entry in entry.library.files.map { $0.name.isEmpty ? entry.path : entry.path + "/" + $0.name } }
-            + icons(for: project).map(\.path)
+            + icons(for: project).map(\.path) + [wishFile(for: project)].compactMap { $0 }
+    }
+
+    /// Where a device's app of a wish with other apps has `LampWish` (`brightScriptWish`): beside the BrightScript
+    /// library, only while its wish has other apps, as `LampWish` is everywhere else.
+    static func wishFile(for project: LampProject) -> String? {
+        guard let entry = libraries(for: project).first(where: { $0.library == .brightscript }), Template.hasOtherApps(project) else { return nil }
+        return entry.path + "/LampWish.brs"
     }
 
     /// The icons a declared kind asks for (`app.declared.icons`), checked: a PNG at a plain path, at a size in pixels.
@@ -184,6 +191,12 @@ enum DeviceSupport {
                 let path = file.name.isEmpty ? entry.path : entry.path + "/" + file.name
                 try Template.put(file.contents, at: project.dir.appendingPathComponent(path), for: project)
             }
+        }
+        // `LampWish` beside the library while the wish has other apps, and gone once it hasn't.
+        if let entry = libraries(for: project).first(where: { $0.library == .brightscript }) {
+            let url = project.dir.appendingPathComponent(entry.path + "/LampWish.brs")
+            if wishFile(for: project) != nil { try Template.put(brightScriptWish, at: url, for: project) }
+            else { AppFolder.remove(url, in: project.dir) }
         }
         // Until Lamp has drawn the app's icon, the tile alone: a manifest names these files, and a package without them
         // shows nothing in their place.
@@ -981,6 +994,46 @@ enum DeviceSupport {
     """#
 
     // MARK: - BrightScript
+
+    /// `LampWish` for a Roku app of a wish with other apps. A Roku can't join the wish's room yet (it has none of the
+    /// handshake's crypto built in, and no WebSocket before Roku OS 16), so this says it's away, with the reason in the
+    /// words every library uses, and its calls are the shape the link will have: an app written against it now keeps
+    /// working when the link comes. `wishes.md` says what that link needs.
+    static let brightScriptWish = #"""
+    ' LampWish: this app and the wish's other apps. Written by Lamp before every build; don't edit.
+    ' Use it from a component by adding this to its XML:
+    '     <script type="text/brightscript" uri="pkg:/components/Lamp/LampWish.brs" />
+    '
+    ' A Roku app can't reach the wish's other apps yet, and they can't reach it: LampWish_status() is always "away",
+    ' with a reason to show as it is, LampWish_peers() is empty, and LampWish_send() and LampWish_set() send nothing.
+    ' Keep what the app shows its own (LampStore, the web, LampAI) rather than waiting on the others.
+    '     status = LampWish_status()     ' { state: "away", reason: "..." }
+
+    function LampWish_status() as Object
+        return { state: "away", reason: "This app can't reach the wish's other apps yet." }
+    end function
+
+    ' The wish's other apps open now: none can be reached from a Roku yet.
+    function LampWish_peers() as Object
+        return []
+    end function
+
+    ' Sends a message (an associative array) to one app by its name ("iphone"), or to all with "": false, since none can
+    ' be reached.
+    function LampWish_send(peer as String, message as Object) as Boolean
+        return false
+    end function
+
+    ' The values the wish's apps share: none reach a Roku yet, so this is empty and LampWish_set() keeps nothing.
+    function LampWish_values() as Object
+        return {}
+    end function
+
+    function LampWish_set(name as String, value as Dynamic) as Boolean
+        return false
+    end function
+
+    """#
 
     /// The Roku library's functions, for a component's scripts and for Main. Network calls run in `LampAITask`, a Task
     /// node, since SceneGraph refuses roUrlTransfer on the render thread.
