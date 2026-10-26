@@ -1153,7 +1153,8 @@ struct InfoPanel: View {
         Form {
             ForEach(state.info ?? []) { section in
                 Section {
-                    ForEach(section.rows, id: \.label) { row in
+                    // By place, not label: two rows may share one ("Uses" for each work a wish uses).
+                    ForEach(Array(section.rows.enumerated()), id: \.offset) { _, row in
                         LabeledContent(row.label) {
                             if let value = row.value {
                                 Text(value).textSelection(.enabled)
