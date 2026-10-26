@@ -314,7 +314,7 @@ enum GameKit {
     an iPhone, an iPad or an Xbox too once it's put there. Lamp plays it in a preview on the Mac to try it.
 
     ## What it does
-    Nothing yet: fresh scaffold, a ball the left stick rolls on a lit floor.
+    Nothing yet: fresh scaffold, an empty wireframe stage under "Lamp is making this game.", for the game to replace.
 
     """
 
