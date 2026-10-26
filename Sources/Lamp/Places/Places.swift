@@ -38,6 +38,29 @@ struct Place: Equatable {
     /// Why it has no web build or no native build, said when one is asked for.
     var noWeb: String? = nil
     var noNative: String? = nil
+    /// Which of Apple's families of device it is, where rows share a destination (`LampProject.family`).
+    var families: Set<DeviceFamily> = []
+    /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
+    /// own does; nil when Lamp doesn't know, which a page there can't be built without.
+    let input: Input?
+
+    /// The device's input as a game's page is told it. Every field is a fact about the device; one left out is what a
+    /// web view with a PC keyboard and no controller of its own has (`generic`).
+    struct Input: Hashable, Codable {
+        /// What its keyboard prints on a key whose name differs between keyboards, by the key's `KeyboardEvent.code`; a
+        /// key not named here is called what a PC keyboard calls it.
+        var keys: [String: String]? = nil
+        /// The controller that comes with it, by its layout's id in `Controllers`: a game there starts on it, until the
+        /// player takes up something else.
+        var controller: String? = nil
+        /// The one layout every controller the device takes has, whatever the controller reports itself as: a game
+        /// names every controller's buttons by it. nil where the controller's own report says which it is.
+        var layout: String? = nil
+
+        static let generic = Input()
+        static let apple = Input(keys: ["Enter": "Return", "Backspace": "Delete", "AltLeft": "Option", "AltRight": "Option",
+                                        "MetaLeft": "⌘", "MetaRight": "⌘"])
+    }
 
     func reach(_ make: Make) -> String? { make == .web ? web : native?.reach }
     func runs(_ make: Make) -> Bool { reach(make) != nil }
@@ -48,28 +71,30 @@ enum Places {
     static let builtIn: [Place] = [
         Place(id: "mac", name: "This Mac", words: ["mac"], destination: .mac,
               web: "right away: Lamp builds an app of its own around the page here",
-              native: .init(code: .apple, reach: "right away: Lamp builds it here")),
+              native: .init(code: .apple, reach: "right away: Lamp builds it here"), input: .apple),
         Place(id: "iphone", name: "iPhone / iPad", words: ["iphone", "ipad"], destination: .ios,
               web: "in an app of Lamp's around the page, the same way as a native app",
-              native: .init(code: .apple, reach: "in the simulator on this Mac, or on the person's own iPhone or iPad paired with this Mac, one device at a time")),
+              native: .init(code: .apple, reach: "in the simulator on this Mac, or on the person's own iPhone or iPad paired with this Mac, one device at a time"),
+              families: [.iphone, .ipad], input: .apple),
         Place(id: "watch", name: "Apple Watch", words: ["watch"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "with the iPhone app, onto the watch paired with that iPhone"),
-              noWeb: "watchOS has no web view"),
+              noWeb: "watchOS has no web view", input: nil),
         Place(id: "apple-tv", name: "Apple TV", words: ["apple-tv"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Apple TV simulator on this Mac; Lamp can't put it on a real Apple TV yet"),
-              noWeb: "tvOS has no web view"),
+              noWeb: "tvOS has no web view", families: [.appletv], input: nil),
         Place(id: "vision-pro", name: "Vision Pro", words: ["vision-pro"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Vision Pro simulator on this Mac; Lamp can't put it on a real Vision Pro yet"),
-              noWeb: "Lamp has no host for a page on Vision Pro yet"),
+              noWeb: "Lamp has no host for a page on Vision Pro yet", families: [.vision], input: .apple),
         Place(id: "android", name: "Android phone / tablet", words: ["android"], destination: .android,
               web: "in an app of Lamp's around the page, the same way as a native app",
-              native: .init(code: .android, reach: "in the Android emulator on this Mac, or on the person's own device with USB debugging, one device at a time")),
+              native: .init(code: .android, reach: "in the Android emulator on this Mac, or on the person's own device with USB debugging, one device at a time"),
+              input: .generic),
         Place(id: "android-tv", name: "Android TV / Google TV / Fire TV", words: ["android-tv"], destination: .android, web: nil,
               native: .init(code: .androidTV, reach: "in the TV emulator on this Mac, or Lamp installs it on each of the person's TVs over Wi‑Fi"),
-              noWeb: "Lamp has no host for a page on Android TV yet"),
+              noWeb: "Lamp has no host for a page on Android TV yet", input: .generic),
         Place(id: "tv", name: "Samsung / LG TV", words: ["tv"], destination: .tv,
               web: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)",
-              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs"),
+              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs", input: .generic),
     ]
 
     /// Every row: the built-in devices, then each integration that declares apps, as its JSON says.
@@ -83,7 +108,8 @@ enum Places {
         return Place(id: integration.id, name: integration.name, words: [integration.id], destination: .device,
                      web: makes.contains(.web) ? reach : nil,
                      native: makes.contains(.native) ? .init(code: .integration, reach: reach) : nil,
-                     noWeb: "its integration declares no web app", noNative: "its integration declares no native app")
+                     noWeb: "its integration declares no web app", noNative: "its integration declares no native app",
+                     input: integration.input)
     }
 
     /// The makes an integration's `supports` names, or nil when it names none (or one Lamp doesn't know).

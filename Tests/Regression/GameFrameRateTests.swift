@@ -1,5 +1,6 @@
 import JavaScriptCore
 import XCTest
+@testable import Lamp
 
 /// The game runtime's own measure of the frame rate wherever a three.js game is played (`lamp-game.js`): what the log
 /// says of it, and the drawing made smaller when frames run slow, the same on every device. Frames are given at the
@@ -24,8 +25,15 @@ final class GameFrameRateTests: XCTestCase {
             var testRenderer = { domElement: { style: {} }, width: 1920, setPixelRatio: function () {},
                              setSize: function (w, h) { this.width = w; testSizes.push(w + 'x' + h); } };
             """)
+        // What the module imports, as Lamp writes it into a copy of the page on this Mac: the device and the controllers.
+        func value(_ module: String) -> String {
+            module.components(separatedBy: "export default ").last!.trimmingCharacters(in: CharacterSet(charactersIn: ";\n"))
+        }
+        let mac = try XCTUnwrap(Places.builtIn.first { $0.id == "mac" })
+        let imports = "var device = \(value(try GamePage.descriptor(for: mac))); var controllers = \(value(Controllers.pageJS));\n"
+        let body = source.replacingOccurrences(of: #"(?m)^import \w+ from '\./[a-z-]+\.js';$"#, with: "", options: .regularExpression)
         // The module as a script in a scope of its own, as a module has, giving its game().
-        context.evaluateScript("(function () {\n" + source.replacingOccurrences(of: "export ", with: "") + "\nwindow.game = game; })();")
+        context.evaluateScript("(function () {\n" + imports + body.replacingOccurrences(of: "export ", with: "") + "\nwindow.game = game; })();")
         context.evaluateScript("game({ renderer: testRenderer, frame: function () {}, sharp: \(sharp) });")
         let tick = try XCTUnwrap(context.evaluateScript("(function (now) { var fn = testFrames.shift(); fn(now); return testRenderer.width; })"))
         var now = 1000.0, width = 1920

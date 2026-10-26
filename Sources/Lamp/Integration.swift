@@ -26,6 +26,10 @@ struct Integration: Codable, Hashable {
     /// What the device can run, of "web" (a page in a host) and "native" (the device's own code): its row in the table of
     /// devices (`Places`). Unsaid, it's what `app` declares. Each one named must be one its `app` or `kinds` has files for.
     var supports: [String]?
+    /// What a game's page on the device is told about its input, as a built-in row says it (`Place.Input`): its
+    /// keyboard's names for keys, the controller that comes with it, the one layout its controllers have. `{}` is a web
+    /// view with a PC keyboard and no controller of its own; left out, Lamp can't put a game's page there.
+    var input: Place.Input?
     /// Where a device that serves its own HTTPS certificate serves the root that signs it ("/config/rootcertificate"
     /// for Xbox's Device Portal, which makes itself a new certificate each time it starts): Lamp reads it once, over
     /// the connection it keeps the device's first certificate on, and from then on takes any certificate it signed.
@@ -498,7 +502,7 @@ enum IntegrationCheck {
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
                                "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
-            "kinds": .map, "supports": .array(.leaf), "certificateRoot": .leaf,
+            "kinds": .map, "supports": .array(.leaf), "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
         ])
     }
 
@@ -703,6 +707,7 @@ enum IntegrationCheck {
                 }
             }
         }
+        if let input = integration.input, let problem = Controllers.problem(in: input) { say(problem) }
         if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
             say("certificateRoot is the path the device serves its root certificate at, over HTTPS on the port the bridge uses: \"/config/rootcertificate\".")
         }

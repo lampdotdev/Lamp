@@ -212,6 +212,8 @@ enum GameKit {
 
     /// Where a three.js game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
     static let webFolder = "Web"
+    /// The controllers a game names buttons for (`Controllers`), which lamp-game.js imports.
+    static let controllersFile = "\(webFolder)/lamp-controllers.js"
 
     private static func read(_ list: [(path: String, from: String)]) -> [(path: String, text: String)] {
         guard let resources else { return [] }
@@ -225,7 +227,7 @@ enum GameKit {
         for file in files { hasher.update(data: Data(file.name.utf8)); hasher.update(data: file.data) }
         // And the app around it on Apple's devices, which a new Lamp may change while the kit stays as it was.
         for file in webFiles + [page, native].compactMap({ $0 }) { hasher.update(data: Data((file.path + file.text).utf8)) }
-        hasher.update(data: Data((webBuildSh + webPackageSwift).utf8))
+        hasher.update(data: Data((webBuildSh + webPackageSwift + Controllers.pageJS).utf8))
         // And Lamp's Android app around it, with the Kotlin blocks a game of several apps carries there, so a game on
         // Android built by an earlier Lamp is built again rather than shown to its wish's other apps as out of date.
         hasher.update(data: Data((GameAndroid.mainActivity + GameAndroid.pageWish + GameAndroid.wishBuildGradle + Template.androidSupportKotlin).utf8))
@@ -237,7 +239,7 @@ enum GameKit {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
         // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
-        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js"] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
+        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
             + GameAndroid.paths(for: project)
     }
 
@@ -249,6 +251,10 @@ enum GameKit {
             try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
             guard webFiles.count == 2, !DeviceSupport.threeFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
             for file in webFiles { try Template.write(file.text, to: file.path, for: project) }
+            // The controllers lamp-game.js names buttons for. The device the page is on isn't written here: each copy of
+            // the page gets its own (`GamePage`).
+            try Template.put(Controllers.pageJS, at: project.dir.appendingPathComponent(controllersFile), for: project)
+            AppFolder.remove(project.dir.appendingPathComponent("\(webFolder)/\(GamePage.deviceFile)"), in: project.dir)
             try writePage(for: project)
             for file in DeviceSupport.threeFiles(for: project, page: webFolder) {
                 try Template.put(file.contents, at: project.dir.appendingPathComponent("\(webFolder)/three/\(file.name)"), for: project)
@@ -287,7 +293,7 @@ enum GameKit {
     /// Takes Lamp's game files out of an app that's no longer a game, so its next kind builds without them; the
     /// game's own code in Game/ is the agent's to move and delete.
     static func remove(from project: LampProject) {
-        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", "\(webFolder)/three", marker] {
+        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", controllersFile, "\(webFolder)/three", marker] {
             AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir)
         }
         removePage(from: project)
@@ -359,7 +365,26 @@ enum GameKit {
     /// A three.js game's build.sh: the Swift around its page for the Mac or the iPhone and iPad simulator, its page copied
     /// into the app (Contents/Resources/Web on the Mac, Web/ at an iOS bundle's top), where the app's web view reads it;
     /// for Android, Lamp's Android app around the page, built by Gradle (`GameAndroid.buildSteps`).
-    static var webBuildSh: String { webBuildTemplate.replacingOccurrences(of: "@@ANDROID@@\n", with: GameAndroid.buildSteps()) }
+    static var webBuildSh: String {
+        webBuildTemplate.replacingOccurrences(of: "@@STAGE@@\n", with: stagePageSh).replacingOccurrences(of: "@@ANDROID@@\n", with: GameAndroid.buildSteps())
+    }
+
+    /// build.sh's one way to put the page into what it builds (the Mac's app, the simulator's, Android's assets): Web/,
+    /// its files only, with the device it's for beside a game's runtime as Lamp resolved it (`GamePage`, handed over as
+    /// LAMP_PAGE_DEVICE). A game's page built without one stops the build rather than claim another device's facts.
+    static let stagePageSh = """
+    stage_page() {
+      if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
+      rm -rf "$1"
+      mkdir -p "$(dirname "$1")"
+      cp -Rp Web "$1"
+      if [ -f "$1/\(GamePage.runtimeFile)" ]; then
+        if [ -z "${LAMP_PAGE_DEVICE:-}" ]; then echo "Lamp builds the game, saying which device its page is for: build it from Lamp." >&2; exit 1; fi
+        printf '%s' "$LAMP_PAGE_DEVICE" > "$1/\(GamePage.deviceFile)"
+      fi
+    }
+
+    """
 
     private static let webBuildTemplate = """
     #!/bin/zsh
@@ -373,6 +398,7 @@ enum GameKit {
     mkdir -p .build
     : > .build/restrict
     RESTRICT=(-Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PWD/.build/restrict")
+    @@STAGE@@
     @@ANDROID@@
     if [[ "$PLACE" == "ios" ]]; then
       SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
@@ -441,11 +467,7 @@ enum GameKit {
     </dict></plist>
     PLIST
     fi
-    # The page, its files only: a link in it would bring what it leads to into the app.
-    if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
-    if [[ "$PLACE" == "ios" ]]; then WEB="$APP/Web"; else WEB="$APP/Contents/Resources/Web"; mkdir -p "$APP/Contents/Resources"; fi
-    rm -rf "$WEB"
-    cp -R Web "$WEB"
+    if [[ "$PLACE" == "ios" ]]; then stage_page "$APP/Web"; else stage_page "$APP/Contents/Resources/Web"; fi
     codesign --force -s - "$APP"
     echo "Built $APP"
 
@@ -574,6 +596,8 @@ enum GameKit {
             throw Failure(message: "Web/ holds a shortcut to another file. Put the file itself in its place.")
         }
         guard fm.fileExists(atPath: page.appendingPathComponent("index.html").path) else { throw Failure(message: "The game has no Web/index.html.") }
+        // The preview is played on this Mac, so its page is told it's the Mac's.
+        try GamePage.stage(page, for: GamePage.place(for: project, at: .mac))
         return page
     }
 
@@ -725,7 +749,7 @@ extension Agent.Rules {
     static let gameWebEdit = """
     - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
-    Web/lamp-game.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/ but for \
+    Web/lamp-game.js, Web/lamp-controllers.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/ but for \
     Sources/Native.swift, build.sh, Package.swift and Lamp/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \

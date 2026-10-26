@@ -67,9 +67,7 @@ enum GameAndroid {
             echo "Android's tools aren't set up. Open the game in Lamp to download them." >&2
             exit 1
           fi
-          if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
-          mkdir -p build/android-assets
-          rsync -a --delete Web/ build/android-assets/Web/
+          stage_page build/android-assets/Web
           # The game's icon, once Lamp has drawn it; until then the system's own for an app.
           ICON=".lamp/AppIcon-square.png"
           [ -f "$ICON" ] || ICON=/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns

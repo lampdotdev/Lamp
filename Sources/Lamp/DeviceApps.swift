@@ -134,6 +134,12 @@ enum DeviceApps {
         }
         let output = project.dir.appendingPathComponent(declared.output)
         AppFolder.remove(output, in: project.dir)
+        // A game's page is told the device it's on: written into the page for the package step to take, checked in
+        // what it made, and taken out again, so no other copy of the page claims this device.
+        let page = GameKit.isGame(project) ? try GamePage.place(for: project) : nil
+        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        if let page { try GamePage.stage(web, for: page) { try Template.put($0, at: $1, for: project) } }
+        defer { if page != nil { AppFolder.remove(web.appendingPathComponent(GamePage.deviceFile), in: project.dir) } }
         var printed: [String] = []
         let status = await Sandbox.run(declared.package, for: project, started: started) { printed.append($0) }
         guard status == 0 else {
@@ -143,6 +149,7 @@ enum DeviceApps {
             throw Failure(message: "The package step ran but left nothing at \(declared.output).")
         }
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
+        if let page { try GamePage.check(try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
             try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))

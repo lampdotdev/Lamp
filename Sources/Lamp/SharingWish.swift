@@ -106,15 +106,16 @@ extension Sharing {
 
 /// A three.js game's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as code
 /// and its models, pictures and sounds as data, and the Swift that answers the page's calls of the device
-/// (Sources/Native.swift) as code too. Never Lamp's runtime beside the page (lamp-game.js, lamp.js, three/) or the app
-/// around it, which the Mac that opens the file writes itself (`GameKit.write`), never a hidden file or a link. A C++ game
-/// isn't shared: Lamp makes no new ones (`GameKit.engine(for:)`).
+/// (Sources/Native.swift) as code too. Never Lamp's runtime beside the page (lamp-game.js, lamp-controllers.js, lamp.js,
+/// three/) or the app around it, which the Mac that opens the file writes itself (`GameKit.write`), never a hidden file
+/// or a link. A C++ game isn't shared: Lamp makes no new ones (`GameKit.engine(for:)`).
 enum GameFiles {
     static let native = "Sources/Native.swift"
 
     /// Lamp's own files in a game's Web/, by their path in the app.
     static func isLamps(_ relative: String) -> Bool {
-        relative == "\(GameKit.webFolder)/lamp-game.js" || relative == "\(GameKit.webFolder)/lamp.js"
+        relative == "\(GameKit.webFolder)/lamp-game.js" || relative == "\(GameKit.webFolder)/lamp.js" || relative == GameKit.controllersFile
+            || relative == "\(GameKit.webFolder)/\(GamePage.deviceFile)"
             || relative.hasPrefix("\(GameKit.webFolder)/three/")
     }
 

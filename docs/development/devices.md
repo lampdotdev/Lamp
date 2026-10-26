@@ -282,9 +282,14 @@ controls on a touch screen, and the frame rate measured wherever it's played: lo
 drawn at 3/4 and then 1/2 of 1920x1080 while frames come slower than 45 a second, a step undone when it didn't make them
 faster) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
-console starts on its controller, a touch screen on touch, the Mac and the preview on the keyboard, and it follows the
-last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick or trigger for it: the
-keyboard's names come from the same table `keyboardPad` reads, and the touch controls' from the one they're drawn
+device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
+keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick
+or trigger for it. The page never works out which device it's on: what it needs of one comes from the device's row in
+the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, a layout it fixes
+for every controller), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
+[kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognised, what's printed on its buttons)
+from Lamp's one list of them, `Controllers`, as `Web/lamp-controllers.js`. The keys a prompt names come from the same
+table `keyboardPad` reads, and the touch controls' from the one they're drawn
 with, so neither can drift. On a Switch controller a prompt names the letter printed on the button, which isn't the
 Xbox's in that place: BUTTON.A is the bottom button, marked B there. The game's rules say to write the controls once as
 actions and build every prompt and help screen from them (`Rules.gameWebKit`); New York is the worked example. On the Mac and iOS the Swift around it is

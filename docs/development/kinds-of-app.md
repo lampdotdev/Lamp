@@ -42,3 +42,21 @@ row needs no prompt edit. `make_app_for` reads each app it's given as a make and
 one on a device that can't run that make, quoting the row (`Places.refusal`, in `Parts.asked`). Every stored kind
 reads as a make and devices that lead back to it (`Places.kinds`); a game and a screen, both web at home on the Mac,
 are still told apart by their folder's mark.
+
+A row also says what a game's page is told about the device (`Place.input`, an integration's `input` in its JSON): what
+its keyboard prints on the keys keyboards name differently (`.apple`: Return, Delete, Option and ⌘), the controller that
+comes with it, which a game there starts on (`controller`), and the one layout every controller it takes has, where the
+device fixes one, so the page names every controller by it rather than by what the controller reports (`layout`). Both
+name a layout in `Controllers` (`Sources/Lamp/Places/Controllers.swift`), Lamp's one list of the controllers a game
+names buttons for, which the page is given as `Web/lamp-controllers.js`. `.generic` (in JSON, `{}`) is a web view with
+a PC keyboard and no controller of its own; a row without `input` can't have a game's page, and saying so is an error,
+never a default.
+
+The page never asks where it is. `GamePage` resolves the row once for each copy of the page Lamp makes (the project's
+destination, its family where several rows share one, its integration on a device) and writes that row's input beside
+lamp-game.js as `lamp-device.js`: the preview's copy (this Mac's row), a real iPhone's or iPad's (`Devices.stage`), an
+integration's package (written into the page for its package step, checked in the package, removed after), and
+build.sh's copies for the Mac, the simulator and Android, which take it from `LAMP_PAGE_DEVICE` (`GamePage.buildEnvironment`)
+in their one `stage_page` step. The app's own Web/ never holds one, and a copy of a game's page made without it stops
+the build. A device that fits a host Lamp has is one row; one that needs the page to behave differently gets a fact in
+`Place.Input`, never a test in the page.

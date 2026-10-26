@@ -188,6 +188,8 @@ enum Devices {
                                      started: started) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to build it.\n\n" + output.suffix(4).joined(separator: "\n")) }
         do { try checkUnlinked(dir) } catch { try? fm.removeItem(at: files); throw error }
+        // A game's page is told the device it's going on (the project's family's row).
+        if GameKit.isGame(project) { try GamePage.stage(files.appendingPathComponent(TVTemplate.webFolder), for: GamePage.place(for: project, at: .ios)) }
         return files
     }
 
