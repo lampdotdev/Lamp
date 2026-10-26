@@ -2,8 +2,9 @@
 //
 // The game is two functions, init and frame, given to game(): the runtime runs them about 60 times a second wherever
 // the game is played (on the Mac and on an iPhone or iPad in Lamp's app around the page, on the Xbox in its web host),
-// draws at 1920x1080 scaled to the screen, and hands each frame the controllers as pads: a controller connected to the
-// device, the keyboard as the first pad, and on a touch screen the touch controls it draws. Lamp's preview runs the same
+// draws at 1920x1080 scaled to the screen (smaller when frames run slow there), and hands each frame the controllers
+// as pads: a controller connected to the device, the keyboard as the first pad, and on a touch screen the touch
+// controls it draws. Lamp's preview runs the same
 // page out of sight from a script of the controller's moves, at exactly 1/60 s a frame with the same random numbers
 // every play, so use frame.dt, random() and save()/load() from here, never requestAnimationFrame, Math.random, the
 // clock or localStorage yourself. What the player is holding (a controller, and whose, the keyboard or the touch screen)
@@ -540,6 +541,59 @@ function step(dt) {
     number++;
 }
 
+// MARK: The frame rate, measured on the device
+
+// Every ten seconds of play the log says how fast frames really came, so the agent sees the device's own frame rate,
+// not the preview's fixed 1/60 s. And when frames run slow the game is drawn smaller and scaled up to the screen, a
+// step at a time: on whatever device it is, a scene that fills the screen with pixels is the usual cost, and fewer
+// pixels the usual cure. A step that doesn't make frames faster is undone and no more are tried, since then the
+// drawing isn't what's slow (a busy frame function, or a screen that refreshes only 30 times a second).
+const SCALES = [1, 0.75, 0.5], SLOW = 45;
+let level = 0, adapting = true, rateBefore = 0, lastTick = 0;
+const report = { frames: 0, time: 0, slowest: 0 }, check = { times: [], time: 0, warm: false };
+
+function drawScale(to) {
+    level = to;
+    check.warm = false;
+    renderer.setSize(Math.round(WIDTH * SCALES[level]), Math.round(HEIGHT * SCALES[level]), false);
+}
+const drawn = () => `${Math.round(WIDTH * SCALES[level])}x${Math.round(HEIGHT * SCALES[level])}`;
+
+function measure(now) {
+    const ms = lastTick ? now - lastTick : 0;
+    lastTick = now;
+    // A page out of sight gets no frames: the gap is a pause, not a slow frame.
+    if (!ms || ms > 1000) return;
+    report.frames++; report.time += ms; report.slowest = Math.max(report.slowest, ms);
+    if (report.time >= 10000) {
+        log(`Lamp: ${Math.round(report.frames * 1000 / report.time)} frames a second (frames ${(report.time / report.frames).toFixed(1)} ms on average, slowest ${report.slowest.toFixed(1)} ms), drawn at ${drawn()}.`);
+        report.frames = report.time = report.slowest = 0;
+    }
+    if (!adapting) return;
+    check.times.push(ms); check.time += ms;
+    // Two seconds a check, after a second left out as play starts and after each change of size, for the shaders
+    // compiled, files read and buffers made then. The rate is the typical frame's, the median: one long hitch (a
+    // window shown, a file read) isn't a device too slow to draw.
+    if (check.time < (check.warm ? 2000 : 1000)) return;
+    const sorted = check.times.sort((a, b) => a - b), rate = 1000 / sorted[sorted.length >> 1], warm = check.warm;
+    check.times = []; check.time = 0; check.warm = true;
+    if (!warm) return;
+    if (rateBefore) {
+        if (rate < rateBefore * 1.15) {
+            drawScale(level - 1);
+            adapting = false;
+            log(`Lamp: drawing smaller didn't make frames faster (${Math.round(rateBefore)} a second, then ${Math.round(rate)}), so the game is drawn at ${drawn()} again.`);
+            return;
+        }
+        rateBefore = 0;
+    }
+    if (rate < SLOW && level < SCALES.length - 1) {
+        rateBefore = rate;
+        drawScale(level + 1);
+        log(`Lamp: frames were slow (${Math.round(rate)} a second), so the game is now drawn at ${drawn()} and scaled up to the screen.`);
+    }
+}
+
 // Fits the canvas to the window at the console's shape, black around it.
 function fit() {
     const canvas = renderer.domElement, scale = Math.min(innerWidth / WIDTH, innerHeight / HEIGHT);
@@ -553,8 +607,10 @@ function fit() {
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
 // the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
 // The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialised before game() is called).
-export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true }) {
+// `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false }) {
     renderer = given;
+    adapting = !sharp;
     frameFunction = frame;
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
@@ -584,6 +640,7 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     const loop = now => {
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
         last = now;
+        measure(now);
         step(dt);
         requestAnimationFrame(loop);
     };
