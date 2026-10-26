@@ -606,9 +606,6 @@ final class Store: ObservableObject {
     @Published var naming: VersionNaming?
     /// Bumped when a version is named, so open version lists reload.
     @Published var versionsRevision = 0
-    /// For each app, the change Undo Last Change is offered under in its chat (`UndoOffer`), by the version it made.
-    @Published private(set) var undoOffers: [String: String] = [:]
-    private var undoOfferReads: [String: Int] = [:]
     /// One span of Lamp owning an app: a chat turn, a rebuild, an undo, an icon redesign. Everything that
     /// belongs to that span lives here and goes with it, so Stop, Delete and quit have one thing to cancel,
     /// and nothing has to be kept in step across a dozen dictionaries. `busy` is the set of apps that have
@@ -777,21 +774,7 @@ final class Store: ObservableObject {
         turns[project.id] = turn
         agentTokens[turn.agentToken] = project.id
         busy.insert(project.id)
-        undoOffers[project.id] = nil
         return turn
-    }
-
-    /// Works out again which change the chat offers Undo Last Change under: when a turn ends, and when a chat is
-    /// shown. Only the latest look counts: one started earlier can end after it.
-    func refreshUndoOffer(_ project: LampProject) {
-        let read = undoOfferReads[project.id, default: 0] + 1
-        undoOfferReads[project.id] = read
-        Task {
-            let offer = busy.contains(project.id) ? nil : await UndoOffer.version(for: project, chat: logs[project.id] ?? [], parts: parts(of: project))
-            guard undoOfferReads[project.id] == read else { return }
-            let shown = busy.contains(project.id) ? nil : offer
-            if undoOffers[project.id] != shown { undoOffers[project.id] = shown }
-        }
     }
 
     /// Gives the app back, without starting anything queued (see `finish`).
@@ -3651,7 +3634,6 @@ final class Store: ObservableObject {
         fixHeldCrashes(project)
         offerHeldDrawing(project)
         startQueued(project)
-        refreshUndoOffer(project)
         // An icon that was waiting for the app to close, when the app closed while this had it: the moment
         // it closed came and went with the app taken, so it's looked at again now the app is free. A wish's turn held
         // its other apps too.
@@ -6352,18 +6334,12 @@ final class Store: ObservableObject {
     private var rebuildingFor: [String: String] = [:]
 
     /// Goes back to the version before the current one. Like any restore, this is itself a new version.
-    /// `change` is the version Undo Last Change in the chat was offered under: when the app has moved on from it
-    /// since, nothing is undone, rather than a change the person wasn't looking at.
-    func undo(_ project: LampProject, change: String? = nil) async {
+    func undo(_ project: LampProject) async {
         guard begin(project) != nil else { return }
         defer { finish(project) }
         dropPausedRequest(project)
         let versions = await Versions.list(project)
         let unsaved = await Versions.hasUnsavedChanges(project)
-        if let change, unsaved || versions.first?.id != change || Versions.undoTarget(in: versions)?.undoing.id != change {
-            log(project, .status, "The app has changed since, so nothing was undone")
-            return
-        }
         // A turn that was stopped, or never got the app building, leaves its changes unsaved: Undo discards those first.
         if let current = versions.first, unsaved {
             _ = await Versions.restoreFiles(project, to: current)
