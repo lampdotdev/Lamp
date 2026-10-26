@@ -245,7 +245,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot }
+    /// `oldCopy` asks whether to take the copy signed for the app's old team off the phone (`OldCopyLine`).
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -8314,16 +8315,11 @@ final class Store: ObservableObject {
             // What's on the phone now, kept signed so it can be put back before its profile runs out.
             let before = PhoneRenewals.record(for: project)
             let kept = await PhoneRenewals.keep(app, for: project, udid: udid, team: team)
-            // Signed for another team than last time: a new app on the phone, so the old one comes off, said once. Only
-            // once the new copy is kept for renewal (else the old record would put the old app back), and only while the
-            // turn still has the app: a person who pressed Stop doesn't lose the old copy's data.
-            if kept, stillOwns(), let old = PhoneRenewals.replaced(before, on: udid, by: project.deviceBundleID(team: team)) {
-                do {
-                    try await Devices.uninstall(old, from: udid)
-                    log(project, .status, "\(project.name) on \(name) is signed for your Apple team now, which makes it a new app there: the copy signed for the old team is off the phone, and what it saved there didn't come along.")
-                } catch {
-                    log(project, .status, "\(project.name) on \(name) is signed for your Apple team now, which makes it a new app there. The copy signed for the old team is still on the phone; delete it there when you like.")
-                }
+            // Signed for another team than last time: a new app on the phone, beside the old one. What the old one saved
+            // there doesn't come along, so it stays until the person says to take it off. Asked only once the new copy is
+            // kept for renewal, else the old record would put the old app back.
+            if kept, let old = PhoneRenewals.replaced(before, on: udid, by: project.deviceBundleID(team: team)) {
+                log(project, .oldCopy, old, retryPhone: udid)
             }
             offerKeepOpening(project)
             guard stillOwns() else { return nil }
@@ -9476,6 +9472,31 @@ final class Store: ObservableObject {
         } catch {
             log(project, .error, (error as? PhoneFailure)?.message ?? error.localizedDescription)
             return false
+        }
+    }
+
+    /// The person answered the old-copy card: `remove` takes the old team's copy off the phone, its data with it; else it
+    /// stays there for them to delete when they like. A removal that fails leaves the card asking, with what went wrong.
+    func answerOldCopy(_ project: LampProject, line id: UUID, remove: Bool,
+                       uninstall: (String, String) async throws -> Void = Devices.uninstall) async {
+        guard let line = logs[project.id]?.first(where: { $0.id == id }), line.kind == .oldCopy, let udid = line.retryPhone,
+              OldCopyLine.state(line.text).answer == nil else { return }
+        let old = line.text
+        var answer = OldCopyLine.kept
+        // Never the copy that's on the phone now: an install for the old team since would have made it that again.
+        if remove, PhoneRenewals.record(for: project)?.bundleID != old {
+            do {
+                try await uninstall(old, udid)
+                answer = OldCopyLine.removed
+            } catch {
+                log(project, .error, (error as? PhoneFailure)?.message ?? error.localizedDescription)
+                return
+            }
+        }
+        if var lines = logs[project.id], let index = lines.firstIndex(where: { $0.id == id }) {
+            lines[index].text = answer + old
+            logs[project.id] = lines
+            saveChat(project)
         }
     }
 

@@ -134,3 +134,30 @@ enum KeepOpeningLine {
     static let button = "Keep It Opening"
     static let symbol = "clock.arrow.circlepath"
 }
+
+/// The chat's card after an app went on a phone signed for another team: the old team's copy is still there, beside
+/// the new one, and comes off only if the person says so, since what it saved goes with it. Its text is the old copy's
+/// bundle id, with "removed:" or "kept:" before it once answered.
+enum OldCopyLine {
+    static let removed = "removed:"
+    static let kept = "kept:"
+
+    /// The old copy's bundle id, and how the card was answered (`removed` or `kept`), nil while it still asks.
+    static func state(_ text: String) -> (bundleID: String, answer: String?) {
+        for answer in [removed, kept] where text.hasPrefix(answer) { return (String(text.dropFirst(answer.count)), answer) }
+        return (text, nil)
+    }
+
+    /// The card's headline and gray line.
+    static func text(phone: String, answer: String?) -> (title: String, status: String) {
+        switch answer {
+        case removed: ("Removed the old copy", "It's off \(phone).")
+        case kept: ("Kept the old copy", "It stays on \(phone) until you delete it there.")
+        default: ("The new copy is installed.", "Remove the old copy from \(phone)? This deletes what it saved on that phone; it has not been copied to the new app.")
+        }
+    }
+
+    static let keep = "Keep Old Copy"
+    static let remove = "Remove Old Copy"
+    static let symbol = "iphone"
+}

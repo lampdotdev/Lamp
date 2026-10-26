@@ -363,6 +363,7 @@ private struct LineView: View {
             }
         case .offer:
             ChatLook.OfferCard(symbol: line.symbol ?? "sparkles", title: line.text, status: line.status ?? "", done: line.done ?? false) {
+                if let decline = line.declineButton { Button(decline) { link.send(.decline(line.id)) } }
                 if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
             }
         case .action:
