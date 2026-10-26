@@ -19,11 +19,14 @@ final class ChatPanel: NSObject, NSWindowDelegate {
     /// The wish's chat in front, in Lamp's panel, made when there's none. Lamp comes in front with it unless
     /// `activate` is false (a chat put up beside an app the person is using, which keeps the keyboard).
     static func show(_ id: String, activate: Bool = true) {
+        // A chat opening for a wish just made on the desk grows out of the bar it was typed in.
+        let arriving = open[id] == nil ? WishArrival.take() : nil
         let panel = open[id] ?? ChatPanel(id: id)
         open[id] = panel
         // Where the person is working when it first opens: the window they asked for it from (the desk, another chat).
         if !panel.placedOnce, let from = NSApp.keyWindow ?? NSApp.mainWindow, from !== panel.window, from.isVisible { panel.openedFrom = from.frame }
         panel.place()
+        if let arriving { WishArrival.play(from: arriving, into: panel.window) }
         if activate {
             NSApp.activate()
             panel.window.makeKeyAndOrderFront(nil)
