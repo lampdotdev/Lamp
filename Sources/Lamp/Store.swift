@@ -2331,6 +2331,9 @@ final class Store: ObservableObject {
     /// A look has been made since Lamp opened, and what it found is in `devices`: before one, the person's devices are
     /// only the TVs and devices Lamp keeps, as not found, and no phone.
     private var looked = false
+    /// adb has been asked since Lamp opened (a look, or a recheck of Android's devices): before, no Android device is
+    /// known, which isn't the same as none being connected (`DeviceNote`).
+    @Published private(set) var androidListed = false
     /// The first look Lamp made on the network was refused while macOS's question was up: the wait for the person's
     /// answer and the look after it, which a wish waits for (`lookAgainOnceAllowed`).
     private var answerAwaited: Task<Void, Never>?
@@ -2367,6 +2370,7 @@ final class Store: ObservableObject {
             let found = kits + known + unknown
             if found != devices { devices = found }
             looked = true
+            androidListed = true
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
@@ -2390,6 +2394,15 @@ final class Store: ObservableObject {
             known.append(Integrations.device(from: keptOne, onNetwork: false))
         }
         if known != devices { devices = known }
+    }
+
+    /// Android's devices as adb lists them now, in place of the last look's, the rest of the list as it was.
+    func refreshAndroidDevices() async {
+        let android = await Adb.devices()
+        let apple = devices.filter { [.iphone, .ipad, .watch].contains($0.kind) }
+        let rest = devices.filter { ![.iphone, .ipad, .watch, .android, .androidEmulator].contains($0.kind) }
+        devices = apple + android + rest
+        androidListed = true
     }
 
     /// Apple's devices as devicectl lists them now, in place of the last look's: the rest of the list stays, so a
@@ -3489,11 +3502,17 @@ final class Store: ObservableObject {
             // A wish that opens on a TV or a device, or has a part that does (a screen or a game beside its Mac app), is
             // told whether Lamp finds it there (`DeviceNote`), which only a look on the network can say: Lamp opens
             // without one, so the first request to such a wish makes it, or waits for the one going on.
-            if !looked, ([project] + parts(of: project)).contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
-                if !lookingForDevices { refreshDevices() }
-                await waitForLook(seconds: 8)
+            let apps = [project] + parts(of: project)
+            if apps.contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
+                if !looked {
+                    if !lookingForDevices { refreshDevices() }
+                    await waitForLook(seconds: 8)
+                }
+                // The first look may have been Settings' or Try On's, still waiting for the answer to macOS's question.
                 await answerAwaited?.value
             }
+            // One set to open on the person's Android phone is told whether it's connected, which only adb can say.
+            if !androidListed, apps.contains(where: { $0.onAndroid && $0.device != nil }) { await refreshAndroidDevices() }
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
@@ -7883,7 +7902,8 @@ final class Store: ObservableObject {
         let serial: String
         let kind = project.platform.target.androidEmulator
         if let chosen = project.device {
-            let found = await Adb.devices().first { $0.udid == chosen }
+            await refreshAndroidDevices()
+            let found = devices.first { $0.udid == chosen }
             guard let found, found.adbState == "device" else {
                 let problem = found.map { Adb.advice(for: $0.name, state: $0.adbState) }
                     ?? "Lamp can't see the Android device chosen under Try On. Plug it in and unlock it, or choose the emulator."
