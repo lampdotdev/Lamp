@@ -150,7 +150,8 @@ enum Places {
     /// A page's places as the agent is told them (`make_app_for`'s `{{PAGE_PLACES}}`, a game's and a screen's rules): each
     /// place's words and device, then the screens across a room it can't go to, and why.
     static var pageList: String {
-        let words = all.filter { $0.web != nil && $0.id != "mac" }.map { place in
+        // Only the places a page can be given: an integration's web host is a page's place once Lamp sends pages there.
+        let words = all.filter { $0.web != nil && $0.id != "mac" && ($0.destination != .device || pageWords[$0.id] != nil) }.map { place in
             place.words.map { "\"\($0)\"" }.joined(separator: " or ") + " (\(place.name))"
         }
         let none = noPage.map(\.name)

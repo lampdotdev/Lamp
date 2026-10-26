@@ -76,6 +76,10 @@ struct TryOnMenu: Equatable {
             }
             sections.append(Section(title: tv ? "Android TV" : "Android", items: items))
         }
+        if places.contains(where: \.isAndroid) {
+            let tv = !places.contains(.android)
+            sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi")]))
+        }
         if places.contains(.tv) {
             var items = [Item(id: "preview", title: "TV Preview", symbol: "tv", checked: project.onTV && project.device == nil)]
             items += store.devices.filter { $0.kind.isTV }.map { tv in

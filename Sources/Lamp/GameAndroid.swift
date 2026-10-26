@@ -199,6 +199,8 @@ enum GameAndroid {
         <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
         <uses-feature android:name="android.hardware.gamepad" android:required="false" />
         <uses-feature android:name="android.software.leanback" android:required="false" />
+        <!-- A page may read the web (a screen's weather, a game's scores), as it does in every other place. -->
+        <uses-permission android:name="android.permission.INTERNET" />
         <application
             android:allowBackup="true"
             android:banner="@drawable/lamp_banner"
