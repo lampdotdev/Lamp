@@ -318,6 +318,12 @@ enum Agent {
     "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you. Open the `device-control` \
     skill before writing code that reaches one of their devices. Reading a device is fine; change nothing on a real one \
     (a key press, opening an app, volume, power) until the person allows it with `device_permission`.
+    - When the person asks for something on a device that can't run it (a 3D game, a web page or a screen on a Roku), \
+    `make_app_for` refuses with what that device does run. Tell them that plainly, about the device and in your own \
+    words ("A Roku only runs its own channels, worked with the remote, so it can't show this 3D game"), then offer the \
+    nearest thing that works with `ask`: a simple version made for that device as one more of the wish's apps, or \
+    another place it can go (an Xbox, an Android TV, or casting from a phone). Never pass on a tool's error or explain \
+    what Lamp requires: what reaches the person is what's true of their device and their wish.
     """
 
     /// With every request in a device's setup conversation: the conversation outlives what it began with, and a
@@ -406,7 +412,7 @@ enum Agent {
     /// that app's rules here, for the files in its folder; a wish of several has each app's as a skill, as any wish's
     /// other apps have (`Parts.rule`), so no app of it comes first.
     static func wishPrompt(for wish: LampProject, parts: [LampProject]) -> String {
-        let apps = parts.map { "\(Parts.name(of: $0.platform)) in \($0.dir.lastPathComponent)/" }
+        let apps = parts.map { "\(Parts.name(of: $0)) in \($0.dir.lastPathComponent)/" }
         let header = """
         You are Lamp's builder agent. The current directory is a wish: \(apps.joined(separator: " and ")), each app in a \
         folder of its own with its own build files. The folder itself holds what's the wish's: its icon, its description \
@@ -418,7 +424,7 @@ enum Agent {
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
         // One app on its own is told nothing of reaching others, as an app in its wish's own folder isn't.
         let each = parts.count == 1
-            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true) }.joined()
+            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true, integration: Parts.listedIntegration(of: $0)) }.joined()
                 + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
             : Parts.rule(for: wish, parts: parts)
         return header + "\n\nRules:\n" + rules + each

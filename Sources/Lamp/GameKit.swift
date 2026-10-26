@@ -129,7 +129,7 @@ enum GameKit {
         game.places = [.device]
         game.chosen = .device
         // Its list of apps named the device app it was: that one app is the game now, not another still to be made.
-        game.apps = game.apps.map { $0.kind == .device ? WishApp(kind: .game) : $0 }
+        game.apps = game.apps.map { $0.kind == .device && ($0.integration == nil || $0.integration == integration) ? WishApp(kind: .game) : $0 }
         return game
     }
 

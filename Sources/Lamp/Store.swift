@@ -477,7 +477,7 @@ final class Store: ObservableObject {
     /// since every app of a wish has the wish's name.
     func placeName(_ project: LampProject) -> String {
         guard project.isPart || project.holdsApp && !parts(of: project).isEmpty else { return project.name }
-        let name = Parts.name(of: project.platform)
+        let name = Parts.name(of: project)
         return name.prefix(1).uppercased() + name.dropFirst()
     }
     /// Play: the app in the wish's own folder and each of its other apps not open yet, each on the device chosen for it, so a TV app and
@@ -1855,7 +1855,7 @@ final class Store: ObservableObject {
         guard let chosen = current(project) else { return project }
         if kind != Targets.fallback.platform {
             let devices = kind.target.identity.made(DeviceApps.integration(for: chosen)?.name, "your")
-            let with = parts.map { ", with \(Parts.name(of: $0)) to go with it" }.joined()
+            let with = parts.map { ", with \(Parts.name(of: $0, integration: integration)) to go with it" }.joined()
             log(chosen, .status, watch ? "Making this for \(devices), and Apple Watch\(with)." : "Making this for \(devices)\(with).")
         }
         return chosen
@@ -1888,19 +1888,26 @@ final class Store: ObservableObject {
     /// `setup` says the problem is this Mac's (the kind's tools aren't here), which its setup fixes; any other is said
     /// and not tried again by itself.
     /// `places`: for a game or a screen, where it's played or shown from the start, beside the Mac.
+    /// `integration`: for a device's app, the device's, which names its folder (Roku/) and what it's made as.
     func addPart(_ kind: Platform, to wish: LampProject, family: DeviceFamily? = nil, folder given: String? = nil,
-                 places: [Destination]? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
+                 places: [Destination]? = nil, integration: String? = nil) async -> (part: LampProject?, problem: String?, setup: Bool) {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
-        if let have = parts(of: wish).first(where: { $0.platform == kind }) { return (have, nil, false) }
+        // A device's app is its integration's to make: one Lamp no longer has can't be.
+        let device = kind.reaches(.device) && !kind.addsPlaces
+        if let have = parts(of: wish).first(where: { $0.platform == kind && (!device || $0.integration == integration) }) { return (have, nil, false) }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
-        if let problem = await kind.target.setup.notReady(nil, Parts.name(of: kind)) { return (nil, problem, true) }
+        if device, integration.map(DeviceApps.makesApps) != true {
+            return (nil, "Lamp doesn't know how to make apps for that device any more.", false)
+        }
+        if let problem = await kind.target.setup.notReady(integration, Parts.name(of: kind, integration: integration)) { return (nil, problem, true) }
         // Files a shared wish brought for this part while this Mac couldn't make it: they go in over the scaffold, with
         // the family the file gave the part, unless the caller gives one.
         let kept = Sharing.kept(in: wish.dir, for: kind).flatMap { $0.package.platform == kind ? $0 : nil }
         // A part from a shared file is made in the folder it had there (`given`, or the one kept with its files), which
         // is its name among the wish's apps (`WishRooms.peer`): an iPhone app made for the Mac too stays the "iphone"
         // the others talk to, rather than coming in as the "apple" none of them knows.
-        let folder = [given, kept?.folder].compactMap { $0 }.first { Parts.folder($0, canHold: kind) } ?? Parts.folder(for: kind)
+        let folder = [given, kept?.folder].compactMap { $0 }.first { Parts.folder($0, canHold: kind) && !device }
+            ?? Parts.folder(for: kind, integration: device ? integration : nil)
         let dir = wish.dir.appendingPathComponent(folder)
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing.
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
@@ -1915,6 +1922,7 @@ final class Store: ObservableObject {
                 part.places = places
                 part.integration = GameKit.integration(for: part)
             }
+            if device { part.integration = integration }
             try Template.saveMeta(part)
             try Template.fill(part)
             if let kept {
@@ -1922,9 +1930,9 @@ final class Store: ObservableObject {
                 Sharing.forgetKept(in: wish.dir, for: kind)
             }
         } catch {
-            return (nil, "Lamp couldn't make \(Parts.name(of: kind)): \(error.localizedDescription)", false)
+            return (nil, "Lamp couldn't make \(Parts.name(of: kind, integration: integration)): \(error.localizedDescription)", false)
         }
-        setApps(wish, Parts.listing(kind, madeFor: wish, parts: parts(of: wish)))
+        setApps(wish, Parts.listing(kind, integration: device ? integration : nil, madeFor: wish, parts: parts(of: wish)))
         reload()
         return (projects.first { $0.id == Parts.id(wish: wish.id, folder: folder) }, nil, false)
     }
@@ -1940,7 +1948,7 @@ final class Store: ObservableObject {
               apps(of: wish).count > 1, await quit(app, for: turns[wish.id]) else { return false }
         // The wish no longer should have it: taken away, it isn't made again at the next turn. Only here: a restore has
         // already given the wish the list its version had (`Versions.restoreFiles`), which forgetting leaves alone.
-        setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(app.platform) })
+        setApps(wish, wish.apps.filter { !Parts.lists($0, app) })
         await settleFiles(wish)
         await forget(app)
         if app.isPart {
@@ -3349,9 +3357,9 @@ final class Store: ObservableObject {
     private func makeWaitingParts(of wish: LampProject) async {
         guard let wish = current(wish), !wish.isPart else { return }
         for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
-            let (part, problem, setup) = await addPart(app.kind, to: wish, places: app.places)
-            if let part { log(wish, .status, "\(wish.name) has \(Parts.name(of: part.platform)) to go with it now.") }
-            else if let problem { recordNeeds(problem, for: app.kind, of: wish, setup: setup) }
+            let (part, problem, setup) = await addPart(app.kind, to: wish, places: app.places, integration: app.integration)
+            if let part { log(wish, .status, "\(wish.name) has \(Parts.name(of: part)) to go with it now.") }
+            else if let problem { recordNeeds(problem, for: app.kind, integration: app.integration, of: wish, setup: setup) }
         }
     }
 
@@ -3360,15 +3368,15 @@ final class Store: ObservableObject {
     /// finishing it there adds the app; anything else (a folder in the way) is said as an error, and the app waits for
     /// the agent to ask for it again once the person has dealt with it, never for a setup that's already done, which
     /// would ask again at once, turn after turn.
-    private func recordNeeds(_ problem: String, for kind: Platform, of wish: LampProject, setup: Bool) {
+    private func recordNeeds(_ problem: String, for kind: Platform, integration: String? = nil, of wish: LampProject, setup: Bool) {
         guard let wish = current(wish) else { return }
-        setApps(wish, Parts.setting(WishApp(kind: kind, needs: problem), in: wish.apps))
+        setApps(wish, Parts.setting(WishApp(kind: kind, needs: problem, integration: integration), in: wish.apps))
         let line = IPhoneSetupLine.lineText(kind, part: true)
         if setup, kind.target.setup.later != nil {
             if !(logs[wish.id] ?? []).contains(where: { $0.kind == .iphoneSetup && $0.text == line }) { log(wish, .iphoneSetup, line) }
             IPhoneSetupLine.follow(wish, wanted: kind, part: true)
         } else {
-            log(wish, .error, "T\(Parts.name(of: kind).dropFirst()) isn't made yet: \(problem)")
+            log(wish, .error, "T\(Parts.name(of: kind, integration: integration).dropFirst()) isn't made yet: \(problem)")
         }
     }
 
@@ -3376,7 +3384,7 @@ final class Store: ObservableObject {
     /// next turn makes it, and the request that asks for it is sent.
     func retryWaitingApp(_ kind: Platform, of wish: LampProject) {
         guard let wish = current(wish), let app = wish.apps.first(where: { Parts.group($0.kind) == Parts.group(kind) }) else { return }
-        let cleared = setApps(wish, Parts.setting(WishApp(kind: app.kind), in: wish.apps))
+        let cleared = setApps(wish, Parts.setting(WishApp(kind: app.kind, integration: app.integration), in: wish.apps))
         send(Parts.request(for: app.kind), to: cleared)
     }
 
@@ -3407,7 +3415,9 @@ final class Store: ObservableObject {
                 // missing holds back only the app that needs it.
                 let rest = parts.filter { Parts.group($0) != Parts.group(project.platform) }
                 if !rest.isEmpty {
-                    project = setApps(project, [WishApp(kind: project.platform)] + rest.map { WishApp(kind: $0, places: suggestion.places[$0]) })
+                    let device = { (kind: Platform) in kind.reaches(.device) && !kind.addsPlaces ? suggestion.integration : nil }
+                    project = setApps(project, [WishApp(kind: project.platform, integration: device(project.platform))]
+                                      + rest.map { WishApp(kind: $0, places: suggestion.places[$0], integration: device($0)) })
                 }
             }
             if project.untitled, let name = suggestion?.name { project = await performRename(project, to: name) }
@@ -5711,7 +5721,7 @@ final class Store: ObservableObject {
         if !wish.holdsApp, stamps[wish.id] != nil {
             let closed = await quit(before, for: turns[wish.id])
             await forget(before)
-            if !closed { log(wish, .status, "T\(Parts.name(of: before.platform).dropFirst()) is still open. It's no longer one of the wish's apps.") }
+            if !closed { log(wish, .status, "T\(Parts.name(of: before).dropFirst()) is still open. It's no longer one of the wish's apps.") }
         }
         guard !Parts.match(parts(of: wish), filesOf: wish.dir) else { return wish }
         let found = Parts.folders(in: wish.dir)
@@ -5722,7 +5732,7 @@ final class Store: ObservableObject {
             if await quit(part, for: turns[wish.id]) { await forget(part) } else { keptOpen.append(part) }
         }
         reload()
-        for part in keptOpen { log(wish, .status, "T\(Parts.name(of: part.platform).dropFirst()) is still open. It goes once it's closed.") }
+        for part in keptOpen { log(wish, .status, "T\(Parts.name(of: part).dropFirst()) is still open. It goes once it's closed.") }
         return current(wish) ?? wish
     }
 
@@ -5780,6 +5790,8 @@ final class Store: ObservableObject {
         // The words each app is made from: its kind's and its places'.
         let words = { (kind: Platform) in asked.words[kind] ?? [kind.rawValue] }
         let placesOf = { (kind: Platform) in kind.addsPlaces ? GameKit.places(for: words(kind), of: kind) : nil }
+        // A device's app is its integration's, by the id it was given as.
+        let integrationOf = { (kind: Platform) in kind.reaches(.device) && !kind.addsPlaces ? words(kind).first(where: DeviceApps.makesApps) : nil }
         var said: [String] = []
         // A wish with nothing made yet (still to be told what it's for, or held for its device) is made as a new wish
         // is: its first app in its own folder, the first of its kinds this Mac can build now, so answered "TV and iPhone"
@@ -5793,9 +5805,9 @@ final class Store: ObservableObject {
             said.append(text)
         }
         let apps = apps(of: wish)
-        let plan = Parts.plan(kinds, for: apps)
+        let plan = Parts.plan(kinds, for: apps, integrations: kinds.reduce(into: [:]) { $0[$1] = integrationOf($1) })
         // The wish should have these from now on; what each one that can't be made yet needs is kept as it's found.
-        setApps(wish, kinds.map { WishApp(kind: $0, places: placesOf($0)) })
+        setApps(wish, kinds.map { WishApp(kind: $0, places: placesOf($0), integration: integrationOf($0)) })
         // Each app that stays as another kind of its family is changed in place.
         for app in apps {
             guard let kind = plan.keep[app.id] else { continue }
@@ -5810,36 +5822,36 @@ final class Store: ObservableObject {
             let (status, answer) = await changeKind(arguments, devices: words(kind), kind: kind, for: app)
             let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
             if status == 200, Parts.saysNothingNew(text) { continue }
-            said.append(app.isPart || !parts(of: wish).isEmpty || !plan.add.isEmpty ? "For \(Parts.name(of: app.platform)) in \(folderWords(app)): " + text : text)
+            said.append(app.isPart || !parts(of: wish).isEmpty || !plan.add.isEmpty ? "For \(Parts.name(of: app)) in \(folderWords(app)): " + text : text)
         }
         // Each family the wish has no app of yet is added in its own folder.
         var added = 0
         for kind in plan.add {
-            let (part, problem, setup) = await addPart(kind, to: wish)
+            let (part, problem, setup) = await addPart(kind, to: wish, integration: integrationOf(kind))
             guard let part else {
-                recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, of: wish, setup: setup)
-                said.append("Not yet for \(Parts.name(of: kind)): \(problem ?? "Lamp couldn't make it.") Lamp keeps it on the wish's list and makes it " +
+                recordNeeds(problem ?? "Lamp couldn't make it.", for: kind, integration: integrationOf(kind), of: wish, setup: setup)
+                said.append("Not yet for \(Parts.name(of: kind, integration: integrationOf(kind))): \(problem ?? "Lamp couldn't make it.") Lamp keeps it on the wish's list and makes it " +
                             "once that's done. Build the rest; what it was to do may go another way meanwhile if one works now, your choice. " +
                             "Tell the person in a sentence.")
                 continue
             }
             added += 1
-            log(wish, .status, "\(wish.name) has \(Parts.name(of: kind)) now.")
+            log(wish, .status, "\(wish.name) has \(Parts.name(of: part)) now.")
             // A game or a screen is at home on the Mac, and goes wherever else it was given, with what that allows.
             if kind.addsPlaces, let places = placesOf(kind) {
                 let placed = await setPlaces(part, places)
                 if !placed.hasPrefix("It's already"), current(part) != nil { said.append(placed) }
                 if let now = current(part) { said.append(kind == .screen ? Agent.Rules.screenPlaces(now) : Agent.Rules.gamePlaces(now)) }
             }
-            said.append("Done: the wish has \(Parts.name(of: kind)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. Build it in this " +
-                        "request, made to work with the rest. `look_at_app` and `use_app` reach it with `part` \"\(Parts.word(for: kind))\". " +
-                        "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n" + Parts.pack(for: kind))
+            said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. Build it in this " +
+                        "request, made to work with the rest. `look_at_app` and `use_app` reach it with `part` \"\(Parts.word(of: part))\". " +
+                        "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n" + Parts.pack(for: kind, in: part.dir.lastPathComponent, integration: Parts.listedIntegration(of: part)))
         }
         // Each app left out goes, once the wish has another: one left with nothing beside it stays until what replaces it is made.
         let stays = Parts.staying(of: apps.map(\.id).filter(plan.remove.contains), survivors: apps.count - plan.remove.count + added)
         for app in apps where plan.remove.contains(app.id) {
             guard let app = current(app) else { continue }
-            let name = Parts.name(of: app.platform)
+            let name = Parts.name(of: app)
             guard !stays.contains(app.id) else {
                 setApps(wish, Parts.setting(WishApp(kind: app.platform), in: current(wish)?.apps ?? []))
                 said.append("\(name.prefix(1).uppercased() + name.dropFirst()) stays for now: it's the only app the wish has until the rest can be made, " +
@@ -7723,10 +7735,12 @@ final class Store: ObservableObject {
         if let step = Integrations.next(for: device) {
             // The card goes under the latest request, where the person is reading: one left further up, from setting the
             // device up before, would be out of sight, and two would show the same step twice.
-            let lines = logs[project.id] ?? []
+            // A part's lines are its wish's chat.
+            let chat = wish(of: project).id
+            let lines = logs[chat] ?? []
             let lastRequest = lines.lastIndex { $0.kind == .user } ?? -1
             if !lines.indices.contains(where: { $0 > lastRequest && lines[$0].kind == .deviceStep && lines[$0].text == device.id }) {
-                logs[project.id]?.removeAll { $0.kind == .deviceStep && $0.text == device.id }
+                logs[chat]?.removeAll { $0.kind == .deviceStep && $0.text == device.id }
                 log(project, .deviceStep, device.id)
             }
             // Nothing runs while the card waits for the person; once its last step passes, the app goes on the device.
@@ -8743,7 +8757,7 @@ final class Store: ObservableObject {
         // The report itself goes with the request when macOS wrote one; otherwise what Lamp saw is all there is.
         // The wish's request carries no note of a part's crash, so a part's goes with what Lamp saw, and which part it was.
         let part = crashed.id != project.id
-        let request = part ? "\(Parts.name(of: crashed.platform).prefix(1).uppercased() + Parts.name(of: crashed.platform).dropFirst()), in \(crashed.dir.lastPathComponent)/, crashed. Fix the crash." : "Fix the crash."
+        let request = part ? "\(Parts.name(of: crashed).prefix(1).uppercased() + Parts.name(of: crashed).dropFirst()), in \(crashed.dir.lastPathComponent)/, crashed. Fix the crash." : "Fix the crash."
         queued[project.id, default: []].append(QueuedMessage(text: report == nil || part ? request + "\n\n" + detail : request, byLamp: true))
         startQueued(project)
         return true
@@ -10879,7 +10893,7 @@ final class Store: ObservableObject {
     /// only when the wish has one app. No app of a wish is the one meant by saying none.
     private func target(_ arguments: [String: Any], in project: LampProject) -> (LampProject?, String?) {
         let apps = apps(of: project)
-        let have = apps.map { "\"\(Parts.word(for: $0.platform))\" (\(Parts.name(of: $0.platform)))" }.joined(separator: ", ")
+        let have = apps.map { "\"\(Parts.word(of: $0))\" (\(Parts.name(of: $0)))" }.joined(separator: ", ")
         guard let word = (arguments["part"] as? String)?.trimmed, !word.isEmpty else {
             guard apps.count > 1 else { return (apps.first ?? project, nil) }
             return (nil, "This wish has \(apps.count) apps: say which with `part`: \(have).")

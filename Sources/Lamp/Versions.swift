@@ -21,8 +21,9 @@ struct AppVersion: Identifiable, Hashable {
     var renamedTo: String? = nil
     var renamedFrom: String? = nil
     /// The kinds of app the wish asked for when this version was saved (`LampProject.apps`), kept in Lamp's own folder
-    /// as the name is, and so carried by each version Lamp saves (`appsTrailer`). Nil for a version saved without it.
-    var apps: [Platform]? = nil
+    /// as the name is, and so carried by each version Lamp saves (`appsTrailer`), a device's app with its device. Nil for
+    /// a version saved without it.
+    var apps: [WishApp]? = nil
 
     var label: String { name ?? title ?? message }
 
@@ -239,7 +240,7 @@ enum Versions {
     /// The kinds of app a wish asked for in `version`: those the latest version at or before it that says them gave
     /// (`appsTrailer`). Nil when none does (versions saved before versions carried them), and the list is then what the
     /// version's files make.
-    static func apps(at version: AppVersion, in versions: [AppVersion]) -> [Platform]? {
+    static func apps(at version: AppVersion, in versions: [AppVersion]) -> [WishApp]? {
         let byID = Dictionary(versions.map { ($0.id, $0) }) { first, _ in first }
         var walked: AppVersion? = version
         while let at = walked {
@@ -249,12 +250,19 @@ enum Versions {
         return nil
     }
 
-    /// The `Lamp-Apps` trailer as a version carries it: the kinds, by name, between spaces. One the version names that
-    /// this Lamp doesn't know is passed over.
-    static func apps(from trailer: String) -> [Platform]? {
+    /// The `Lamp-Apps` trailer as a version carries it: the kinds, by name, between spaces, a device's app with its
+    /// integration after a colon ("device:roku"), so one restored while it waits is made for that device. One the version
+    /// names that this Lamp doesn't know is passed over (as an earlier Lamp passes over "device:roku").
+    static func apps(from trailer: String) -> [WishApp]? {
         guard let said = trailer.split(separator: ",").first.map({ String($0).trimmed }), !said.isEmpty else { return nil }
-        return said.split(separator: " ").compactMap { Platform(rawValue: String($0)) }
+        return said.split(separator: " ").compactMap { word in
+            let parts = word.split(separator: ":", maxSplits: 1).map(String.init)
+            return Platform(rawValue: parts[0]).map { WishApp(kind: $0, integration: parts.count > 1 ? parts[1] : nil) }
+        }
     }
+
+    /// One app as the trailer says it.
+    nonisolated static func trailerWord(_ app: WishApp) -> String { app.kind.rawValue + (app.integration.map { ":" + $0 } ?? "") }
 
     /// What every version Lamp saves of a wish carries: the kinds of app it asks for then, whether made or waiting
     /// (`Parts.wanted`), since the list is kept in meta.json, which no version holds. Going back to a version brings
@@ -262,14 +270,14 @@ enum Versions {
     /// list too, rather than leaving it to be made at the next turn. Nil for a folder that isn't a wish's.
     nonisolated static func appsTrailer(in dir: URL) -> String? {
         guard let kinds = listedKinds(in: dir), !kinds.isEmpty else { return nil }
-        return "Lamp-Apps: " + kinds.map(\.rawValue).joined(separator: " ")
+        return "Lamp-Apps: " + kinds.map(trailerWord).joined(separator: " ")
     }
 
     /// The kinds of app the wish in this folder asks for now, made or waiting.
-    private nonisolated static func listedKinds(in dir: URL) -> [Platform]? {
+    private nonisolated static func listedKinds(in dir: URL) -> [WishApp]? {
         guard var wish = Store.readWish(at: dir) else { return nil }
         wish.partFolders = Parts.folders(in: dir)
-        return Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind)
+        return Parts.wanted(in: wish, parts: Parts.load(wish)).map { WishApp(kind: $0.kind, integration: $0.integration) }
     }
 
     /// Whether going back to the latest version would give the wish another list of apps than it has, its files being
@@ -282,9 +290,9 @@ enum Versions {
             if said.isEmpty { said = line.trimmed }
         }
         wish.partFolders = Parts.folders(in: dir)
-        wish.apps = (apps(from: said) ?? []).map { WishApp(kind: $0) }
-        let latest = Parts.wanted(in: wish, parts: Parts.load(wish)).map(\.kind)
-        return Set(latest) != Set(now)
+        wish.apps = apps(from: said) ?? []
+        let latest = Parts.wanted(in: wish, parts: Parts.load(wish)).map(trailerWord)
+        return Set(latest) != Set(now.map(trailerWord))
     }
 
     /// What a version that changes the app's name carries, for `name(at:in:)`.
@@ -334,9 +342,12 @@ enum Versions {
                 let parts = Parts.load(project)
                 let asked = await apps(at: version, in: list(project)) ?? []
                 var listed = project
-                listed.apps = asked.map { kind in
-                    let now = project.apps.first { $0.kind == kind }
-                    return WishApp(kind: kind, needs: now?.needs, places: now?.places)
+                // A device's app is for the device the version names, else the one the list has now.
+                // What stops one, and where a game goes, are kept only for the same app: a device's app for another
+                // device keeps none of the one the list has now.
+                listed.apps = asked.map { app in
+                    let now = project.apps.first { $0.kind == app.kind && (app.integration == nil || $0.integration == nil || $0.integration == app.integration) }
+                    return WishApp(kind: app.kind, needs: now?.needs, places: now?.places, integration: app.integration ?? now?.integration)
                 }
                 let apps = Parts.wanted(in: listed, parts: parts)
                 if apps != project.apps { project.apps = apps; changed = true }

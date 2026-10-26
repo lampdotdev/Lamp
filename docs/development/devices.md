@@ -89,7 +89,9 @@ chat instead. `look_at_app` is the bridge's `look` picture with what the device 
 `bridge.keys`, each pressed with `use`), `type` (the bridge's `type`, once per character as `{text}`, which in a path
 Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`. Stop runs the bridge's `stop` (a Roku's
 `/exit-app/dev`), and presses `home` when there's none or the device refuses it. Lamp can't tell whether the
-app is still open on the device, so Play always puts it there again. Such apps aren't shared yet. Lamp ships the Roku's
+app is still open on the device, so Play always puts it there again. Such an app can be one of a wish's apps, in a
+folder named for its device (Roku/, the "Wishes" guide), where all of this works in its folder as it does at a wish's
+root. Such apps aren't shared yet. Lamp ships the Roku's
 integration (`Resources/Devices/roku.json`): a channel in BrightScript with Lamp's building blocks, its icon and splash
 screens, and a bridge whose `remove` is the developer installer's Delete, so deleting a wish takes the channel off the
 Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere` removes the device's one copy, and only

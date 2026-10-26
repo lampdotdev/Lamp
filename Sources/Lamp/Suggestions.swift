@@ -200,7 +200,7 @@ enum AppName {
         let kinds = asked?.kinds ?? []
         return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
                           kinds: kinds, kindSaid: said,
-                          integration: kinds == [.device] ? devices.first : nil,
+                          integration: kinds.contains(.device) ? devices.first(where: DeviceApps.makesApps) : nil,
                           places: (asked?.places ?? [:]).reduce(into: [:]) { $0[$1.key] = GameKit.places(for: $1.value, of: $1.key) },
                           engine: kinds == [.game] ? GameKit.engine(for: devices) : nil,
                           forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
@@ -218,13 +218,13 @@ enum AppName {
         return seen.count >= 2 ? seen : nil
     }
 
-    /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone. A device
+    /// The devices whose integrations declare their apps, as more names the devices may be, alone or with other apps. A device
     /// that takes more than one kind of app has each named with what it's for ("xbox-one:game" for a 3D game), so the
     /// kind is chosen from the wish as the device is, never by a setting.
     static func deviceKinds() -> String {
         let kinds = DeviceApps.kinds()
         guard !kinds.isEmpty else { return "" }
-        return "\n\nThese devices of the person's take apps too; each stands alone, for a request that names it or its maker: "
+        return "\n\nThese devices of the person's take apps too, for a request that names it or its maker, alone or beside the wish's other apps ([\"\(kinds[0].id)\", \"iphone\"] for one on it kept with a phone app): "
             + kinds.map { entry in
                 let what = "their \(entry.integration.name) (\(entry.integration.kind ?? "device") by \(entry.integration.maker))"
                 return "[\"\(entry.id)\"] for " + (entry.kind.purpose.map { "\($0) on \(what)" } ?? what)
