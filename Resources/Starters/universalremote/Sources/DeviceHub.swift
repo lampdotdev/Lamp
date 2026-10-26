@@ -69,7 +69,7 @@ final class DeviceHub: ObservableObject {
         note = ""
         // One Samsung TV at a time goes through the TV's own channel: the one chosen.
         if device.kind == .samsung, TVRemote.shared.tv?.id != device.id {
-            TVRemote.shared.choose(SavedTV(id: device.id, name: device.name, address: device.address, model: device.model))
+            TVRemote.shared.choose(SavedTV(id: device.id, name: device.name, address: device.address, model: device.model, mac: device.mac))
         }
         Task {
             await controller?.wake()
@@ -107,11 +107,11 @@ final class DeviceHub: ObservableObject {
         for device in await LampNetwork.find(bonjour: ["_sonos._tcp"]) {
             if device.ssdp.contains("roku:ecp"), let roku = try? await LampRoku.at(device.address) {
                 rokus[roku.id] = roku
-                found.append(HomeDevice(id: roku.id, name: roku.name, kind: .roku, address: device.address, model: roku.model))
+                found.append(HomeDevice(id: roku.id, name: roku.name, kind: .roku, address: device.address, model: roku.model, mac: nil))
             } else if device.maker.localizedCaseInsensitiveContains("samsung"), let tv = await TVRemote.info(at: device.address) {
-                found.append(HomeDevice(id: tv.id, name: tv.name, kind: .samsung, address: tv.address, model: tv.model))
+                found.append(HomeDevice(id: tv.id, name: tv.name, kind: .samsung, address: tv.address, model: tv.model, mac: tv.mac))
             } else if device.maker.hasPrefix("Sonos") || device.bonjour.contains(where: { $0.type == "_sonos._tcp" }) {
-                found.append(HomeDevice(id: "sonos:" + device.name, name: device.name, kind: .sonos, address: device.address, model: device.model))
+                found.append(HomeDevice(id: "sonos:" + device.name, name: device.name, kind: .sonos, address: device.address, model: device.model, mac: nil))
             } else if !device.maker.isEmpty || !device.model.isEmpty,
                       !device.ssdp.contains(where: { $0.contains("InternetGatewayDevice") }) {
                 others.append(device)
@@ -127,7 +127,9 @@ final class DeviceHub: ObservableObject {
         }
         unsupported = others
         save()
-        if selected == nil || selectedID == HomeDevice.example.id, let first = devices.first { select(first) }
+        // Nothing chosen yet (or only the example): the first found is, so its connection is made, not only shown.
+        let chosen = devices.contains { $0.id == selectedID }
+        if !chosen, let first = devices.first { select(first) }
         revision += 1
     }
 

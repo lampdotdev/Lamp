@@ -9,6 +9,8 @@ struct HomeDevice: Codable, Identifiable, Hashable {
     var kind: Kind
     var address: String
     var model: String?
+    /// A Samsung TV's Wi-Fi address, for waking it.
+    var mac: String?
 
     var symbol: String {
         switch kind {
@@ -27,7 +29,7 @@ struct HomeDevice: Codable, Identifiable, Hashable {
         }
     }
 
-    static let example = HomeDevice(id: "example", name: "Example TV", kind: .example, address: "", model: "Nothing is sent")
+    static let example = HomeDevice(id: "example", name: "Example TV", kind: .example, address: "", model: "Nothing is sent", mac: nil)
 }
 
 /// What a device can do. The remote's screen asks for these, never for the kind of device: a TV that can't change

@@ -68,6 +68,11 @@ final class TVRemote: ObservableObject {
     private let trust = LocalTrust()
     private let remoteName = "Universal Remote"
 
+    /// Each paired TV's token by its id, so switching between TVs never asks one to Allow again.
+    private var tokens: [String: String] = LampStore.load([String: String].self, from: "tokens") ?? [:]
+    /// Bumped when another TV is chosen: a connection still being made for the one before is dropped, never used.
+    private var generation = 0
+
     init() {
         tv = LampStore.load(SavedTV.self, from: "tv")
         installedApps = LampStore.load([TVApp].self, from: "apps") ?? []
@@ -166,16 +171,25 @@ final class TVRemote: ObservableObject {
     func ensureConnected() async -> Bool {
         if status == .connected, socket != nil { return true }
         if let connecting { return await connecting.value }
-        let task = Task { await self.openConnection() }
+        let generation = generation
+        let task = Task { await self.openConnection(generation) }
         connecting = task
         let ok = await task.value
-        connecting = nil
-        return ok
+        if generation == self.generation { connecting = nil }
+        return ok && generation == self.generation
+    }
+
+    /// The token the TV handed back, kept with it and by its id.
+    private func keep(token: String?) {
+        tv?.token = token
+        if let id = tv?.id { tokens[id] = token }
+        if let saved = tv { LampStore.save(saved, to: "tv") }
+        LampStore.save(tokens, to: "tokens")
     }
 
     private enum Attempt { case connected, denied, unreachable, gaveUp }
 
-    private func openConnection() async -> Bool {
+    private func openConnection(_ generation: Int) async -> Bool {
         guard let tv else { status = .notSetUp; return false }
         trust.host = tv.address
         status = .connecting
@@ -184,7 +198,10 @@ final class TVRemote: ObservableObject {
         for round in 0..<3 {
             if round > 0 { try? await Task.sleep(for: .seconds(Double(round) * 1.5)) }
             for secure in [true, false] {
-            switch await attempt(self.tv ?? tv, secure: secure) {
+            let result = await attempt(self.tv ?? tv, secure: secure, generation: generation)
+            // Another TV was chosen meanwhile: this one's answer is no longer the remote's.
+            guard generation == self.generation else { return false }
+            switch result {
             case .connected:
                 status = .connected
                 requestApps()
@@ -192,8 +209,7 @@ final class TVRemote: ObservableObject {
             case .denied:
                 // An old pairing the TV no longer accepts: forget it and ask the TV afresh.
                 if self.tv?.token != nil {
-                    self.tv?.token = nil
-                    if let saved = self.tv { LampStore.save(saved, to: "tv") }
+                    keep(token: nil)
                     continue
                 }
                 status = .offline("Choose Allow on the TV, then press any key")
@@ -210,7 +226,7 @@ final class TVRemote: ObservableObject {
         return false
     }
 
-    private func attempt(_ tv: SavedTV, secure: Bool) async -> Attempt {
+    private func attempt(_ tv: SavedTV, secure: Bool, generation: Int) async -> Attempt {
         let name = Data(remoteName.utf8).base64EncodedString()
             .addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
         var path = secure ? "wss://\(tv.address):8002" : "ws://\(tv.address):8001"
@@ -237,10 +253,11 @@ final class TVRemote: ObservableObject {
             let json = Self.json(message)
             switch json?["event"] as? String {
             case "ms.channel.connect":
-                if let token = (json?["data"] as? [String: Any])?["token"] as? String {
-                    self.tv?.token = token
-                    if let saved = self.tv { LampStore.save(saved, to: "tv") }
+                guard generation == self.generation else {
+                    task.cancel()
+                    return .unreachable
                 }
+                if let token = (json?["data"] as? [String: Any])?["token"] as? String { keep(token: token) }
                 socket = task
                 listen(task)
                 return .connected
@@ -369,12 +386,14 @@ final class TVRemote: ObservableObject {
     // MARK: Choosing a TV
 
     func choose(_ newTV: SavedTV) {
+        generation += 1
+        connecting = nil
         if let socket { socket.cancel() }
         socket = nil
         var chosen = newTV
-        if newTV.id == tv?.id {
-            chosen.token = tv?.token
-        } else {
+        chosen.token = (newTV.id == tv?.id ? tv?.token : nil) ?? tokens[newTV.id]
+        if chosen.mac == nil, newTV.id == tv?.id { chosen.mac = tv?.mac }
+        if newTV.id != tv?.id {
             installedApps = []
             LampStore.save(installedApps, to: "apps")
         }

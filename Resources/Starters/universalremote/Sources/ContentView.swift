@@ -53,6 +53,10 @@ struct ContentView: View {
                 await hub.refreshApps()
             }
         }
+        .onChange(of: tv.installedApps) { _, _ in
+            // A Samsung TV's list of apps comes a moment after it connects: its keys follow it.
+            if hub.selected?.kind == .samsung { Task { await hub.refreshApps() } }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, let device = hub.selected { hub.select(device) }
         }
