@@ -735,6 +735,7 @@ struct ChatBar: View {
                         tryOnItems(section)
                     }
                 }
+                .onAppear { link.send(.tryOnOpened) }
             } label: {
                 ToolSymbol(tryOn.symbol, "Try On")
             }

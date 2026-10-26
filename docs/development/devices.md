@@ -119,6 +119,17 @@ app. The gateway listens on the network while a TV app is set to open on a TV or
 (only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
 name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
 
+**When Lamp looks on the network.** A look on the network is what has macOS ask whether Lamp may use the local network,
+so Lamp makes one only once the person is doing something with a device: Settings → Your Devices, Add a New Device and
+Look Again, Try On opening (Lamp's and the chat's, `SidebarCommand.tryOnOpened`), a device's setup, Play on a TV or a
+device, a game given the Xbox, `device_integration`; a wish named for a TV or a device (`AppName.Suggestion.forDevice`,
+then `Store.lookOnNetworkForWish`, which names the wish again when the look found one Lamp didn't know); and the first
+request to a wish that opens on a TV or a device, whose device line says whether Lamp finds it. Never as Lamp opens or as
+a wish starts: those looks (`refreshDevices(network: false)`) list the phones and Android devices and leave the TVs and
+devices as the last look on the network left them, or as kept. A look macOS refused (`DeviceProbe.search`: a send that
+fails with no route to host, and nothing answered) sets `Store.localNetworkRefused`, and where a look was asked for (Your
+Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security → Local Network.
+
 A look for devices (`Store.refreshDevices`) is one at a time: one asked for while another runs is made once it ends
 (`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every
 integration share: an integration's `find.ssdp` target and the description its identity reads are taken from those

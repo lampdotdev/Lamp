@@ -120,7 +120,7 @@ the width beside a window (`ChatPanel.aloneWidth`). Moving between these (the ap
 closes) keeps the draft (it's the store's, `Store.updateDraft`) and where the person was reading: each chat says which
 line is first in view as the scrolling settles (`SidebarCommand.scrolled`), and a chat drawn again opens there
 (`SidebarState.readingAt`). A wish deleted with its chat in Lamp's panel takes the panel with it. The panel's bar has what the chat beside a Mac app has, and for a wish that isn't a Mac
-window beside it Play and Stop (`SidebarToolbar.play`) and Try On's one list for every kind (`TryOnMenu`, and each
+window beside it Play and Stop (`SidebarToolbar.play`) and Try On's one list for every kind (`TryOnMenu`, which looks for devices as it opens, as Lamp's own does, and each
 of the wish's other apps in a menu of its own, to use, quit and give a place). In Lamp's panel a Mac app's chat has Play too, which opens the app with its chat beside it;
 and whenever a wish's Mac app opens while its chat is in Lamp's panel (Play, a reopen for a change, the person opening
 it), the app is asked to take the chat (`ChatPanel.place`, `MagicPanel.openChat`), and the panel closes once it has.
