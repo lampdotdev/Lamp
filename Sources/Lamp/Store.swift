@@ -7788,36 +7788,48 @@ final class Store: ObservableObject {
     private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let serial: String
-        do {
-            if let chosen = project.device {
-                let found = await Adb.devices().first { $0.udid == chosen }
-                guard let found, found.adbState == "device" else {
-                    let problem = found.map { Adb.advice(for: $0.name, state: $0.adbState) }
-                        ?? "Lamp can't see the Android device chosen under Try On. Plug it in and unlock it, or choose the emulator."
-                    log(project, .error, problem)
-                    return problem
-                }
-                serial = chosen
-                androidDensities[project.id] = found.density
-            } else {
-                let kind = project.platform.target.androidEmulator
-                if kind == .tv { try await Emulator.prepareTV { [weak self] in self?.note($0, for: project) } }
-                note(kind == .tv ? "Starting the Android TV emulator…" : "Starting the Android emulator…", for: project)
-                serial = try await Emulator.start(show: inFront, kind: kind)
-                if androidDensities[project.id] == nil {
-                    androidDensities[project.id] = (await Adb.getprop(on: serial))["density"].flatMap { Int($0) }
+        let kind = project.platform.target.androidEmulator
+        if let chosen = project.device {
+            let found = await Adb.devices().first { $0.udid == chosen }
+            guard let found, found.adbState == "device" else {
+                let problem = found.map { Adb.advice(for: $0.name, state: $0.adbState) }
+                    ?? "Lamp can't see the Android device chosen under Try On. Plug it in and unlock it, or choose the emulator."
+                log(project, .error, problem)
+                return problem
+            }
+            serial = chosen
+            androidDensities[project.id] = found.density
+        } else {
+            // The TV emulator's first download can take many minutes: done before the queue, so it holds up no other
+            // app, and nothing is started for a request stopped or deleted meanwhile.
+            if kind == .tv {
+                do { try await Emulator.prepareTV { [weak self] in self?.note($0, for: project) } } catch {
+                    log(project, .error, error.localizedDescription)
+                    return error.localizedDescription
                 }
             }
-        } catch {
-            let problem = error.localizedDescription
-            log(project, .error, problem)
-            return problem
+            serial = Emulator.serial
         }
         guard stillOwns() else { return "The app was deleted or stopped before it opened." }
         let previous = androidWork[serial]
         let mine = Task<String?, Never> { [self] in
             await previous?.value
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            // Lamp's phone and TV emulators share its ports and serial: one is started (the other closed) only in this
+            // queue, so an install or launch under way in the other is never cut short, nor made in the wrong one.
+            if project.device == nil {
+                do {
+                    note(kind == .tv ? "Starting the Android TV emulator…" : "Starting the Android emulator…", for: project)
+                    _ = try await Emulator.start(show: inFront, kind: kind)
+                } catch {
+                    log(project, .error, error.localizedDescription)
+                    return error.localizedDescription
+                }
+                if androidDensities[project.id] == nil {
+                    androidDensities[project.id] = (await Adb.getprop(on: serial))["density"].flatMap { Int($0) }
+                }
+                guard stillOwns() else { return "The app was deleted or stopped before it opened." }
+            }
             return await launchOnAndroid(project, owner: owner, serial: serial, inFront: inFront)
         }
         androidWork[serial] = Task { _ = await mine.value }
