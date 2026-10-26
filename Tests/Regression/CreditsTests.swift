@@ -25,10 +25,12 @@ final class CreditsTests: XCTestCase {
                                   commit: "199f010cf9b35eb58ec934d95eba1ab977c880c1", license: "MIT", licenseFile: "Web/LICENSE-slop-newyork")
         let sender = try app("city")
         try Credits.arrive(Credits(upstream: [city], remixOf: [Credits.Remix(name: "New York", starter: "newyork")]), in: sender)
-        // The file rewritten with only a new source, as an agent might: the city is still credited.
-        try Data(#"{"upstream": [{"name": "Snow", "license": "CC0-1.0", "url": "javascript:alert(1)"}, {"author": "no name"}]}"#.utf8)
+        // The file rewritten with the city cut down to its name and a new source, as an agent might: the city is still
+        // credited in full.
+        try Data(#"{"upstream": [{"name": "Slop New York"}, {"name": "Snow", "license": "CC0-1.0", "url": "javascript:alert(1)"}, {"author": "no name"}]}"#.utf8)
             .write(to: sender.dir.appendingPathComponent(Credits.file))
         XCTAssertEqual(Credits.load(sender).upstream.map(\.name), ["Slop New York", "Snow"])
+        XCTAssertEqual(Credits.load(sender).upstream.first, city)
         XCTAssertNil(Credits.load(sender).upstream[1].url, "only https addresses are kept")
 
         let package = try opened(try exported(sender))

@@ -83,7 +83,8 @@ struct Credits: Codable, Equatable {
         return try encoder.encode(self)
     }
 
-    private static func arrivedURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/credits-arrived.json") }
+    static let arrivedPath = ".lamp/credits-arrived.json"
+    private static func arrivedURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(arrivedPath) }
 
     /// Each list may be missing from a file, and an entry that doesn't decode drops only itself.
     private struct Lenient: Decodable {
@@ -108,9 +109,13 @@ struct Credits: Codable, Equatable {
     func merged(with other: Credits) -> Credits {
         var result = self
         for source in other.upstream where !result.upstream.contains(where: { $0.sameWork(as: source) }) { result.upstream.append(source) }
-        // A source both name is taken as the newer file says it (a later commit, a licence filled in).
+        // A source both name takes what the newer file says (a later commit, a licence filled in), field by field: one it
+        // leaves out keeps what was known, so a rewritten entry can't drop an author, an address or a licence.
         for (index, source) in result.upstream.enumerated() {
-            if let newer = other.upstream.first(where: { $0.sameWork(as: source) }) { result.upstream[index] = newer }
+            guard let newer = other.upstream.first(where: { $0.sameWork(as: source) }) else { continue }
+            result.upstream[index] = Source(name: newer.name, author: newer.author ?? source.author, url: newer.url ?? source.url,
+                                            commit: newer.commit ?? source.commit, license: newer.license ?? source.license,
+                                            licenseFile: newer.licenseFile ?? source.licenseFile)
         }
         for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameWish(as: remix) }) { result.remixOf.append(remix) }
         return result.checked
