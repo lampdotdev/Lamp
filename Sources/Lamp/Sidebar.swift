@@ -1196,6 +1196,9 @@ final class SidebarServer {
             // Beside its Mac app the chat has no Play: a place chosen there is where it opens at once.
             store.tryOn(project, id, open: Self.besideItsApp(project, place: histories[project.id]?.value?.place))
             scheduleUpdate()
+        case .tryOnOpened:
+            store.refreshDevices()
+            store.refreshSimulators()
         case .play:
             // A Mac app that can have its chat beside it opens with it there (asked from Lamp's panel, which then closes);
             // anything else, an app built before the chat could go beside it included, is opened as Play opens it.

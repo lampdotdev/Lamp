@@ -614,6 +614,8 @@ public enum SidebarCommand: Codable, Equatable {
     case wishLink(SidebarWishLinkCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
+    /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
+    case tryOnOpened
     /// Play, and Stop.
     case play
     case quit

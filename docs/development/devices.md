@@ -114,10 +114,29 @@ packaged, the Xbox's MSIX payload, a Roku's zip made again), never into the app'
 package: Lamp opens a claim for the app just before it puts it on a device (`DeviceSupport.Claims`, from that device's
 address, for half an hour), and the app, finding no token kept, asks `/app/claim` for it and keeps it on the device. The
 TV preview needs neither: LampAI's calls reach Lamp through the web view (`TVPreview`'s `lampGateway` handler), as the
-app. The gateway listens on the network while a TV app is set to open on a TV or a device app takes the building blocks
-(`Store.syncLocalNetwork`); from the network it answers a browser's preflight and lets the device's page read the answer
+app. The gateway listens on the network while a TV app is set to open on a TV, or a device app that takes the building
+blocks is being put on a device or has been (`Store.syncLocalNetwork`, `DeviceApps.wentOnADevice`): listening is what
+has macOS ask about the local network, so an app made for a device and never put on one doesn't; from the network it answers a browser's preflight and lets the device's page read the answer
 (only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
 name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
+
+**When Lamp looks.** A look (`Store.refreshDevices`) runs devicectl for the phones, adb for Android's and one search
+of the local network for the TVs and devices, and each of these can have macOS ask whether Lamp may use the local network:
+devicectl finds phones over Wi‑Fi too, and macOS counts the tools Lamp runs as Lamp. So Lamp looks only once the person
+is doing something with a device: Settings → Your Devices, Add a New Device and Look Again, Try On opening (Lamp's and the
+chat's, `SidebarCommand.tryOnOpened`), pairing, a device's setup, Play on a phone, a TV or a device, a game given the
+Xbox, `device_integration`; a wish named for a phone, a TV or a device (`AppName.Suggestion.forPhone`, `forDevice`, then
+`Store.lookForWish`, which names the wish again when the look found a TV or device Lamp didn't know); and the first
+request to a wish that opens on a TV or a device, or has a part that does, whose device line says whether Lamp finds it.
+A turn's note on the person's phone asks devicectl only when the app is set to open on one. The first look Lamp makes hears nothing while macOS's question is up, so a wish's look that
+was the first to ask waits up to half a minute for the answer and, given Allow, looks again before the agent starts
+(`lookAgainOnceAllowed`, `localNetworkAsked`); a refusal after that is the person's Don't Allow, not waited on. Never as Lamp opens or as a
+wish starts: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
+and devices as not found). A look macOS refused (`DeviceProbe.search`: nothing
+answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
+succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your
+Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security, and that Local Network is chosen there (System Settings has no
+link to that page itself).
 
 A look for devices (`Store.refreshDevices`) is one at a time: one asked for while another runs is made once it ends
 (`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every

@@ -343,7 +343,37 @@ enum DeviceProbe {
 
     /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
     static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
-        await Task.detached { search(target, seconds: seconds) }.value
+        await search(target, seconds: seconds).answers
+    }
+
+    /// The same search, and whether macOS refused it: Lamp isn't allowed on the local network (Privacy & Security →
+    /// Local Network), or hasn't been answered yet. A refused search only hears nothing, so a look that heard nothing
+    /// asks Network.framework why (`localNetworkDenied`).
+    static func search(_ target: String, seconds: Double) async -> (answers: [SSDPAnswer], refused: Bool) {
+        async let denied = localNetworkDenied()
+        let answers = await Task.detached { search(target, seconds: seconds) }.value
+        return (answers, await denied && answers.isEmpty)
+    }
+
+    /// Whether macOS refuses Lamp the local network now. A send it refuses still succeeds where Lamp makes it, so a
+    /// connection to the SSDP group is asked why its path can't be used, and closed at once.
+    static func localNetworkDenied() async -> Bool {
+        let connection = NWConnection(host: "239.255.255.250", port: 1900, using: .udp)
+        return await withCheckedContinuation { continuation in
+            let once = Once()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready, .waiting, .failed:
+                    guard once.take() else { return }
+                    let denied = connection.currentPath?.unsatisfiedReason == .localNetworkDenied
+                    connection.cancel()
+                    continuation.resume(returning: denied)
+                default: break
+                }
+            }
+            connection.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if once.take() { connection.cancel(); continuation.resume(returning: false) } }
+        }
     }
 
     private static func search(_ target: String, seconds: Double) -> [SSDPAnswer] {

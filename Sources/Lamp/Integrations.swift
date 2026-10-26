@@ -175,10 +175,15 @@ enum Integrations {
     /// What the network said, once per look, for the TVs, every integration and the unknown devices to share.
     struct Scan {
         let answers: [DeviceProbe.SSDPAnswer]
+        /// macOS refused the search: Lamp isn't allowed on the local network.
+        var refused = false
 
         /// One search for everything: a device answers it once for each of its devices and services, so every
         /// integration's own search target is among the answers, and no integration needs a search of its own.
-        static func now() async -> Scan { Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2.5)) }
+        static func now() async -> Scan {
+            let (answers, refused) = await DeviceProbe.search("ssdp:all", seconds: 2.5)
+            return Scan(answers: answers, refused: refused)
+        }
 
         /// The answers a search for this target alone would have had.
         func answers(for target: String) -> [DeviceProbe.SSDPAnswer] {
