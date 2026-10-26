@@ -260,7 +260,8 @@ is what lost people's work.
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
 app what Finder may hand it, `{"opens": ["folder", "png", "public.image"]}` ("folder", "file", extensions,
-type identifiers). Each field has its own check and only what passes is used (`Capabilities.checked`),
+type identifiers), and for either the app's own reason for the local network (`localNetwork`, `LampNetwork`'s question,
+in place of Lamp's general one). Each field has its own check and only what passes is used (`Capabilities.checked`),
 whoever wrote the file. A new capability is a field there, its check, and where it lands: `apply(to:)` for a
 Mac app's Info.plist (called in `Store.deploy`, as `finishSimulatorBundle` does for the simulator's bundle),
 `lists` and `entitlementsPlist` for an iPhone app. A shared app carries the file as Lamp read it, checked,

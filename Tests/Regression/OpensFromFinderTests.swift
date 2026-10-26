@@ -41,6 +41,9 @@ final class OpensFromFinderTests: XCTestCase {
         XCTAssertEqual(sent.checked, Template.Capabilities(healthkit: true, backgroundModes: ["audio"], bonjourServices: ["_peek._tcp"],
                                                            backgroundTasks: ["dev.lamp.refresh"], opens: ["folder", "txt"]))
         XCTAssertTrue(Template.Capabilities(nfc: false, backgroundModes: ["root"], opens: ["a b"]).isEmpty)
+        // The local network reason is shown as it is in the system's question: one line, kept short.
+        XCTAssertEqual(Template.Capabilities(localNetwork: " Finds your TV. ").checked.localNetwork, "Finds your TV.")
+        XCTAssertTrue(Template.Capabilities(localNetwork: "Finds\nyour TV").isEmpty)
     }
 
     /// A shared app keeps what it declares: Lamp writes the copy's capabilities.json itself from what passed,
