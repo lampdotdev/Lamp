@@ -924,6 +924,7 @@ struct PhoneSigningSection: View {
 struct DevicesSection: View {
     @EnvironmentObject private var store: Store
     @AppStorage("appleTeam") private var team = ""
+    @AppStorage(PhoneRenewals.staysOpenKey) private var keepOpening = false
     @State private var adding = false
     @State private var forgetting: Device?
 
@@ -936,6 +937,14 @@ struct DevicesSection: View {
                 if store.lookingForDevices { LookingForDevices() }
                 Spacer()
                 Button("Add a New Device…") { adding = true }.controlSize(.small)
+            }
+            // Shown once an app is on a phone, which is when it does something, and while it's on, so it can always be
+            // turned off: Lamp keeps opening at login until it is.
+            if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
+                SettingsCheckboxes {
+                    Toggle("Keep apps on your phones opening", isOn: Binding(get: { keepOpening }, set: { store.keepPhoneAppsOpening($0) }))
+                        .checkboxNote("Lamp opens when you log in and keeps running with its window closed, to put them back before Apple stops them opening.")
+                }
             }
         }
         .onAppear { store.refreshDevices() }
@@ -984,6 +993,11 @@ struct DevicesSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                 Text(device.line).font(.caption).foregroundStyle(.secondary)
+                let stopped = store.projects.filter { PhoneRenewals.stoppedOpening($0, on: device.udid) }.map(\.name)
+                if !stopped.isEmpty {
+                    Label("\(TeamLimits.list(stopped)) stopped opening. Open \(stopped.count == 1 ? "it" : "each") and press Play.", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
             Spacer()
             switch setup {

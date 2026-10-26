@@ -138,6 +138,14 @@ enum Gallery {
             LogLine(kind: .user, text: "put it on my phone"),
             LogLine(kind: .error, text: "Today couldn't go on the iPhone: it's locked. Unlock it, then try again.", retryPhone: "00008110-gallery"),
         ]),
+        screen("Keeping it opening on the phone", group: "Chat screen", [
+            LogLine(kind: .user, text: "put it on my phone"),
+            LogLine(kind: .status, text: "Today is ready on the iPhone"),
+            LogLine(kind: .keepOpening, text: ""),
+        ]),
+        screen("It stopped opening on the phone", group: "Chat screen", [
+            LogLine(kind: .error, text: "Today on the iPhone stopped opening: Apple lets an app signed with your account open for a limited time, and Lamp couldn't put it back. Lamp can't reach the iPhone. Connect it to this Mac or join the same Wi‑Fi, unlock it, then click Retry.", retryPhone: "00008110-gallery"),
+        ]),
     ]
 
     private static let introLine = "Say it in your own words: a chore to take off your hands, a habit to keep, a game to play. Lamp makes it for you."

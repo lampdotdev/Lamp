@@ -245,7 +245,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -8274,6 +8274,7 @@ final class Store: ObservableObject {
             try await Devices.install(app, on: udid)
             // What's on the phone now, kept signed so it can be put back before its profile runs out.
             await PhoneRenewals.keep(app, for: project, udid: udid, team: team)
+            offerKeepOpening(project)
             guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()
             deviceApps[project.id] = nil
@@ -9369,6 +9370,20 @@ final class Store: ObservableObject {
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Task { await Store.shared.renewPhoneApps() } }
         }
+    }
+
+    /// Once per app, after it first goes on a phone with a free account's seven-day profile: the card offering to keep it
+    /// opening (`KeepOpeningLine`), unless the person already chose to.
+    private func offerKeepOpening(_ project: LampProject) {
+        guard !PhoneRenewals.staysOpen, let record = PhoneRenewals.record(for: project), PhoneRenewals.isShortLived(record),
+              !(logs[project.id] ?? []).contains(where: { $0.kind == .keepOpening }) else { return }
+        log(project, .keepOpening, "")
+    }
+
+    /// The person chose to keep their phone apps opening, from the card (`project`) or Settings.
+    func keepPhoneAppsOpening(_ on: Bool, for project: LampProject? = nil) {
+        if let problem = PhoneRenewals.setStaysOpen(on), let project { log(project, .error, problem) }
+        objectWillChange.send()
     }
 
     /// Puts each app back on the person's phone whose profile runs out soon (`PhoneRenewals`), one at a time, without
