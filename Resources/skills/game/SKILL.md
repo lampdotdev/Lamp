@@ -35,13 +35,23 @@ different rates, and a slow frame must not slow the game.
 
 ## Controls
 
-Play it the way the device is held:
+Controls follow the input the player has, not the device: the same player may pick up an Xbox, PlayStation or
+Switch controller, the keyboard or the touch screen, and switch while playing.
 
-- **A controller** wherever one is connected. Web: `f.pads[0]` in lamp-game.js, the same pad from a controller, the
-  keyboard or the touch controls it draws. Swift: GameController's `GCController`.
-- **Keys** on a Mac. SpriteKit: `NSEvent.addLocalMonitorForEvents`.
-- **Touch** on a phone or tablet: big targets for thumbs, and few of them. Web: the runtime draws a stick and the
-  buttons `touch` names; keep the game playable with those few.
+- **Web**: lamp-game.js reads all of them as one pad, `f.pads[0]`. Write the controls once, as actions mapped to the
+  pad (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), and read the pad
+  through them. `input()` says what the player holds (`kind` is `controller`, with its `family`: `xbox`,
+  `playstation`, `switch` or `other`; or `keyboard`, or `touch`); `onInput(draw)` draws now and again each time they
+  take up another. Build every prompt and help screen inside it from the actions: `label(CONTROLS.jump)` is the
+  button's name on that input ("A", "✕", "Space") and `glyph(CONTROLS.jump)` its badge, an element to put in the text.
+  Both are null where the input has nothing for that action: leave the line out. Never write a key's or a button's
+  name yourself; a page that reads the keys itself (`keyboard: false`) names its own keys by their codes,
+  `label('KeyH')`.
+- **Swift**: GameController's `GCController` for a controller, with the button's name from the controller itself
+  (`localizedName`, `sfSymbolsName`) rather than a fixed letter; keys on a Mac with
+  `NSEvent.addLocalMonitorForEvents`.
+- **Touch**: big targets for thumbs, and few of them. Web: the runtime draws a stick and the buttons `touch` names;
+  keep the game playable with those few.
 - **A TV remote**: arrows and OK, and a back key; a game that needs more wants a controller, or phones (the
   phone-controllers skill).
 
