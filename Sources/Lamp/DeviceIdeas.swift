@@ -19,22 +19,31 @@ import Foundation
 
     @Published private(set) var ideas: [Idea] = []
     @Published private(set) var thinking = false
-    /// The devices the ideas are for, so a look that finds the same ones keeps them.
+    /// The devices the ideas are for, so a look that finds the same ones keeps them, and those being thought about now,
+    /// so asking again meanwhile doesn't ask the model twice.
     private var madeFor: String?
+    private var pending: String?
     private var asked = 0
 
     /// Ideas for these devices: kept when they're the same ones, made up afresh when they changed or `again`.
     func think(about devices: [Device], again: Bool = false) {
         let key = devices.map(\.id).sorted().joined(separator: "\n")
-        guard !devices.isEmpty else { ideas = []; madeFor = nil; return }
-        guard again || key != madeFor else { return }
+        guard !devices.isEmpty else {
+            // An answer still on its way is for devices that are gone.
+            asked += 1
+            ideas = []; madeFor = nil; pending = nil; thinking = false
+            return
+        }
+        guard again || (key != madeFor && key != pending) else { return }
         asked += 1
+        pending = key
         let ask = asked, avoiding = again ? ideas.map(\.wish) : []
         thinking = true
         Task {
             let made = await Self.invent(for: devices, avoiding: avoiding)
             guard ask == asked else { return }
             thinking = false
+            pending = nil
             if let made {
                 ideas = made
                 madeFor = key

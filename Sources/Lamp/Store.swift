@@ -995,9 +995,9 @@ final class Store: ObservableObject {
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
         // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        // Only a wish that really opens on a phone or a TV counts as having used a device: a kind that only could (New
+        // Only a wish that really opens on a phone, a TV or an Xbox counts as having used a device: a kind that only could (New
         // York, a game played on this Mac) asks nothing of the network.
-        if projects.contains(where: { $0.openPlaces.contains(where: \.listsDevices) }) {
+        if projects.contains(where: { $0.openPlaces.contains { $0.listsDevices || $0 == .device } }) {
             if !looksOnNetwork { lookOnNetwork() } else { refreshDevices() }
             refreshSimulators()
         }

@@ -50,9 +50,9 @@ struct DeskDevices: View {
         .onKeyPress(.return) { show(); return .handled }
         .help(store.looksOnNetwork ? "Make something for your TV, console or phone" : "Find your TV, console and phones on this network")
         .popover(isPresented: $listing, arrowEdge: .trailing) { list.environment(\.colorScheme, Self.macScheme) }
-        // Wishes for what's found are thought of while the list is open, once for each set of devices.
+        // Wishes for what's found are thought of while the list is open, once for each set of devices: opening the list
+        // and a look that finds others both change this, once each.
         .onChange(of: listing ? devices.map(\.id) : []) { if listing && store.looksOnNetwork { ideas.think(about: devices) } }
-        .onChange(of: listing) { if listing && store.looksOnNetwork { ideas.think(about: devices) } }
     }
 
     /// Before the first look the list asks first (Look); after it, opening the list looks again.
