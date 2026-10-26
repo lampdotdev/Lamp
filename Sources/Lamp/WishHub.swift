@@ -139,26 +139,30 @@ enum WishRooms {
     /// its name holds; the app at a wish's root, which has no folder of its own yet, is named by the folder an app of its
     /// kind gets, the one it will have once every app is in a folder.
     static func peer(_ app: LampProject, in wish: LampProject) -> String {
-        (app.id == wish.id ? Parts.folder(for: app.platform) : app.dir.lastPathComponent).lowercased()
+        (app.id == wish.id ? Parts.folder(for: app.platform, integration: Parts.listedIntegration(of: app)) : app.dir.lastPathComponent).lowercased()
     }
+
+    /// Whether an app of this kind joins the room. A device's app made through its integration doesn't yet (a Roku's
+    /// channel has none of the room's handshake), so it's left out of the room's list and the others never wait for it.
+    nonisolated static func joins(_ kind: Platform) -> Bool { kind.target.part?.joinsWish ?? true }
 
     /// Every app the wish has, and every one it asks for and doesn't have yet (`Parts.waiting`), as the relay and the
     /// libraries describe one: an app waiting to be made is in the list from the start, not open, so the first app of a
     /// wish meant to be several is one of several from its first build, as its building blocks are.
     static func described(_ apps: [LampProject], in wish: LampProject) -> [[String: Any]] {
-        apps.map { describe($0, in: wish) }
-            + Parts.waiting(in: wish, parts: apps.filter { $0.id != wish.id }).map { describe(kind: $0.kind, in: wish) }
+        apps.filter { joins($0.platform) }.map { describe($0, in: wish) }
+            + Parts.waiting(in: wish, parts: apps.filter { $0.id != wish.id }).filter { joins($0.kind) }.map { describe($0, in: wish) }
     }
 
     /// An app the wish asks for and doesn't have yet, by the folder it will be made in (`Parts.folder(waiting:in:)`),
     /// marked as waiting so the others say it isn't ready rather than ask the person to open it.
-    static func describe(kind: Platform, in wish: LampProject) -> [String: Any] {
-        ["peer": Parts.folder(waiting: kind, in: wish.dir).lowercased(), "kind": Parts.word(for: kind), "name": Parts.name(of: kind), "waiting": true]
+    static func describe(_ app: WishApp, in wish: LampProject) -> [String: Any] {
+        ["peer": Parts.folder(waiting: app, in: wish.dir).lowercased(), "kind": Parts.word(for: app.kind), "name": Parts.name(of: app), "waiting": true]
     }
 
     /// `kind` is the device word the tools use for the app ("iphone" for an app for iPhone and iPad, Mac too).
     static func describe(_ app: LampProject, in wish: LampProject) -> [String: Any] {
-        ["peer": peer(app, in: wish), "kind": Parts.word(for: app.platform), "name": Parts.name(of: app.platform)]
+        ["peer": peer(app, in: wish), "kind": Parts.word(for: app.platform), "name": Parts.name(of: app)]
     }
 
     /// When each room was last asked for by one of its apps, by key.
@@ -483,8 +487,12 @@ enum WishNote {
             (member["app"] as? String) ?? (member["peer"] as? String).map(WishChannel.app(of:)) ?? ""
         }
         return apps.map { app in
-            let name = Parts.name(of: app.platform)
+            let name = Parts.name(of: app)
             let peer = WishRooms.peer(app, in: wish)
+            // One that can't join the room says so, rather than that it isn't in it.
+            guard WishRooms.joins(app.platform) else {
+                return "\(name.prefix(1).uppercased() + name.dropFirst()): can't reach the wish's other apps yet, and they can't reach it"
+            }
             var line = "\(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(peer)\"): \(store.isOpen(app) ? "open" : "not open")"
             let copies = present[peer] ?? []
             if copies.count > 1 { line += ", open on \(copies.count) devices at once" }
@@ -514,8 +522,8 @@ enum WishNote {
                 return line
             }.joined()
         }.joined(separator: "; ") + waiting.map { app in
-            let name = Parts.name(of: app.kind)
-            return "; \(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(Parts.folder(waiting: app.kind, in: wish.dir).lowercased())\"): not made yet"
+            let name = Parts.name(of: app)
+            return "; \(name.prefix(1).uppercased() + name.dropFirst()) (peer \"\(Parts.folder(waiting: app, in: wish.dir).lowercased())\"): not made yet"
         }.joined() + "."
     }
 
