@@ -172,7 +172,10 @@ that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `dev
 never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this
 Mac's other addresses, printers, Apple's devices (by the model their records give, `NetworkHost.apple`: an app can't
 reach them the way it reaches others), appliances and hosts that said nothing but their maker, each with the names it
-goes by on this Mac only and Set Up… (but the router and this Mac), whose setup note asks the agent to work out what it
+goes by on this Mac only and Set Up… (but the router and this Mac; a device found this way is known by
+`found:<address>#<hardware address>`, read from the neighbour table as Set Up… is pressed, so a conversation is reopened,
+linked to an integration's device and given a host's facts only for the same hardware, and one that began without a
+hardware address never is), whose setup note asks the agent to work out what it
 is and to say so plainly when nothing on the home network can reach it; and the hosts with randomised addresses that
 said nothing, counted and never named, since nothing tells one such phone from another. Bonjour also browses a few types
 whether the meta-query names them or not (`Bonjour.alwaysBrowse`: Cast, printers, a gadget's web page), since a

@@ -1697,9 +1697,10 @@ final class Store: ObservableObject {
     func linkSetupConversations(to found: [Device]) {
         var changed = false
         for project in projects {
-            // The same device, not only the same address: its hardware address, where the conversation knows it.
+            // The same device, not only the same address: its hardware address, which a conversation started without
+            // one can't show, so that one stays where it is.
             guard let id = project.deviceSetup, let address = Device.foundAddress(id),
-                  Device.foundHardware(id).map({ Neighbours.table()[address] == $0 }) ?? true,
+                  Device.foundHardware(id).map({ Neighbours.table()[address] == $0 }) ?? false,
                   let device = found.first(where: { $0.integration != nil && $0.address == address }),
                   !projects.contains(where: { $0.deviceSetup == device.id }) else { continue }
             var linked = project

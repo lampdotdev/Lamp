@@ -344,7 +344,10 @@ enum Agent {
         // are often people's, so they stay out of the integration.
         let address = device?.address ?? project.deviceSetup.flatMap(Device.foundAddress)
         let hardware = project.deviceSetup.flatMap(Device.foundHardware)
-        if let host = Store.shared.hosts.first(where: { $0.address == address && (hardware == nil || $0.mac == hardware) }) {
+        // A device found on the network is the host with its hardware address; one whose setup began without that
+        // can't be told from whatever has its address now, so no host's facts go with it.
+        let isFound = project.deviceSetup.flatMap(Device.foundAddress) != nil
+        if let host = Store.shared.hosts.first(where: { $0.address == address && (isFound ? hardware != nil && $0.mac == hardware : true) }) {
             if device == nil { note += " Work out what it is first, from what Lamp found of it, and tell the person; if nothing on the home network can reach it (it's controlled only through its maker's cloud, or has no local interface), say so in a sentence rather than writing an integration." }
             note += " Its host: " + HomeNetwork.facts(host) + ". Keep the names it goes by out of the integration: find it by its service, maker or model."
         }
