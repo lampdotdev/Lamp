@@ -48,14 +48,18 @@ enum IntegrationProbe {
     static func run(_ integration: Integration, on device: Device, update: @escaping @MainActor ([Stage]) -> Void) async {
         var stages = stages(for: integration)
         update(stages)
-        let folder = Edition.supportFolder.appendingPathComponent("Probes").appendingPathComponent(integration.id)
-        var project = LampProject(id: "lamp-probe-" + integration.id, name: "Lamp Probe", exe: "LampProbe", dir: folder, platform: .device)
+        // Each run its own folder and identity: two devices of one integration can be tried at once.
+        let run = "lamp-probe-\(integration.id)-" + UUID().uuidString.prefix(8).lowercased()
+        let folder = Edition.supportFolder.appendingPathComponent("Probes").appendingPathComponent(run)
+        var project = LampProject(id: run, name: "Lamp Probe", exe: "LampProbe", dir: folder, platform: .device)
         project.integration = integration.id
         // One app at a time on a device: the run waits for an install under way, and holds it off until it's done.
         await DeviceApps.take(device.id)
-        var run: DeviceApps.Run?
+        // A wish open on the device is replaced by the test app: its run ends, so its next look puts it back.
+        Store.shared.endRuns(on: device.id)
+        var opened: DeviceApps.Run?
         defer {
-            run?.end()
+            opened?.end()
             DeviceApps.release(device.id)
             try? FileManager.default.removeItem(at: folder)
             try? FileManager.default.removeItem(at: DeviceApps.buildFolder(for: project))
@@ -72,7 +76,7 @@ enum IntegrationProbe {
                     try DeviceSupport.write(for: project)
                     try await DeviceApps.build(project)
                 case "Put it on and open it":
-                    run = try await DeviceApps.install(project, on: device, log: nil)
+                    opened = try await DeviceApps.install(project, on: device, log: nil)
                 case "See its screen":
                     _ = try await DeviceApps.picture(project, on: device)
                 case "Press its keys":
@@ -86,10 +90,10 @@ enum IntegrationProbe {
                     guard await DeviceApps.stop(project, on: device) else { throw DeviceApps.Failure(message: "The device refused to end the app.") }
                 case "Put it on again while it's open":
                     // Opened, then put on again over the open copy, as every change the builder makes is.
-                    run?.end()
-                    run = try await DeviceApps.install(project, on: device, log: nil)
-                    run?.end()
-                    run = try await DeviceApps.install(project, on: device, log: nil)
+                    opened?.end()
+                    opened = try await DeviceApps.install(project, on: device, log: nil)
+                    opened?.end()
+                    opened = try await DeviceApps.install(project, on: device, log: nil)
                 case "Take it off":
                     try await DeviceApps.remove(project, from: device)
                 default: break

@@ -7492,6 +7492,16 @@ final class Store: ObservableObject {
         project.onTV || ScreenKit.isScreen(project) ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
     }
 
+    /// Ends every app's run on a device (and this app's anywhere): what replaces it there is something else, so a look
+    /// or a key in flight stops rather than reaching it, and the next look puts the app there again.
+    func endRuns(on deviceID: String, andOf projectID: String? = nil) {
+        for (id, other) in deviceRuns where id == projectID || other.device.id == deviceID {
+            other.end()
+            deviceRuns[id] = nil
+        }
+        refreshOpenApps()
+    }
+
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let device = await deviceForApp(project) else {
@@ -7525,11 +7535,7 @@ final class Store: ObservableObject {
         guard stillWanted() else { return "Stopped." }
         // The device is this app's from the upload on: every run there (another wish's, or this one's last) is over,
         // so a look or a key in flight for it stops rather than reaching what replaces it.
-        for (id, other) in deviceRuns where id == project.id || other.device.id == device.id {
-            other.end()
-            deviceRuns[id] = nil
-        }
-        refreshOpenApps()
+        endRuns(on: device.id, andOf: project.id)
         note("Putting \(project.name) on \(device.name)…", for: project)
         try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)

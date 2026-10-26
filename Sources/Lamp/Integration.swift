@@ -728,16 +728,23 @@ enum IntegrationCheck {
         // showing nothing in its place, as a Roku's tile was.
         let drawn = Set((declared.icons ?? [:]).keys), written = Set(declared.files.keys)
         let pattern = try! NSRegularExpression(pattern: #"[A-Za-z0-9_./-]+\.(?:png|jpg|jpeg)\b"#)
-        var named: Set<String> = []
-        for text in declared.files.values {
+        var missing: Set<String> = []
+        for (file, text) in declared.files {
+            let folder = (file as NSString).deletingLastPathComponent
             for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 guard let range = Range(match.range, in: text) else { continue }
                 var path = String(text[range])
-                for prefix in ["pkg:/", "./", "/"] where path.hasPrefix(prefix) { path.removeFirst(prefix.count) }
-                if isAppPath(path) { named.insert(path) }
+                // A package path ("pkg:/images/a.png") or one from the root is the app folder's; any other is the
+                // naming file's own, as a page's <img src> is, or the folder's when the file's folder doesn't have it.
+                var rooted = false
+                for prefix in ["pkg:/", "/"] where path.hasPrefix(prefix) { path.removeFirst(prefix.count); rooted = true }
+                if path.hasPrefix("./") { path.removeFirst(2) }
+                let candidates = rooted || folder.isEmpty ? [path] : [(folder as NSString).appendingPathComponent(path), path]
+                let valid = candidates.filter(isAppPath)
+                if !valid.isEmpty, !valid.contains(where: { drawn.contains($0) || written.contains($0) }) { missing.insert(valid[0]) }
             }
         }
-        for path in named.subtracting(drawn).subtracting(written).sorted() {
+        for path in missing.sorted() {
             say("app.declared.files names \(path), which nothing writes: list it in app.declared.icons with its size so Lamp draws the app's icon there, or don't name it.")
         }
         // The rules are the builder's only guide: Lamp's blocks they don't mention go unused, and the device's own

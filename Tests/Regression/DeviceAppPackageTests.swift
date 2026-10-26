@@ -28,6 +28,10 @@ final class DeviceAppPackageTests: XCTestCase {
         XCTAssertEqual(IntegrationCheck.lifecycle(roku), [])
         roku.app?.declared?.icons = nil
         XCTAssertTrue(IntegrationCheck.lifecycle(roku).contains { $0.contains("images/icon_focus_hd.png") })
+        // A page's own relative picture is its folder's.
+        roku.app?.declared?.files = ["Web/index.html": "<img src=\"images/icon.png\">"]
+        roku.app?.declared?.icons = ["Web/images/icon.png": "200x200"]
+        XCTAssertFalse(IntegrationCheck.lifecycle(roku).contains { $0.contains("icon.png") })
     }
 
     /// Windows names a package by a short id of its publisher; the bridge launches it by that name.
