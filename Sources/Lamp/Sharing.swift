@@ -158,6 +158,9 @@ enum Sharing {
         }
     }
 
+    /// The secrets `export` keeps out of a file. Tests give their own, since the person's keys aren't theirs to read.
+    nonisolated(unsafe) static var knownSecrets: (LampProject) -> [String] = ShareCheck.keptSecrets(of:)
+
     /// Where `export` and `open` make their folders. Tests give each test a folder of its own here, so what one leaves
     /// behind is told apart from the folders a running Lamp makes at the same moment.
     nonisolated(unsafe) static var workFolder = FileManager.default.temporaryDirectory
@@ -183,6 +186,9 @@ enum Sharing {
         for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
         }
+        // Others' work in it goes only with its licence and credit, and work with no licence doesn't go at all.
+        let credits = Credits.load(project)
+        if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -213,8 +219,8 @@ enum Sharing {
             }
         }
         // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it.
-        let credits = Credits.load(project).remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
-        try credits.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        try credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project))).encoded()
+            .write(to: stage.appendingPathComponent(Credits.file))
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
         if let icon = icon ?? drawnIcon(of: project) {
@@ -234,6 +240,13 @@ enum Sharing {
                                     }))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
+        // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
+        // like a key.
+        let leaks = ShareCheck.secrets(in: stage, known: knownSecrets(project))
+        if let first = leaks.first {
+            throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
+                              detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
+        }
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
         let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []

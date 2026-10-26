@@ -140,6 +140,21 @@ alike. It's shown first in the wish's info panel and, for a Mac app, in its Abou
 bundle by `Store.stageSigned`). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
 file's format isn't raised for it.
 
+Pictures `make_art` paints are marked as made with AI twice: in the PNG itself (IPTC's digital source type
+`trainedAlgorithmicMedia` in its XMP, `AIMark`), and in the wish's `generated` list, which the info panel and About
+window count ("3 pictures made with AI") while the files are there.
+
+Before a wish leaves the Mac (a shared file now, a published page too), `ShareCheck` decides whether it may: work under
+an open licence goes with its licence and credit; under a share-alike one (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) it goes
+and the remix stays under it, which a shared file satisfies by carrying the code and a published page says
+(`ShareCheck.notes`); under its own terms (`LicenseRef-`, an id Lamp doesn't know, non-commercial or no-derivatives) it
+goes, credited and named; with no licence it can be used here but the share is refused, naming it. A licence file the
+credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
+provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and
+for anything shaped like a key (a private key, the prefixes services give their keys), and a hit refuses the share,
+naming the file. The person's data isn't in the folder (an app keeps it in its container) and the chat's attachments
+never ship.
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp

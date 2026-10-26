@@ -8,7 +8,8 @@ import Foundation
 ///
 /// Credit is only ever added to. Lamp keeps what a wish arrived with (`arrived`, in its own folder) and reads it back
 /// with whatever the file says now (`load`), so an entry the file lost while the wish was changed is still credited,
-/// shared on and shown. Lamp reads the file as data and keeps only what passes `checked`, the same for a file the agent
+/// shared on and shown. `generated` lists the pictures in it that were made with AI (`make_art` adds each it paints),
+/// so they're marked as made with AI wherever the wish is shown, shared or published. Lamp reads the file as data and keeps only what passes `checked`, the same for a file the agent
 /// wrote and one a shared file brought.
 struct Credits: Codable, Equatable {
     static let file = "credits.json"
@@ -39,18 +40,50 @@ struct Credits: Codable, Equatable {
         var wish: String?
     }
 
+    /// A picture made with AI, by its path in the wish.
+    struct Generated: Codable, Equatable {
+        var file: String
+    }
+
     var upstream: [Source] = []
     var remixOf: [Remix] = []
+    var generated: [Generated] = []
 
-    var isEmpty: Bool { upstream.isEmpty && remixOf.isEmpty }
+    init(upstream: [Source] = [], remixOf: [Remix] = [], generated: [Generated] = []) {
+        self.upstream = upstream
+        self.remixOf = remixOf
+        self.generated = generated
+    }
+
+    /// Written without an empty `generated`, so a wish with no AI pictures has a file the agent reads as before.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Lenient.Keys.self)
+        try container.encode(upstream, forKey: .upstream)
+        try container.encode(remixOf, forKey: .remixOf)
+        if !generated.isEmpty { try container.encode(generated, forKey: .generated) }
+    }
+
+    var isEmpty: Bool { upstream.isEmpty && remixOf.isEmpty && generated.isEmpty }
 
     // MARK: Reading and writing
 
     /// The wish's credits: what its file says now, with anything it arrived with that the file no longer has.
     static func load(_ project: LampProject) -> Credits {
         let now = read(project.dir.appendingPathComponent(file)) ?? Credits()
-        guard let arrived = read(arrivedURL(project)) else { return now }
-        return arrived.merged(with: now)
+        var credits = read(arrivedURL(project)).map { $0.merged(with: now) } ?? now
+        // A picture made with AI is marked while it's there; one taken out (or replaced by hand) is nothing to mark.
+        credits.generated.removeAll { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0.file).path) }
+        return credits
+    }
+
+    /// Adds to the wish's credits, in its file and in Lamp's own record, which the file can't take it out of.
+    static func add(_ credits: Credits, to project: LampProject) throws {
+        let fileURL = project.dir.appendingPathComponent(file)
+        let now = (read(fileURL) ?? Credits()).merged(with: credits)
+        try now.encoded().write(to: fileURL, options: .atomic)
+        let kept = (read(arrivedURL(project)) ?? Credits()).merged(with: credits)
+        try FileManager.default.createDirectory(at: arrivedURL(project).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try kept.encoded().write(to: arrivedURL(project), options: .atomic)
     }
 
     static func read(_ url: URL) -> Credits? {
@@ -60,7 +93,9 @@ struct Credits: Codable, Equatable {
 
     /// A credits file as Lamp takes it: what passes the checks, nothing else.
     static func decoded(_ data: Data) -> Credits? {
-        (try? JSONDecoder().decode(Lenient.self, from: data)).map { Credits(upstream: $0.upstream ?? [], remixOf: $0.remixOf ?? []).checked }
+        (try? JSONDecoder().decode(Lenient.self, from: data)).map {
+            Credits(upstream: $0.upstream ?? [], remixOf: $0.remixOf ?? [], generated: $0.generated ?? []).checked
+        }
     }
 
     /// Gives the wish these credits, in its file and as what it arrived with: a starter's copy, a shared file opened.
@@ -90,11 +125,13 @@ struct Credits: Codable, Equatable {
     private struct Lenient: Decodable {
         var upstream: [Source]?
         var remixOf: [Remix]?
-        enum Keys: String, CodingKey { case upstream, remixOf }
+        var generated: [Generated]?
+        enum Keys: String, CodingKey { case upstream, remixOf, generated }
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: Keys.self)
             upstream = try? container.decode([Maybe<Source>].self, forKey: .upstream).compactMap(\.value)
             remixOf = try? container.decode([Maybe<Remix>].self, forKey: .remixOf).compactMap(\.value)
+            generated = try? container.decode([Maybe<Generated>].self, forKey: .generated).compactMap(\.value)
         }
     }
 
@@ -118,6 +155,7 @@ struct Credits: Codable, Equatable {
                                             licenseFile: newer.licenseFile ?? source.licenseFile)
         }
         for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameWish(as: remix) }) { result.remixOf.append(remix) }
+        for picture in other.generated where !result.generated.contains(picture) { result.generated.append(picture) }
         return result.checked
     }
 
@@ -135,6 +173,9 @@ struct Credits: Codable, Equatable {
     }
 
     // MARK: What a person reads
+
+    /// How AI pictures are marked: "1 picture made with AI", "3 pictures made with AI".
+    static func generatedLine(_ count: Int) -> String { count == 1 ? "1 picture made with AI" : "\(count) pictures made with AI" }
 
     /// "Slop New York by Mr.doob", the standard credit line.
     static func line(for source: Source) -> String {
@@ -159,6 +200,7 @@ struct Credits: Codable, Equatable {
             let license = source.license.map { " (\(escaped($0)))" } ?? ""
             lines.append((index == 0 ? "Based on " : "Uses ") + name + by + license)
         }
+        if !generated.isEmpty { lines.append(Self.generatedLine(generated.count)) }
         if !remixOf.isEmpty {
             lines.append("Remixed from " + remixOf.map { escaped($0.name) + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: ", then "))
         }
@@ -176,6 +218,7 @@ struct Credits: Codable, Equatable {
     // MARK: Checks
 
     static let maxEntries = 32
+    static let maxPictures = 500
     static let maxText = 100
 
     /// Only entries Lamp can show as they are: one plain line for each name, an https address, a commit that's a
@@ -183,7 +226,8 @@ struct Credits: Codable, Equatable {
     /// entry with no name is.
     var checked: Credits {
         Credits(upstream: Array(upstream.compactMap(\.checked).prefix(Self.maxEntries)),
-                remixOf: Array(remixOf.compactMap(\.checked).prefix(Self.maxEntries)))
+                remixOf: Array(remixOf.compactMap(\.checked).prefix(Self.maxEntries)),
+                generated: Array(generated.compactMap { Self.validPath($0.file).map(Generated.init) }.prefix(Self.maxPictures)))
     }
 
     fileprivate static func text(_ value: String?) -> String? {
