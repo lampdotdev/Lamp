@@ -29,14 +29,9 @@ import {
 } from './city-config.js';
 import { groundHeight } from './terrain.js';
 
-// js/nyc-map.js
-// GTA 6-Style Live Radar Minimap + Full-Screen Interactive New York City Cartographic Atlas.
-// Synchronized 1:1 with the 3D world (1 unit = 1 m; x = Manhattan-grid east, z = grid south, so both maps are drawn
-// "grid north up", the way Manhattan's street map is read, 29° east of true north). They draw the very geography the
-// city is built from (GEO, from NYC Open Data & OpenStreetMap): Manhattan's bulkhead line and piers, every
-// curb island (block) with the building footprints standing on it, the parks, Central Park's meadows, water bodies &
-// drives, the shore highways, the real street centrelines (labelled along their course), the surrounding boroughs and
-// New Jersey, the harbour islands and the bridges.
+// Minimap and full-screen map drawn from the same geography and building footprints as the 3D city.
+// World frame: 1 unit = 1 m, x = Manhattan-grid east, z = grid south. Both maps face grid north,
+// about 29 degrees east of true north.
 
 const FONT = 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const MIN_ZOOM = 0.015; // full map, pixels per metre: the whole harbour, Staten Island to the Bronx
@@ -478,11 +473,10 @@ class NYCMapSystem {
     this.panStart = { x: 0, y: 0, cx: 0, cz: 0 };
     this.dragMoved = false;
 
-    this.hoverWorld = null;
     this.searchHighlight = '';
     this.searchPath = null;
     this.textWidths = new Map();
-    // Default GTA 6-style active GPS waypoint (Times Square / Broadway)
+    // Start with a waypoint at Times Square / Broadway.
     const ts = NYC_LANDMARKS.find((l) => l.id === 'timessquare') || { x: 0, z: 0 };
     this.waypoint = { x: ts.x, z: ts.z, name: 'Times Square & 42nd St' };
 
@@ -594,7 +588,6 @@ class NYCMapSystem {
 
         if (mx >= 0 && mx <= rect.width && my >= 0 && my <= rect.height) {
           const wPos = this.screenToWorld(mx, my, rect.width, rect.height);
-          this.hoverWorld = wPos;
           if (this.elHoverInfo) {
             this.elHoverInfo.textContent = `${getLocationLabel(wPos.x, wPos.z)} · Click to teleport here`;
           }
@@ -957,7 +950,7 @@ class NYCMapSystem {
   }
 
   // =========================================================================
-  // 1. GTA 6-STYLE LIVE RADAR MINIMAP (BOTTOM-LEFT HUD)
+  // 1. LIVE MINIMAP (BOTTOM-LEFT HUD)
   // =========================================================================
   renderMinimap() {
     if (!this.miniCtx || !this.miniCanvas) return;

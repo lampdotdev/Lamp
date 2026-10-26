@@ -67,11 +67,8 @@ let pavedPlazaRects;
 let sidewalkBlocks;
 let fdrViaduct;
 
-// js/city-grid.js
-// Builds Manhattan Island's true polygonal coastline contour, granite seawall bulkhead,
-// full-island 3D raised sidewalks & curbstones (split by Broadway's diagonal corridor),
-// organic Central Park lakes & winding drives, Roosevelt & Governors Islands,
-// Hudson & East River piers, and East River suspension bridges at 60 FPS.
+// Manhattan's coastline, raised sidewalks, parks, waterfront piers and shore highways.
+// Boroughs, harbor islands and major river bridges are built in boroughs.js.
 
 /**
  * Builds a multi-part vaulted stone-arch park bridge (Gapstow Bridge & Bow Bridge)
@@ -163,7 +160,6 @@ function buildManhattanSchistGeometry() {
  * batched BufferGeometry per material to minimize WebGPU render & shadow pass draw calls.
  */
 function batchStaticGroupMeshes(rootGroup, excludeMaterials = null) {
-  if (!mergeGeometries) return;
   rootGroup.updateMatrixWorld(true);
   const invRoot = new THREE.Matrix4().copy(rootGroup.matrixWorld).invert();
   const buckets = new Map();
@@ -1505,11 +1501,6 @@ function buildCityGrid(scene) {
     roughness: 0.82,
     metalness: 0.1
   });
-  const esplanadeMat = new THREE.MeshStandardNodeMaterial({
-    color: 0x76726a,
-    roughness: 0.76,
-    metalness: 0.08
-  });
 
   // Slightly expanded perimeter polygon for the granite seawall & waterfront esplanade coping
   const seawallPolygon = MANHATTAN_COASTLINE.map((p) => ({
@@ -1828,7 +1819,6 @@ function buildCityGrid(scene) {
     for (let i = 0; i < flat.length; i += 2) o.push({ x: flat[i], z: flat[i + 1] });
     return o;
   };
-  const cp = CENTRAL_PARK_BOUNDS;
   const cpSite = (name) => CPG.sites.find((t) => t.name === name);
 
   // Perimeter sidewalk: the park's curb island (BLOCKS), with the schist wall along the real park line inside it
