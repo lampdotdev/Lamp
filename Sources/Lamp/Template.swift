@@ -11118,7 +11118,8 @@ enum Template {
                 return text.isEmpty ? nil : text
             }
             var device = device
-            if let name = tag("friendlyName") { device.name = name }
+            // A speaker's room ("Living Room") is what the person calls it, where its friendly name is a serial number.
+            if let name = tag("roomName") ?? tag("friendlyName") { device.name = name }
             device.maker = tag("manufacturer") ?? device.maker
             device.model = tag("modelName") ?? tag("modelDescription") ?? device.model
             return device

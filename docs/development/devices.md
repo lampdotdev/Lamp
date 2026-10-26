@@ -217,7 +217,8 @@ connection's path says whether it's allowed (`unsatisfiedReason == .localNetwork
 the person's answer, after that it says how things stand at once (`access` keeps the last). `find()` asks SSDP twice
 over, to the multicast group (a Mac) and to each address of the /24 (no multicast, so an iPhone app without Apple's
 multicast entitlement gets answers too; most players and TVs answer, a Sonos doesn't), reads each SSDP device's UPnP
-description for its name, maker and model, and browses Bonjour for the types in the app's `NSBonjourServices` (an
+description for its name (a speaker's room before its friendly name, which a Sonos fills with its serial number), maker
+and model, and browses Bonjour for the types in the app's `NSBonjourServices` (an
 iPhone app may browse no others), plus common media and home types on a Mac; each Bonjour service is resolved to its
 address by a connection opened and closed at once. This device's own addresses are left out. The app's own reason for
 the question is `localNetwork` in capabilities.json (`Capabilities.localNetworkReason`: one line, 150 characters at

@@ -48,7 +48,9 @@ them. Use them instead of writing your own.
   services (`bonjour`). An iPhone app sees only the Bonjour types in capabilities.json's `bonjourServices` (add the
   types of the devices the app is for: `"_sonos._tcp"`, `"_googlecast._tcp"`), and the system's question shows
   `"localNetwork"` there, the app's own reason ("TV Remote finds your TV and speakers to control them."). Work out how
-  to reach each device from what it says of itself; a Roku is `LampRoku`'s.
+  to reach each device from what it says of itself; a Roku is `LampRoku`'s. Its maker and model say what a device is;
+  its services say only what it can do: a console and a TV both answer as media renderers, and a Mac offers AirPlay,
+  so none of them is a speaker for that.
 - Roku: `LampRoku`, for an app on the Mac or a phone that controls the person's Roku (a remote of its own, buttons
   that open Netflix or a show, what's playing, a Roku TV's power, volume and input), with nothing installed on the
   Roku. An app that runs on the Roku itself is a Roku app instead. `await LampRoku.find()` (every Roku that answers,
