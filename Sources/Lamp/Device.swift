@@ -418,7 +418,9 @@ enum DeviceNote {
                 + line(for: part, store: .shared)
         }
         guard !own.isEmpty || !placed.isEmpty else { return "" }
-        let now = (own + placed).joined(separator: "\n")
+        // And every device of the person's Lamp knows, with what each can run, so an app is made for the ones they have.
+        let known = Places.known(Store.shared.devices)
+        let now = (own + placed + (known.isEmpty ? [] : [known])).joined(separator: "\n")
         let what = placed.isEmpty ? "The device this app is for" : own.isEmpty ? "Where the wish's game or screen is" : "The devices this wish's apps are for"
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\n\(what) (from Lamp, not part of the request above): \(now)"

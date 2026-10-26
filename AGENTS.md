@@ -71,7 +71,7 @@ Read the guide for the part you're changing before you change it. A section name
 | [approvals and privacy](docs/development/approvals-and-privacy.md) | `/agent/approve`, `Privacy`, the sandbox, file access outside an app's folder, data snapshots |
 | [desk](docs/development/desk.md) | The desk, Lamp's only window: wishes as icons, opening a wish, starters and their checks |
 | [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md) | Two Lamps on one Mac: `Edition`, worktree instances, `dev-data.sh`, `fresh-start.sh`, `LAMP_PRETEND_MISSING` |
-| [kinds of app](docs/development/kinds-of-app.md) | `Platform`, `Targets/`, a kind's identity, guidance, recipe, part and setup; `Destination` |
+| [kinds of app](docs/development/kinds-of-app.md) | `Platform`, `Targets/`, a kind's identity, guidance, recipe, part and setup; `Destination`; the table of what each device can run (`Places`) |
 | [iPhone](docs/development/iphone.md) | iPhone apps, the simulator and phones, Apple TV and Vision Pro; Apps for both the Mac and the iPhone |
 | [Android](docs/development/android.md) | Android apps, the emulator and Android devices |
 | [devices](docs/development/devices.md) | Devices as data (device integrations), games and their places, and screens |

@@ -6053,17 +6053,22 @@ final class Store: ObservableObject {
     }
 
     /// The tools every engine gets: Resources/lamp-tools.json, the one place their names, descriptions and schemas live,
-    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`). That's done
+    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`; `{{PLACES}}`, what
+    /// each device can run, from the table of devices: `Places.forAgent`). That's done
     /// once, to the file's own text: the MCP endpoint serves it, and pi's extension (lamp-tools.ts) reads it from
     /// `toolsFile`, so both get the same rendering.
     nonisolated static let toolsJSON: Data = {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"), let data = try? Data(contentsOf: url),
-              let quoted = try? JSONSerialization.data(withJSONObject: [Targets.toolDevices], options: .withoutEscapingSlashes) else {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"), let data = try? Data(contentsOf: url) else {
             assertionFailure("lamp-tools.json is missing from the app")
             return Data("[]".utf8)
         }
-        let devices = String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
-        return Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: "{{DEVICES}}", with: devices).utf8)
+        // Each as it goes inside a JSON string: quoted, without its quotes.
+        let inString = { (text: String) -> String in
+            let quoted = (try? JSONSerialization.data(withJSONObject: [text], options: .withoutEscapingSlashes)) ?? Data(#"[""]"#.utf8)
+            return String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
+        }
+        return Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: "{{DEVICES}}", with: inString(Targets.toolDevices))
+            .replacingOccurrences(of: "{{PLACES}}", with: inString(Places.forAgent)).utf8)
     }()
     // `label` is pi's: MCP clients see name, description and inputSchema.
     static let mcpTools: [[String: Any]] = ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? [])
