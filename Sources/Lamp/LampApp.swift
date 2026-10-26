@@ -75,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Before launch finishes, so clicking a notification that launched Lamp still opens its chat.
     func applicationWillFinishLaunching(_ notification: Notification) {
         PhoneTools.restoreChoice()
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: nil) { [weak self] note in
+            self?.previewClosed = note.object is TVPreview.Window
+        }
         MainActor.assumeIsolated {
             Notifier.shared.start()
             MagicPanel.start()
@@ -84,6 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private let launched = Date()
+    /// The window closed last was a TV or device preview: Stop closes it, and so may the person, to stop the app.
+    private var previewClosed = false
 
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -104,9 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Closing Lamp's window quits it, except while an app's sidebar is open: Lamp is still in use there.
+    /// Closing Lamp's window quits it, except while an app's sidebar is open: Lamp is still in use there. A preview
+    /// isn't Lamp's window: with the desk closed it's the last one AppKit counts (a chat is a panel, which it doesn't),
+    /// and stopping the app it shows must leave Lamp running.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        MainActor.assumeIsolated { !SidebarServer.shared.isInUse }
+        MainActor.assumeIsolated { !previewClosed && !SidebarServer.shared.isInUse }
     }
 
     /// Quitting mid-turn would leave the agent and its build running on their own, and the gateway the
