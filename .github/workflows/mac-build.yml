@@ -1,0 +1,39 @@
+# Builds Lamp on every pull request with the Xcode the release is built with (.github/xcode-version), so code that
+# only a newer Xcode accepts is caught here rather than when a release is tagged. Builds only: no signing, no tests.
+name: Mac build
+
+on:
+  pull_request:
+    paths:
+      - "Sources/**"
+      - "Package.swift"
+      - "Package.resolved"
+      - ".github/**"
+
+concurrency:
+  group: mac-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
+          xcodebuild -version
+
+      - name: Cache Swift packages and build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: mac-build-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}
+
+      - name: Build
+        run: swift build
