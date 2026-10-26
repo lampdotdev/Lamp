@@ -8219,9 +8219,11 @@ final class Store: ObservableObject {
         _ = await installOnDevice(current, owner: owner, udid: udid)
     }
 
-    private func clearPhoneRetry(_ project: LampProject) {
-        guard var lines = logs[project.id], lines.contains(where: { $0.retryPhone != nil }) else { return }
-        for index in lines.indices { lines[index].retryPhone = nil }
+    func clearPhoneRetry(_ project: LampProject) {
+        // An old-copy card's phone isn't a retry: it's where the old copy is, which another install or destination
+        // doesn't change, and the card's answers need it.
+        guard var lines = logs[project.id], lines.contains(where: { $0.retryPhone != nil && $0.kind != .oldCopy }) else { return }
+        for index in lines.indices where lines[index].kind != .oldCopy { lines[index].retryPhone = nil }
         logs[project.id] = lines
         saveChat(project)
     }
@@ -9475,12 +9477,18 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Old-copy cards whose answer is under way, drawn with their buttons off.
+    @Published private(set) var answeringOldCopy: Set<UUID> = []
+
     /// The person answered the old-copy card: `remove` takes the old team's copy off the phone, its data with it; else it
     /// stays there for them to delete when they like. A removal that fails leaves the card asking, with what went wrong.
     func answerOldCopy(_ project: LampProject, line id: UUID, remove: Bool,
                        uninstall: (String, String) async throws -> Void = Devices.uninstall) async {
         guard let line = logs[project.id]?.first(where: { $0.id == id }), line.kind == .oldCopy, let udid = line.retryPhone,
-              OldCopyLine.state(line.text).answer == nil else { return }
+              OldCopyLine.state(line.text).answer == nil, answeringOldCopy.insert(id).inserted else { return }
+        // Claimed until it's answered or the removal fails: a removal can take minutes, and a second press of either
+        // button meanwhile must not start another or say "kept" while the first is still deleting it.
+        defer { answeringOldCopy.remove(id) }
         let old = line.text
         var answer = OldCopyLine.kept
         // Never the copy that's on the phone now: an install for the old team since would have made it that again.

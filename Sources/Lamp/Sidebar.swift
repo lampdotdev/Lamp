@@ -796,6 +796,7 @@ final class SidebarServer {
                     card.symbol = OldCopyLine.symbol
                     card.status = text.status
                     card.done = state.answer != nil
+                    card.disabled = Store.shared.answeringOldCopy.contains(line.id)
                     if state.answer == nil {
                         card.declineButton = OldCopyLine.keep
                         card.button = OldCopyLine.remove

@@ -63,4 +63,38 @@ final class OldCopyCardTests: XCTestCase {
         XCTAssertTrue(removed)
         XCTAssertEqual(text(store, project, id), OldCopyLine.removed + old)
     }
+
+    /// Another install, or another destination in Try On, takes the Retry off the chat's failed installs. The card
+    /// keeps its phone, since that's where the old copy is, and both its answers still work.
+    func testTheCardKeepsItsPhoneAfterAnotherInstall() async throws {
+        let (store, project, id) = try card()
+        store.clearPhoneRetry(project)
+        XCTAssertEqual(store.logs[project.id]?.first { $0.id == id }?.retryPhone, udid)
+        var removed: [String] = []
+        await store.answerOldCopy(project, line: id, remove: true) { removed.append("\($0) from \($1)") }
+        XCTAssertEqual(removed, ["\(old) from \(udid)"])
+        XCTAssertEqual(text(store, project, id), OldCopyLine.removed + old)
+    }
+
+    /// While a removal is under way the card is taken: pressing Remove again starts no second one, and Keep doesn't
+    /// mark it kept while the old copy is being deleted.
+    func testAnAnswerUnderWayTakesTheCard() async throws {
+        let (store, project, id) = try card()
+        var calls = 0
+        var finish: CheckedContinuation<Void, Never>?
+        let first = Task {
+            await store.answerOldCopy(project, line: id, remove: true) { _, _ in
+                calls += 1
+                await withCheckedContinuation { finish = $0 }
+            }
+        }
+        while finish == nil { await Task.yield() }
+        await store.answerOldCopy(project, line: id, remove: true) { _, _ in calls += 1 }
+        await store.answerOldCopy(project, line: id, remove: false) { _, _ in calls += 1 }
+        XCTAssertEqual(calls, 1, "one removal at a time")
+        XCTAssertEqual(text(store, project, id), old, "not marked kept while the removal runs")
+        finish?.resume()
+        await first.value
+        XCTAssertEqual(text(store, project, id), OldCopyLine.removed + old)
+    }
 }

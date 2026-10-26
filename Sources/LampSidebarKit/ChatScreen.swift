@@ -368,6 +368,7 @@ private struct LineView: View {
                     if let decline = line.declineButton { Button(decline) { link.send(.decline(line.id)) } }
                     if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
                 }
+                .disabled(line.disabled ?? false)
             }
         case .action:
             ChatLook.ActionLine(symbol: line.symbol ?? "sparkles", text: line.text, button: line.button ?? "",
