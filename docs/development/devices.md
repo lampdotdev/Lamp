@@ -83,7 +83,8 @@ screens, and a bridge whose `remove` is the developer installer's Delete, so del
 Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere` removes the device's one copy, and only
 while it's still this wish's: `lastOnDevice` notes which app each device took last). Its
 mobile-control step reads `ecp-setting-mode` from device-info, which Roku's ECP page doesn't list but Rokus report, and
-asks only for Enabled, never Permissive.
+asks only for Enabled, never Permissive. Its developer-mode step's button presses the remote's secret keys over ECP (`run`), which that
+setting allows; the licence and the password stay the person's, on the Roku.
 
 **Lamp's building blocks on devices** (`DeviceSupport`, DeviceSupport.swift): TVs and declared app kinds get `LampAI`,
 `LampStore` and `LampAssets` as Mac, iPhone and Android apps do, under the same names and with the same advice in their

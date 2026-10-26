@@ -271,12 +271,87 @@
         "version": "15.3.4"
       },
       "lines": [
-        "Press Home three times on the remote",
-        "Then press Up, Up, Right, Left, Right, Left, Right",
+        "Press Continue and Lamp presses the remote's secret keys for you",
+        "Or press Home three times, then Up, Up, Right, Left, Right, Left, Right",
         "Choose Enable installer and restart",
         "Agree to the license",
         "Set a developer password and remember it",
         "Wait for the Roku to restart"
+      ],
+      "run": [
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Home",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Home",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Home",
+            "port": 8060
+          }
+        },
+        {
+          "wait": 3
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Up",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Up",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Right",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Left",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Right",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Left",
+            "port": 8060
+          }
+        },
+        {
+          "http": {
+            "method": "POST",
+            "path": "/keypress/Right",
+            "port": 8060
+          }
+        }
       ],
       "title": "Turn on developer mode",
       "wait": true
