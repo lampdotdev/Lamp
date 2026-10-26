@@ -167,6 +167,14 @@ enum AppName {
         /// icon keeps it.
         var color: String?
 
+        /// The wish is for a phone or tablet, Apple's or Android's: what makes Lamp look for the person's phones.
+        var forPhone: Bool {
+            kinds.contains { kind in
+                let places = kind.addsPlaces ? (self.places[kind] ?? []) : kind.target.places
+                return places.contains(.ios) || places.contains(.android)
+            }
+        }
+
         /// The wish is for a TV or another device Lamp reaches over the network (a TV app, a device's app, a game or a
         /// screen given a TV or a device, one Lamp can't make apps for yet): what makes Lamp look on the network for it.
         var forDevice: Bool {

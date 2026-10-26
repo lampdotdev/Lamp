@@ -994,13 +994,12 @@ final class Store: ObservableObject {
         selection = nil
         startGateway()
         watchOpenApps()
-        // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
-        // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        // Only where a wish really opens counts (a phone, a TV, an Xbox), not every place its kind could: the New York starter is a game, which
-        // could go on a phone. The look stays off the network: macOS's Local Network question comes only once the
-        // person does something with a device, never as Lamp opens.
-        if projects.contains(where: { $0.openPlaces.contains { $0.listsDevices || $0 == .device } }) { refreshDevices(network: false); refreshSimulators() }
-        else { Task { thisMac = await Device.readThisMac() } }
+        // Lamp opens with what it knows of the person's devices and runs no tool to look for more: devicectl, adb and a
+        // search of the network can each have macOS ask about the local network, which comes only once the person does
+        // something with a device (Settings, Try On, Play on one). This Mac's record is read off the main thread, so the
+        // first request's note has it.
+        showKnownDevices()
+        Task { thisMac = await Device.readThisMac() }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -2323,77 +2322,66 @@ final class Store: ObservableObject {
     /// Whether a look for devices is going on, so what asked for it can say so: it takes a few seconds and most often
     /// finds the same devices, which without a sign looked like nothing happened.
     @Published private(set) var lookingForDevices = false
-    /// A look was asked for while one was going on, and whether on the network: it's made once that one ends, since
-    /// what changed meanwhile (a step passed, a device forgotten) may have come too late for it.
-    private var lookAgain: Bool?
-    /// When the last look ended, so a new wish doesn't look again within a moment of one (`lookForDevicesForWish`).
-    private var devicesLookedAt: Date?
+    /// A look was asked for while one was going on: it's made once that one ends, since what changed meanwhile (a step
+    /// passed, a device forgotten) may have come too late for it.
+    private var lookAgain = false
     /// The last look on the network was refused by macOS: Lamp isn't allowed on the local network, or the person hasn't
     /// answered yet. Where a look was asked for, a line says so with the way to allow it.
     @Published private(set) var localNetworkRefused = false
-    /// A look on the network has been made since Lamp opened, and what it found is in `devices`: before one, the TVs
-    /// and devices are as kept, not found.
-    private var lookedOnNetwork = false
-    /// A look on the network is going on now, or is to follow the one going on.
-    private var lookingOnNetwork: Bool { (lookingForDevices && lookIsOnNetwork) || lookAgain == true }
-    private var lookIsOnNetwork = false
+    /// A look has been made since Lamp opened, and what it found is in `devices`: before one, the person's devices are
+    /// only the TVs and devices Lamp keeps, as not found, and no phone.
+    private var looked = false
     /// Privacy & Security, where the person chooses Local Network and allows Lamp: System Settings has no link to
     /// Local Network's own page.
     static let localNetworkSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
 
-    /// Looks for the person's devices. `network` searches the local network too (the TVs, the integrations' devices,
-    /// what nothing knows yet), which is what makes macOS ask whether Lamp may: only when the person is doing
-    /// something with a device (Settings, Try On, a device's setup, Play on one) or a wish has just been named for
-    /// one, never as Lamp opens or a wish starts. Without it, the phones and Android devices are listed, and the TVs
-    /// and devices stay as the last look on the network left them, or as kept.
-    func refreshDevices(network: Bool = true) {
-        guard !lookingForDevices else { lookAgain = (lookAgain ?? false) || network; return }
+    /// Looks for the person's devices: the phones with Apple's tool (devicectl), Android's with adb, and one search of
+    /// the local network for the TVs and the integrations' devices. Any of them can have macOS ask whether Lamp may use
+    /// the local network (devicectl finds phones over Wi‑Fi too, and macOS counts the tools Lamp runs as Lamp), so a
+    /// look is made only when the person is doing something with a device (Settings, Try On, a device's setup, pairing,
+    /// Play on one) or a wish has just been named for one (`lookForWish`): never as Lamp opens or a wish starts, which
+    /// show what Lamp already knows (`showKnownDevices`).
+    func refreshDevices() {
+        guard !lookingForDevices else { lookAgain = true; return }
         lookingForDevices = true
-        lookIsOnNetwork = network
         Task {
             async let apple = Devices.list()
             async let android = Adb.devices()
-            let found: [Device]
-            if network {
-                // What answers on the network: one search, which the TVs and the integrations share.
-                let scan = await Integrations.Scan.now()
-                localNetworkRefused = scan.refused
-                async let tvs = TVs.devices(answers: scan.answers)
-                async let integrated = Integrations.devices(scan: scan)
-                let kits = await apple + android + tvs
-                let known = await integrated
-                // What's on the network that nothing Lamp has knows, after the rest.
-                let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
-                found = kits + known + unknown
-            } else {
-                found = await apple + android + networkDevicesAsLeft()
-            }
+            // What answers on the network: one search, which the TVs and the integrations share.
+            let scan = await Integrations.Scan.now()
+            localNetworkRefused = scan.refused
+            async let tvs = TVs.devices(answers: scan.answers)
+            async let integrated = Integrations.devices(scan: scan)
+            let kits = await apple + android + tvs
+            let known = await integrated
+            // What's on the network that nothing Lamp has knows, after the rest.
+            let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
+            let found = kits + known + unknown
             if found != devices { devices = found }
-            if network { lookedOnNetwork = true }
+            looked = true
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
             lookingForDevices = false
-            devicesLookedAt = Date()
-            if let again = lookAgain {
-                lookAgain = nil
-                refreshDevices(network: again)
+            if lookAgain {
+                lookAgain = false
+                refreshDevices()
             }
         }
     }
 
-    /// The TVs and other devices on the network as the last look on the network left them, with the kept ones it
-    /// didn't see (or every kept one, before any look) as not found: a look that stays off the network changes none.
-    private func networkDevicesAsLeft() -> [Device] {
-        var left = devices.filter { $0.kind.isTV || $0.kind == .other }
+    /// The devices Lamp knows without looking: what the last look found, and the TVs and devices it keeps, as not found
+    /// until a look sees them. What Lamp opens with and a wish starts with: no tool runs and nothing goes on the network.
+    func showKnownDevices() {
+        var known = devices
         let keptTVs = Set(TVs.kept().map(\.id))
-        for record in TVs.kept() where !left.contains(where: { $0.id == record.id }) {
-            left.append(Device.from(tv: record, onNetwork: false, kept: keptTVs.contains(record.id)))
+        for record in TVs.kept() where !known.contains(where: { $0.id == record.id }) {
+            known.append(Device.from(tv: record, onNetwork: false, kept: keptTVs.contains(record.id)))
         }
-        for keptOne in Integrations.kept() where !left.contains(where: { $0.id == keptOne.id }) {
-            left.append(Integrations.device(from: keptOne, onNetwork: false))
+        for keptOne in Integrations.kept() where !known.contains(where: { $0.id == keptOne.id }) {
+            known.append(Integrations.device(from: keptOne, onNetwork: false))
         }
-        return left
+        if known != devices { devices = known }
     }
 
     /// Apple's devices as devicectl lists them now, in place of the last look's: the rest of the list stays, so a
@@ -2403,27 +2391,20 @@ final class Store: ObservableObject {
         devices = apple + devices.filter { ![.iphone, .ipad, .watch].contains($0.kind) }
     }
 
-    /// A new wish may be for one of the person's phones, so they're looked for as a wish begins: when something is
-    /// typed in the desk's bar, when a new wish is made, and as its first request is named. A look from the last two
-    /// minutes does. It stays off the network: a wish named for a TV or a device looks there once it's named
-    /// (`lookOnNetworkForWish`), so a wish for this Mac never has macOS ask about the local network.
-    func lookForDevicesForWish() {
-        guard !lookingForDevices else { return }
-        if let at = devicesLookedAt, Date().timeIntervalSince(at) < 120 { return }
-        refreshDevices(network: false)
-    }
+    /// What a new wish is told of the person's devices as it begins (typed in the desk's bar, made, its first request
+    /// named): what Lamp knows without looking, so starting a wish never has macOS ask about the local network. A wish
+    /// named for a phone, a TV or a device looks once it's named (`lookForWish`).
+    func lookForDevicesForWish() { showKnownDevices() }
 
-    /// The devices a new wish's naming call is told of (`AppName.suggest`): the look going on is waited for, a few
-    /// seconds at most, since the wish waits on it; one that takes longer leaves what the last look found.
+    /// The devices a new wish's naming call is told of (`AppName.suggest`).
     func devicesForWish() async -> [Device] {
-        lookForDevicesForWish()
-        await waitForLook(seconds: 5)
+        showKnownDevices()
         return devices
     }
 
-    /// A wish named for a TV or a device: Lamp looks on the network now, since the person has just said the wish is
-    /// for one, and says whether the look found a TV or device that wasn't known before it.
-    func lookOnNetworkForWish() async -> Bool {
+    /// A wish named for a phone, a TV or a device: Lamp looks now, since the person has just said what it's for, and
+    /// says whether the look found a TV or device that wasn't known before it, which the wish is named again with.
+    func lookForWish() async -> Bool {
         let before = Set(devices.filter { $0.kind.isTV || $0.kind == .other }.map(\.id))
         refreshDevices()
         await waitForLook(seconds: 8)
@@ -3316,9 +3297,9 @@ final class Store: ObservableObject {
         // A draft named before its first request (in its intro) is still asked about, for what it runs on.
         if project.untitled || !project.scaffolded {
             var suggestion = await AppName.suggest(for: brief, devices: await devicesForWish())
-            // Named for a TV or a device: Lamp looks on the network now, and names it again when that found one it
+            // Named for a phone, a TV or a device: Lamp looks now, and names it again when that found a TV or device it
             // didn't know ("my TV" is the Roku found just now, not a Samsung).
-            if suggestion?.forDevice == true, await lookOnNetworkForWish() {
+            if suggestion?.forDevice == true || suggestion?.forPhone == true, await lookForWish() {
                 suggestion = await AppName.suggest(for: brief, devices: devices) ?? suggestion
             }
             progress[project.id]?.sketch = suggestion?.sketch ?? []
@@ -3482,8 +3463,8 @@ final class Store: ObservableObject {
             // A wish that opens on a TV or a device, or has a part that does (a screen or a game beside its Mac app), is
             // told whether Lamp finds it there (`DeviceNote`), which only a look on the network can say: Lamp opens
             // without one, so the first request to such a wish makes it, or waits for the one going on.
-            if !lookedOnNetwork, ([project] + parts(of: project)).contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
-                if !lookingOnNetwork { refreshDevices() }
+            if !looked, ([project] + parts(of: project)).contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
+                if !lookingForDevices { refreshDevices() }
                 await waitForLook(seconds: 8)
             }
             var worked = false
@@ -10818,8 +10799,10 @@ final class Store: ObservableObject {
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
             if !turn.look.toldPhone {
                 turn.look.toldPhone = true
-                await refreshAppleDevices()
-                on += " " + Devices.tryOnNote(chosen: project.device, among: devices)
+                // The phones are asked for only when the app is set to open on one: devicectl can have macOS ask about
+                // the local network, and an app on the simulator gives no reason to.
+                if project.device != nil { await refreshAppleDevices() }
+                on += " " + Devices.tryOnNote(chosen: project.device, among: devices, listed: looked || project.device != nil)
             }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
