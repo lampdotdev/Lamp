@@ -362,13 +362,16 @@ enum AppInfoView {
     static func creditsSection(_ credits: Credits) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
-        // The work it's based on and its licence, each a row; anything else it uses one row each, licence after it.
+        // The work it's based on and its licence, each a row; anything else it uses one row each, with its licence when
+        // that's a plain id. Terms of its own (`LicenseRef-`) would make the row too long for the panel, which shows a
+        // row on one line; they're in the About window.
         for (index, source) in credits.upstream.enumerated() {
             if index == 0 {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
                 rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
             } else {
-                rows.append(SidebarInfoRow(label: "Uses", value: Credits.line(for: source) + " · " + (source.license ?? "no licence")))
+                let license = source.license.map { $0.hasPrefix("LicenseRef-") ? "" : " · " + $0 } ?? " · no licence"
+                rows.append(SidebarInfoRow(label: "Uses", value: Credits.line(for: source) + license))
             }
         }
         if !credits.remixOf.isEmpty {
