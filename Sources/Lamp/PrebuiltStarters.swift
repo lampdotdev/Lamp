@@ -116,6 +116,7 @@ enum PrebuiltStarters {
         build.arguments = ["-c", "./build.sh"]
         build.currentDirectoryURL = project.dir
         build.environment = ProcessInfo.processInfo.environment.merging(["LAMP_LIVE": "1"]) { $1 }
+            .merging(try GamePage.buildEnvironment(for: project)) { $1 }
         let output = Pipe()
         build.standardOutput = output
         build.standardError = output

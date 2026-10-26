@@ -23,6 +23,10 @@
   "supports": [
     "web"
   ],
+  "input": {
+    "controller": "xbox",
+    "layout": "xbox"
+  },
   "bridge": {
     "install": [
       {
