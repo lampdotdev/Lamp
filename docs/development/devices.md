@@ -144,8 +144,45 @@ integration share: an integration's `find.ssdp` target and the description its i
 answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
 device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
 phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
-Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
-that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
+**The whole network** (`HomeNetwork`, HomeNetwork.swift). Where the person is looking at what's there (Your Devices,
+Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
+SSDP and the integrations don't, and every other look leaves the last of it as it was. Never at launch or on a timer.
+It sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet, sixteen at a time,
+paced, so the Mac asks who has each one and its neighbour table fills (`Sweep`); no nmap, raw socket or admin. The
+subnet is the default route's interface's (`Subnet.current`): the whole of a /24 or smaller, and on a bigger network
+only the 256 addresses around this Mac's (`Subnet.widest`), which the agent is told. Then it reads the neighbour table
+and the default route from the kernel's routing table by sysctl (`Neighbours`, what `arp -a` reads; macOS hides the
+table from a process without Local Network access, `swift test`'s helper included, so check it in Lamp or with
+`xctest` from a shell), marks a locally administered hardware address as randomised (`Vendors.isRandomised`: a phone's,
+tablet's or computer's private Wi‑Fi address), and looks up each other one's maker by its prefix (`Vendors`, the
+longest of nine, seven and six hex digits) in `Resources/vendors.xz`, made from the IEEE's MA-L, MA-M and MA-S
+registries by `scripts/update-vendors.sh` (names with their legal endings taken off, xz-compressed, about 375 KB; not
+nmap's list, which is under nmap's licence). Meanwhile it browses every Bonjour type (`_services._dns-sd._udp`), then
+each type's services, resolving each with `dns_sd` to its host, IPv4 address and the record's model keys only
+(`Bonjour`, `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no connection to the
+device. Each address is one `NetworkHost`: hardware address and maker, randomised or not, this Mac, the gateway, its
+Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
+Hosts are kept in memory only (`Store.hosts`).
+
+Settings → Your Devices lists, in this order (`HomeNetwork.List`): what Lamp makes apps for or controls (the kits'
+devices, what integrations find, `Integrations.devices`, and what a starter controls, `HomeNetwork.controlled`, a Sonos
+now, "Apps can control it"); then the devices Lamp could learn, with "Lamp could learn to work with this" and Set Up…:
+those that answered the SSDP scan that nothing knows, read from their UPnP description (routers left out), and hosts
+that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `device(for:)`, named by maker and model,
+never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this
+Mac's other addresses, printers, Apple's devices (by the model their records give, `NetworkHost.apple`: an app can't
+reach them the way it reaches others), appliances and hosts that said nothing but their maker, each with the names it
+goes by on this Mac only and Set Up… (but the router and this Mac; a device found this way is known by
+`found:<address>#<hardware address>`, read from the neighbour table as Set Up… is pressed, so a conversation is reopened,
+linked to an integration's device and given a host's facts only for the same hardware, and one that began without a
+hardware address never is), whose setup note asks the agent to work out what it
+is and to say so plainly when nothing on the home network can reach it; and the hosts with randomised addresses that
+said nothing, counted and never named, since nothing tells one such phone from another. Bonjour also browses a few types
+whether the meta-query names them or not (`Bonjour.alwaysBrowse`: Cast, printers, a gadget's web page), since a
+sleeping device often misses that one answer. What each host is isn't worked out by a list of rules: `network_devices`
+gives the agent every host's facts (`HomeNetwork.facts`), with a few anchors (the gateway is the router, this Mac, a
+randomised address is a phone, tablet or computer, counted), and the agent labels them when the person asks, or when
+Set Up… asks it to learn one (`deviceSetupNote` adds that host's facts). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
 per device, whose first request is `Agent.deviceSetupRequest` (what the device said of itself). That conversation is
 no wish (`LampProject.deviceSetup`, `makesNoApp`): it's never on the desk, never named, scaffolded, built or saved, and
@@ -240,8 +277,10 @@ reads the person's devices starts from what's there, not from a question about w
 fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first; a look still going after 45 s is said to be, never answered with the last one's list) and
 answers with each device on the network: its name, maker, model and address, what it said to the SSDP search, and what
 Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing). Phones,
-the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits and the
-integrations, so a device that answers only Bonjour isn't in it, and the answer says so. Kept devices not on the network
+the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits, the
+integrations and the whole network (above): after the devices come every other host's facts, how much of the subnet
+was swept, how to tell what each is, and that the names a network holds are often people's, to be said to the person
+and never written into an app, its files or an integration. Kept devices not on the network
 now are listed apart. When macOS keeps Lamp off the local network (`Store.localNetworkRefused`), the
 answer says where the person turns it on rather than that nothing answered. A rule in `deviceRules` names the tool, the
 `device-control` skill (also named with the request once an app's code reaches devices, `Skills.applying`) and

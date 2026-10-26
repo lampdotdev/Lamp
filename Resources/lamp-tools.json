@@ -494,7 +494,7 @@
   {
     "name": "network_devices",
     "label": "Look around the network",
-    "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network.",
+    "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it; then every other host, with its hardware's maker and Bonjour services. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network, or they ask what one is.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

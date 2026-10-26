@@ -313,7 +313,8 @@ enum Agent {
     checks and sets up the device itself, and draws every step's card: never walk the person through its steps in your \
     own words, and never try to reach the device with a command of yours.
     - When a wish controls, plays to or reads devices on the person's network (a remote, buttons for the speakers, \
-    what's playing on the TV), call `network_devices` before asking what they have, and start from what it finds: \
+    what's playing on the TV), or the person asks what something on their network is, call `network_devices` before \
+    asking what they have, and start from what it finds: \
     "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you. Open the `device-control` \
     skill before writing code that reaches one of their devices. Reading a device is fine; change nothing on a real one \
     (a key press, opening an app, volume, power) until the person allows it with `device_permission`.
@@ -325,10 +326,32 @@ enum Agent {
         var note = "\n\n---\nThis conversation is the setup of a device of the person's (from Lamp, not part of the request above): no app is made here. Write no files and open nothing; write or fix the device's integration with `device_integration` (the `device-integrations` skill), and answer about the device in a sentence or two. Lamp shows its setup steps as cards. When the person wants something on the device, tell them to make a wish for it on Lamp's desk."
         // What the device said of itself when it was found, for writing its integration: the agent's to read, not the
         // person's, so it isn't in the request they see.
-        if let device = Store.shared.devices.first(where: { $0.id == project.deviceSetup }) {
+        // A device Lamp doesn't know is kept by its network address in the list, and by its hardware address too here.
+        let setup = project.deviceSetup
+        // One begun without a hardware address can't be told from whatever has its address now: nothing found is said of it.
+        let unverified = setup.flatMap(Device.foundAddress) != nil && setup.flatMap(Device.foundHardware) == nil
+        let device = unverified ? nil : Store.shared.devices.first { $0.id == setup }
+            ?? setup.flatMap(Device.foundAddress).flatMap { address in
+                // Only while the same hardware is at that address.
+                guard let hardware = setup.flatMap(Device.foundHardware), Neighbours.table()[address] == hardware else { return nil }
+                return Store.shared.devices.first { Device.foundAddress($0.id) == address }
+            }
+        if let device {
             var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
             if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
-            note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's SSDP scan as \($0)" } ?? "") + "."
+            note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's scan as \($0)" } ?? "") + "."
+        }
+        // Its host's facts, for working out what it is and how it's reached: all there is for one set up from Everything
+        // Else, which may be something Lamp can't reach at all (say so plainly then). The names it goes by on the network
+        // are often people's, so they stay out of the integration.
+        let address = device?.address ?? project.deviceSetup.flatMap(Device.foundAddress)
+        let hardware = project.deviceSetup.flatMap(Device.foundHardware)
+        // A device found on the network is the host with its hardware address; one whose setup began without that
+        // can't be told from whatever has its address now, so no host's facts go with it.
+        let isFound = project.deviceSetup.flatMap(Device.foundAddress) != nil
+        if let host = Store.shared.hosts.first(where: { $0.address == address && (isFound ? hardware != nil && $0.mac == hardware : true) }) {
+            if device == nil { note += " Work out what it is first, from what Lamp found of it, and tell the person; if nothing on the home network can reach it (it's controlled only through its maker's cloud, or has no local interface), say so in a sentence rather than writing an integration." }
+            note += " Its host: " + HomeNetwork.facts(host) + ". Keep the names it goes by out of the integration: find it by its service, maker or model."
         }
         // The last test run on it: what the device did with an app made from the integration, which the builder fixes.
         if let deviceID = project.deviceSetup, let report = IntegrationProbe.report(for: deviceID) { note += "\n\n" + report }
@@ -338,7 +361,7 @@ enum Agent {
     /// The first request of a device's setup conversation, from Set Up… on a device Lamp doesn't know
     /// (`Store.setUpDevice`), in the person's words: what Lamp found of it goes to the agent in `deviceSetupNote`.
     static func deviceSetupRequest(_ device: Device) -> String {
-        "Set up my \(device.name)."
+        "Set up my \(device.plainName)."
     }
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the

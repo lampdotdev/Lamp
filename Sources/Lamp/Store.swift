@@ -1669,11 +1669,18 @@ final class Store: ObservableObject {
     /// integration (`device_integration`), with what the device said of itself. Like finding a wish, nothing is named,
     /// scaffolded or built until a wish for the device is sent.
     func setUpDevice(_ device: Device) {
-        // One conversation per device: Set Up… again goes back to it, where it was left.
-        if let earlier = projects.first(where: { $0.deviceSetup == device.id }) { return showChat(earlier.id) }
+        // One conversation per device: Set Up… again goes back to it, where it was left. A device Lamp doesn't know is
+        // told apart by its hardware address as well as its network address, which may be another device's later; one
+        // whose hardware address Lamp can't read gets a new conversation each time, never another device's.
+        var id = device.id
+        if let address = Device.foundAddress(id), Device.foundHardware(id) == nil {
+            id = Neighbours.table()[address].map { "found:\(address)#\($0)" } ?? id
+        }
+        if Device.foundAddress(id) == nil || Device.foundHardware(id) != nil,
+           let earlier = projects.first(where: { $0.deviceSetup == id }) { return showChat(earlier.id) }
         let project: LampProject
         do {
-            project = try Template.draft(name: "Set Up \(device.name)", deviceSetup: device.id, in: root)
+            project = try Template.draft(name: "Set Up \(device.plainName)", deviceSetup: id, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -1690,8 +1697,11 @@ final class Store: ObservableObject {
     func linkSetupConversations(to found: [Device]) {
         var changed = false
         for project in projects {
-            guard let id = project.deviceSetup, id.hasPrefix("found:"),
-                  let device = found.first(where: { $0.integration != nil && $0.address == String(id.dropFirst("found:".count)) }),
+            // The same device, not only the same address: its hardware address, which a conversation started without
+            // one can't show, so that one stays where it is.
+            guard let id = project.deviceSetup, let address = Device.foundAddress(id),
+                  Device.foundHardware(id).map({ Neighbours.table()[address] == $0 }) ?? false,
+                  let device = found.first(where: { $0.integration != nil && $0.address == address }),
                   !projects.contains(where: { $0.deviceSetup == device.id }) else { continue }
             var linked = project
             linked.deviceSetup = device.id
@@ -2309,6 +2319,15 @@ final class Store: ObservableObject {
     /// A look was asked for while one was going on: it's made once that one ends, since what changed meanwhile (a step
     /// passed, a device forgotten) may have come too late for it.
     private var lookAgain = false
+    /// The one asked for meanwhile wants the whole network too (`refreshDevices(everything:)`).
+    private var lookAgainEverywhere = false
+    /// Everything else on the network, from the last look the person asked to see it all (`HomeNetwork`): kept in
+    /// memory only, since its names are often people's.
+    @Published private(set) var hosts: [NetworkHost] = []
+    /// How much of the subnet that look swept, for the agent.
+    private(set) var swept: Subnet?
+    /// The router's hardware address on that network: the hosts are this network's only while it's the same.
+    private var sweptRouter: String?
     /// The last look on the network was refused by macOS: Lamp isn't allowed on the local network, or the person hasn't
     /// answered yet. Where a look was asked for, a line says so with the way to allow it.
     @Published private(set) var localNetworkRefused = false
@@ -2332,27 +2351,57 @@ final class Store: ObservableObject {
     /// look is made only when the person is doing something with a device (Settings, Try On, a device's setup, pairing,
     /// Play on one) or a wish has just been named for one (`lookForWish`): never as Lamp opens or a wish starts, which
     /// show what Lamp already knows (`showKnownDevices`).
-    func refreshDevices() {
-        guard !lookingForDevices else { lookAgain = true; return }
+    ///
+    /// `everything` is for where the person is looking at what's on the network (Your Devices, Add a New Device,
+    /// `network_devices`): it also sweeps this Mac's subnet, reads the neighbour table and browses every Bonjour service
+    /// (`HomeNetwork.look`), for the hosts nothing of Lamp's knows. Any other look leaves the last of those as they are.
+    func refreshDevices(everything: Bool = false) {
+        guard !lookingForDevices else { lookAgain = true; lookAgainEverywhere = lookAgainEverywhere || everything; return }
         lookingForDevices = true
         Task {
             async let apple = Devices.list()
             async let android = Adb.devices()
+            // Started at once: the sweep and Bonjour take a few seconds, as the SSDP search does.
+            let network = everything ? Task.detached { await HomeNetwork.look() } : nil
             // What answers on the network: one search, which the TVs and the integrations share.
             let scan = await Integrations.Scan.now()
             localNetworkRefused = scan.refused
             // Refused the first time is macOS's question still up; refused after it is the person's answer.
             let firstAsked = scan.refused && !UserDefaults.standard.bool(forKey: Self.localNetworkAskedKey)
             UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
-            if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed() } }
+            if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed(everything: everything) } }
             async let tvs = TVs.devices(answers: scan.answers)
             async let integrated = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
             let known = await integrated
             // What's on the network that nothing Lamp has knows, after the rest.
             let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
-            let found = kits + known + unknown
+            var found = kits + known + unknown
             if found != devices { devices = found }
+            if let look = await network?.value {
+                let merged = HomeNetwork.merge(look.hosts, scan: scan, devices: found)
+                // A host that offers something of its own on the network, which SSDP didn't describe, is one Lamp could
+                // learn too: listed with Set Up… like an unknown SSDP device.
+                let taken = Set(found.compactMap(\.address))
+                found += merged.filter { !taken.contains($0.address) && HomeNetwork.couldLearn($0) }.map(HomeNetwork.device(for:))
+                if found != devices { devices = found }
+                if merged != hosts { hosts = merged }
+                swept = look.swept
+                sweptRouter = merged.first(where: \.isGateway)?.mac
+            } else if !HomeNetwork.sameNetwork(as: swept, router: sweptRouter) {
+                // Another network since the last whole look: its hosts aren't here, and an address may be another's now.
+                if !hosts.isEmpty { hosts = [] }
+                swept = nil
+                sweptRouter = nil
+            } else {
+                // A look of SSDP alone keeps what the last whole look learned of the rest, on the same network, for the
+                // hosts still at their address.
+                let here = HomeNetwork.stillHere(hosts)
+                if here != hosts { hosts = here }
+                let taken = Set(found.compactMap(\.address))
+                found += hosts.filter { !taken.contains($0.address) && HomeNetwork.couldLearn($0) }.map(HomeNetwork.device(for:))
+                if found != devices { devices = found }
+            }
             looked = true
             androidListed = true
             linkSetupConversations(to: found)
@@ -2360,8 +2409,10 @@ final class Store: ObservableObject {
             if mac != thisMac { thisMac = mac }
             lookingForDevices = false
             if lookAgain {
+                let everywhere = lookAgainEverywhere
                 lookAgain = false
-                refreshDevices()
+                lookAgainEverywhere = false
+                refreshDevices(everything: everywhere)
             }
         }
     }
@@ -2411,7 +2462,7 @@ final class Store: ObservableObject {
     /// without it), with the wait for macOS's question when this is the first look Lamp makes on the network. `done` is
     /// false when the look is still going after the wait: `devices` is then what the last look found, not this one.
     func devicesNow() async -> (devices: [Device], done: Bool) {
-        refreshDevices()
+        refreshDevices(everything: true)
         await waitForLook(seconds: 45)
         await answerAwaited?.value
         return (devices, !lookingForDevices)
@@ -2430,7 +2481,7 @@ final class Store: ObservableObject {
     /// A look that was the first to ask macOS about the local network heard nothing while its question was up: Lamp
     /// waits a little for the person's answer and, given Allow, looks again, so what the wish is told comes from a look
     /// that could see. A refusal after the first is the person's Don't Allow, which isn't waited on.
-    private func lookAgainOnceAllowed(seconds: Double = 30) async {
+    private func lookAgainOnceAllowed(everything: Bool = false, seconds: Double = 30) async {
         defer { answerAwaited = nil }
         let until = Date().addingTimeInterval(seconds)
         while Date() < until {
@@ -2438,7 +2489,7 @@ final class Store: ObservableObject {
             guard !(await DeviceProbe.localNetworkDenied()) else { continue }
             // Allowed: a look made at once can still be refused while macOS takes the answer in, so Lamp looks until one
             // gets through, in the same half minute.
-            refreshDevices()
+            refreshDevices(everything: everything)
             await waitForLook(seconds: 8)
             if !localNetworkRefused { return }
         }
