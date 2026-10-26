@@ -139,7 +139,10 @@ enum GameFiles {
     /// files around them, which make the folder a three.js game.
     static func install(_ package: Sharing.Package, into project: LampProject) throws {
         let fm = FileManager.default
+        // The file's page and Native.swift take the place of the game's; a file without a Native.swift leaves the game
+        // with Lamp's own, written again by `GameKit.write`, not the one it had.
         try? fm.removeItem(at: project.dir.appendingPathComponent(GameKit.webFolder))
+        try? fm.removeItem(at: project.dir.appendingPathComponent(native))
         for file in package.sources + package.webData {
             let relative = package.path(of: file)
             guard !relative.contains(".."), relative == native || relative.hasPrefix(GameKit.webFolder + "/"), !isLamps(relative) else { continue }

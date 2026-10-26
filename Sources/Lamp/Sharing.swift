@@ -247,9 +247,11 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: format(withWidget: first.widget, capabilities: first.capabilities,
-                                                    platform: root.platform, watch: first.watch, share: first.share,
-                                                    scene: first.scene, parts: !parts.isEmpty),
+        // A game anywhere in the wish makes it an 11: a Lamp from before would find no code in the game's folder.
+        let number = max(format(withWidget: first.widget, capabilities: first.capabilities, platform: root.platform, watch: first.watch,
+                                share: first.share, scene: first.scene, parts: !parts.isEmpty),
+                         parts.contains { $0.platform == .game } ? format(withWidget: false, platform: .game) : 0)
+        try encoder.encode(Manifest(format: number,
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
                                     platform: root.platform, family: root.hasIOS ? root.family : nil,
