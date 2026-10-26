@@ -138,6 +138,18 @@ what the gateway would with the provider directly (chat completions with the JSO
 decisions, images). The prompt's fencing and dates are made in the library either way. What's spent this
 way isn't recorded in Lamp, and `/ai/computer` says it needs the Mac.
 
+**A free Apple account** (a Personal Team, `PhoneTools.xcodeFreeTeams`) signs for the person's own phones too, within
+Apple's limits, which `FreeTeamProbeLiveTests` finds by planning Lamp's own project for such a team (opt-in:
+`LAMP_FREE_TEAM=<team> LAMP_FREE_TEAM_DEVICE=<udid>`; every probe reuses one app id, so a run costs two of the team's ten
+ids a week). What it found with Xcode 27: a profile lasts seven days; HealthKit, HomeKit and app groups (a widget's)
+sign; NFC, Siri, iCloud with push, WeatherKit and Time Sensitive notifications are refused, each with Apple's "Personal
+development teams … do not support the … capability". Planning again returns the same profile while Xcode's copy of it
+is kept (in `~/Library/Developer/Xcode/UserData/Provisioning Profiles`); with that copy removed, Xcode makes a new one
+good for seven days from then, so a renewal can come before the old one runs out. An app signed again and installed over
+itself keeps its data. `devicectl device info apps` marks what a developer built (`builtByDeveloper`), and Lamp's bundle
+ids end in the team, so the apps a team has on a phone can be counted. Xcode lists a newly added account's team in its
+settings, where Lamp reads teams, only once the team has a development certificate.
+
 **On Apple TV and Vision Pro**: an iPhone app, and the iPhone half of an app for both, can open on the Apple TV or Vision
 Pro simulator, chosen under Try On as the iPad is (`DeviceFamily.appletv`, `.vision`; not for a game, whose kit is
 iOS's). It's the same code built for tvOS or visionOS: the build passes `LAMP_FAMILY`, and the iPhone build.sh picks
