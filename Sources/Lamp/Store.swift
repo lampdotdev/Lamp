@@ -8282,7 +8282,19 @@ final class Store: ObservableObject {
             onPhone[project.id] = nil
             try await Devices.install(app, on: udid)
             // What's on the phone now, kept signed so it can be put back before its profile runs out.
-            await PhoneRenewals.keep(app, for: project, udid: udid, team: team)
+            let before = PhoneRenewals.record(for: project)
+            let kept = await PhoneRenewals.keep(app, for: project, udid: udid, team: team)
+            // Signed for another team than last time: a new app on the phone, so the old one comes off, said once. Only
+            // once the new copy is kept for renewal (else the old record would put the old app back), and only while the
+            // turn still has the app: a person who pressed Stop doesn't lose the old copy's data.
+            if kept, stillOwns(), let old = PhoneRenewals.replaced(before, on: udid, by: project.deviceBundleID(team: team)) {
+                do {
+                    try await Devices.uninstall(old, from: udid)
+                    log(project, .status, "\(project.name) on \(name) is signed for your Apple team now, which makes it a new app there: the copy signed for the old team is off the phone, and what it saved there didn't come along.")
+                } catch {
+                    log(project, .status, "\(project.name) on \(name) is signed for your Apple team now, which makes it a new app there. The copy signed for the old team is still on the phone; delete it there when you like.")
+                }
+            }
             offerKeepOpening(project)
             guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()

@@ -94,15 +94,27 @@ enum PhoneRenewals {
         try? JSONEncoder().encode(record).write(to: recordURL(for: project), options: .atomic)
     }
 
-    /// Keeps `app`, just installed on `udid`, as what's on that phone: moved in place of the copy kept before.
-    static func keep(_ app: URL, for project: LampProject, udid: String, team: String) async {
+    /// Keeps `app`, just installed on `udid`, as what's on that phone: moved in place of the copy kept before. Returns
+    /// whether it's kept, its record written and read back.
+    @discardableResult static func keep(_ app: URL, for project: LampProject, udid: String, team: String) async -> Bool {
         let fm = FileManager.default
-        guard let expires = await TeamSigning.expiry(of: app.appendingPathComponent("embedded.mobileprovision")) else { return }
+        guard let expires = await TeamSigning.expiry(of: app.appendingPathComponent("embedded.mobileprovision")) else { return false }
         try? fm.createDirectory(at: folder(for: project), withIntermediateDirectories: true)
         try? fm.removeItem(at: keptApp(for: project))
         guard (try? TeamSigning.snapshot(for: project, place: .iphone, to: keptSigning(for: project))) != nil,
-              (try? fm.moveItem(at: app, to: keptApp(for: project))) != nil else { return }
-        save(Record(udid: udid, bundleID: project.deviceBundleID(team: team), team: team, expires: expires), for: project)
+              (try? fm.moveItem(at: app, to: keptApp(for: project))) != nil else { return false }
+        let record = Record(udid: udid, bundleID: project.deviceBundleID(team: team), team: team, expires: expires)
+        save(record, for: project)
+        // Read back by what names it: a date may not survive the trip to the last fraction of a second.
+        return self.record(for: project).map { $0.bundleID == record.bundleID && $0.udid == udid } ?? false
+    }
+
+    /// The copy to take off `udid` now that `bundleID` is on it: the one kept there before, when it was signed for another
+    /// team. An app's bundle id carries its team, so moving to another team (a paid one, say) makes it a new app on the
+    /// phone, and the old copy would sit beside it until it stopped opening. Nil when it's the same app.
+    static func replaced(_ before: Record?, on udid: String, by bundleID: String) -> String? {
+        guard let before, before.udid == udid, before.bundleID != bundleID else { return nil }
+        return before.bundleID
     }
 
     /// Forgets what's on the phone, when the app is deleted or put somewhere else.
