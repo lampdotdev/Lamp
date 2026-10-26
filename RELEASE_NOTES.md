@@ -5,6 +5,14 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.21.1
+
+- A game for an Xbox Series X or S is made for that console, which draws far more than an Xbox One, and Lamp calls
+  your Xbox by its real model.
+- Pressing Stop on a TV or Xbox app keeps its chat on screen, and Lamp no longer quits when its window was closed.
+- A new wish's chat opens on the screen you're using.
+- Lamp no longer asks to look on your local network at its first launch.
+
 ## 0.21.0
 
 - Attach files when you wish for something new: press + in the desk's bar or drop files on it.
