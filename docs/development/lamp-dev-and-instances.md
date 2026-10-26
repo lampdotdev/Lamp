@@ -41,7 +41,8 @@ A check is kept light and out of the way:
   "The gallery"), and a single view can be drawn off screen with SwiftUI's `ImageRenderer` from a throwaway test that's
   never committed (it draws no controls, such as spinners).
 - **Take a window's picture, not the screen's.** `swift scripts/window-shot.swift <pid>` lists an app's windows and
-  `swift scripts/window-shot.swift <pid> <title> out.png` pictures one, covered or not, without bringing it forward. A
+  `swift scripts/window-shot.swift <pid> <title> out.png` pictures one, covered or not, without bringing it forward (it
+  needs Screen & System Audio Recording for whatever runs it, and says so when that's missing). A
   region of the screen is whatever is on top: often another worktree's window.
 - **Reach the app, not whatever is in front.** Menu items are chosen through System Events on the app's own process
   (`click menu item "Gallery" of menu "Window" of menu bar 1`), and windows moved or raised the same way. Keystrokes,

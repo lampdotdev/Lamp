@@ -10,6 +10,16 @@ guard let pid = arguments.first.flatMap(Int32.init) else {
     FileHandle.standardError.write("usage: window-shot.swift <pid> [<title> <out.png>]\n".data(using: .utf8)!)
     exit(2)
 }
+// Without Screen & System Audio Recording for whatever runs this (the terminal, or the agent's host), macOS hides other
+// apps' window titles and pictures, and listing them asks for nothing: say so, rather than find no window by its title.
+guard CGPreflightScreenCaptureAccess() else {
+    FileHandle.standardError.write("""
+        This needs Screen & System Audio Recording for the app running it (System Settings → Privacy & Security), \
+        which macOS hasn't given. Once it's on, quit and reopen that app, then run this again.
+
+        """.data(using: .utf8)!)
+    exit(3)
+}
 let all = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 // Only the app's own ordinary windows with a size: menus, tooltips and off-screen helpers are on other layers.
 let windows = all.filter {
