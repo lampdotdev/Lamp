@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -786,6 +786,45 @@ enum Gallery {
                 .frame(width: width == nil ? 340 : nil)
                 .background(width == nil ? AnyShapeStyle(ChatLook.paper) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor)),
                             in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+    }
+
+    // MARK: Publish
+
+    /// The card that says what a game's page will put up and where, from checking it to its being up, in the chat's
+    /// place at its narrowest and widest.
+    private static let publishEntries: [Entry] = [
+        publish("Checking", stage: .preparing),
+        publish("Needs GitHub's tool", stage: .needsGitHub(.install)),
+        publish("Needs a sign-in", stage: .needsGitHub(.signIn)),
+        publish("No licence", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no licence. It can still be used on this Mac.")),
+        publish("Ready", stage: .ready),
+        publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same licence.",
+                                                             "2 pictures made with AI, marked as such."]),
+        publish("Publishing", stage: .publishing("Waiting for GitHub to put it up…")),
+        publish("Couldn't publish", stage: .failed("GitHub didn't take the page: the connection was lost.")),
+        publish("Up", stage: .published, page: true),
+        publish("Up and copied", stage: .published, page: true, copied: true),
+        publish("Up, changed since", stage: .ready, page: true),
+        publish("Up, wide", stage: .published, page: true, width: 480),
+    ]
+
+    private static func publish(_ name: String, stage: PublishCard.Stage, notes: [String] = [], page: Bool = false, copied: Bool = false,
+                                width: CGFloat? = nil) -> Entry {
+        Entry(group: "Publish", name: name) {
+            let folder = Starters.folder?.appendingPathComponent("newyork")
+            let ready = stage != .preparing
+            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+                                   stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
+                                   credit: "Based on Slop New York by Mr.doob",
+                                   openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
+                                   copied: copied, republish: page, canPublish: stage == .ready || { if case .failed = stage { true } else { false } }(), publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
+            return AnyView(card
+                .frame(width: width == nil ? 340 : nil)
+                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .fixedSize(horizontal: false, vertical: true))

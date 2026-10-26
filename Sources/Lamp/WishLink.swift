@@ -337,7 +337,7 @@ enum WishLink {
         }
     }
 
-    private static func digest(_ data: Data) -> String {
+    static func digest(_ data: Data) -> String {
         SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 }

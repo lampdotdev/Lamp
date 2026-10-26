@@ -336,6 +336,7 @@ struct SettingsView: View {
 struct ExperimentalSettings: View {
     static var hasAny: Bool { Edition.isDev }
     @AppStorage(BrowserBridge.switchKey) private var browser = ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1"
+    @AppStorage(Publish.switchKey) private var publish = false
 
     var body: some View {
         Form {
@@ -344,6 +345,8 @@ struct ExperimentalSettings: View {
                     Toggle("Apps in Chrome", isOn: $browser)
                         .checkboxNote("Apps that help with web pages also open beside the page, in Chrome's sidebar.")
                     if browser { BrowserConnectionUpgrade(compact: true).underCheckbox() }
+                    Toggle("Publish games as web pages", isOn: $publish)
+                        .checkboxNote("A game's Share menu can put it on GitHub Pages, from your own GitHub account.")
                 }
             } header: {
                 // Above the box, in a checkbox note's size and color rather than as a heading.

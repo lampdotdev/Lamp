@@ -155,6 +155,34 @@ for anything shaped like a key (a private key, the prefixes services give their 
 naming the file. The person's data isn't in the folder (an app keeps it in its container) and the chat's attachments
 never ship.
 
+### Publishing a game as a page
+
+A wish whose one app is a game drawn with three.js can be published as a page anyone plays in a browser (`Publish`,
+an experiment: Settings → Experimental, Lamp Dev only, since the page carries Lamp's own runtime, which needs a
+licence that lets anyone pass it on before every Lamp can publish). Its share menu has Publish as Web Page…, which puts
+the Publish card in the chat's place (`PublishCard`, `PublishCards`, `SidebarPublish`). It goes on GitHub Pages under the
+person's own account, through GitHub's `gh` and their sign-in there, never through Lamp's servers: the page costs Lamp
+nothing however often it's played, and it's the person's under GitHub's terms. Without `gh` the card's one button gets
+it; signed out, Sign In to GitHub… runs `gh auth login --web` in Terminal and the card checks again once that's done.
+Before anything goes up the card shows what will: the repository (the wish's name, made public; a name the account
+already has gets a number), the credit, the licence notes, the AI pictures and the size, all worked out by staging the
+page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it with Lamp's credit bar over it ("Based on Slop New York by Mr.doob · Open in
+Lamp", settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding its link on a
+narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), once the person has made one: Publish never sends
+the wish's words or picture itself, and a wish with none has Make Share Link… on the card, which opens Share Link's own
+card where they see and change what it shows (with none, the bar links Lamp's site). That page is the one that works for
+someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
+wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
+the page too when its kind can be shared as one (a game can't yet), offered in the README, and made by
+`Sharing.export`, so held to its checks. With them go credits.json with this wish at the end of the
+chain, a README with the credits and licences, and `.nojekyll`; the staged page is searched for secrets again. The push
+signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built
+that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten minutes.
+A repository is kept as soon as it's made, and a failed try keeps the page staged, so Publish tries again into the same
+repository instead of leaving one behind and making another. Where a
+wish's page went is kept in Lamp's folder (`Published Pages.json`), so Update Page puts the wish as it is now in its
+place.
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp
