@@ -62,7 +62,7 @@ enum GameKit {
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
         // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
-        // given apart (`Parts.asked`'s places): "mac" beside "game" is a Mac app.
+        // given apart, as its places: "mac" beside "game" is a Mac app.
         devices == ["game"]
     }
 
@@ -707,9 +707,8 @@ extension Agent.Rules {
     static func placesAmongApps(_ word: String, verb: String) -> String {
         """
 
-        - This wish has other apps beside the \(word). make_app_for's `apps` are all of them, the \(word) and every \
-        other app the person keeps: one left out is taken away. Where the \(word) is \(verb) is its own entry's \
-        `places`.
+        - This wish has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
+        with `made` "web"; the wish's other apps stay as they are, and one is taken away only with remove_app.
         """
     }
 
@@ -755,9 +754,8 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
     it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
-    make_app_for with the game as {"kind": "game", "places": [every place it's to be played beside the Mac: \
-    "iphone", "android", "xbox-one"…]} and every other app the wish keeps beside it in `apps`; it stays the same \
-    game.
+    make_app_for with `devices` every device it's to be played on ("mac", "iphone", "android", "xbox-one"…) and `made` \
+    "web"; it stays the same game, and the wish's other apps stay as they are.
     """
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

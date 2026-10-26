@@ -110,7 +110,7 @@ enum Ideas {
         Idea(.play, "Tilt Maze", "circle.grid.cross", 0.85, "Make a marble maze I play by tilting my phone."),
     ]
 
-    /// Mac and iPhone ideas in turn: a new app's kind is worked out from what's asked for (Store.chooseKind),
+    /// Mac and iPhone ideas in turn: what a new app is made as is the agent's choice from what's asked for (`Agent.undecidedPrompt`),
     /// so the ideas are for either.
     static let mixed: [Idea] = (0..<max(pool.count, phonePool.count)).flatMap { index in
         [pool.indices.contains(index) ? pool[index] : nil, phonePool.indices.contains(index) ? phonePool[index] : nil].compactMap { $0 }

@@ -3,12 +3,6 @@ import XCTest
 
 /// A wish can be more than one app (`Parts`): a TV app with an iPhone app that controls it.
 final class WishPartsTests: XCTestCase {
-    /// "A TV app that I can control with my phone" is a TV app and an iPhone app, made to work together; "both", to
-    /// "TV, Mac or both?", is a TV app and a Mac app. Neither leads.
-    func testATVAppControlledFromThePhoneIsATVAppWithAnIPhoneApp() throws {
-        XCTAssertEqual(Parts.kinds(for: ["tv", "iphone"]), [.iphone, .tv])
-        XCTAssertEqual(Parts.kinds(for: ["tv", "mac"]), [.mac, .tv])
-    }
 
     /// A part's folder is inside its wish's, which the agent may swap for a link: the part's own folder, which its build's
     /// sandbox opens, is still found by name under the wish's, never where that link leads.

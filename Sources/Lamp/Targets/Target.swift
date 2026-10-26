@@ -111,7 +111,7 @@ struct Target {
         /// A word of its own beyond `words` (an integration's id).
         var owns: (String) -> Bool = { _ in false }
         /// Listed apart from the kinds of a wish's apps, its hint before theirs: a device app, which is never one wish with
-        /// other kinds, and a game and a screen, which are one wish with others only through their own word (`Parts.asked`).
+        /// other kinds, and a game and a screen, which are one wish with others only through their own word.
         let alone: Bool
         /// How a wish still to be told what it's for asks about it ("for the TV"), and how it hears what Lamp makes
         /// ("for Samsung and LG TVs"). Nil when it's never asked about.
@@ -258,35 +258,4 @@ enum Targets {
 
     /// The kind a folder is, read off what every version keeps.
     static func kind(of dir: URL) -> Platform? { matchOrder.first { $0.recipe.isMade(dir) }?.platform }
-
-    // MARK: How the kinds are listed to models
-
-    /// `make_app_for`'s devices (`{{DEVICES}}`): the kinds that can be one wish, then those that stand alone, and last
-    /// what has no word of its own.
-    static var toolDevices: String {
-        let say = { (kinds: [Target]) in kinds.flatMap { $0.identity.devices.words.map(\.tool).filter { !$0.isEmpty } } + kinds.compactMap(\.identity.devices.toolNote) }
-        let alone = say(all.filter(\.identity.devices.alone))
-        return say(all.filter { !$0.identity.devices.alone }).joined(separator: ", ") + (alone.isEmpty ? "" : "; " + alone.joined(separator: ", "))
-    }
-
-    /// "mac, iphone, watch, tv and android", for `make_app_for`'s answer to a list it can't make.
-    static var toolWords: String { sentence(listed.flatMap { $0.identity.devices.words.map(\.word) }) }
-
-    /// The naming call's devices: every kind's words, then the hints of those that stand alone, the rest's, and last
-    /// the fallback's, which is what's left.
-    static var namingDevices: String {
-        let last = fallback.platform
-        let hints = (all.filter(\.identity.devices.alone) + all.filter { !$0.identity.devices.alone && $0.platform != last } + [fallback])
-            .compactMap(\.identity.devices.hint)
-        return all.flatMap { $0.identity.devices.words.map(\.naming) }.joined(separator: ", ") + ". " + hints.joined(separator: "; ") + "."
-    }
-
-    /// The words a wish may be asked about (`AppName.candidates`), how it names each, and how it hears what Lamp makes.
-    static var askedWords: [String] { all.compactMap(\.identity.devices.asked?.word) }
-    static func asked(_ word: String) -> String? { all.first { $0.identity.devices.asked?.word == word }?.identity.devices.asked?.phrase }
-    static var lampMakes: String { sentence(listed.compactMap(\.identity.devices.asked?.makes)) }
-
-    private static func sentence(_ items: [String]) -> String {
-        items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " and " + items.last!
-    }
 }
