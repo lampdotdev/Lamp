@@ -222,7 +222,7 @@ devices as well as Lamp.
 
 **What's on the network, for the agent** (`network_devices`, NetworkDevices.swift): a wish that controls, plays to or
 reads the person's devices starts from what's there, not from a question about what they own. The tool waits for a
-fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first) and
+fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first; a look still going after 45 s is said to be, never answered with the last one's list) and
 answers with each device on the network: its name, maker, model and address, what it said to the SSDP search, and what
 Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing). Phones,
 the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits and the

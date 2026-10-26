@@ -2425,12 +2425,13 @@ final class Store: ObservableObject {
     }
 
     /// The devices `network_devices` answers with: a fresh look, waited for (the agent asked, and the answer is no use
-    /// without it), with the wait for macOS's question when this is the first look Lamp makes on the network.
-    func devicesNow() async -> [Device] {
+    /// without it), with the wait for macOS's question when this is the first look Lamp makes on the network. `done` is
+    /// false when the look is still going after the wait: `devices` is then what the last look found, not this one.
+    func devicesNow() async -> (devices: [Device], done: Bool) {
         refreshDevices()
-        await waitForLook(seconds: 20)
+        await waitForLook(seconds: 45)
         await answerAwaited?.value
-        return devices
+        return (devices, !lookingForDevices)
     }
 
     /// A wish named for a phone, a TV or a device: Lamp looks now, since the person has just said what it's for, and

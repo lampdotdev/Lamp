@@ -6,7 +6,10 @@ import Foundation
 /// itself how an app can reach it.
 enum NetworkDevices {
     @MainActor static func answer() async -> (Int, [String: Any]) {
-        let devices = await Store.shared.devicesNow()
+        let (devices, done) = await Store.shared.devicesNow()
+        guard done else {
+            return (200, ["text": "Lamp's look around the network is still going (a device is slow to answer). Call this again in a moment; until then, don't take the network to be empty."])
+        }
         return (200, ["text": describe(devices, integrations: Integrations.all(), refused: Store.shared.localNetworkRefused)])
     }
 

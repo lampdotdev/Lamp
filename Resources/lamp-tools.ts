@@ -601,7 +601,7 @@ const networkDevices = defineTool({
 			method: "POST",
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify(params),
-			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
 		const reply = (await response.json()) as { text?: string; error?: string };
 		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
