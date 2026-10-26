@@ -250,8 +250,11 @@ enum DeviceApps {
         // A device busy closing the app it's replacing can drop a connection, the upload's or the launch's just after
         // it; a little later it's ready, so the pair is tried again a couple of times before Lamp gives up.
         // The copy on the device now is ended first: a device can fail to open a package installed over its running copy.
-        if let stop = bridge.stop, !stop.isEmpty, let installed = installedValues(project, on: device) {
-            _ = try? await runner.run(stop, extra: installed)
+        // A Roku's installer waits on a developer channel that's still running until the upload times out, so a package
+        // that isn't wrapped (one copy on the device, whichever app it is) is always ended first.
+        let running = integration.app?.declared?.wrap == nil ? values(project) : installedValues(project, on: device)
+        if let stop = bridge.stop, !stop.isEmpty, let running {
+            _ = try? await runner.run(stop, extra: running)
         }
         // A setting the install changes for itself (an Xbox's "treat apps as games") stays changed until the app has been
         // opened: the console settles the package's type then.
