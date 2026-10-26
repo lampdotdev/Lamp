@@ -164,9 +164,12 @@ extension Adb {
             let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
             guard fields.count >= 3, let colon = fields[2].lastIndex(of: ":"), let port = Int(fields[2][fields[2].index(after: colon)...]) else { continue }
             let host = String(fields[2][..<colon])
-            guard DeviceAddress.isPrivate(host) else { continue }
+            // An emulator, Lamp's own included, announces itself at the address it has inside the emulator (10.0.2.15),
+            // which nothing on the network can reach.
+            guard DeviceAddress.isPrivate(host), !fields[0].uppercased().hasPrefix("ADB-EMULATOR") else { continue }
             var entry = byHost[host] ?? AndroidWiFi.Found(host: host)
-            if fields[1].hasPrefix("_adb-tls-pairing") { entry.pairPort = port } else if fields[1].hasPrefix("_adb-tls-connect") { entry.connectPort = port }
+            // Pairing (Android 11 and later's wireless debugging), its connection once paired, or an older device's plain adb.
+            if fields[1].hasPrefix("_adb-tls-pairing") { entry.pairPort = port } else if fields[1].hasPrefix("_adb-tls-connect") || fields[1].hasPrefix("_adb._tcp") { entry.connectPort = port }
             byHost[host] = entry
         }
         return byHost.values.sorted { $0.host < $1.host }
@@ -178,7 +181,7 @@ extension Adb {
         let result = await Subprocess.run(AndroidTools.adb, ["pair", "\(host):\(port)"], env: AndroidTools.environment, timeout: 30, input: Data((code + "\n").utf8))
         let said = (result.output + result.errors).lowercased()
         if said.contains("successfully paired") { return nil }
-        if said.contains("wrong password") || said.contains("protocol fault") { return "That code didn't work. Check the code on the TV and try again." }
+        if said.contains("wrong password") { return "That code didn't work. Check the code on the TV and try again." }
         return "The TV didn't pair. Keep its pairing screen open and try again."
     }
 

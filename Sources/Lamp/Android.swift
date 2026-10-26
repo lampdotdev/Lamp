@@ -340,8 +340,9 @@ enum Adb {
     static func getprop(on serial: String) async -> [String: String] {
         var properties: [String: String] = [:]
         let keys = ["ro.product.manufacturer", "ro.product.model", "ro.product.device", "ro.build.version.release", "ro.build.version.sdk",
-                    "ro.kernel.qemu", "ro.boot.qemu", "ro.build.characteristics"]
-        let shell = keys.map { "echo \($0)=$(getprop \($0))" }.joined(separator: ";") + ";wm size;wm density"
+                    "ro.kernel.qemu", "ro.boot.qemu"]
+        // A TV says so by its leanback feature: Google TV, Android TV, Fire TV and the Android TV emulator alike.
+        let shell = keys.map { "echo \($0)=$(getprop \($0))" }.joined(separator: ";") + ";echo leanback=$(pm has-feature android.software.leanback);wm size;wm density"
         for line in (await run(["shell", shell], on: serial, timeout: 20)).output.split(separator: "\n") {
             let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if let equals = text.firstIndex(of: "=") {
@@ -820,7 +821,8 @@ enum Emulator {
         guard !AndroidTools.has(.tv) else { return }
         if !AndroidTools.hasTVImage {
             await note("Downloading the Android TV emulator, about a gigabyte, once…")
-            let install = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --licenses > /dev/null 2>&1; \"$LAMP_SDKMANAGER\" --install \"$LAMP_IMAGE\" 2>&1"
+            // The TV image has a licence of its own, asked for during the install, so the answer goes to the install itself.
+            let install = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --install \"$LAMP_IMAGE\" 2>&1"
             let result = await Subprocess.run("/bin/sh", ["-c", install], env: AndroidTools.environment.merging(["LAMP_SDKMANAGER": AndroidTools.sdkmanager, "LAMP_IMAGE": Kind.tv.image]) { $1 },
                                               timeout: 3600)
             guard AndroidTools.hasTVImage else {

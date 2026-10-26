@@ -69,8 +69,8 @@ TV, Android TV or Fire TV: the same Gradle project and building blocks, with a m
 TV (`androidx.tv:tv-material`, in Lamp's catalogue), and rules for the remote and the room (`Rules.androidTVDesign`,
 `androidTVTry`) in place of the phone's design skill. The banner (`lamp_banner.png`, 320x180) is drawn by Lamp from the
 app's icon before every build, the tile alone until there is one (`writeAndroidTVOwnedFiles`, `DeviceSupport.iconPNG`).
-The naming call reads a device that says it's a TV (`ro.build.characteristics` has "tv": `Device.from(adb:)` gives it
-the "tv" feature) as "android-tv". It opens in Lamp's TV emulator (`Emulator.Kind.tv`, "Lamp TV", a 1080p TV made from
+The naming call reads a device that's a TV (it has the `android.software.leanback` feature: `Device.from(adb:)` gives
+it the "tv" feature) as "android-tv". It opens in Lamp's TV emulator (`Emulator.Kind.tv`, "Lamp TV", a 1080p TV made from
 the Android TV system image the first time one is wanted: `Emulator.prepareTV`), which takes Lamp's emulator ports from
 the phone (closed first) and gives them back the same way: `Target.androidEmulator` says which. `use_app` presses the
 remote's keys (select, menu and play beside the arrows, back and home). A TV has no cable to the Mac, so Try On's
