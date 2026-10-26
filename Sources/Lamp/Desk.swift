@@ -14,6 +14,7 @@ struct WishDesk: View {
     /// Whether the person put the bar to use (clicked into it, chose an idea), rather than Lamp focusing it as the
     /// desk opened so typing starts at once: only then do the wishes recede behind it.
     @State private var barEngaged = false
+    @State private var dropTargeted = false
     /// Set while Lamp itself moves the focus to the bar, so that move doesn't count as the person's.
     @State private var lampFocusing = false
     /// Drawn once, so they don't change under the reader.
@@ -169,8 +170,11 @@ struct WishDesk: View {
 
     /// What's on the stage: nothing while a new wish is being typed or said, which the stage would hide.
     private var shown: Staged? {
-        store.deskDraft.trimmed.isEmpty && !dictation.isListening ? staged : nil
+        store.deskDraft.trimmed.isEmpty && store.deskAttachments.isEmpty && !dictation.isListening ? staged : nil
     }
+
+    /// Something to send: words, or files to make a wish of.
+    private var hasWish: Bool { !store.deskDraft.trimmed.isEmpty || !store.deskAttachments.isEmpty }
 
     /// The headline and the wishes step away while the ideas are open, leaving the bar and the ideas. An empty desk
     /// opens on its ideas and keeps its headline, the only question on it.
@@ -178,7 +182,7 @@ struct WishDesk: View {
 
     /// The wishes recede behind the bar while the person is writing one, and come back while one is pointed at.
     private var receding: Bool {
-        barFocused && (barEngaged || !store.deskDraft.trimmed.isEmpty || dictation.isListening)
+        barFocused && (barEngaged || hasWish || dictation.isListening)
             && pointedAt == nil && arrangement.dragging == nil
     }
 
@@ -282,14 +286,63 @@ struct WishDesk: View {
     }
 
     private var bar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            barRow
+            // What's attached goes with the wish, shown as the chat's message box shows it.
+            if !store.deskAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(store.deskAttachments, id: \.self) { url in
+                            ChatLook.Chip(onRemove: { store.deskAttachments.removeAll { $0 == url } }) {
+                                ChatLook.ChipLabel(name: url.lastPathComponent) {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 28, height: 28)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.leading, 34)
+            }
+        }
+        .padding(.leading, 12).padding(.trailing, 12).padding(.vertical, 14)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+            .strokeBorder(Color.primary.opacity(barFocused || dropTargeted ? 0.18 : 0.1), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
+        // Files dropped on the bar are attached to the wish; a wish's own icon dropped here isn't a file.
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            for provider in providers {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    // Files only: a folder would show as attached, but only files go with the wish.
+                    guard let url, url.isFileURL, (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return }
+                    Task { @MainActor in if !store.deskAttachments.contains(url) { store.deskAttachments.append(url) } }
+                }
+            }
+            return true
+        }
+        // A click into a bar Lamp already focused is the person's too.
+        .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
+    }
+
+    private var barRow: some View {
         HStack(alignment: .center, spacing: 10) {
+            Button(action: chooseFiles) {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Attach a file")
+            .accessibilityLabel("Attach a file")
             TextField(dictation.isListening ? "Listening…" : wishes.isEmpty ? "Type a wish…" : "Wish for something new…", text: $store.deskDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .lineLimit(1...5)
                 .focused($barFocused)
                 .onSubmit { send() }
-            if !store.deskDraft.trimmed.isEmpty {
+            if hasWish {
                 Button { send() } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
@@ -303,14 +356,17 @@ struct WishDesk: View {
                 .transition(.scale.combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: store.deskDraft.trimmed.isEmpty)
-        .padding(.leading, 20).padding(.trailing, 12).padding(.vertical, 14)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
-            .strokeBorder(Color.primary.opacity(barFocused ? 0.18 : 0.1), lineWidth: 1))
-        .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
-        // A click into a bar Lamp already focused is the person's too.
-        .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasWish)
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where !store.deskAttachments.contains(url) { store.deskAttachments.append(url) }
+        barFocused = true
+        barEngaged = true
     }
 
     private var grid: some View {
@@ -356,12 +412,13 @@ struct WishDesk: View {
     }
 
     private func send() {
-        let wish = store.deskDraft.trimmed
-        guard !wish.isEmpty else { return }
+        let wish = store.deskDraft.trimmed, attachments = store.deskAttachments
+        guard !wish.isEmpty || !attachments.isEmpty else { return }
         let spoken = dictation.isListening
         dictation.cancel()
         store.deskDraft = ""
-        store.wish(wish, spoken: spoken)
+        store.deskAttachments = []
+        store.wish(wish, attachments: attachments, spoken: spoken)
     }
 }
 

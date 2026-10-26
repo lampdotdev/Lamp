@@ -1796,6 +1796,9 @@ final class Store: ObservableObject {
         didSet { if oldValue.isEmpty, !deskDraft.isEmpty { lookForDevicesForWish() } }
     }
 
+    /// Files attached in the desk's wish bar and not sent, kept like `deskDraft`; they go with the wish to its chat.
+    @Published var deskAttachments: [URL] = []
+
     /// Goes up to put the cursor in the desk's wish bar (New Wish).
     @Published var deskFocusRequest = 0
 
