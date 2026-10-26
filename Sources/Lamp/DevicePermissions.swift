@@ -8,6 +8,9 @@ enum DevicePermissions {
     struct Kept: Codable, Equatable {
         var always: [String] = []
         var once: String?
+        /// Each device's address (or `.local` name), from the card that asked about it: what a command may reach once
+        /// the device is allowed.
+        var addresses: [String: String] = [:]
     }
 
     static let allowOnce = "Allow once"
@@ -34,6 +37,19 @@ enum DevicePermissions {
     static func allowed(_ wish: LampProject) -> [String] {
         let kept = kept(wish)
         return kept.always + (kept.once.map { [$0] } ?? [])
+    }
+
+    /// The addresses of the devices the agent may change now.
+    static func allowedAddresses(_ wish: LampProject) -> Set<String> {
+        let kept = kept(wish)
+        return Set(allowed(wish).compactMap { kept.addresses[$0]?.lowercased() })
+    }
+
+    /// The card is up: the device's address is noted, to be allowed with it.
+    static func asking(about device: String, at address: String, for wish: LampProject) {
+        var kept = kept(wish)
+        kept.addresses[device] = address
+        save(kept, for: wish)
     }
 
     /// The person's answer to the card, as the option they chose.
@@ -81,15 +97,22 @@ enum DevicePermissions {
     /// Whether a shell command reaches a device on the home network (a private address or a `.local` name) in a way
     /// that could change it: every part of it that names one must be a plain `curl` read. Codex's own check, where
     /// Codex runs ordinary commands in its sandbox with the network open and no reviewer sees them.
-    static func mayChangeADevice(_ command: String) -> Bool {
-        let home = #"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b|[A-Za-z0-9-]\.local\b"#
+    static func mayChangeADevice(_ command: String) -> Bool { !devicesChanged(by: command).isEmpty }
+
+    /// The home network's addresses and `.local` names a command reaches other than by a plain `curl` read, lowercased.
+    static func devicesChanged(by command: String) -> Set<String> {
+        let home = #"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b|\b[A-Za-z0-9][A-Za-z0-9-]*\.local\b"#
         let writes = #"(^|\s)(-X|--request)\s*(?!GET\b)\S|(^|\s)(-d|--data[a-z-]*|--json|-F|--form|-T|--upload-file)(\s|=|$)"#
-        let parts = command.components(separatedBy: CharacterSet(charactersIn: ";|&\n"))
-        return parts.contains { part in
+        var reached: Set<String> = []
+        for part in command.components(separatedBy: CharacterSet(charactersIn: ";|&\n")) {
             let part = part.trimmingCharacters(in: .whitespaces)
-            guard part.range(of: home, options: .regularExpression) != nil else { return false }
-            return !part.hasPrefix("curl ") || part.range(of: writes, options: .regularExpression) != nil
+            guard let regex = try? NSRegularExpression(pattern: home) else { continue }
+            let hosts = regex.matches(in: part, range: NSRange(part.startIndex..., in: part))
+                .compactMap { Range($0.range, in: part).map { part[$0].lowercased() } }
+            guard !hosts.isEmpty, !part.hasPrefix("curl ") || part.range(of: writes, options: .regularExpression) != nil else { continue }
+            reached.formUnion(hosts)
         }
+        return reached
     }
 
     static let commandRefusal = "This reaches a device on the person's network in a way that could change it. Ask with `device_permission` first; to read a device, use a plain `curl` GET."

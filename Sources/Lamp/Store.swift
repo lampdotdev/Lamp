@@ -5591,6 +5591,10 @@ final class Store: ObservableObject {
         case "device_permission":
             let device = (arguments["device"] as? String ?? "").trimmed
             let doing = (arguments["doing"] as? String ?? "").trimmed
+            let address = (arguments["address"] as? String ?? "").trimmed.lowercased()
+            guard address.range(of: #"^[a-z0-9][a-z0-9.-]{0,252}$"#, options: .regularExpression) != nil else {
+                return (400, ["error": "Give the device's address in `address`, as `network_devices` or LampNetwork found it (\"10.0.0.20\", \"living-room.local\")."])
+            }
             guard !device.isEmpty, device.count <= 40, !device.contains("\n") else {
                 return (400, ["error": "Give the device's name in `device`, as the person knows it (\"Living Room TV\"), 40 characters at most."])
             }
@@ -5600,6 +5604,7 @@ final class Store: ObservableObject {
             let wish = wish(of: project)
             if DevicePermissions.kept(wish).always.contains(device) { return (200, ["text": "The person already allows \(device) for this wish: go ahead."]) }
             if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+            DevicePermissions.asking(about: device, at: address, for: wish)
             let ask = DevicePermissions.card(device: device, doing: doing)
             logs[project.id, default: []].append(chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project))
             closeSteps(project)
@@ -10317,7 +10322,8 @@ final class Store: ObservableObject {
             // Under "Only when risky" Codex's ordinary commands run in its sandbox with the network open, where no reviewer
             // sees them: this hook only keeps them off the person's devices until one is allowed.
             if request.path.contains("format=codex-devices") {
-                guard DevicePermissions.allowed(wish(of: project)).isEmpty, DevicePermissions.mayChangeADevice(command) else { return (200, [:]) }
+                let allowed = DevicePermissions.allowedAddresses(wish(of: project))
+                guard DevicePermissions.devicesChanged(by: command).contains(where: { !allowed.contains($0) }) else { return (200, [:]) }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                      "permissionDecisionReason": DevicePermissions.commandRefusal]])
             }

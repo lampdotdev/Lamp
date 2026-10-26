@@ -48,8 +48,8 @@ Say so plainly in a sentence instead of half-building it.
 
 Reading a device is always fine: what it is, its apps, what's playing, its volume. Changing one is the person's to
 allow: a key press, opening an app, the volume, the input, power, a setting. Before the first change on a device, by
-a command or by using the app (`use_app`), call `device_permission` with the device as the person knows it and what
-you'd do, and end your turn. Lamp shows the card and keeps the answer: "Allow once" covers this request, "Always for"
+a command or by using the app (`use_app`), call `device_permission` with the device as the person knows it, its address,
+and what you'd do, and end your turn. Lamp shows the card and keeps the answer: "Allow once" covers this request, "Always for"
 the device covers the wish. Lamp refuses `use_app` on an app that reaches devices unless its `device` names one the person allowed,
 and every engine's check refuses a command that changes a device without it. When the answer is "Not now", leave the
 device alone and say how the person can try it themselves.

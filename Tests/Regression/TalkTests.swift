@@ -67,5 +67,11 @@ final class TalkTests: XCTestCase {
         XCTAssertTrue(DevicePermissions.mayChangeADevice("curl -d '' http://192.168.1.9:1400/MediaRenderer/AVTransport/Control"))
         XCTAssertTrue(DevicePermissions.mayChangeADevice("python3 press.py 172.20.0.5"))
         XCTAssertTrue(DevicePermissions.mayChangeADevice("echo hi | nc living-room.local 1234"))
+        // Allowing one device lets a command reach that device alone.
+        DevicePermissions.asking(about: "Living Room TV", at: "10.0.0.120", for: wish)
+        DevicePermissions.answer(DevicePermissions.allowAlways("Living Room TV"), about: "Living Room TV", for: wish)
+        XCTAssertEqual(DevicePermissions.allowedAddresses(wish), ["10.0.0.120"])
+        XCTAssertEqual(DevicePermissions.devicesChanged(by: "curl -X POST http://10.0.0.120:8060/keypress/Home && curl -d x http://10.0.0.99:1400/x"),
+                       ["10.0.0.120", "10.0.0.99"])
     }
 }

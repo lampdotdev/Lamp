@@ -537,6 +537,7 @@
       "additionalProperties": false,
       "required": [
         "device",
+        "address",
         "doing"
       ],
       "properties": {
@@ -547,6 +548,10 @@
         "doing": {
           "type": "string",
           "description": "What you'd press or change on it, 12 words at most: \"Press Home and open Netflix to check the buttons\"."
+        },
+        "address": {
+          "type": "string",
+          "description": "Its address on the network, as `network_devices` or LampNetwork found it: \"10.0.0.20\" or \"living-room.local\"."
         }
       }
     }

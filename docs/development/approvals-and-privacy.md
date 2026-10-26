@@ -101,5 +101,7 @@ A capability given to one engine must be given to all of them that can take it, 
   its own (`$defaults`, `Engines.swift`); Codex's reviewer is told to refuse it (`CodexReview`), but sees only what needs
   more than Codex's sandbox, which leaves the network open, so under "Only when risky" Codex also gets Lamp's hook asking
   only this (`format=codex-devices`, `DevicePermissions.mayChangeADevice`: a command naming a private address or a
-  `.local` name that isn't a plain `curl` read is refused until a device is allowed). Never leaves every engine's
-  commands unchecked, this rule included.
+  `.local` name that isn't a plain `curl` read is refused unless that address is an allowed device's, as the card noted it).
+  Never leaves every engine's commands unchecked, this rule included. What this can't see: a command that keeps the
+  device's address in a script or file it runs, and which device a `use_app` click really reaches (the agent names it).
+  Holding those too would take filtering the network itself, per address, in the sandbox and in the app.
