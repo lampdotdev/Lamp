@@ -73,16 +73,27 @@ enum Integrations {
     }
 
     /// A step's check passed on a device of this model and software: Lamp marks how it's known now. A step that needed
-    /// the person's hands on the device is done by people; one Lamp did itself is checked by Lamp.
-    static func mark(_ stepID: String, of integrationID: String, on device: Device) {
-        guard var integration = integration(integrationID), let index = integration.steps.firstIndex(where: { $0.id == stepID }) else { return }
+    /// the person's hands on the device is done by people; one Lamp did itself is checked by Lamp. `model` is the
+    /// device's as it's known now, which a model step may just have read. A shipped integration's marks are Lamp's to
+    /// write in the repository: a copy here would never be read, since the shipped one wins.
+    static func mark(_ stepID: String, of integrationID: String, model: String, version: String) {
+        guard !isShipped(integrationID), var integration = integration(integrationID),
+              let index = integration.steps.firstIndex(where: { $0.id == stepID }) else { return }
         let step = integration.steps[index]
         let hands = step.wait == true || !(step.lines ?? []).isEmpty || step.field != nil
         let how: Integration.Known.How = hands ? .people : .lamp
         if step.known?.how == .lamp, how == .people { return }
-        integration.steps[index].known = Integration.Known(how: how, source: step.known?.source, model: device.modelID.isEmpty ? device.model : device.modelID,
-                                                           version: device.osVersion)
+        integration.steps[index].known = Integration.Known(how: how, source: step.known?.source, model: model, version: version)
         write(integration)
+    }
+
+    /// Takes away copies of shipped integrations an earlier Lamp marked into the person's folder. Each was shadowed by
+    /// the shipped one, so nothing read it; left, an old copy would stand in if Lamp ever stopped shipping that id.
+    static func dropShippedCopies() {
+        for file in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        where file.pathExtension == "json" && isShipped(file.deletingPathExtension().lastPathComponent) {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     // MARK: Devices kept
@@ -667,8 +678,11 @@ struct IntegrationRunner {
                                                                         address: device.address ?? "")
         if !keptOne.passed.contains(step.id) { keptOne.passed.append(step.id) }
         if let read { keptOne.reads[step.id] = read }
+        // What the model step read is the device's model from now on, finer than what it said of itself when found.
+        if step.model == true, let model = read?.trimmed.nilIfEmpty { keptOne.model = model }
         Integrations.keep(keptOne)
-        Integrations.mark(step.id, of: integration.id, on: device)
+        Integrations.mark(step.id, of: integration.id, model: keptOne.modelID.isEmpty ? Integrations.model(of: keptOne) : keptOne.modelID,
+                          version: keptOne.osVersion)
     }
 }
 

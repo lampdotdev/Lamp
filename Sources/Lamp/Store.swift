@@ -970,6 +970,7 @@ final class Store: ObservableObject {
     private init() {
         root = Edition.supportFolder.appendingPathComponent("Apps")
         Migration.fromForge()
+        Integrations.dropShippedCopies()
         AppsLink.ensure()
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
         // views drawn meanwhile) follows once they're in.
