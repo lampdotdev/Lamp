@@ -1753,11 +1753,12 @@ final class Store: ObservableObject {
         guard let integration = kept else {
             return (400, ["error": "Lamp didn't take the integration. Fix these and call device_integration again:\n" + problems.map { "- " + $0 }.joined(separator: "\n")])
         }
-        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        let scan = await Integrations.Scan.now()
         var found: [Device] = []
         for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
         }
+        Integrations.remember(found)
         linkSetupConversations(to: found)
         // In the list at once, for the card below; the next look for devices keeps them while they answer.
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
@@ -2295,7 +2296,7 @@ final class Store: ObservableObject {
             }
             do {
                 try await Devices.pair(device.udid)
-                devices = await Devices.list()
+                await refreshAppleDevices()
                 guard let paired = devices.first(where: { $0.udid == device.udid }), paired.paired else {
                     // Paired, as far as devicectl said, but not in the list now: unplugged, or the listing
                     // failed. Not a word about Developer Mode until the phone is seen again.
@@ -2309,7 +2310,7 @@ final class Store: ObservableObject {
                 }
             } catch {
                 tell(.error, error.localizedDescription)
-                devices = await Devices.list()
+                await refreshAppleDevices()
             }
         }
     }
@@ -2320,35 +2321,46 @@ final class Store: ObservableObject {
     /// Whether a look for devices is going on, so what asked for it can say so: it takes a few seconds and most often
     /// finds the same devices, which without a sign looked like nothing happened.
     @Published private(set) var lookingForDevices = false
-    /// Counts looks, so only the latest one's findings are kept: an earlier one that ends later is out of date.
-    private var deviceLook = 0
+    /// A look was asked for while one was going on: it's made once that one ends, since what changed meanwhile (a step
+    /// passed, a device forgotten) may have come too late for it.
+    private var lookAgain = false
     /// When the last look ended, so a new wish doesn't look again within a moment of one (`lookForDevicesForWish`).
     private var devicesLookedAt: Date?
 
     func refreshDevices() {
-        deviceLook += 1
-        let look = deviceLook
+        guard !lookingForDevices else { lookAgain = true; return }
         lookingForDevices = true
         Task {
-            defer {
-                if look == deviceLook {
-                    lookingForDevices = false
-                    devicesLookedAt = Date()
-                }
-            }
-            // Apple's devices, Android's when Android's tools are here (adb is one of them), and the TVs on the network.
+            // Apple's devices, Android's when Android's tools are here (adb is one of them), and what answers on the
+            // network: one search, which the TVs and the integrations share.
             async let apple = Devices.list()
             async let android = Adb.devices()
-            async let tvs = TVs.devices()
+            let scan = await Integrations.Scan.now()
+            async let tvs = TVs.devices(answers: scan.answers)
+            async let integrated = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
-            // What integrations find, and what's on the network that nothing Lamp has knows, after the kits' own.
-            let found = kits + (await Integrations.devices(known: Set(kits.compactMap(\.address))))
-            guard look == deviceLook else { return }
+            let known = await integrated
+            // What's on the network that nothing Lamp has knows, after the rest.
+            let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
+            let found = kits + known + unknown
             if found != devices { devices = found }
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
+            lookingForDevices = false
+            devicesLookedAt = Date()
+            if lookAgain {
+                lookAgain = false
+                refreshDevices()
+            }
         }
+    }
+
+    /// Apple's devices as devicectl lists them now, in place of the last look's: the rest of the list stays, so a
+    /// recheck of a phone doesn't take the TVs and the person's other devices out of Settings and Try On.
+    func refreshAppleDevices() async {
+        let apple = await Devices.list()
+        devices = apple + devices.filter { ![.iphone, .ipad, .watch].contains($0.kind) }
     }
 
     /// A new wish may be for one of the person's devices ("tetris on my TV", "something for my Roku"), so one is
@@ -7455,11 +7467,12 @@ final class Store: ObservableObject {
     private func deviceForApp(_ project: LampProject) async -> Device? {
         if let device = DeviceApps.device(for: project, among: devices), device.connected { return device }
         guard let integration = DeviceApps.integration(for: project) else { return nil }
-        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        let scan = await Integrations.Scan.now()
         var found: [Device] = []
         for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
         }
+        Integrations.remember(found)
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
         return DeviceApps.device(for: project, among: devices)
     }
@@ -8252,7 +8265,7 @@ final class Store: ObservableObject {
         // The code as it's staged, kept once it's on the phone, so a turn that changes nothing doesn't put it there again.
         let build = Runtime.fingerprint(project)
         // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.
-        devices = await Devices.list()
+        await refreshAppleDevices()
         guard stillOwns() else { return nil }
         let device = devices.first(where: { $0.udid == udid })
         if let problem = Devices.problem(device, team: team) {
@@ -10728,7 +10741,7 @@ final class Store: ObservableObject {
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
             if !turn.look.toldPhone {
                 turn.look.toldPhone = true
-                devices = await Devices.list()
+                await refreshAppleDevices()
                 on += " " + Devices.tryOnNote(chosen: project.device, among: devices)
             }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."

@@ -117,6 +117,12 @@ app. The gateway listens on the network while a TV app is set to open on a TV or
 (only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
 name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
 
+A look for devices (`Store.refreshDevices`) is one at a time: one asked for while another runs is made once it ends
+(`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every
+integration share: an integration's `find.ssdp` target and the description its identity reads are taken from those
+answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
+device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
+phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
 Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
 that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
