@@ -328,7 +328,9 @@ enum Agent {
         // person's, so it isn't in the request they see.
         // A device Lamp doesn't know is kept by its network address in the list, and by its hardware address too here.
         let setup = project.deviceSetup
-        let device = Store.shared.devices.first { $0.id == setup }
+        // One begun without a hardware address can't be told from whatever has its address now: nothing found is said of it.
+        let unverified = setup.flatMap(Device.foundAddress) != nil && setup.flatMap(Device.foundHardware) == nil
+        let device = unverified ? nil : Store.shared.devices.first { $0.id == setup }
             ?? setup.flatMap(Device.foundAddress).flatMap { address in
                 // Only while the same hardware is at that address.
                 guard let hardware = setup.flatMap(Device.foundHardware), Neighbours.table()[address] == hardware else { return nil }
