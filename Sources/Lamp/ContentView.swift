@@ -362,17 +362,21 @@ enum AppInfoView {
     static func creditsSection(_ credits: Credits) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
-        // The work it's based on and its licence, each a row; anything else it uses one row each, with its licence when
-        // that's a plain id. Terms of its own (`LicenseRef-`) would make the row too long for the panel, which shows a
-        // row on one line; they're in the About window.
+        // The work it's based on and its licence, each a row; anything else it uses a row of its own, named after it, with
+        // who made it and its licence when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
+        // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
+        // by their labels.
+        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from"]
         for (index, source) in credits.upstream.enumerated() {
             if index == 0 {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
                 rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
-            } else {
-                let license = source.license.map { $0.hasPrefix("LicenseRef-") ? "" : " · " + $0 } ?? " · no licence"
-                rows.append(SidebarInfoRow(label: "Uses", value: Credits.line(for: source) + license))
+                continue
             }
+            var label = source.name
+            while !labels.insert(label).inserted { label += " " }
+            let license = source.license.map { $0.hasPrefix("LicenseRef-") ? nil : $0 } ?? "no licence"
+            rows.append(SidebarInfoRow(label: label, value: [source.author, license].compactMap { $0 }.joined(separator: " · ")))
         }
         if !credits.remixOf.isEmpty {
             rows.append(SidebarInfoRow(label: "Remixed from", value: credits.remixOf.map { $0.name + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: " → ")))
