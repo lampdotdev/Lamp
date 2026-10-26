@@ -437,12 +437,15 @@ enum GameAndroid {
                         id to pair.opt(1)?.takeIf { it != JSONObject.NULL }
                     }
                     val name = call.optString("s")
-                    if (call.optString("op") == "put") LampWish.putItems(name, given)
-                    else LampWish.publishItems(name, given.mapNotNull { (id, value) -> value?.let { id to it } })
+                    val kept = if (call.optString("op") == "put") LampWish.putItems(name, given)
+                        else LampWish.publishItems(name, given.mapNotNull { (id, value) -> value?.let { id to it } })
+                    // Turned down (past a limit): the page, which showed it at once, is told the collection as it really is.
+                    if (!kept) tellItems(name, LampWish.items(name).map { it.first to (it.second as Any?) }, true, LampWish.me)
                 }
                 "putFile" -> {
                     val bytes = try { Base64.decode(call.optString("data"), Base64.DEFAULT) } catch (e: Exception) { return }
-                    LampWish.putFile(call.optString("s"), call.optString("id"), bytes, call.optString("type"))
+                    val kept = LampWish.putFile(call.optString("s"), call.optString("id"), bytes, call.optString("type"))
+                    if (call.has("ask")) tell(JSONObject().put("t", "fileDone").put("ask", call.optInt("ask")).put("ok", kept))
                 }
                 "fileBytes" -> {
                     val file = LampWish.fileOf(call.optString("s"), call.optString("id"))

@@ -14934,7 +14934,7 @@ enum Template {
             // again whichever was open meanwhile.
             for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
             // And what its shared collections add up to, so each asks the other for what differs.
-            for id in arrived where wire(of: id) >= 5 { sendSums(to: id) }
+            for id in arrived where wire(of: id) >= 5 && Self.app(of: id) == me { sendSums(to: id) }
             if !arrived.isEmpty { fetchFiles() }
         }
 
@@ -15716,7 +15716,7 @@ enum Template {
             // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
             if beats % 12 == 0 { for each in copies(for: nil) where wire(of: each) >= 2 { share([:], to: each, extra: ["sum": digest()]) } }
             // And its shared collections, and a shared file asked of a copy that has gone quiet is asked again.
-            if beats % 12 == 0 { for each in copies(for: nil) where wire(of: each) >= 5 { sendSums(to: each) } }
+            if beats % 12 == 0 { for each in storeCopies { sendSums(to: each) } }
             if beats % 12 == 6 { fetchFiles() }
             // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
@@ -16635,7 +16635,7 @@ enum Template {
             guard !changed.isEmpty else { return !failed }
             keepValues()
             itemsChanged(name, changed, from: copy)
-            for each in copies(for: nil) where wire(of: each) >= 5 { shareItems(name, sets, to: each) }
+            for each in storeCopies { shareItems(name, sets, to: each) }
             return !failed
         }
 
@@ -16668,7 +16668,12 @@ enum Template {
 
         // MARK: Between copies
 
+        /// The other copies of this app open now that speak 5: a collection is this app's own, never another app's of the
+        /// wish, so it goes only to them and is taken only from them.
+        private var storeCopies: [String] { me.isEmpty ? [] : copies(for: me).filter { $0 != copy && wire(of: $0) >= 5 } }
+
         private func heardStore(_ m: [String: Any], from peer: String) {
+            guard !me.isEmpty, Self.app(of: peer) == me, peer != copy else { return }
             switch m["op"] as? String {
             case "items":
                 guard let name = m["s"] as? String, Self.isCollection(name), let given = m["items"] as? [String: Any] else { return }
@@ -16754,7 +16759,7 @@ enum Template {
             keepValues()
             if !changed.isEmpty { itemsChanged(name, changed, from: peer) } else if !collectionsUnsaved.isEmpty { saveCollectionsSoon() }
             // Passed on as values are: to the copies open now that the one it came from may not reach.
-            for each in copies(for: nil) where each != peer && wire(of: each) >= 5 && !taken.isEmpty {
+            for each in storeCopies where each != peer && !taken.isEmpty {
                 if directs[each]?.ready == true || (relayPresent[peer] == nil && relayPresent[each] != nil) { shareItems(name, taken, to: each) }
             }
         }
@@ -16886,7 +16891,7 @@ enum Template {
         /// Asks for the shared files this copy lacks, each of one other copy at a time: the one that set it first, then each
         /// of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes.
         private func fetchFiles() {
-            let sources = copies(for: nil).filter { wire(of: $0) >= 5 }
+            let sources = storeCopies
             guard !sources.isEmpty else { return }
             let now = Date()
             var here = 0
@@ -16932,6 +16937,7 @@ enum Template {
 
         /// A shared file's bytes from another copy: kept when they're the file as it is now.
         private func sharedFileArrived(_ name: String, id: String, data: Data, from peer: String) {
+            guard Self.app(of: peer) == me else { return }
             let key = name + "\t" + id
             fileAsks[key] = nil
             guard name.hasPrefix("files:"), Self.isCollection(name), let meta = item(in: name, id: id) as? [String: Any],

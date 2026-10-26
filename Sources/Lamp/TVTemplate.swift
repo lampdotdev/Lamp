@@ -1376,7 +1376,7 @@ extension TVTemplate {
             // again whichever was open meanwhile.
             for (var j = 0; j < arrived.length; j++) if (wireOf(arrived[j]) >= 2) share(entries, arrived[j]);
             // And what its shared collections add up to, so each asks the other for what differs.
-            for (var sj = 0; sj < arrived.length; sj++) if (wireOf(arrived[sj]) >= 5) sendSums(arrived[sj]);
+            for (var sj = 0; sj < arrived.length; sj++) if (wireOf(arrived[sj]) >= 5 && appOf(arrived[sj]) === mine) sendSums(arrived[sj]);
             if (arrived.length) fetchFiles();
           }
           // What another open copy speaks: 1 for an app from before values, which says nothing of it.
@@ -2274,7 +2274,7 @@ extension TVTemplate {
             var each = copiesFor(null);
             if (beats % 12 === 0) for (var j = 0; j < each.length; j++) if (wireOf(each[j]) >= 2) share({}, each[j], { sum: digest() });
             // And its shared collections; a shared file asked of a copy that has gone quiet is asked again.
-            if (beats % 12 === 0) for (var sj = 0; sj < each.length; sj++) if (wireOf(each[sj]) >= 5) sendSums(each[sj]);
+            if (beats % 12 === 0) { var ownCopies = storeCopies(); for (var sj = 0; sj < ownCopies.length; sj++) sendSums(ownCopies[sj]); }
             if (beats % 12 === 6) fetchFiles();
             // A page without the wish's key keeps saying why (open, claim) rather than "Connecting…".
             if (key) rebuild();
@@ -2472,8 +2472,8 @@ extension TVTemplate {
             if (!changed.length) return !failed;
             keepValues();
             itemsChanged(name, changed, myCopy() || mine);
-            var list = copiesFor(null);
-            for (var j = 0; j < list.length; j++) if (wireOf(list[j]) >= 5) shareItems(name, sets, list[j]);
+            var list = storeCopies();
+            for (var j = 0; j < list.length; j++) shareItems(name, sets, list[j]);
             return !failed;
           }
           function publishItems(name, given) {
@@ -2482,8 +2482,16 @@ extension TVTemplate {
             for (var id in c) if (!ids[id] && c[id].v !== undefined && c[id].c[2] === me) list.push([id, null]);
             return putItems(name, list);
           }
+          // The other copies of this app open now that speak 5: a collection is this app's own, never another app's of
+          // the wish, so it goes only to them and is taken only from them.
+          function storeCopies() {
+            if (!mine) return [];
+            var me = myCopy();
+            return copiesFor(mine).filter(function (id) { return id !== me && wireOf(id) >= 5; });
+          }
           function heardStore(m, from) {
             var name, i;
+            if (!mine || appOf(from) !== mine || from === myCopy()) return;
             if (m.op === 'items') {
               if (colOk(m.s) && m.items && typeof m.items === 'object') mergeItems(m.s, m.items, from);
             } else if (m.op === 'sum') {
@@ -2570,10 +2578,10 @@ extension TVTemplate {
             else { var u = false; for (var un in unsaved) u = true; if (u) saveItemsSoon(); }
             if (!any) return;
             // Passed on as values are: to the copies open now that the one it came from may not reach.
-            var each_ = copiesFor(null);
+            var each_ = storeCopies();
             for (var j = 0; j < each_.length; j++) {
               var to = each_[j], straight = directs[to] && directs[to].ready;
-              if (to !== from && wireOf(to) >= 5 && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
+              if (to !== from && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
             }
           }
           function shareItems(name, list, id) {
@@ -2623,7 +2631,7 @@ extension TVTemplate {
             }
           }
           function fetchFiles() {
-            var sources = copiesFor(null).filter(function (id) { return wireOf(id) >= 5; }), now = Date.now(), here = 0, name, id;
+            var sources = storeCopies(), now = Date.now(), here = 0, name, id;
             if (!sources.length) return;
             for (var k in fileBytes) here += fileBytes[k].data.length;
             var list = names(cols);
@@ -2662,6 +2670,7 @@ extension TVTemplate {
             }
           }
           function sharedFileArrived(name, id, data, from) {
+            if (appOf(from) !== mine) return;
             var key_ = name + '\t' + id, meta = cols[name] && cols[name][id] && cols[name][id].v;
             delete fileAsks[key_];
             if (!meta || typeof meta.sum !== 'string' || checksum(data) !== meta.sum) return fetchFiles();
@@ -2755,7 +2764,7 @@ extension TVTemplate {
             }
             return Promise.reject(new Error('a file is a File, a Blob, an ArrayBuffer, bytes or text.'));
           }
-          var sharedLists = {}, sharedFolders = {};
+          var sharedLists = Object.create(null), sharedFolders = Object.create(null);
           // A list the app keeps the same on every copy of it (the same app on a Mac, an iPad, a TV and a photo frame):
           // see LampStore.shared in lamp.js's header.
           function shared(name, idKey) {
@@ -2788,7 +2797,7 @@ extension TVTemplate {
           function sharedFiles(name) {
             if (sharedFolders[name]) return sharedFolders[name];
             api.start();
-            var key_ = 'files:' + name, on_ = [], urls = {};
+            var key_ = 'files:' + name, on_ = [], urls = Object.create(null);
             store.listen(key_, function (changed, from) {
               for (var i = 0; i < changed.length; i++) for (var j = 0; j < on_.length; j++) {
                 try { on_[j](changed[i][0], from); } catch (e) { if (window.console) console.error(e); }
@@ -2957,8 +2966,10 @@ extension TVTemplate {
             };
             // The shared collections are the app's: the page mirrors each it uses, told all of it first and then what
             // changes ({ t: 'items', s, items: { id: value or null }, whole, from, here }), and a change made here is
-            // shown at once and made in the app.
-            var subscribed = {}, here_ = {}, fileAsked = {}, nextAsk = 0;
+            // shown at once and made in the app. One the app turns down (past a limit) is taken back: the app sends the
+            // collection whole again, and onChange hears the difference. A file put is answered (fileDone) with whether
+            // the app kept it.
+            var subscribed = Object.create(null), here_ = Object.create(null), fileAsked = {}, nextAsk = 0;
             function subscribe(name) { if (!subscribed[name]) { subscribed[name] = true; post({ op: 'shared', s: name }); } }
             function heardItems(m) {
               if (!colOk(m.s) || !m.items || typeof m.items !== 'object') return;
@@ -2984,6 +2995,11 @@ extension TVTemplate {
             var plainHeard = window.__lampWish;
             window.__lampWish = function (m) {
               if (m && m.t === 'items') return heardItems(m);
+              if (m && m.t === 'fileDone' && fileAsked[m.ask]) {
+                var kept = fileAsked[m.ask];
+                delete fileAsked[m.ask];
+                return kept(m.ok === true);
+              }
               if (m && m.t === 'fileBytes' && fileAsked[m.ask]) {
                 var done = fileAsked[m.ask];
                 delete fileAsked[m.ask];
@@ -3024,8 +3040,11 @@ extension TVTemplate {
             store.putFile = function (name, id, data, type) {
               subscribe(name);
               if (data.length > 67108864) { say('LampStore.sharedFiles: "' + id + '" is too big to share: 64 MB at most.'); return false; }
-              post({ op: 'putFile', s: name, id: id, type: String(type || ''), data: toBase64(data) });
-              return true;
+              return new Promise(function (resolve) {
+                var ask = ++nextAsk;
+                fileAsked[ask] = resolve;
+                post({ op: 'putFile', s: name, id: id, type: String(type || ''), data: toBase64(data), ask: ask });
+              });
             };
             store.fileBytes = function (name, id) {
               subscribe(name);

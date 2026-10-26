@@ -190,11 +190,14 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
                 guard pair.count == 2, let id = pair[0] as? String else { return nil }
                 return (id, pair[1] is NSNull ? nil : pair[1])
             }
-            if op == "put" { wish.putItems(in: name, given) } else { wish.publishItems(in: name, given.compactMap { id, value in value.map { (id, $0) } }) }
+            let kept = op == "put" ? wish.putItems(in: name, given) : wish.publishItems(in: name, given.compactMap { id, value in value.map { (id, $0) } })
+            // Turned down (past a limit): the page, which showed it at once, is told the collection as it really is.
+            if !kept { tellItems(name, wish.items(in: name).map { ($0.id, $0.value as Any?) }, whole: true, from: wish.me) }
         case "putFile":
             guard let name = call["s"] as? String, let id = call["id"] as? String,
                   let data = (call["data"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return }
-            wish.putFile(in: name, id: id, data: data, type: call["type"] as? String ?? "")
+            let kept = wish.putFile(in: name, id: id, data: data, type: call["type"] as? String ?? "")
+            if let ask = call["ask"] as? Int { tell(["t": "fileDone", "ask": ask, "ok": kept]) }
         case "fileBytes":
             guard let name = call["s"] as? String, let id = call["id"] as? String, let ask = call["ask"] as? Int else { return }
             let data = wish.fileURL(in: name, id: id).flatMap { try? Data(contentsOf: $0) }

@@ -1455,7 +1455,7 @@ extension Template {
             // again whichever was open meanwhile.
             for (id in arrived) if (wireOf(id) >= 2) share(valuesLock.withLock { entries.toMap() }, id)
             // And what its shared collections add up to, so each asks the other for what differs.
-            for (id in arrived) if (wireOf(id) >= 5) sendSums(id)
+            for (id in arrived) if (wireOf(id) >= 5 && appOf(id) == me) sendSums(id)
             if (arrived.isNotEmpty()) fetchFiles()
         }
 
@@ -2037,7 +2037,7 @@ extension Template {
             if (changed.isEmpty()) return !failed
             keepValues()
             itemsChanged(name, changed, copy)
-            for (each in copiesFor(null)) if (wireOf(each) >= 5) shareItems(name, sets, each)
+            for (each in storeCopies()) shareItems(name, sets, each)
             return !failed
         }
 
@@ -2075,7 +2075,17 @@ extension Template {
             if (named) saveCollectionsSoon()
         }
 
+        /** The other copies of this app open now that speak 5: a collection is this app's own, never another app's of the
+         *  wish, so it goes only to them and is taken only from them. */
+        private fun storeCopies(): List<String> {
+            val mine = me
+            if (mine.isEmpty()) return emptyList()
+            val self = copy
+            return copiesFor(mine).filter { it != self && wireOf(it) >= 5 }
+        }
+
         private fun heardStore(m: JSONObject, from: String) {
+            if (me.isEmpty() || appOf(from) != me || from == copy) return
             ensureCollections()
             when (m.optString("op")) {
                 "items" -> { val name = m.optString("s"); if (isCollection(name)) m.optJSONObject("items")?.let { mergeItems(name, it, from) } }
@@ -2171,8 +2181,8 @@ extension Template {
             // Passed on as values are: to the copies open now that the one it came from may not reach.
             val ways = routes
             val inRoom = relayed
-            for (each in copiesFor(null)) {
-                if (each == from || wireOf(each) < 5) continue
+            for (each in storeCopies()) {
+                if (each == from) continue
                 if (each in ways || (from !in inRoom && each in inRoom)) shareItems(name, taken, each)
             }
         }
@@ -2271,7 +2281,7 @@ extension Template {
          *  of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes. On the main
          *  thread. */
         private fun fetchFiles() {
-            val sources = copiesFor(null).filter { wireOf(it) >= 5 }
+            val sources = storeCopies()
             if (sources.isEmpty()) return
             val now = System.currentTimeMillis()
             val all = valuesLock.withLock { collections.filterKeys { it.startsWith("files:") }.toSortedMap().mapValues { it.value.toSortedMap().mapValues { e -> e.value.entry } } }
@@ -2320,6 +2330,7 @@ extension Template {
 
         /** A shared file's bytes from another copy: kept when they're the file as it is now. On the main thread. */
         private fun sharedFileArrived(name: String, id: String, bytes: ByteArray, from: String) {
+            if (appOf(from) != me) return
             val key = "$name\t$id"
             fileAsks.remove(key)
             val meta = item(name, id) as? JSONObject
@@ -2605,7 +2616,7 @@ extension Template {
             // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
             if (beats % 12 == 0) for (each in copiesFor(null)) if (wireOf(each) >= 2) share(emptyMap(), each, JSONObject().put("sum", digest()))
             // And its shared collections; a shared file asked of a copy that has gone quiet is asked again.
-            if (beats % 12 == 0) for (each in copiesFor(null)) if (wireOf(each) >= 5) sendSums(each)
+            if (beats % 12 == 0) for (each in storeCopies()) sendSums(each)
             if (beats % 12 == 6) fetchFiles()
             rebuild()
             val mine = addresses()
@@ -3228,9 +3239,16 @@ extension Template {
         private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, T?, String) -> Unit>()
         val items: kotlinx.coroutines.flow.StateFlow<List<T>> get() = itemsFlow
 
-        init {
-            for ((id, value) in LampWish.items(name)) decode(value, id)?.let { byID[id] = it }
+        /** What the collection holds now, so a write here reads back before its change is heard. */
+        private fun reload() {
+            val now = LampWish.items(name).toMap()
+            byID.keys.retainAll(now.keys)
+            for ((id, value) in now) decode(value, id)?.let { byID[id] = it }
             itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] }
+        }
+
+        init {
+            reload()
             LampWish.onItems(name) { changed, from ->
                 val said = changed.map { (id, value) -> id to value?.let { decode(it, id) }.also { item -> if (item != null) byID[id] = item else byID.remove(id) } }
                 itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] }
@@ -3238,12 +3256,20 @@ extension Template {
             }
         }
 
-        /** Adds the item, or replaces the one with the same id, here and on every copy. */
+        /** Adds the item, or replaces the one with the same id, here and on every copy. Read back at once; `onChange`
+         *  hears it a moment later, on the main thread. */
         fun put(item: T): Boolean = put(listOf(item))
-        fun put(items: List<T>): Boolean = LampWish.putItems(name, items.map { idOf(it).toString() to encode(it) })
+        fun put(items: List<T>): Boolean {
+            val kept = LampWish.putItems(name, items.map { idOf(it).toString() to encode(it) })
+            // All kept: just these change; one turned down, the whole collection is read again.
+            if (kept) { for (item in items) byID[idOf(item).toString()] = item; itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] } } else reload()
+            return kept
+        }
         /** Makes the items this copy put exactly these: each put, and each it put before that isn't among them deleted. */
-        fun publish(items: List<T>): Boolean = LampWish.publishItems(name, items.map { idOf(it).toString() to encode(it) })
-        fun delete(id: Any): Boolean = LampWish.putItems(name, listOf(id.toString() to null))
+        fun publish(items: List<T>): Boolean = LampWish.publishItems(name, items.map { idOf(it).toString() to encode(it) }).also { reload() }
+        fun delete(id: Any): Boolean = LampWish.putItems(name, listOf(id.toString() to null)).also {
+            if (it) { byID.remove(id.toString()); itemsFlow.value = byID.keys.sorted().mapNotNull { key -> byID[key] } }
+        }
         fun get(id: Any): T? = byID[id.toString()]
         fun all(): List<T> = itemsFlow.value
         val count: Int get() = itemsFlow.value.size
@@ -3290,10 +3316,10 @@ extension Template {
             }
         }
 
-        fun put(name: String, bytes: ByteArray, type: String): Boolean = LampWish.putFile(key, name, bytes, type)
+        fun put(name: String, bytes: ByteArray, type: String): Boolean = LampWish.putFile(key, name, bytes, type).also { reload() }
         fun get(name: String): ByteArray? = file(name)?.let { try { it.readBytes() } catch (e: Exception) { null } }
         fun file(name: String): File? = LampWish.fileOf(key, name)
-        fun delete(name: String): Boolean = LampWish.putItems(key, listOf(name to null))
+        fun delete(name: String): Boolean = LampWish.putItems(key, listOf(name to null)).also { reload() }
         /** Hears each change, on the main thread: the file's name, and which app made it. Heard again when its bytes arrive. */
         fun onChange(handler: (name: String, from: String) -> Unit) { listeners.add(handler) }
 
