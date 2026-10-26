@@ -5,16 +5,23 @@ import XCTest
 /// planned by Xcode for that team (`TeamSigning.plan`). Only when asked, since every plan registers ids with the team
 /// and a free team gets 10 a week: `LAMP_FREE_TEAM=<team id> LAMP_FREE_TEAM_DEVICE=<udid> swift test --filter
 /// FreeTeamProbeLiveTests`, on a Mac with Xcode signed in to that account and the phone paired. Every probe uses the same
-/// app id, so the whole run costs two of the week's ids (the app's and a widget's). `LAMP_FREE_TEAM_OUT=<file>` keeps
-/// what was found. The reinstall test puts a small app on the phone, never opens it, and takes it off again.
+/// app id, so the whole run costs two of the week's ids (the app's and a widget's). What was found is printed at the end
+/// of each test, and `LAMP_FREE_TEAM_OUT=<file>` keeps it too. The reinstall test puts a small app on the phone, never opens it, and takes it off again.
 @MainActor
 final class FreeTeamProbeLiveTests: XCTestCase {
     private var root: URL?
     private var projects: [LampProject] = []
     private var savedTeam: String?
     private var report: [String] = []
+    /// The probe app on the phone, taken off again in tearDown whatever happened.
+    private var installed: (device: String, bundleID: String)?
 
     override func tearDown() async throws {
+        if let installed {
+            let removed = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "uninstall", "app", "--device", installed.device, installed.bundleID], timeout: 120)
+            report.append("probe app taken off the phone: " + (removed.ok ? "yes" : "no: " + removed.output + removed.errors))
+            XCTAssertTrue(removed.ok, "the probe app is still on the phone: " + removed.output + removed.errors)
+        }
         let fm = FileManager.default
         if let root { try? fm.removeItem(at: root) }
         for project in projects {
@@ -24,6 +31,8 @@ final class FreeTeamProbeLiveTests: XCTestCase {
         for folder in [Devices.buildsFolder.appendingPathComponent(".signing"), Devices.buildsFolder]
         where (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true { try? fm.removeItem(at: folder) }
         if let savedTeam { Devices.team = savedTeam }
+        // The answers are the point of a run, which spends the team's ids: always shown, and kept in a file when asked.
+        if !report.isEmpty { print(report.joined(separator: "\n")) }
         if let out = ProcessInfo.processInfo.environment["LAMP_FREE_TEAM_OUT"] {
             let before = (try? String(contentsOfFile: out, encoding: .utf8)) ?? ""
             try? (before + report.joined(separator: "\n") + "\n\n").write(toFile: out, atomically: true, encoding: .utf8)
@@ -146,9 +155,7 @@ final class FreeTeamProbeLiveTests: XCTestCase {
         let built = try await Devices.build(project, team: team, destination: "id=\(device)") { output.append($0) }
         let copy = try await Devices.signedCopy(of: built, for: project, team: team, destination: "id=\(device)") { output.append($0) }
         try await Devices.install(copy, on: device)
-        defer {
-            Task { _ = await Subprocess.run(devicectl, ["device", "uninstall", "app", "--device", device, bundleID], timeout: 120) }
-        }
+        installed = (device, bundleID)
         let marker = root!.appendingPathComponent("marker.txt")
         try "kept".write(to: marker, atomically: true, encoding: .utf8)
         let container = ["--domain-type", "appDataContainer", "--domain-identifier", bundleID, "--device", device]
@@ -164,6 +171,5 @@ final class FreeTeamProbeLiveTests: XCTestCase {
         let kept = (try? String(contentsOf: back, encoding: .utf8)) == "kept"
         report.append("after signing again and reinstalling, the marker is " + (kept ? "still there" : "gone: " + got.output + got.errors))
         XCTAssertTrue(kept)
-        _ = await Subprocess.run(devicectl, ["device", "uninstall", "app", "--device", device, bundleID], timeout: 120)
     }
 }
