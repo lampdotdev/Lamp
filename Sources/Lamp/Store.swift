@@ -1669,11 +1669,18 @@ final class Store: ObservableObject {
     /// integration (`device_integration`), with what the device said of itself. Like finding a wish, nothing is named,
     /// scaffolded or built until a wish for the device is sent.
     func setUpDevice(_ device: Device) {
-        // One conversation per device: Set Up… again goes back to it, where it was left.
-        if let earlier = projects.first(where: { $0.deviceSetup == device.id }) { return showChat(earlier.id) }
+        // One conversation per device: Set Up… again goes back to it, where it was left. A device Lamp doesn't know is
+        // told apart by its hardware address as well as its network address, which may be another device's later; one
+        // whose hardware address Lamp can't read gets a new conversation each time, never another device's.
+        var id = device.id
+        if let address = Device.foundAddress(id), Device.foundHardware(id) == nil {
+            id = Neighbours.table()[address].map { "found:\(address)#\($0)" } ?? id
+        }
+        if Device.foundAddress(id) == nil || Device.foundHardware(id) != nil,
+           let earlier = projects.first(where: { $0.deviceSetup == id }) { return showChat(earlier.id) }
         let project: LampProject
         do {
-            project = try Template.draft(name: "Set Up \(device.plainName)", deviceSetup: device.id, in: root)
+            project = try Template.draft(name: "Set Up \(device.plainName)", deviceSetup: id, in: root)
         } catch {
             NSAlert(error: error).runModal()
             return
@@ -1690,7 +1697,9 @@ final class Store: ObservableObject {
     func linkSetupConversations(to found: [Device]) {
         var changed = false
         for project in projects {
+            // The same device, not only the same address: its hardware address, where the conversation knows it.
             guard let id = project.deviceSetup, let address = Device.foundAddress(id),
+                  Device.foundHardware(id).map({ Neighbours.table()[address] == $0 }) ?? true,
                   let device = found.first(where: { $0.integration != nil && $0.address == address }),
                   !projects.contains(where: { $0.deviceSetup == device.id }) else { continue }
             var linked = project

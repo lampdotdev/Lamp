@@ -167,7 +167,8 @@ enum HomeNetwork {
 
     static func sameNetwork(as swept: Subnet?, router: String?) -> Bool {
         guard let swept, let now = Subnet.current(), now.network == swept.network, now.prefix == swept.prefix else { return false }
-        guard let router else { return true }
+        // Without the router's hardware address the network can't be told from another on the same subnet.
+        guard let router else { return false }
         return Neighbours.gateway().flatMap { Neighbours.table()[$0] } == router
     }
 

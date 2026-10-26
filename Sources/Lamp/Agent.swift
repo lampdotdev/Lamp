@@ -326,7 +326,14 @@ enum Agent {
         var note = "\n\n---\nThis conversation is the setup of a device of the person's (from Lamp, not part of the request above): no app is made here. Write no files and open nothing; write or fix the device's integration with `device_integration` (the `device-integrations` skill), and answer about the device in a sentence or two. Lamp shows its setup steps as cards. When the person wants something on the device, tell them to make a wish for it on Lamp's desk."
         // What the device said of itself when it was found, for writing its integration: the agent's to read, not the
         // person's, so it isn't in the request they see.
-        let device = Store.shared.devices.first(where: { $0.id == project.deviceSetup })
+        // A device Lamp doesn't know is kept by its network address in the list, and by its hardware address too here.
+        let setup = project.deviceSetup
+        let device = Store.shared.devices.first { $0.id == setup }
+            ?? setup.flatMap(Device.foundAddress).flatMap { address in
+                // Only while the same hardware is at that address.
+                guard let hardware = setup.flatMap(Device.foundHardware), Neighbours.table()[address] == hardware else { return nil }
+                return Store.shared.devices.first { Device.foundAddress($0.id) == address }
+            }
         if let device {
             var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
             if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
