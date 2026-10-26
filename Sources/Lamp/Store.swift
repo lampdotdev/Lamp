@@ -995,7 +995,9 @@ final class Store: ObservableObject {
         watchOpenApps()
         // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
         // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        if projects.contains(where: { $0.platform.target.places.contains(where: \.listsDevices) }) { refreshDevices(); refreshSimulators() }
+        // Only where a wish really opens counts (a phone, a TV, an Xbox), not every place its kind could: the New York starter is a game, which
+        // could go on a phone, and looking at launch for it put macOS's Local Network question in a new person's welcome.
+        if projects.contains(where: { $0.openPlaces.contains { $0.listsDevices || $0 == .device } }) { refreshDevices(); refreshSimulators() }
         else { Task { thisMac = await Device.readThisMac() } }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
