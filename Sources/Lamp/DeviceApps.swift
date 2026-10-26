@@ -416,9 +416,19 @@ enum DeviceApps {
         }
     }
 
+    /// Takes the copy just put on one device off it, saying what the device answered when it refused: the test run's
+    /// last stage (`IntegrationProbe`), where a removal that fails is the finding rather than something to pass over.
+    static func remove(_ project: LampProject, from device: Device) async throws {
+        guard let integration = integration(for: project), let remove = integration.bridge?.remove, !remove.isEmpty else { return }
+        let extra = integration.app?.declared?.wrap == nil ? values(project) : (installedValues(project, on: device) ?? values(project))
+        let runner = IntegrationRunner(integration: integration, device: device)
+        if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: extra) }
+        _ = try await runner.run(remove, extra: extra)
+    }
+
     /// Lamp's values for the bridge: the app's id, whether it's a game, and for a wrapped package the names Windows
     /// gives it.
-    private static func values(_ project: LampProject) -> [String: String] {
+    static func values(_ project: LampProject) -> [String: String] {
         var values = values(project, identity: buildFolder(for: project).appendingPathComponent("identity.json")) ?? ["appID": project.id]
         values["isGame"] = isGame(project) ? "true" : "false"
         return values

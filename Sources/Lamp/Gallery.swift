@@ -422,7 +422,27 @@ enum Gallery {
         },
         Entry(group: "Device setup", name: "The setup window, set up") {
             AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
-                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }, tryIt: {}))
+        },
+        Entry(group: "Device setup", name: "The setup window, a test run under way") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    trial: [.init(id: "Make a test app", state: .passed), .init(id: "Put it on and open it", state: .passed),
+                                            .init(id: "See its screen", state: .running), .init(id: "Press its keys", state: .waiting),
+                                            .init(id: "Take it off", state: .waiting)], tryIt: {}, canTry: false))
+        },
+        Entry(group: "Device setup", name: "The setup window, a test run that failed") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    trial: [.init(id: "Make a test app", state: .passed), .init(id: "Put it on and open it", state: .passed),
+                                            .init(id: "Put it on again while it's open", state: .failed("The request timed out.")),
+                                            .init(id: "Take it off", state: .skipped)], tryIt: {}))
+        },
+        Entry(group: "Device setup", name: "The setup window, a test run that passed") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    trial: [.init(id: "Make a test app", state: .passed), .init(id: "Put it on and open it", state: .passed),
+                                            .init(id: "Take it off", state: .passed)], tryIt: {}, worked: "Apps worked on 3900X, 15.3.4"))
         },
     ]
 

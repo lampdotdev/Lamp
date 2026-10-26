@@ -44,6 +44,8 @@ final class DeviceSetupModel: ObservableObject {
     /// The device showed another certificate than the one Lamp kept (`DeviceTLS`): nothing goes to it until the person
     /// reconnects it. Shown in place of a step's card, wherever the device's setup is.
     @Published private(set) var certificateChanged = false
+    /// The test run's stages while it runs, and after (`IntegrationProbe`).
+    @Published private(set) var trial: [IntegrationProbe.Stage] = []
     private var answer: CheckedContinuation<Bool, Never>?
     private var watching: Task<Void, Never>?
     /// What asked for the setup, run once the device is ready.
@@ -62,6 +64,22 @@ final class DeviceSetupModel: ObservableObject {
     }
 
     var integration: Integration? { device.integration.flatMap(Integrations.integration) }
+
+    /// Whether a test run can start: the device is set up, its integration makes apps, and none is running.
+    var canTry: Bool { ready && integration?.app?.declared != nil && !trial.contains { $0.state == .running } }
+
+    /// Puts a test app on the device and back off, at the person's press.
+    func tryIt() {
+        guard canTry, let integration else { return }
+        let device = device
+        Task { await IntegrationProbe.run(integration, on: device) { [weak self] in self?.trial = $0 } }
+    }
+
+    /// The bridge's mark from a test run that passed, in the person's words.
+    var worked: String? {
+        guard let known = integration?.bridge?.known, let model = known.model else { return nil }
+        return "Apps worked on \(model)" + (known.version.map { ", \($0)" } ?? "")
+    }
     var steps: [Integration.Step] { integration?.steps ?? [] }
     var next: Integration.Step? { steps.first { !passed.contains($0.id) } }
     var ready: Bool { integration != nil && next == nil }
@@ -236,7 +254,9 @@ struct DeviceSetupView: View {
         DeviceSetupPage(device: model.device, steps: model.steps, passed: model.passed, content: model.content, typed: $model.typed,
                         approval: model.approval, act: model.act, decide: model.decide,
                         ask: conversation.map { project in { Store.shared.showChat(project.id) } },
-                        reconnect: model.certificateChanged ? { model.reconnect() } : nil)
+                        reconnect: model.certificateChanged ? { model.reconnect() } : nil,
+                        trial: model.trial, tryIt: model.integration?.app?.declared != nil ? { model.tryIt() } : nil,
+                        canTry: model.canTry, worked: model.worked)
     }
 }
 
@@ -255,6 +275,11 @@ struct DeviceSetupPage: View {
     var ask: (() -> Void)? = nil
     /// Set while the device's certificate has changed: the reconnect card takes the step card's place.
     var reconnect: (() -> Void)? = nil
+    /// Once it's set up, for a device that takes apps: a test run's stages, its button, and how its bridge is known.
+    var trial: [IntegrationProbe.Stage] = []
+    var tryIt: (() -> Void)? = nil
+    var canTry = true
+    var worked: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -295,6 +320,7 @@ struct DeviceSetupPage: View {
                 DeviceStepCard(content: content, typed: $typed, act: act).padding(.top, 16)
             } else if !steps.isEmpty {
                 Label("\(device.name) is set up.", systemImage: "checkmark.circle.fill").foregroundStyle(.green).padding(.top, 16)
+                if let tryIt { DeviceTrialCard(device: device.name, stages: trial, worked: worked, enabled: canTry, tryIt: tryIt).padding(.top, 12) }
             }
         }
         .padding(20)
@@ -504,3 +530,49 @@ enum DeviceStepLine {
     }
 }
 
+
+/// A set-up device's test run: Lamp puts a test app on it, tries it, and takes it off (`IntegrationProbe`). Each stage
+/// ticks as it goes, with the device's words where one failed; a run that passed leaves the bridge's mark.
+struct DeviceTrialCard: View {
+    let device: String
+    let stages: [IntegrationProbe.Stage]
+    let worked: String?
+    let enabled: Bool
+    let tryIt: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Lamp puts a test app on \(device), tries it with the remote, then takes it off.").foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !stages.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(stages) { stage in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            symbol(stage.state).frame(width: 16)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(stage.id).opacity(stage.state == .skipped || stage.state == .waiting ? 0.5 : 1)
+                                if case .failed(let why) = stage.state { Text(why).font(.callout).foregroundStyle(.secondary).lineLimit(4) }
+                            }
+                        }
+                    }
+                }
+            }
+            HStack {
+                if let worked { Label(worked, systemImage: "checkmark.seal").font(.callout).foregroundStyle(.secondary) }
+                Spacer()
+                Button(stages.isEmpty ? "Try It on \(device)" : "Try Again", action: tryIt).disabled(!enabled)
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder private func symbol(_ state: IntegrationProbe.Stage.State) -> some View {
+        switch state {
+        case .running: ProgressView().controlSize(.small)
+        case .passed: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        case .waiting, .skipped: Image(systemName: "circle").foregroundStyle(.tertiary)
+        }
+    }
+}
