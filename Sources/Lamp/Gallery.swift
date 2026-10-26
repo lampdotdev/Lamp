@@ -143,11 +143,6 @@ enum Gallery {
             LogLine(kind: .status, text: "Today is ready on the iPhone"),
             LogLine(kind: .keepOpening, text: ""),
         ]),
-        screen("Keeping it opening, chosen", group: "Chat screen", [
-            LogLine(kind: .user, text: "put it on my phone"),
-            LogLine(kind: .status, text: "Today is ready on the iPhone"),
-            LogLine(kind: .keepOpening, text: KeepOpeningLine.chosen),
-        ]),
         screen("It stopped opening on the phone", group: "Chat screen", [
             LogLine(kind: .error, text: "Today on the iPhone stopped opening: Apple lets an app signed with your account open for a limited time, and Lamp couldn't put it back. Lamp can't reach the iPhone. Connect it to this Mac or join the same Wi‑Fi, unlock it, then click Retry.", retryPhone: "00008110-gallery"),
         ]),

@@ -111,15 +111,13 @@ enum PhoneRenewals {
     }
 }
 
-/// The chat's card offering to keep an app opening on the person's phone: a plain action card, its button gone once
-/// the person has chosen it (here or in Settings).
+/// The chat's card offering to keep an app opening on the person's phone: a plain action card that says what Lamp does
+/// now, its button there whenever the setting is off (never chosen, or turned off in Settings since).
 enum KeepOpeningLine {
     static func text(_ name: String, on: Bool) -> String {
         on ? "Lamp opens when you log in and puts \(name) back on your phone before it stops opening."
             : "Apple lets apps signed with a free account open for seven days. Lamp can put \(name) back on your phone before then if it opens when you log in and keeps running with its window closed."
     }
     static let button = "Keep It Opening"
-    /// The line's text once the person chose it from the card: the card says so even if Settings is changed later.
-    static let chosen = "chosen"
     static let symbol = "clock.arrow.circlepath"
 }

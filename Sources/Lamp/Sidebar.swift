@@ -778,7 +778,8 @@ final class SidebarServer {
                     card.disabled = IPhoneSetupLine.isOff(for: project, wanted: kind, part: part)
                     out.append(card)
                 case .keepOpening:
-                    let on = PhoneRenewals.staysOpen || line.text == KeepOpeningLine.chosen
+                    // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
+                    let on = PhoneRenewals.staysOpen
                     var card = SidebarLine(id: line.id, kind: .action, text: KeepOpeningLine.text(project.name, on: on), gap: gap)
                     card.symbol = KeepOpeningLine.symbol
                     card.button = on ? nil : KeepOpeningLine.button

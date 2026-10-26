@@ -938,8 +938,9 @@ struct DevicesSection: View {
                 Spacer()
                 Button("Add a New Device…") { adding = true }.controlSize(.small)
             }
-            // Shown once an app is on a phone, which is when it does something.
-            if PhoneRenewals.anyOnPhones(store.projects) {
+            // Shown once an app is on a phone, which is when it does something, and while it's on, so it can always be
+            // turned off: Lamp keeps opening at login until it is.
+            if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
                 SettingsCheckboxes {
                     Toggle("Keep apps on your phones opening", isOn: Binding(get: { keepOpening }, set: { store.keepPhoneAppsOpening($0) }))
                         .checkboxNote("Lamp opens when you log in and keeps running with its window closed, to put them back before Apple stops them opening.")
