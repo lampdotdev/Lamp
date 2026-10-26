@@ -10721,8 +10721,14 @@ enum Template {
         /// the whole network at once. The first time, the system asks the person whether the app may use the local
         /// network, and nothing answers until they allow it: offer to look again.
         static func find(timeout: TimeInterval = 3) async -> [LampRoku] {
-            var found = await read(Array(Set(await ssdp(timeout: min(timeout, 2)) + remembered)), timeout: timeout)
-            if found.isEmpty { found = await read(neighbours(), timeout: 1.5) }
+            let answered = await ssdp(timeout: min(timeout, 2))
+            var found = await read(Array(Set(answered + remembered)), timeout: timeout)
+            // Where SSDP got no answer (an iPhone app can't send it), the Rokus found before are only a start: one added
+            // or moved since is found by the sweep.
+            if answered.isEmpty {
+                let more = await read(neighbours().filter { address in !found.contains { $0.address == address } }, timeout: 1.5)
+                found += more.filter { roku in !found.contains { $0.id == roku.id } }
+            }
             if !found.isEmpty { UserDefaults.standard.set(found.map(\.address), forKey: rememberKey) }
             return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
