@@ -46,4 +46,27 @@ final class DeviceRecordTests: XCTestCase {
         let pad = Devices.list(devicectl: Data(withoutPhone.utf8))
         XCTAssertEqual(pad.first { $0.kind == .watch }?.setup(team: "ABCDE12345"), .needs("Set up the iPhone it's paired with"))
     }
+
+    /// An Xbox's description says Xbox One on every console; Device Portal names the console, and that's its model and
+    /// what a game played on it is budgeted for. An Xbox not read yet is budgeted as the slowest, an Xbox One.
+    func testAnXboxIsTheConsoleDevicePortalNames() throws {
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let xbox = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: source.appendingPathComponent("Resources/Devices/xbox-one.json")))
+        var kept = Integrations.Kept(id: "xbox-one:uuid:1", integration: "xbox-one", name: "Xbox", model: "Xbox One", modelID: "",
+                                     os: "Xbox OS", osVersion: "10.0", address: "192.168.1.20")
+        XCTAssertNil(Integrations.readModel(of: kept, by: xbox))
+        kept.reads["device-portal"] = "Xbox Series X"
+        XCTAssertEqual(Integrations.readModel(of: kept, by: xbox), "Xbox Series X")
+
+        let game = LampProject(id: "racer", name: "Racer", exe: "Racer", dir: URL(fileURLWithPath: "/tmp/racer"), platform: .game,
+                               device: kept.id, places: [.mac, .device], engine: "web")
+        let line = Agent.Rules.gamePlaces(game, xbox: Integrations.readModel(of: kept, by: xbox))
+        XCTAssertTrue(line.contains("Its budget is the person's Xbox Series X's"), line)
+        XCTAssertFalse(line.contains("Xbox One"), line)
+        XCTAssertTrue(Agent.Rules.gamePlaces(game, xbox: nil).contains("Its budget is an Xbox One's"))
+        // With an iPhone too, the iPhone is the slower place.
+        var both = game
+        both.places = [.mac, .ios, .device]
+        XCTAssertTrue(Agent.Rules.gamePlaces(both, xbox: "Xbox Series X").contains("Its budget is an iPhone's"))
+    }
 }

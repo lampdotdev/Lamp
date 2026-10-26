@@ -103,6 +103,9 @@ struct Integration: Codable, Hashable {
         var wait: Bool?
         /// How Lamp knows the step is done. Every step has one.
         var check: [Condition]
+        /// What the check reads is the device's model, finer than what it says of itself before it's set up (an Xbox's
+        /// description says Xbox One on every console; Device Portal names the console).
+        var model: Bool?
         /// How the step is known. The model may only say it was read (with where); Lamp marks the rest.
         var known: Known?
     }
@@ -463,7 +466,7 @@ enum IntegrationCheck {
                 "qr": .leaf, "field": .object(["key": .leaf, "label": .leaf, "secret": .leaf]), "link": .leaf,
                 "accepts": .array(.leaf), "run": .array(action), "wait": .leaf,
                 "check": .array(.object(["http": request, "json": .leaf, "xml": .leaf, "equals": .leaf, "contains": .leaf,
-                                         "tcp": .leaf, "field": .leaf, "signedIn": .leaf])),
+                                         "tcp": .leaf, "field": .leaf, "signedIn": .leaf])), "model": .leaf,
                 "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf]),
             ])),
             "bridge": .object(["install": .array(action), "launch": .array(action), "look": .array(action),
@@ -563,6 +566,9 @@ enum IntegrationCheck {
             if step.check.isEmpty { say("\(at).check is empty: a step is done when Lamp's check passes, never because someone said so.") }
             for (n, condition) in step.check.enumerated() {
                 problems += conditionProblems(condition, at: "\(at).check[\(n)]", fields: fields, steps: steps)
+            }
+            if step.model == true, !step.check.contains(where: { $0.json != nil || $0.xml != nil }) {
+                say("\(at).model says its check reads the device's model, so a check must read a value with json or xml.")
             }
             if step.wait == true, step.check.allSatisfy({ $0.field != nil }) {
                 say("\(at) waits for hands on the device, so its check must ask the device, not only a field.")

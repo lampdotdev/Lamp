@@ -130,7 +130,7 @@ on it, `DeviceSupport.threeNodeFiles`, go only into an app whose page imports `t
 (`DeviceSupport.Library.three`, `"three": "Web/three"`, a folder the page loads through an import map), so nothing loads
 from the network. It replaced Babylon.js, which was chosen for EdgeHTML; under WebView2 the agent writes three.js more
 reliably, its efficient path (`InstancedMesh`) is the obvious one, and it's about half the size. The rules
-keep scenes within what an Xbox One's web view draws and have a game read the controller with the Gamepad API while it's
+keep scenes within the budget of the console the game goes to (below) and have a game read the controller with the Gamepad API while it's
 played, the keyboard too. A kind that declares `preview` (a web app's folder) is looked at and used in the preview on the
 Mac, the TV preview's window under the device's name (`Store.openDevicePreview`, `TVPreview.show(device:)`, where Back
 is Escape, letters reach the page and a key can be held), since a device's screen can only be pictured; Play still puts
@@ -180,8 +180,12 @@ can also be added beside a wish's other apps, in Game/);
 Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
 first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox
-One's, else an iPhone's, else this Mac's) ride with the request in the device line (`DeviceNote`, `Rules.gamePlaces`),
-not in the prompt, since a place may be given at any time. Places on the project are general: games and screens take them,
+One's, a mid-range Android phone's, an iPhone's, an Xbox Series S's, an Xbox Series X's, this Mac's) ride with the request in
+the device line (`DeviceNote`, `Rules.gamePlaces`), not in the prompt, since a place may be given at any time. The Xbox's is
+the console chosen under Try On, else the slowest of the person's (`GameKit.xboxModel`), as Device Portal names it: the
+integration's description says Xbox One on every console, so its `device-portal` step is the model step (`"model": true`,
+`Integrations.model(of:)`), which also gives the device its model in the list and the agent's line. An Xbox whose setup
+hasn't reached Device Portal is budgeted as an Xbox One. Places on the project are general: games and screens take them,
 and an app kind that takes places one at a time (an Apple TV or a TV beside a SwiftUI app) is a `startsAt` away.
 
 A game is drawn with three.js (`GameKit.Engine.web`, written in its `.lamp-game` mark): the model writes it best and every
