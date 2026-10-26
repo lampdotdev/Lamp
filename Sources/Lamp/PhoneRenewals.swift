@@ -105,6 +105,14 @@ enum PhoneRenewals {
         save(Record(udid: udid, bundleID: project.deviceBundleID(team: team), team: team, expires: expires), for: project)
     }
 
+    /// The copy to take off `udid` now that `bundleID` is on it: the one kept there before, when it was signed for another
+    /// team. An app's bundle id carries its team, so moving to another team (a paid one, say) makes it a new app on the
+    /// phone, and the old copy would sit beside it until it stopped opening. Nil when it's the same app.
+    static func replaced(_ before: Record?, on udid: String, by bundleID: String) -> String? {
+        guard let before, before.udid == udid, before.bundleID != bundleID else { return nil }
+        return before.bundleID
+    }
+
     /// Forgets what's on the phone, when the app is deleted or put somewhere else.
     static func forget(_ project: LampProject) {
         try? FileManager.default.removeItem(at: folder(for: project))

@@ -26,6 +26,15 @@ final class PhoneRenewalsTests: XCTestCase {
         XCTAssertTrue(PhoneRenewals.isDue(record(expiresIn: 1, failedHoursAgo: 25, failure: .authentication), now: now))
     }
 
+    /// Signed for another team, an app is a new app on the phone: the old team's copy is the one to take off.
+    func testANewTeamsCopyReplacesTheOldOne() {
+        let free = record(expiresIn: 3)
+        XCTAssertEqual(PhoneRenewals.replaced(free, on: "PHONE", by: "dev.lamp.app.test.fghij67890"), free.bundleID)
+        XCTAssertNil(PhoneRenewals.replaced(free, on: "PHONE", by: free.bundleID), "the same team: the same app, put back over itself")
+        XCTAssertNil(PhoneRenewals.replaced(free, on: "OTHER", by: "dev.lamp.app.test.fghij67890"), "another phone keeps its own")
+        XCTAssertNil(PhoneRenewals.replaced(nil, on: "PHONE", by: free.bundleID))
+    }
+
     func testThePersonIsToldOncePerExpiry() {
         var expired = record(expiresIn: -1)
         XCTAssertFalse(PhoneRenewals.shouldTell(record(expiresIn: 1), now: now), "nothing while it still opens")
