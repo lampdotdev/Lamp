@@ -23,6 +23,9 @@
     },
     "purpose": "a channel: menus and pages, video and music, a simple game, or a screensaver"
   },
+  "supports": [
+    "native"
+  ],
   "bridge": {
     "install": [
       {

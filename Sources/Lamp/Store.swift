@@ -6091,28 +6091,40 @@ final class Store: ObservableObject {
     }
 
     /// The tools every engine gets: Resources/lamp-tools.json, the one place their names, descriptions and schemas live,
-    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`). That's done
-    /// once, to the file's own text: the MCP endpoint serves it, and pi's extension (lamp-tools.ts) reads it from
-    /// `toolsFile`, so both get the same rendering.
-    nonisolated static let toolsJSON: Data = {
-        guard let url = Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"), let data = try? Data(contentsOf: url),
-              let quoted = try? JSONSerialization.data(withJSONObject: [Targets.toolDevices], options: .withoutEscapingSlashes) else {
+    /// with what only Lamp's code knows filled in (`{{DEVICES}}`, each kind's own: `Targets.toolDevices`; `{{PLACES}}`, what
+    /// each device can run, from the table of devices: `Places.forAgent`). Filled each time it's asked for, since an
+    /// integration written meanwhile adds a row to the table: the MCP endpoint serves it to Claude Code and Codex as each
+    /// asks for its tools, and pi's extension (lamp-tools.ts) reads it from `toolsFile`, written as each pi starts, so all
+    /// three get the same rendering.
+    nonisolated static var toolsJSON: Data {
+        guard let template = toolsTemplate else {
             assertionFailure("lamp-tools.json is missing from the app")
             return Data("[]".utf8)
         }
-        let devices = String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
-        return Data(String(decoding: data, as: UTF8.self).replacingOccurrences(of: "{{DEVICES}}", with: devices).utf8)
-    }()
+        // Each as it goes inside a JSON string: quoted, without its quotes.
+        let inString = { (text: String) -> String in
+            let quoted = (try? JSONSerialization.data(withJSONObject: [text], options: .withoutEscapingSlashes)) ?? Data(#"[""]"#.utf8)
+            return String(decoding: quoted.dropFirst(2).dropLast(2), as: UTF8.self)
+        }
+        return Data(template.replacingOccurrences(of: "{{DEVICES}}", with: inString(Targets.toolDevices))
+            .replacingOccurrences(of: "{{PLACES}}", with: inString(Places.forAgent)).utf8)
+    }
+    private nonisolated static let toolsTemplate: String? = Bundle.main.resourceURL
+        .flatMap { try? String(contentsOf: $0.appendingPathComponent("lamp-tools.json"), encoding: .utf8) }
     // `label` is pi's: MCP clients see name, description and inputSchema.
-    static let mcpTools: [[String: Any]] = ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? [])
-        .map { tool in tool.filter { $0.key != "label" } }
-    /// `toolsJSON` as pi's extension reads it, written once per launch to Lamp's own pi folder.
-    nonisolated static let toolsFile: URL? = {
+    static var mcpTools: [[String: Any]] {
+        ((try? JSONSerialization.jsonObject(with: toolsJSON)) as? [[String: Any]] ?? []).map { tool in tool.filter { $0.key != "label" } }
+    }
+    /// `toolsJSON` as pi's extension reads it, in Lamp's own pi folder: written again as each pi starts, so it has the
+    /// table as it is then.
+    nonisolated static var toolsFile: URL? {
         let url = URL(fileURLWithPath: Agent.configDir).appendingPathComponent("lamp-tools.json")
+        let json = toolsJSON
+        if (try? Data(contentsOf: url)) == json { return url }
         guard (try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)) != nil,
-              (try? toolsJSON.write(to: url, options: .atomic)) != nil else { return nil }
+              (try? json.write(to: url, options: .atomic)) != nil else { return nil }
         return url
-    }()
+    }
 
     /// Whether the installed app's binary contains a string, which says which Lamp features it was built with.
     static func binary(of project: LampProject, contains marker: String) -> Bool {
