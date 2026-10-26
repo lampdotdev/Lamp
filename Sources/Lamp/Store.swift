@@ -6052,7 +6052,9 @@ final class Store: ObservableObject {
             guard let url = artDestination(name, in: app) else {
                 return (400, ["error": "\(folder)\(name) can't be written: Assets or the file leads outside the app's folder."])
             }
-            try png.write(to: url, options: .atomic)
+            try AIMark.marked(png).write(to: url, options: .atomic)
+            // Marked as made with AI in the wish's credits too, wherever it's shown, shared or published.
+            try? Credits.add(Credits(generated: [Credits.Generated(file: folder + name)]), to: project)
             let size = NSBitmapImageRep(data: png).map { " (\($0.pixelsWide)×\($0.pixelsHigh) pixels)" } ?? ""
             let around = scene ? "" : ", transparent around the object"
             return (200, ["text": "Saved \(folder)\(name)\(size)\(around). Show it with LampAssets.image(\"\(name)\"). It follows.",

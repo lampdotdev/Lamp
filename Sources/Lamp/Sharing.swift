@@ -158,6 +158,9 @@ enum Sharing {
         }
     }
 
+    /// The secrets `export` keeps out of a file. Tests give their own, since the person's keys aren't theirs to read.
+    nonisolated(unsafe) static var knownSecrets: (LampProject) -> [String] = ShareCheck.keptSecrets(of:)
+
     /// Where `export` and `open` make their folders. Tests give each test a folder of its own here, so what one leaves
     /// behind is told apart from the folders a running Lamp makes at the same moment.
     nonisolated(unsafe) static var workFolder = FileManager.default.temporaryDirectory
@@ -183,6 +186,9 @@ enum Sharing {
         for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
         }
+        // Others' work in it goes only with its licence and credit, and work with no licence doesn't go at all.
+        let credits = Credits.load(project)
+        if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -212,9 +218,24 @@ enum Sharing {
             case .waiting, nil: break
             }
         }
-        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it.
-        let credits = Credits.load(project).remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
-        try credits.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it. Its paths
+        // are the wish's; when one of its apps in a folder goes at the file's root, paths into that folder lose it.
+        let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
+        func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
+        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
+        carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
+        carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
+        try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // Each licence the credits name goes with the work it covers, wherever the kind's own files left it.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, Credits.isLicenceFile(path) else { continue }
+            let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
+            guard !fm.fileExists(atPath: to.path),
+                  (try? from.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map({ $0.isRegularFile == true && $0.isSymbolicLink != true }) == true
+            else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: from, to: to)
+        }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
         if let icon = icon ?? drawnIcon(of: project) {
@@ -234,6 +255,21 @@ enum Sharing {
                                     }))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
+        // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
+        // like a key.
+        // A licence the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) else { continue }
+            throw ImportError("\(project.name) can't be shared.",
+                              detail: "The licence of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+        }
+        // Every app's: each of a wish's apps keeps its own secrets and token.
+        let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
+        let leaks = ShareCheck.secrets(in: stage, known: known)
+        if let first = leaks.first {
+            throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
+                              detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
+        }
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
         let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
@@ -405,6 +441,8 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
+        /// The licence texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
+        var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
         /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
@@ -479,6 +517,11 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.licences = (package.credits?.upstream ?? []).compactMap(\.licenseFile).filter(Credits.isLicenceFile).compactMap { path in
+            let file = folder.appendingPathComponent(path)
+            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            return values?.isRegularFile == true && values?.isSymbolicLink != true ? file : nil
+        }
         // The wish's other apps, each read from its folder as the app at the root is: only a folder Lamp keeps a part
         // in, named once, holding a kind that can be a part. The manifest is the sender's word, so the folder's name
         // and kind are taken only within those.
@@ -487,6 +530,14 @@ enum Sharing {
             let read = try read(app: folder.appendingPathComponent(part.folder), platform: part.platform, family: part.family ?? .iphone,
                                 name: package.name, identity: nil, description: nil, fileCount: 0)
             package.parts.append(Package.Part(folder: part.folder, package: read))
+        }
+        // A licence inside one of the other apps' folders goes in with that app too: its install replaces what its folder
+        // held, the licence the wish's own install put there included.
+        package.parts = package.parts.map { part in
+            var app = part.package
+            let inside = folder.appendingPathComponent(part.folder).standardizedFileURL.path + "/"
+            app.licences = package.licences.filter { $0.standardizedFileURL.path.hasPrefix(inside) }
+            return Package.Part(folder: part.folder, package: app)
         }
         // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
         // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
@@ -544,6 +595,8 @@ enum Sharing {
         var family: DeviceFamily?
         /// The folder the file had it in, which it's made in when that's a folder for its kind. Nil from before it was kept.
         var folder: String?
+        /// The licence texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
+        var licences: [String]?
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
@@ -553,7 +606,8 @@ enum Sharing {
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
-        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder))
+        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder,
+                                                    licences: part.package.licences.map { relativePath(of: $0, in: part.package.folder) }))
         try note.write(to: folder.appendingPathComponent("lamp-part.json"))
     }
 
@@ -566,7 +620,10 @@ enum Sharing {
               let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
                                       identity: nil, description: nil, fileCount: 0) else { return nil }
         let folder = note.folder.flatMap { Parts.folder($0, canHold: note.platform) ? $0 : nil } ?? Parts.folder(for: note.platform)
-        return Package.Part(folder: folder, package: package)
+        var app = package
+        app.licences = (note.licences ?? []).filter(Credits.isLicenceFile).map { kept.appendingPathComponent($0) }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map { $0.isRegularFile == true && $0.isSymbolicLink != true } == true }
+        return Package.Part(folder: folder, package: app)
     }
 
     /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
@@ -644,8 +701,17 @@ enum Sharing {
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
         try AppDescription.write(package.description, for: project)
-        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`).
+        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
+        // each licence it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        // An update replaces what's there, so a licence whose text changed upstream never stays as it was; one the kind's
+        // files already brought is the same text written again.
+        for file in package.licences {
+            let target = project.dir.appendingPathComponent(Sharing.relativePath(of: file, in: package.folder))
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)

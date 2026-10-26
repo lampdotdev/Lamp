@@ -378,6 +378,9 @@ enum AppInfoView {
             let license = source.license.map { $0.hasPrefix("LicenseRef-") ? nil : $0 } ?? "no licence"
             rows.append(SidebarInfoRow(label: label, value: [source.author, license].compactMap { $0 }.joined(separator: " · ")))
         }
+        if !credits.generated.isEmpty {
+            rows.append(SidebarInfoRow(label: "Made with AI", value: credits.generated.count == 1 ? "1 picture" : "\(credits.generated.count) pictures"))
+        }
         if !credits.remixOf.isEmpty {
             rows.append(SidebarInfoRow(label: "Remixed from", value: credits.remixOf.map { $0.name + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: " → ")))
         }
