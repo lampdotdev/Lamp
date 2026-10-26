@@ -439,9 +439,10 @@ final class SidebarServer {
         let shown = card.shared?.shown
         return SidebarWishLink(
             name: card.values.name, line: card.values.line, words: card.values.words, includePicture: card.values.includePicture,
+            includeFile: card.values.includeFile, canIncludeFile: WishLinkCards.canIncludeFile(project),
             revision: card.revision, picture: wishLinkPictures[project.id]?.data, icon: card.icon,
             link: card.shared?.url.absoluteString,
-            shown: shown.map { SidebarWishLinkValues(name: $0.name, line: $0.line, words: $0.words, includePicture: $0.picture != nil) },
+            shown: shown.map { SidebarWishLinkValues(name: $0.name, line: $0.line, words: $0.words, includePicture: $0.picture != nil, includeFile: $0.file == true) },
             newPicture: shown?.picture != nil && shown?.picture != card.pictureDigest,
             sending: card.stage == .sending, problem: { if case .failed(let message) = card.stage { message } else { nil } }(),
             copied: card.copied, canRetake: WishLinkCards.shared.canRetake(project), retaking: card.retaking,
@@ -1165,7 +1166,7 @@ final class SidebarServer {
             case .open: cards.open(project, inSidebar: true)
             case .share(let values):
                 cards.update(project, values: WishLinkCard.Values(name: values.name, line: values.line, words: values.words,
-                                                                  includePicture: values.includePicture))
+                                                                  includePicture: values.includePicture, includeFile: values.includeFile ?? false))
                 cards.share(project)
             case .copy: cards.copy(project)
             case .stop: cards.stop(project)

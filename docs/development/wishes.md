@@ -177,7 +177,8 @@ page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it
 Lamp", settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding its link on a
 narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), once the person has made one: Publish never sends
 the wish's words or picture itself, and a wish with none has Make Share Link… on the card, which opens Share Link's own
-card where they see and change what it shows (with none, the bar links Lamp's site). That page is the one that works for
+card where they see and change what it shows, and can tick Include the wish itself so the link's page offers this
+exact wish to anyone with Lamp (site/SHARED_WISHES.md) (with none, the bar links Lamp's site). That page is the one that works for
 someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
 wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
 the page too (a three.js game's as its page, `GameFiles`), offered in the README, and made by
