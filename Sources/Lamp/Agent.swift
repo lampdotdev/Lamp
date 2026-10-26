@@ -835,6 +835,15 @@ enum Agent {
         every ten seconds."), \(AppDescription.limit) characters at most. Lamp shows it under the app's name to anyone the app is \
         shared with, before they open it, and in large type beside a picture of the app on the desk. Not a list of features and not how it works: what it is, in everyday words, with nothing from \
         the code. Write it once a new app is built, and again when what the app is changes.
+        - Credit: \(Credits.file) at the app's root is where it came from. When you bring in someone else's work (code \
+        from a repository, a library copied in, a model, a picture, a sound, a font, data), add it to `upstream`: \
+        `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
+        "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
+        (left out when it has none) and its licence text kept in the app beside the work. Never take anything out of \
+        \(Credits.file), never remove or change a licence or a notice of someone else's, and never take an author's \
+        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no licence can be used here but \
+        not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \
+        window and its info.
         """
 
         static let attachments = """

@@ -212,6 +212,9 @@ enum Sharing {
             case .waiting, nil: break
             }
         }
+        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it.
+        let credits = Credits.load(project).remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
+        try credits.encoded().write(to: stage.appendingPathComponent(Credits.file))
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
         if let icon = icon ?? drawnIcon(of: project) {
@@ -399,6 +402,9 @@ enum Sharing {
         let name: String
         var identity: String? = nil   // Manifest.app; nil in files from before apps said who they are
         var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
+        /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
+        /// files from before wishes carried it.
+        var credits: Credits? = nil
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
         /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
@@ -472,6 +478,7 @@ enum Sharing {
         let all = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
+        package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
         // The wish's other apps, each read from its folder as the app at the root is: only a folder Lamp keeps a part
         // in, named once, holding a kind that can be a part. The manifest is the sender's word, so the folder's name
         // and kind are taken only within those.
@@ -637,6 +644,8 @@ enum Sharing {
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
         try AppDescription.write(package.description, for: project)
+        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`).
+        try Credits.arrive(package.credits, in: project)
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)

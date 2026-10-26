@@ -257,6 +257,11 @@ that ends it. A build that waits for an app for both
 goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
 is what lost people's work.
 
+A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
+wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
+window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked), so no app code is needed and an
+app with no credits has none.
+
 `capabilities.json` at an app's root is where the agent declares what the app needs beyond its code
 (`Template.Capabilities`): for an iPhone app the entitlements and background work described above, for a Mac
 app what Finder may hand it, `{"opens": ["folder", "png", "public.image"]}` ("folder", "file", extensions,

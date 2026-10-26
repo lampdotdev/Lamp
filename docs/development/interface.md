@@ -60,6 +60,9 @@ belongs: what the app has cost, what answers its AI (from `AppAI.resolve`, so it
 how Lamp builds it, and where it lives. What doesn't: menus, switches, explanations, upgrade offers, or
 anything that's the same for every app and already in Settings.
 
+- **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its licence,
+  what else it uses, and the wishes it was remixed from (`AppInfoView.creditsSection`), with one button to the page of
+  the work it's based on. A wish with none has no such section.
 - **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
   that opens the tab where it's chosen ("Configure Providers…", "Building Settings…"). The only exception is
   undoing what an app was left with by an earlier Lamp ("Use Settings' Choices", shown only when there is
