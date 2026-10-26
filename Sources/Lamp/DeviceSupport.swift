@@ -185,10 +185,10 @@ enum DeviceSupport {
                 try Template.put(file.contents, at: project.dir.appendingPathComponent(path), for: project)
             }
         }
-        // The icons only once Lamp has drawn one: until then the device shows its own placeholder.
-        let wanted = icons(for: project)
-        guard !wanted.isEmpty, let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:)) else { return }
-        for entry in wanted {
+        // Until Lamp has drawn the app's icon, the tile alone: a manifest names these files, and a package without them
+        // shows nothing in their place.
+        let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
+        for entry in icons(for: project) {
             try Template.put(iconPNG(icon, width: entry.width, height: entry.height), at: project.dir.appendingPathComponent(entry.path), for: project)
         }
     }
@@ -1027,8 +1027,8 @@ enum DeviceSupport {
     ' obeying it. For decisions, put it in what the decision is about and keep the question your own words.
     ' Dates: LampAI_ask tells the AI today's date and a calendar of the weeks around it. Ask for dates back as ISO 8601.
     '
-    ' LampStore: the app's saved data, kept on the Roku across launches and changes, as JSON. Roku keeps only 16 KB for
-    ' an app's saved data, so keep it small. People rely on their data through every change: once something is saved,
+    ' LampStore: the app's saved data, kept on the Roku across launches and changes, as JSON. Roku keeps about 32 KB
+    ' (compressed) for a channel's saved data, shared by every app Lamp puts on that Roku, so keep it small. People rely on their data through every change: once something is saved,
     ' only ever add to it, and give a new field a default where it's read.
     '     prefs = LampStore_load("prefs", { theme: "dark" })     LampStore_save(prefs, "prefs")     LampStore_remove("prefs")
     '     notes = LampStore_collection("notes")    ' items are associative arrays with an id

@@ -250,8 +250,11 @@ enum DeviceApps {
         // A device busy closing the app it's replacing can drop a connection, the upload's or the launch's just after
         // it; a little later it's ready, so the pair is tried again a couple of times before Lamp gives up.
         // The copy on the device now is ended first: a device can fail to open a package installed over its running copy.
-        if let stop = bridge.stop, !stop.isEmpty, let installed = installedValues(project, on: device) {
-            _ = try? await runner.run(stop, extra: installed)
+        // A Roku's installer waits on a developer channel that's still running until the upload times out, so a package
+        // that isn't wrapped (one copy on the device, whichever app it is) is always ended first.
+        let running = integration.app?.declared?.wrap == nil ? values(project) : installedValues(project, on: device)
+        if let stop = bridge.stop, !stop.isEmpty, let running {
+            _ = try? await runner.run(stop, extra: running)
         }
         // A setting the install changes for itself (an Xbox's "treat apps as games") stays changed until the app has been
         // opened: the console settles the package's type then.
@@ -314,6 +317,29 @@ enum DeviceApps {
         _ = try await IntegrationRunner(integration: integration, device: device).run(use, extra: values(project).merging(["key": name]) { $1 })
     }
 
+    /// Types text on the device's screen through the bridge's `type`, a character at a time, while `stillWanted` says
+    /// the app is still the one there and the turn still running.
+    static func type(_ text: String, in project: LampProject, on device: Device, stillWanted: @MainActor () -> Bool) async throws {
+        guard let integration = integration(for: project), let type = integration.bridge?.type, !type.isEmpty else {
+            throw Failure(message: "Lamp can't type on the \(device.name): its integration doesn't say how.")
+        }
+        let runner = IntegrationRunner(integration: integration, device: device)
+        for character in text {
+            guard await stillWanted() else { throw Failure(message: "Stopped.") }
+            _ = try await runner.run(type, extra: values(project).merging(["text": String(character)]) { $1 })
+        }
+    }
+
+    /// Ends the app on the device as the person stops it, through the bridge's `stop`; false when the integration has
+    /// none or the device refused, for the caller to take the device back another way (Home).
+    static func stop(_ project: LampProject, on device: Device) async -> Bool {
+        guard let integration = integration(for: project), let stop = integration.bridge?.stop, !stop.isEmpty else { return false }
+        // A wrapped package is ended by its names, so only the copy Lamp knows is there.
+        let extra = integration.app?.declared?.wrap == nil ? values(project) : installedValues(project, on: device)
+        guard let extra else { return false }
+        return (try? await IntegrationRunner(integration: integration, device: device).run(stop, extra: extra)) != nil
+    }
+
     /// What the app's own log on the device holds now, through the bridge's `log`; nil when the integration has none.
     static func log(_ project: LampProject, on device: Device) async throws -> String? {
         guard let integration = integration(for: project), let log = integration.bridge?.log, !log.isEmpty else { return nil }
@@ -329,6 +355,23 @@ enum DeviceApps {
         try? FileManager.default.copyItem(at: identity, to: record)
         try? Data(device.id.utf8).write(to: installedRecord(project, device: device.id).deletingPathExtension().appendingPathExtension("device"))
         if !pending { try? FileManager.default.removeItem(at: installedRecord(project, device: device.id, pending: true)) }
+        // Which app the device last took, for a device that keeps only one copy of anything Lamp puts there.
+        if !pending { try? Data(project.id.utf8).write(to: lastOnDevice(device.id), options: .atomic) }
+    }
+
+    /// The devices an app is going on or coming off now: one at a time on each, since an install replaces what's there.
+    @MainActor private static var busy: Set<String> = []
+
+    @MainActor static func take(_ id: String) async {
+        while busy.contains(id) { try? await Task.sleep(for: .milliseconds(300)) }
+        busy.insert(id)
+    }
+
+    @MainActor static func release(_ id: String) { busy.remove(id) }
+
+    /// Where Lamp notes which app it last put on a device: a Roku has one developer channel, which each install replaces.
+    private static func lastOnDevice(_ id: String) -> URL {
+        Edition.supportFolder.appendingPathComponent("Device Builds").appendingPathComponent("last-\(MSIX.publisherID(id)).txt")
     }
 
     /// Where Lamp notes which package of the app is on a device (the identity, with the device's id beside it), and
@@ -350,7 +393,18 @@ enum DeviceApps {
         for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix("installed-") && name.hasSuffix(".device") {
             guard let id = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8),
                   let device = devices.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) else { continue }
+            // Never while an install is putting another app there: its ownership is checked and the copy removed in one go.
+            await take(id)
+            defer { release(id) }
             let runner = IntegrationRunner(integration: integration, device: device)
+            // A package that isn't wrapped has no names of its own: the device keeps one copy (a Roku's developer channel).
+            guard integration.app?.declared?.wrap != nil else {
+                // Only while it's still this app's: another wish put on the device since has replaced it.
+                guard (try? String(contentsOf: lastOnDevice(id), encoding: .utf8)) == project.id else { continue }
+                if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: values(project)) }
+                _ = try? await runner.run(remove, extra: values(project))
+                continue
+            }
             // The copy the device took, and one that was on its way and may have landed; the same package twice is asked once.
             var asked: Set<String> = []
             for pending in [false, true] {
@@ -503,6 +557,7 @@ extension Agent.Rules {
             rule += "Lamp can't press the \(name)'s keys, so `use_app` doesn't work for it. "
         } else {
             rule += "`use_app` presses the remote's keys there, with `key` actions (\(keys.joined(separator: ", "))) and `wait`, then shows the screen again. "
+            if integration?.bridge?.type?.isEmpty == false { rule += "`type` with `text` types into a keyboard on its screen once one has focus. " }
         }
         if integration?.bridge?.look == nil { rule += "Its integration has no way to picture its screen, so ask the person what they see. " }
         return rule + "There is no screen as text and no pointer: try the app the way the person will, with the keys.\n"

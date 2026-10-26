@@ -685,7 +685,8 @@ enum IntegrationWords {
     static func mark(_ known: Integration.Known?) -> (title: String, symbol: String) {
         switch known?.how ?? .read {
         case .lamp: return ("Checked by Lamp", "checkmark.seal")
-        case .people: return ("Done by people", "person.2")
+        // A step done by hand that has passed on a real device: what matters to the person is that it works.
+        case .people: return ("Worked before", "person.2")
         case .read: return ("Not tried yet", "questionmark.circle")
         }
     }
@@ -695,7 +696,8 @@ enum IntegrationWords {
         guard let known else { return "Written from what was read, and not yet tried on a device." }
         switch known.how {
         case .read: return "Written from what was read\(known.source.flatMap { URL(string: $0)?.host }.map { " on \($0)" } ?? ""), and not yet tried on a device."
-        case .lamp, .people: return "It worked on \([known.model, known.version].compactMap { $0 }.joined(separator: ", "))."
+        case .lamp: return "Lamp did it on \([known.model, known.version].compactMap { $0 }.joined(separator: ", ")), and it worked."
+        case .people: return "Someone did it by hand on \([known.model, known.version].compactMap { $0 }.joined(separator: ", ")), and it worked."
         }
     }
 }

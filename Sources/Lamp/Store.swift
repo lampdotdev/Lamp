@@ -7444,7 +7444,6 @@ final class Store: ObservableObject {
     /// Device apps put on a device since Lamp opened, by app: the device, and the log read from it.
     private var deviceRuns: [String: DeviceApps.Run] = [:]
     /// Devices an app is being put on now, by id.
-    private var installingOn: Set<String> = []
     /// Apps being put on a device now, by id: deleting one waits for that to settle before taking it off again.
     private var installingApps: Set<String> = []
     /// What each device app's run on its device was built from, so a look that went to the preview on this Mac isn't
@@ -7519,10 +7518,9 @@ final class Store: ObservableObject {
             return "\(device.name) isn't set up for apps yet. Its next step, \"\(step.title)\", is a card in the chat for the person to follow."
         }
         // One app at a time goes on a device: a second waits for the first, then takes the device from it.
-        while installingOn.contains(device.id) { try? await Task.sleep(for: .milliseconds(300)) }
-        installingOn.insert(device.id)
+        await DeviceApps.take(device.id)
         installingApps.insert(project.id)
-        defer { installingOn.remove(device.id); installingApps.remove(project.id) }
+        defer { DeviceApps.release(device.id); installingApps.remove(project.id) }
         let stillWanted: @MainActor () -> Bool = { [weak self] in self?.turns[project.id] === owner && !owner.stopped }
         guard stillWanted() else { return "Stopped." }
         // The device is this app's from the upload on: every run there (another wish's, or this one's last) is over,
@@ -7628,6 +7626,7 @@ final class Store: ObservableObject {
         guard !keys.isEmpty, DeviceApps.integration(for: project)?.bridge?.use != nil else {
             return (200, ["text": "Lamp can't press the \(name)'s keys: its integration doesn't say how."])
         }
+        let typing = DeviceApps.integration(for: project)?.bridge?.type?.isEmpty == false
         var report: [String] = []
         for action in actions {
             guard turns[project.id] === owner, !owner.stopped else { report.append("Stopped."); break }
@@ -7647,8 +7646,19 @@ final class Store: ObservableObject {
                     report.append("Couldn't press \(key): \(error.localizedDescription)")
                     break
                 }
+            } else if kind == "type", typing, let text = action["text"] as? String, !text.isEmpty {
+                do {
+                    try await DeviceApps.type(text, in: project, on: run.device) { [weak self] in
+                        self?.turns[project.id] === owner && !owner.stopped && self?.deviceRuns[project.id] === run
+                    }
+                    report.append("Typed \"\(text)\".")
+                    try? await Task.sleep(for: .milliseconds(400))
+                } catch {
+                    report.append("Couldn't type \"\(text)\": \(error.localizedDescription)")
+                    break
+                }
             } else {
-                report.append("\(kind.isEmpty ? "That" : kind) isn't something a \(name) does: only `key` (\(keys.joined(separator: ", "))) and `wait`.")
+                report.append("\(kind.isEmpty ? "That" : kind) isn't something a \(name) does: only `key` (\(keys.joined(separator: ", ")))\(typing ? ", `type`" : "") and `wait`.")
                 break
             }
         }
@@ -9581,8 +9591,11 @@ final class Store: ObservableObject {
             deviceRunBuilt[project.id] = nil
             if let run = deviceRuns.removeValue(forKey: project.id) {
                 run.end()
-                // Home takes a device back from the app, where its remote has one.
-                if DeviceApps.keys(for: project).contains("home") { try? await DeviceApps.press("home", in: project, on: run.device) }
+                // The bridge's stop ends the app; where there's none, or the device refused, Home takes the device back
+                // from it, where its remote has one.
+                if await !DeviceApps.stop(project, on: run.device), DeviceApps.keys(for: project).contains("home") {
+                    try? await DeviceApps.press("home", in: project, on: run.device)
+                }
             }
             return true
         }
