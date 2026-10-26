@@ -9386,10 +9386,10 @@ final class Store: ObservableObject {
         // Mac wakes, since a Mac asleep through the window is the usual reason one was missed.
         Task { await renewPhoneApps() }
         Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { _ in
-            MainActor.assumeIsolated { Task { await Store.shared.renewPhoneApps() } }
+            Task { @MainActor in await Store.shared.renewPhoneApps() }
         }
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Task { await Store.shared.renewPhoneApps() } }
+            Task { @MainActor in await Store.shared.renewPhoneApps() }
         }
     }
 
