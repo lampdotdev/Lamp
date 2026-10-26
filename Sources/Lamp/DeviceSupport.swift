@@ -119,7 +119,7 @@ enum DeviceSupport {
 
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        if ScreenKit.isScreen(project) { return ScreenKit.paths }
+        if ScreenKit.isScreen(project) { return ScreenKit.paths(for: project) }
         if project.hasTV { return [TVTemplate.supportFile] }
         // A game's are its kit's, and on the Xbox a three.js game's are the web app's as well.
         if GameKit.isGame(project) { return GameKit.paths(for: project) + (GameKit.engine(project) == .web ? declaredPaths(for: project) : []) }
