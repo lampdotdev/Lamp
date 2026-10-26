@@ -1208,8 +1208,9 @@ struct FileDrop: NSViewRepresentable {
             if let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver], !promises.isEmpty {
                 let folder = Self.folder()
                 for promise in promises {
-                    promise.receivePromisedFiles(atDestination: folder, operationQueue: .main) { [dropped] url, error in
-                        if error == nil { MainActor.assumeIsolated { dropped([url]) } }
+                    // Received off the main queue: the source may still be writing the file (a large picture from Photos).
+                    promise.receivePromisedFiles(atDestination: folder, operationQueue: Self.receiving) { [dropped] url, error in
+                        if error == nil { Task { @MainActor in dropped([url]) } }
                     }
                 }
                 return true
@@ -1221,6 +1222,12 @@ struct FileDrop: NSViewRepresentable {
             dropped([url])
             return true
         }
+
+        private static let receiving: OperationQueue = {
+            let queue = OperationQueue()
+            queue.qualityOfService = .userInitiated
+            return queue
+        }()
 
         private static func takes(_ pasteboard: NSPasteboard) -> Bool {
             // A wish's icon is dragged as a file promised too (to the Finder), but it isn't one to attach.
