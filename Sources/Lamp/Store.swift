@@ -2068,8 +2068,8 @@ final class Store: ObservableObject {
     /// Which Android device an Android app opens on: the person's own, by its serial, or nil for the emulator.
     /// The copy on the old one is closed, so Play and Stop are about the one chosen.
     func setAndroidDevice(_ project: LampProject, _ serial: String?) {
-        // A game has Android among its places, and may be pointed at another of them now.
-        let reaches = project.onAndroid || (GameKit.isGame(project) && project.openPlaces.contains(.android))
+        // A game or a screen has Android among its places, and may be pointed at another of them now.
+        let reaches = project.onAndroid || (project.platform.addsPlaces && project.openPlaces.contains(.android))
         guard reaches, project.device != serial || !project.onAndroid, begin(project) != nil else { return }
         var changed = project
         changed.device = serial
@@ -5779,7 +5779,8 @@ final class Store: ObservableObject {
         if kind == .screen {
             let said = await setPlaces(game, GameKit.places(for: words, of: kind), family: words.contains("ipad") && !words.contains("iphone") ? .ipad : nil)
             guard let now = current(game) else { return (404, ["error": "Lamp can't find the screen."]) }
-            return (200, ["text": said + " It's the same page everywhere, laid out at 1920x1080 and scaled to each screen, so nothing in Web/ changes for it. " +
+            return (200, ["text": said + (ScreenKit.fillsAnyShape(now) ? " It's the same page everywhere, filling each screen, so nothing in Web/ changes for it; look at it in the new place's shape with `look_at_app`'s `shape`. "
+                                                    : " It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. ") +
                           Agent.Rules.screenPlaces(now) + " Try it as before; `look_at_app` with `on_device` opens it where Try On points now."])
         }
         // "ipad" alone is a wish to see it on an iPad: the simulator it opens on is one.
@@ -7450,8 +7451,19 @@ final class Store: ObservableObject {
     }
 
     /// `look_at_app` for a TV app: the preview pictured at half the TV's size and read as text, with what it printed.
-    private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
+    private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool, shape: String? = nil) async -> (Int, [String: Any]) {
         let device = previewDevice(project)
+        // A screen that fills any shape is looked at in the one asked for; one laid out at a fixed 1920x1080 only as a TV.
+        var size: CGSize?
+        if let shape {
+            guard ScreenKit.isScreen(project), ScreenKit.fillsAnyShape(project) else {
+                return (400, ["error": "`shape` is for a screen whose page fills any shape; this page is laid out at a fixed 1920x1080."])
+            }
+            guard let asked = ScreenKit.shape(shape) else {
+                return (400, ["error": "`shape` is the page's width and height in CSS pixels, such as \"1920x1080\" or \"390x844\", each 200 to 4000."])
+            }
+            size = asked
+        }
         var summary = "The app is open in the \(device) preview on this Mac."
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
@@ -7470,11 +7482,17 @@ final class Store: ObservableObject {
             turn.look.presented = true
             TVPreview.bringForward(project)
         }
+        if let size { await TVPreview.reshape(project, to: size) }
+        let shown = TVPreview.shape(of: project)
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         let taken = await TVPreview.picture(project)
         if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-        var text = summary + " " + Self.notTheDevice(device) + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
+        let measured = "\(Int(shown.width))×\(Int(shown.height))"
+        var text = summary + " " + Self.notTheDevice(device)
+            + (ScreenKit.isScreen(project) && ScreenKit.fillsAnyShape(project)
+               ? " It shows the page at \(measured) CSS pixels (`shape` shows it at another), pictured with its long side 960 pixels. "
+               : " It shows the \(measured) page at half size: a pixel in the picture is two of the page's. ")
             + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the \(device) preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
         if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
             text += " " + TVPreview.takenNote(taken)
@@ -10731,7 +10749,8 @@ final class Store: ObservableObject {
             arguments["sidebar"] as? Bool == true
                 ? await lookAtSidebar(app, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                 : await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                             reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false)
+                             reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false,
+                             shape: arguments["shape"] as? String)
         }
     }
 
@@ -10778,11 +10797,12 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than in the preview (`GameKit`).
-    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice), of: project)
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
+                      shape: String? = nil) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape), of: project)
     }
 
-    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool) async -> (Int, [String: Any]) {
+    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -10820,7 +10840,7 @@ final class Store: ObservableObject {
         // A screen is looked at in the TV preview, wherever it's shown, with no build of the app around it. Pointed at a TV
         // it goes the TV app's way below, which stages the page before it opens the preview.
         if ScreenKit.isScreen(project), !onDevice, !project.onTV {
-            return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
+            return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen, shape: shape)
         }
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project, inPlace: !reopen) {

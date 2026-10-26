@@ -1,0 +1,26 @@
+{
+  "upstream" : [
+    {
+      "author" : "Wes Bos",
+      "commit" : "0bff55ef3fb2a3bfdab05bc8e3bd0c9d69f63189",
+      "license" : "MIT",
+      "licenseFile" : "Web/LICENSE-photo-frame-dashboard",
+      "name" : "photo-frame-dashboard",
+      "url" : "https://github.com/wesbos/photo-frame-dashboard"
+    },
+    {
+      "author" : "The Archivo Project Authors",
+      "license" : "OFL-1.1",
+      "licenseFile" : "Web/fonts/OFL-archivo.txt",
+      "name" : "Archivo",
+      "url" : "https://github.com/Omnibus-Type/Archivo"
+    },
+    {
+      "author" : "The Instrument Serif Project Authors",
+      "license" : "OFL-1.1",
+      "licenseFile" : "Web/fonts/OFL-instrument-serif.txt",
+      "name" : "Instrument Serif",
+      "url" : "https://github.com/Instrument/instrument-serif"
+    }
+  ]
+}

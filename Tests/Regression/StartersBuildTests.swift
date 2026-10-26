@@ -23,7 +23,7 @@ final class StartersBuildTests: XCTestCase {
         for folder in folders {
             let text = try String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8)
             let starter = try XCTUnwrap(Starters.parse(text, folder: folder))
-            let project = try Template.draft(name: starter.name, in: root)
+            let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
             try Template.fill(project)
             try Starters.copy(starter, into: project)
             try Template.writeOwnedFiles(for: project)

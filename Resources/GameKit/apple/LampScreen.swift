@@ -2,7 +2,8 @@
 // the iPhone and the iPad. Lamp writes this file before every build; the screen itself is the page in Web/, the same
 // page a TV shows, which this shows in a web view of its own.
 //
-// The page is laid out at 1920x1080, as on a TV, and zoomed to fill the window or screen. It's served from the app's
+// The page fills the window or the screen as a web page fills a browser, at whatever shape it is; a page laid out at a
+// fixed 1920x1080 (its viewport says `width=1920`, as screens were made before) is zoomed whole instead. It's served from the app's
 // bundle at an address of its own (lamp-screen://app/), so it reads its own files with fetch; its LampAI and LampStore
 // calls reach Lamp through this app (the `lampGateway` bridge that Web/lamp.js looks for), with the app's own token,
 // never the page's, and its `LampNative` calls reach Sources/Native.swift (both in LampPage.swift); what it logs goes
@@ -88,7 +89,8 @@ final class LampScreenFiles: NSObject, WKURLSchemeHandler {
         #else
         view.isOpaque = false
         view.backgroundColor = .black
-        view.scrollView.isScrollEnabled = false
+        // A page that fills any shape may let a tall column scroll; one zoomed whole never does.
+        view.scrollView.isScrollEnabled = !fixed
         view.scrollView.bounces = false
         view.scrollView.contentInsetAdjustmentBehavior = .never
         #endif
@@ -96,10 +98,18 @@ final class LampScreenFiles: NSObject, WKURLSchemeHandler {
         return view
     }
 
-    /// The page laid out at a TV's 1920x1080 and zoomed to the space it has.
+    /// Whether the page is laid out at a fixed 1920x1080: its viewport meta names that width.
+    static let fixed: Bool = {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("Web/index.html"),
+              let page = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return page.range(of: #"<meta[^>]*name=["']viewport["'][^>]*width\s*=\s*1920"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }()
+
+    /// A page that fills any shape gets the window's own size; a fixed one is laid out at a TV's 1920x1080 and zoomed to
+    /// the space it has.
     static func fit(_ view: WKWebView, in size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
-        let zoom = min(size.width / 1920, size.height / 1080)
+        let zoom = fixed ? min(size.width / 1920, size.height / 1080) : 1
         if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
     }
 }

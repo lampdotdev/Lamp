@@ -59,8 +59,8 @@ final class StartersTests: XCTestCase {
                 XCTAssertNotNil(NSImage(systemSymbolName: symbol, accessibilityDescription: nil), "\(name): \(symbol)")
             }
             XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent("APP.md").path), name)
-            // A Mac app's code starts at App.swift; a game is its page (Lamp writes the Swift around it).
-            let entry = starter.kind == .game ? "Web/index.html" : "Sources/App.swift"
+            // A Mac app's code starts at App.swift; a game or a screen is its page (Lamp writes the Swift around it).
+            let entry = starter.kind.target.recipe.language == .swift ? "Sources/App.swift" : "Web/index.html"
             XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent(entry).path), "\(name): no \(entry)")
             let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: folder.appendingPathComponent("icon.json")))
             XCTAssertTrue(Icons.backgrounds.contains { $0.name == spec.background }, name)

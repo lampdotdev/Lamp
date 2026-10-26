@@ -8,7 +8,9 @@ import Foundation
 /// motion events), handing them to Lamp's runtime in the page (`lampNativePad`), since a WebView doesn't promise the
 /// Gamepad API. The touch controls are the runtime's own. The build is Lamp's Android build (Gradle from Lamp's tools,
 /// in the app's sandbox), and the app is installed, launched, looked at and used like any Android app of Lamp's
-/// (`Store.installOnAndroid`, its package and `.MainActivity`).
+/// (`Store.installOnAndroid`, its package and `.MainActivity`). A screen on Android is the same app around its page
+/// (`ScreenKit`), not a game to the system, laid out as its viewport asks (filling the screen, or a fixed 1920x1080 page
+/// fitted to it), and kept awake, as a photo frame's own app would be.
 enum GameAndroid {
     static let folder = "Lamp/Android"
 
@@ -30,8 +32,10 @@ enum GameAndroid {
         try Template.write(Template.androidGradleProperties, to: "\(folder)/gradle.properties", for: project)
         try Template.write(Template.androidVersionsCatalogue, to: "\(folder)/gradle/libs.versions.toml", for: project)
         try Template.write(talks ? wishBuildGradle : appBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
-        try Template.write(manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
-        try Template.write((talks ? mainActivity : withoutWish(activity: mainActivity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),
+        let screen = project.platform == .screen
+        try Template.write(screen ? screenManifest : manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
+        let activity = screen ? screenActivity : gameActivity
+        try Template.write((talks ? activity : withoutWish(activity: activity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),
                            to: kotlin + "/MainActivity.kt", for: project)
         try Template.write(".gradle/\n.kotlin/\nlocal.properties\n", to: "\(folder)/.gitignore", for: project)
         let wish = [(kotlin + "/" + Template.androidSupportFile, Template.androidSupportKotlin(for: project)),
@@ -52,6 +56,16 @@ enum GameAndroid {
                 "app/src/main/kotlin/\(package)/\(Template.androidSupportFile)", "app/src/main/kotlin/\(package)/LampPageWish.kt",
                 Template.androidDebugManifest].map { "\(folder)/\($0)" }
     }
+
+    /// The activity for a game, without a screen's lines, and for a screen, with them unmarked.
+    static var gameActivity: String {
+        mainActivity.components(separatedBy: "\n").filter { !$0.hasSuffix(screenLine) }.joined(separator: "\n")
+    }
+    static var screenActivity: String { mainActivity.replacingOccurrences(of: " " + screenLine, with: "") }
+    private static let screenLine = "// a screen"
+
+    /// A screen's manifest: no game to the system.
+    static var screenManifest: String { manifest.replacingOccurrences(of: "        android:isGame=\"true\"\n", with: "") }
 
     /// The game's activity for a game on its own: without the lines that answer the page's `Lamp.wish`, each marked so.
     static func withoutWish(activity: String) -> String {
@@ -232,6 +246,11 @@ enum GameAndroid {
             web.settings.domStorageEnabled = true
             web.settings.mediaPlaybackRequiresUserGesture = false
             web.settings.allowFileAccess = false
+            // A screen is laid out at the width its viewport asks for (the device's own, or a fixed 1920 for a page made // a screen
+            // before screens filled any shape) and shown whole, and the display stays on. // a screen
+            web.settings.useWideViewPort = true // a screen
+            web.settings.loadWithOverviewMode = true // a screen
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // a screen
             web.webViewClient = object : WebViewClient() {
                 // The page's files, from the app's own assets, at an address of the game's own.
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {

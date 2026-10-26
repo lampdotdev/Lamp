@@ -348,18 +348,30 @@ such build).
 ## Screens
 
 A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is something shown full screen and glanced at
-from across a room: a family calendar, a photo album, a dashboard, a clock. It's the TV app's page in `Web/`, with the
-same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, and it takes places as a game does (`addsPlaces`, the Mac
-always first): on the Mac, the iPhone and the iPad it's a Swift app of Lamp's own around the page
-(`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift, so it has the wand and the chat beside it), which
-zooms the page to the window; on a Samsung or LG TV it goes as a TV app does, and on the Xbox as the integration's web
-app. A TV app (`Platform.tv`) stays what it was, the TV its one place: a screen is its own kind, whose recipe refines
-the TV's (a screen's folder holds a TV app's page as well as its mark, `.lamp-screen`). On the person's own iPhone or
-iPad the phone's Xcode project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as
-it does for a three.js game. Wherever it's shown the agent looks at it in the TV preview on the Mac
-(`openDevicePreview`), the same page at the same size, so a change is seen without a build of the Mac app; pointed at a
-TV it's staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`),
-and the request's device line says where it's shown (`Rules.screenPlaces`).
+from across a room: a family calendar, a photo album, a dashboard, a clock. It's a page in `Web/` with the TV app's
+`Web/lamp.js` (`TVTemplate`), and it takes places as a game does (`addsPlaces`, the Mac always first). **The page fills
+whatever it's shown on**, as a web page fills a browser: a TV, a Mac window of any size, a photo frame, an iPad either
+way up, a phone. It's laid out as a responsive page (`Rules.screenDesign`: grid and flexbox, sizes from the screen,
+media queries for its shape; the scaffold, `ScreenKit.indexHTML` and `styleCSS`, sizes everything from `--u`, a
+hundredth of the screen's shorter side), and every place hands it the real viewport: on the Mac, the iPhone and the
+iPad it's a Swift app of Lamp's own around the page (`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift,
+so it has the wand and the chat beside it), whose web view takes the window's size; on Android (a tablet, or a photo
+frame the person has reached with adb) it's the Android app of Lamp's own a three.js game has there (`GameAndroid`),
+which for a screen isn't a game to the system, lays the page out at its viewport and keeps the display awake
+(`screenActivity`, `screenManifest`), with Try On's emulator and devices as any Android app's; on a Samsung or LG TV
+it goes as a TV app does, and on the Xbox as the integration's web app. A screen made before screens filled any shape
+says `width=1920` in its viewport meta (`ScreenKit.isFixed`, and `LampScreenPage.fixed` in the app around it): it's
+still laid out at 1920x1080 and zoomed whole, and the rule tells the agent to change its viewport first when it's to
+go somewhere tall. A TV app (`Platform.tv`) stays what it was, the TV its one place: a screen is its own kind, whose
+recipe refines the TV's (a screen's folder holds a TV app's page as well as its mark, `.lamp-screen`). On the person's
+own iPhone or iPad the phone's Xcode project carries `Web/` as a folder beside Assets (`Template.withWebFolder`,
+`Devices.stage`), as it does for a three.js game. Wherever it's shown the agent looks at it in the TV preview on the Mac
+(`openDevicePreview`), so a change is seen without a build of the Mac app, and at any shape: `look_at_app`'s `shape`
+(a width and height in CSS pixels, "390x844") turns the preview's window to it and lays the page out at that size
+(`TVPreview.reshape`), the picture drawn with its long side 960 pixels and `use_app`'s points measured in it
+(`TVPreview.scale`); the preview keeps that shape for later looks, and starts at a TV's 1920x1080. Pointed at a TV it's
+staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and
+the request's device line says where it's shown (`Rules.screenPlaces`).
 
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
 `hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team. A game's or a screen's Mac copy is installed in Games/ or Screens/ of the apps folder (`Target.installFolder`), apart from a Mac app of its wish, which has the wish's name.

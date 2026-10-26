@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 import WebKit
 
 /// The TV on this Mac's screen: a TV app opened at the TVs' own size (1920×1080, shown at half that), from the copy of
-/// its files in Lamp's folder (`TVs.stage`). The agent looks at it and presses the remote's keys on it, as it does on a
+/// its files in Lamp's folder (`TVs.stage`). A screen that fills whatever it's shown on is opened at any shape the
+/// agent asks for (`shape`: a TV, a frame, an iPad either way up, a phone), each pictured with its long side 960 pixels. The agent looks at it and presses the remote's keys on it, as it does on a
 /// simulator; the person can use it with the keyboard's arrows, Return and Escape. What the page prints goes to the
 /// app's log.
 @MainActor
@@ -30,6 +31,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// When the open page was last pictured, so each picture can say how long after the one before it was taken.
     private var lastPictured: Date?
     private var log: FileHandle?
+    /// The page's size in CSS pixels: a TV's, or the shape a screen is looked at in.
+    private var shape = CGSize(width: 1920, height: 1080)
+    /// Pixels in a picture (and points for `use_app`) per pixel of the page: half for a TV, as it always was.
+    private var scale: CGFloat { 960 / max(shape.width, shape.height) }
 
     static func isOpen(_ project: LampProject) -> Bool { open[project.id]?.window.isVisible == true }
     static var openIDs: [String] { open.filter { $0.value.window.isVisible }.map(\.key) }
@@ -62,6 +67,24 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         preview.device = device
         preview.window.title = "\(project.name) on \(device)"
         return await preview.load(staged: staged, inFront: inFront)
+    }
+
+    /// The shape the page is shown at now, in CSS pixels.
+    static func shape(of project: LampProject) -> CGSize { open[project.id]?.shape ?? CGSize(width: 1920, height: 1080) }
+
+    /// Shows a screen's page at another shape, the window turned to it and the page laid out again at that size.
+    static func reshape(_ project: LampProject, to size: CGSize) async {
+        guard let preview = open[project.id], size.width >= 200, size.height >= 200, size != preview.shape else { return }
+        preview.shape = size
+        let top = preview.window.frame.maxY
+        preview.window.contentAspectRatio = size
+        preview.window.setContentSize(NSSize(width: size.width * preview.scale, height: size.height * preview.scale))
+        var frame = preview.window.frame
+        frame.origin.y = top - frame.height
+        preview.window.setFrame(frame, display: true)
+        preview.webView.pageZoom = preview.webView.bounds.width / size.width
+        // A moment for the page to hear the resize and lay itself out again.
+        try? await Task.sleep(for: .milliseconds(500))
     }
 
     static func bringForward(_ project: LampProject) {
@@ -115,7 +138,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// The preview's window, told apart from the desk: closing it stops the app, never Lamp (`AppDelegate`).
     final class Window: NSWindow {}
 
-    func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
+    func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / shape.width }
 
     func windowWillClose(_ notification: Notification) {
         // The wish's chat is attached to the preview (`ChatPanel`), and AppKit hides a window's children with it: let go
@@ -166,7 +189,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Closed while it loaded: showing the window again would bring back a preview with no page in it.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
         if inFront { window.makeKeyAndOrderFront(nil); NSApp.activate() } else { window.orderFront(nil) }
-        webView.pageZoom = webView.bounds.width / 1920
+        webView.pageZoom = webView.bounds.width / shape.width
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
         try? await Task.sleep(for: .milliseconds(600))
         return nil
@@ -320,9 +343,9 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         if #available(macOS 14.4, *), let png = await preview.captured() { taken = (png, true) }
         if taken == nil {
             let configuration = WKSnapshotConfiguration()
-            configuration.snapshotWidth = 960
+            configuration.snapshotWidth = NSNumber(value: Double(preview.shape.width * preview.scale))
             if let image = try? await preview.webView.takeSnapshot(configuration: configuration),
-               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = halfSize(cg) { taken = (png, false) }
+               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = preview.sized(cg) { taken = (png, false) }
         }
         guard let taken else { return nil }
         let now = Date()
@@ -342,9 +365,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         return when + ", \(String(format: "%.1f", since)) s after the previous one."
     }
 
-    /// The page drawn 960 pixels across, the size `use_app`'s points are measured in, whatever the screen's scale.
-    private static func halfSize(_ page: CGImage) -> Data? {
-        let width = 960, height = Int((960 * CGFloat(page.height) / CGFloat(page.width)).rounded())
+    /// The page drawn at `scale` (a TV's 960 pixels across), the size `use_app`'s points are measured in, whatever the
+    /// screen's own scale.
+    private func sized(_ page: CGImage) -> Data? {
+        let width = Int((shape.width * scale).rounded()), height = Int((CGFloat(width) * CGFloat(page.height) / CGFloat(page.width)).rounded())
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
                                             hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
@@ -378,7 +402,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         let page = webView.convert(webView.bounds, to: nil)
         let crop = CGRect(x: page.minX * scale, y: (filter.contentRect.height - page.maxY) * scale,
                           width: page.width * scale, height: page.height * scale).integral
-        return image.cropping(to: crop).flatMap(Self.halfSize)
+        return image.cropping(to: crop).flatMap(sized)
     }
 
     struct Item {
@@ -396,11 +420,12 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
               let json = try? await preview.webView.evaluateJavaScript(screenScript) as? String,
               let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] else { return [] }
         var counts: [String: Int] = [:]
+        let scale = preview.scale
         return list.compactMap { entry in
             guard let kind = entry["kind"] as? String else { return nil }
             let letter = String(kind.prefix(1))
             counts[letter, default: 0] += 1
-            func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) / 2 }
+            func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) * scale }
             return Item(id: letter + String(counts[letter]!), kind: kind, name: entry["name"] as? String ?? "", value: entry["value"] as? String ?? "",
                         focused: entry["focused"] as? Bool ?? false, frame: CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h")))
         }
@@ -427,7 +452,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
           var focused = document.activeElement, out = [];
           function box(el) {
             var r = el.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > 1920 || r.top > 1080) return null;
+            if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > window.innerWidth || r.top > window.innerHeight) return null;
             var s = window.getComputedStyle(el);
             if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return null;
             return r;
@@ -544,7 +569,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                 } else { report.append("\(n). click needs a target or x and y."); continue }
                 _ = await js("""
                     (function () {
-                      var el = document.elementFromPoint(\(point.x * 2), \(point.y * 2));
+                      var el = document.elementFromPoint(\(point.x / preview.scale), \(point.y / preview.scale));
                       if (!el) return '';
                       var focusable = el.closest('[data-focus], button, a[href], input, select, textarea, [tabindex]') || el;
                       if (focusable.focus) focusable.focus();
@@ -557,7 +582,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                 guard let text = action.text else { report.append("\(n). type needs text."); continue }
                 let target = action.target.flatMap(find)
                 let quoted = String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8), as: UTF8.self)
-                let point = target.map { "document.elementFromPoint(\($0.frame.midX * 2), \($0.frame.midY * 2))" } ?? "document.activeElement"
+                let point = target.map { "document.elementFromPoint(\($0.frame.midX / preview.scale), \($0.frame.midY / preview.scale))" } ?? "document.activeElement"
                 _ = await js("""
                     (function () {
                       var el = \(point);

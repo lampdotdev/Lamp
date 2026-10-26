@@ -1,0 +1,99 @@
+// The family's real things, each only once it's chosen in the settings drawer:
+// - the weather where they live, from Open-Meteo (open data: no key or account; its licence asks for the credit the
+//   drawer shows), filling DATA.weather's 24 hours;
+// - their own calendars and photos, read by the app around the page on the Mac, iPhone or iPad (Sources/Native.swift).
+//   Elsewhere (a TV, Android, the Xbox, Lamp's preview) LampNative.available is false and the examples stay.
+(function () {
+  'use strict';
+  var D = window.DATA;
+  var EXAMPLE = JSON.parse(JSON.stringify(D.weather));
+
+  // ------------------------------------------------------------ weather
+  App.findPlaces = function (q) {
+    return fetch('https://geocoding-api.open-meteo.com/v1/search?count=6&name=' + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        return (j.results || []).map(function (p) {
+          return { name: p.name, lat: p.latitude, lon: p.longitude, label: [p.name, p.admin1, p.country].filter(Boolean).join(', ') };
+        });
+      });
+  };
+
+  // WMO weather codes to the dashboard's five looks.
+  function look(code, day) {
+    if (code >= 51) return 'rain';
+    if (code >= 3) return 'cloud';
+    if (code >= 1) return 'partly';
+    return day ? 'sun' : 'moon';
+  }
+
+  App.exampleWeather = function () {
+    D.weather = JSON.parse(JSON.stringify(EXAMPLE));
+    App.emit('time');
+    App.rerender();
+  };
+
+  App.loadWeather = function () {
+    var p = D.settings.place;
+    if (!p) return;
+    var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + p.lat + '&longitude=' + p.lon +
+      '&hourly=temperature_2m,precipitation_probability,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min' +
+      '&timezone=auto&forecast_days=1';
+    fetch(url).then(function (r) { return r.json(); }).then(function (j) {
+      var h = j.hourly, n = Math.min(24, h.time.length);
+      var w = { example: false, t: [], c: [], p: [], hi: Math.round(j.daily.temperature_2m_max[0]), lo: Math.round(j.daily.temperature_2m_min[0]) };
+      for (var i = 0; i < n; i++) {
+        w.t.push(Math.round(h.temperature_2m[i]));
+        w.c.push(look(h.weather_code[i], h.is_day[i]));
+        w.p.push(h.precipitation_probability[i] || 0);
+      }
+      D.weather = w;
+      App.emit('time');
+      App.rerender();
+    }, function () { /* offline: the last weather stays */ });
+  };
+
+  // ------------------------------------------------------------ calendars
+  // Each calendar's events go to the person it's named after ("Maya's soccer" → Maya), else to everyone.
+  function personFor(calendar) {
+    var name = (calendar || '').toLowerCase();
+    var p = D.people.filter(function (x) { return name.indexOf(x.name.toLowerCase()) > -1; })[0];
+    return p ? [p.id] : D.ALL.slice();
+  }
+  App.loadCalendars = function () {
+    var chosen = D.settings.calendars;
+    D.events = D.events.filter(function (e) { return !e.cal; });
+    if (!chosen || !window.LampNative || !LampNative.available) { App.emit('data'); return; }
+    LampNative.call('events', { calendars: chosen, days: 45 }).then(function (list) {
+      D.events = D.events.filter(function (e) { return !e.cal; }).concat(list.map(function (e) {
+        return { id: 'k' + e.id, cal: true, title: e.title, start: new Date(e.start), end: new Date(e.end), allDay: !!e.allDay,
+                 loc: e.loc || undefined, notes: e.notes || undefined, people: personFor(e.calendar) };
+      }));
+      App.emit('data');
+    }, function () {});
+  };
+
+  // ------------------------------------------------------------ photos
+  var examples = D.photos.slice();
+  App.loadPhotos = function () {
+    var album = D.settings.album;
+    if (album == null || !window.LampNative || !LampNative.available) {
+      D.photos = D.cleared ? [] : examples.filter(function (p) { return !D.cleared || !p.ex; });
+      App.emit('data');
+      return;
+    }
+    LampNative.call('photos', { album: album, limit: 30 }).then(function (list) {
+      if (!list.length) return;
+      D.photos = list.map(function (p) { return { id: p.id, src: p.src, o: p.o, date: p.date || '', place: '', fav: !!p.fav, tag: p.date || p.id }; });
+      App.emit('data');
+    }, function () {});
+  };
+
+  App.on('ready', function () {
+    App.loadWeather();
+    App.loadCalendars();
+    if (D.settings.album != null) App.loadPhotos();
+    setInterval(App.loadWeather, 30 * 60000);
+    setInterval(App.loadCalendars, 15 * 60000);
+  });
+})();
