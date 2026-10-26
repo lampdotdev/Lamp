@@ -21,6 +21,8 @@ final class ChatPanel: NSObject, NSWindowDelegate {
     static func show(_ id: String, activate: Bool = true) {
         let panel = open[id] ?? ChatPanel(id: id)
         open[id] = panel
+        // Where the person is working when it first opens: the window they asked for it from (the desk, another chat).
+        if !panel.placedOnce, let from = NSApp.keyWindow ?? NSApp.mainWindow, from !== panel.window, from.isVisible { panel.openedFrom = from.frame }
         panel.place()
         if activate {
             NSApp.activate()
@@ -58,6 +60,10 @@ final class ChatPanel: NSObject, NSWindowDelegate {
     /// What it was last put beside, and that window's frame then, so it's moved only when one of those changes.
     private var besideKey: String?
     private var besideFrame: CGRect?
+    /// It has been put somewhere on screen: from then on a chat on its own stays on the screen it's on.
+    private var placedOnce = false
+    /// The frame of the window it was opened from, which decides its screen until it's placed.
+    private var openedFrom: CGRect?
 
     /// The panel's width beside a window, kept for every wish, between the chat's narrowest and widest (as
     /// `LampSidebar.width`): narrow, since the window beside it is what's being looked at.
@@ -220,8 +226,14 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         } else if let parent = window.parent {
             parent.removeChildWindow(window)
         }
-        let screen = frame.flatMap { frame in NSScreen.screens.first { $0.frame.intersects(frame) } } ?? window.screen ?? NSScreen.main
+        let screens = NSScreen.screens
+        let screen = frame.flatMap { frame in screens.first { $0.frame.intersects(frame) } }
+            ?? Self.aloneScreen(screens.map(\.frame), shown: placedOnce ? window.frame : nil, from: openedFrom, pointer: NSEvent.mouseLocation)
+                .flatMap { chosen in screens.first { $0.frame == chosen } }
+            ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
+        placedOnce = true
+        openedFrom = nil
         var placed = frame.map { Self.frame(beside: $0, in: visible, width: Self.width) } ?? Self.floating(in: visible, width: Self.aloneWidth)
         // Two chats on their own at once: each a step down and across, as windows cascade, so none hides another. On a
         // screen too short to step down, it steps across and gives up the height that step would have taken.
@@ -268,6 +280,20 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         let width = min(width, visible.width - 2 * margin)
         let height = min(820, visible.height - 2 * margin)
         return CGRect(x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height).integral
+    }
+
+    /// The screen a chat on its own goes on. Once it's up, the one it's mostly on, so it stays where the person has it.
+    /// Opening, where the person is working: the screen of the window they opened it from, else the one under the
+    /// pointer. A new panel's frame starts at the corner of the first screen, so going by it would put every new chat
+    /// on that screen, whichever one the person is using.
+    nonisolated static func aloneScreen(_ screens: [CGRect], shown: CGRect?, from: CGRect?, pointer: CGPoint) -> CGRect? {
+        func most(_ rect: CGRect) -> CGRect? {
+            let overlaps = screens.map { ($0, $0.intersection(rect)) }.filter { !$0.1.isNull && !$0.1.isEmpty }
+            return overlaps.max { $0.1.width * $0.1.height < $1.1.width * $1.1.height }?.0
+        }
+        if let shown, let screen = most(shown) { return screen }
+        if let from, let screen = most(from) { return screen }
+        return screens.first { $0.contains(pointer) } ?? screens.first
     }
 
     /// The window showing the wish on this Mac, if any: Lamp's preview of it, the simulator it's open in, or Lamp's
