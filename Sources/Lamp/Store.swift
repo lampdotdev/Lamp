@@ -1938,7 +1938,7 @@ final class Store: ObservableObject {
               apps(of: wish).count > 1, await quit(app, for: turns[wish.id]) else { return false }
         // The wish no longer should have it: taken away, it isn't made again at the next turn. Only here: a restore has
         // already given the wish the list its version had (`Versions.restoreFiles`), which forgetting leaves alone.
-        setApps(wish, wish.apps.filter { Parts.group($0.kind) != Parts.group(app.platform) })
+        setApps(wish, wish.apps.filter { !Parts.lists($0, app) })
         await settleFiles(wish)
         await forget(app)
         if app.isPart {

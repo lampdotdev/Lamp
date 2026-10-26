@@ -97,6 +97,13 @@ enum Parts {
     static func folders(in wish: URL) -> [String] {
         var found: [String] = [], families: Set<String> = []
         for part in Targets.all.compactMap(\.part) {
+            if let marked = part.marked {
+                for folder in marked(wish) where !found.contains(folder) {
+                    guard kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish)?.target.part?.family == part.family else { continue }
+                    found.append(folder)
+                }
+                continue
+            }
             for folder in part.folders {
                 guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish),
                       kind.target.part?.family == part.family, families.insert(part.family).inserted else { continue }
@@ -392,6 +399,14 @@ enum Parts {
     /// before the list has none written), with this one in place of any of its family.
     static func listing(_ kind: Platform, integration: String? = nil, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
         setting(WishApp(kind: kind, integration: integration), in: wanted(in: wish, parts: parts))
+    }
+
+    /// Whether a list entry is this app: of its family and, for a device's app, for its device, so taking away the Roku
+    /// app that the Xbox's app replaces leaves the Xbox's on the list.
+    static func lists(_ entry: WishApp, _ app: LampProject) -> Bool {
+        guard group(entry.kind) == group(app.platform) else { return false }
+        guard let mine = listedIntegration(of: app), let theirs = entry.integration else { return true }
+        return DeviceApps.split(theirs).integration == DeviceApps.split(mine).integration
     }
 
     /// The list with one app set: in place of the one of its family, or added.

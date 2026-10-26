@@ -71,14 +71,16 @@ its list, so a missing tool holds back only the app that needs it.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device's app made through its integration (a Roku
 channel) is one of a wish's apps like any other (family "device", one per wish), in a folder named for its device
-(`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, which `Part.folderFor` and
-`moreFolders` give, so `Parts.folders(in:)` looks in each), read as that integration's from its folder's marker
-(`Parts.load`), and kept on the wish's list with its integration (`WishApp.integration`), so one that waits is made for
-the right device (`addPart`'s `integration`). Its rules as a part are `Agent.devicePrompt(part:)` (the integration's
+(`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, which `Part.folderFor` gives a new
+one), found by its folder's marker whatever the folder is called (`Part.marked`, `DeviceApps.markedFolders`), so an
+integration renamed since never loses its app, read as that integration's from the marker (`Parts.load`), and kept on
+the wish's list with its integration (`WishApp.integration`, and in versions as "device:roku" in `Lamp-Apps`), so one
+that waits, or comes back with a restore, is made for the right device (`addPart`'s `integration`). Its rules as a part are `Agent.devicePrompt(part:)` (the integration's
 rules for the files in its folder), its word in `look_at_app` and `use_app` is its folder's ("roku", `Parts.word(of:)`),
 and the chat names it by its device ("the Roku app", `Parts.name(of:)`, `Parts.menu(of:)`). A list that gives the wish
 another device's app replaces it rather than changing it in place (`Parts.plan`'s `integrations`), so its folder always
-names its device. It isn't shared yet (its kind's `shareRefusal`), so a wish with one isn't either. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
+names its device: the new one is added first, each folder found by its mark meanwhile, and taking the old one away takes
+only its own entry off the list (`Parts.lists`). It isn't shared yet (its kind's `shareRefusal`), so a wish with one isn't either. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
 its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). `make_app_for` sets the
 wish's apps as the list keeps them (`Parts.asked(apps:)`, `AppAsked`): one entry per app, its `kind` (what it is) and its
 `places` (where it runs beyond its kind's own device: a Mac app's "iphone" makes it the app for both, an iPhone app's

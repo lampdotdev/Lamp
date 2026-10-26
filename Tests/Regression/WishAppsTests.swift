@@ -384,6 +384,20 @@ final class WishAppsKeptTests: XCTestCase {
         XCTAssertTrue(Template.hasOtherApps(roku))
     }
 
+    /// A device's app is found by its own mark, whatever its folder is called (its integration may have been renamed
+    /// since), and a version keeps which device it was for.
+    func testADevicesAppIsFoundByItsMarkAndVersionsKeepItsDevice() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        for folder in ["Roku", "OldName"] {
+            let dir = wish.dir.appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try "roku\n".write(to: dir.appendingPathComponent(DeviceApps.marker), atomically: true, encoding: .utf8)
+        }
+        XCTAssertEqual(Set(Parts.folders(in: wish.dir)), ["Roku", "OldName"], "both, while one replaces the other")
+        let apps = [WishApp(kind: .iphone), WishApp(kind: .device, integration: "roku")]
+        XCTAssertEqual(Versions.apps(from: apps.map(Versions.trailerWord).joined(separator: " ")), apps)
+    }
+
     /// An Android app in Android/ is one of the wish's parts, found from its files as the others are.
     func testAnAndroidPartIsFoundInItsFolder() throws {
         let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)

@@ -181,6 +181,10 @@ struct Target {
         var folderFor: ((_ integration: String) -> String?)? = nil
         /// Every other folder an app of the kind may be in: one per integration, for a device's app.
         var moreFolders: () -> [String] = { [] }
+        /// The folders of a wish that hold an app of the kind whatever they're called now, found by its own mark: a
+        /// device's app stays found when its integration's name (and so the folder a new one gets) changes. Each such
+        /// folder names its own device, so more than one may be found while one replaces another.
+        var marked: ((_ wish: URL) -> [String])? = nil
         /// Whether it joins the wish's room at Lamp's relay and so reaches the wish's other apps (`WishRooms`). One that
         /// can't yet is left out of the room's list, so the others never wait for it, and isn't counted among the apps
         /// that give the others `LampWish` (`Template.talksToOtherApps`).

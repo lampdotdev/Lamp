@@ -44,7 +44,8 @@ extension Target {
         part: Part(folder: "Device", family: "device", word: "device", menu: ("Device", "appletvremote.gen4"),
                    rules: { Agent.devicePrompt(part: $0, alone: $1) }, wishRule: Agent.Rules.deviceAmongApps,
                    isMade: { dir, wish in DeviceApps.isMade(dir, wish: wish) },
-                   folderFor: DeviceApps.folder(for:), moreFolders: DeviceApps.folders, joinsWish: false),
+                   folderFor: DeviceApps.folder(for:), moreFolders: DeviceApps.folders,
+                   marked: DeviceApps.markedFolders(in:), joinsWish: false),
         setup: .none)
 }
 

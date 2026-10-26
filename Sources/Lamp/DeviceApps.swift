@@ -76,6 +76,15 @@ enum DeviceApps {
         Integrations.all().first { $0.app?.declared != nil && self.folder(for: $0.id) == folder }
     }
 
+    /// The folders of a wish holding a device's app, by their marker, whatever they're called: a folder made for an
+    /// integration whose name has changed since is still found. Lamp's other kinds' folders and what's the wish's own
+    /// are never one.
+    static func markedFolders(in wish: URL) -> [String] {
+        let others = Set(Targets.all.compactMap { $0.part?.folderFor == nil ? $0.part?.folder : nil } + [Attachments.folder, "Lamp"])
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: wish.path)) ?? []
+        return names.filter { !$0.hasPrefix(".") && !others.contains($0) && isMade(wish.appendingPathComponent($0), wish: wish) }.sorted()
+    }
+
     /// Whether a part's folder holds a device's app, read without following a link: its marker, naming an integration.
     static func isMade(_ dir: URL, wish: URL) -> Bool {
         AppFile.read(dir.appendingPathComponent(marker), inFolder: wish, last: 1) != nil
