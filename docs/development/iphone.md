@@ -121,7 +121,7 @@ come from its folder name and the team), which Xcode builds with automatic signi
 the certificate and profiles with the account signed in to Xcode (Lamp never holds the account); each piece of the
 real build, matched by its id, then gets that piece's profile and the entitlements Xcode signed it with, and a build
 holding a piece Lamp's project doesn't, or a program or library that isn't a piece's own (`TeamSigning.checkCode`),
-isn't signed. Nothing the agent wrote is read for it. The bundle id carries the team (`deviceBundleID(team:)`). `devicectl` installs and
+isn't signed. Nothing the agent wrote is read for it. The bundle id carries the team (`deviceBundleID(team:)`). What a free account's team can't sign (iCloud, NFC, Siri, WeatherKit, Time Sensitive notifications) is listed once, in `TeamLimits`: the setup check names it before a build signed for the team (`PhoneSetup.Context.paidFor`), the build says it (`Devices.membershipProblem`), and the request's device line tells the agent while the team is free (`TeamLimits.agentLine`, the same for every engine). Xcode lists a newly added account's team only once it has a development certificate, so an account with none (`PhoneTools.xcodeAccountsWithoutTeams`) is told how to make one, in the setup check and under the team in Settings → Building. `devicectl` installs and
 launches the app with `--console`, so what it prints reaches the app's log. The agent's looks stay on the
 simulator: the phone's screen can't be photographed. The app reaches Lamp's gateway at the Mac's Bonjour
 name (`Devices.macHost`, the `{{MACHOST}}` placeholder, chosen in LampSupport by `targetEnvironment`): the

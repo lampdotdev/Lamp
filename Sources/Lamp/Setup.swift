@@ -879,6 +879,9 @@ struct PhoneSigningSection: View {
     let phoneApps: Bool
     @AppStorage("appleTeam") private var team = ""
     @State private var teams: [(id: String, name: String)] = []
+    /// Free accounts' teams, named as Xcode names them: two teams of one person otherwise read the same.
+    @State private var free: Set<String> = []
+    @State private var teamless = 0
 
     var body: some View {
         Group {
@@ -889,15 +892,21 @@ struct PhoneSigningSection: View {
                     } else {
                         Picker("Apple Team", selection: $team) {
                             if !phoneApps { Text("None").tag("") }
-                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                            ForEach(teams, id: \.id) { Text("\($0.name) (\(free.contains($0.id) ? "Personal Team, " : "")\($0.id))").tag($0.id) }
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
+                    }
+                    if phoneApps, teamless > 0 {
+                        Text("An Apple Account in Xcode has no team yet. In Xcode → Settings → Apple Accounts, choose its team, click Manage Certificates, then + and Apple Development.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
         }
         .task(id: phoneApps) {
             teams = await Devices.knownTeams()
+            free = PhoneTools.xcodeFreeTeams()
+            teamless = PhoneTools.xcodeAccountsWithoutTeams()
             guard phoneApps else { return }
             // The account signed in to Xcode is the one that can sign, so its team is the first choice
             // whenever the stored one isn't among Xcode's.

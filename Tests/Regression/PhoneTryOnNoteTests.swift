@@ -17,6 +17,19 @@ final class PhoneTryOnNoteTests: XCTestCase {
         }
     }
 
+    /// What Apple won't sign for a free team is named at the build, and nothing is said for a paid one.
+    func testAFreeTeamIsToldWhatItCantSign() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-free-team-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{"healthkit": true, "nfc": true, "siri": true}"#.write(to: dir.appendingPathComponent("capabilities.json"), atomically: true, encoding: .utf8)
+        let app = LampProject(id: "tags", name: "Tags", exe: "Tags", dir: dir, platform: .iphone)
+        XCTAssertEqual(TeamLimits.refused(in: app), ["NFC", "Siri"])
+        XCTAssertEqual(TeamLimits.problem(for: app, on: "Test iPhone", team: "ABCDE12345", free: ["ABCDE12345"]),
+                       "Tags uses NFC and Siri, which Apple allows only with a paid Apple Developer membership. Your Apple account is a free one, so Lamp can't put the app on Test iPhone. Choose a simulator under Try On to keep working, or ask Lamp to take them out.")
+        XCTAssertNil(TeamLimits.problem(for: app, on: "Test iPhone", team: "ABCDE12345", free: []))
+    }
+
     func testAChosenPhoneThatsListedIsWhereTryOnIsSet() {
         let note = Devices.tryOnNote(chosen: phone.udid, among: [phone])
         XCTAssertTrue(note.contains("Try On is set to the person's Test iPhone"))

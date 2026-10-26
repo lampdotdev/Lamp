@@ -14,8 +14,10 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         var requiresPhoneTools = true
         /// An app for both: its Mac build is signed for the person's team, so the team is checked with the rest.
         var requiresTeam = false
-        /// An app that keeps data in iCloud, about to be signed for the team: Apple signs those only for a paid one.
+        /// An app using what Apple signs only for a paid team (`TeamLimits`), about to be signed for the team.
         var requiresPaidTeam = false
+        /// What it uses that needs the paid team, by name, for the setup window's words.
+        var paidFor: [String] = []
     }
     private struct Request {
         let id = UUID()
@@ -49,10 +51,10 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     nonisolated private static func inspect(_ context: Context) async -> PhoneTools.Report {
         await Task.detached {
             let preferred = PhoneTools.checked(family: context.family, phone: context.phone, requiresTeam: context.requiresTeam,
-                                               requiresPaidTeam: context.requiresPaidTeam)
+                                               requiresPaidTeam: context.requiresPaidTeam, paidFor: context.paidFor)
             if context.eitherSimulator, preferred.issue?.step == .simulator {
                 let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone, requiresTeam: context.requiresTeam,
-                                               requiresPaidTeam: context.requiresPaidTeam)
+                                               requiresPaidTeam: context.requiresPaidTeam, paidFor: context.paidFor)
                 if other.ready { return other }
             }
             return preferred
@@ -473,13 +475,10 @@ extension PhoneSetup.Context {
     /// build that is signed for the team; the simulator's copy isn't, so there an account is asked for only
     /// by an app for both, and a paid one by nothing.
     init(for project: LampProject, phone: String?, building: Bool = false) {
+        let signed = building && (phone != nil || (project.platform.target.macSignedForTeam && !project.onIOS))
+        let paidFor = signed ? TeamLimits.refused(in: project) : []
         self.init(family: project.family, phone: phone, requiresPhoneTools: project.hasIOS,
-                  requiresTeam: project.platform.target.macSignedForTeam,
-                  requiresPaidTeam: building && (phone != nil || (project.platform.target.macSignedForTeam && !project.onIOS)) && Self.usesICloud(project))
-    }
-
-    static func usesICloud(_ project: LampProject) -> Bool {
-        Template.Capabilities.load(project).container(for: project) != nil
+                  requiresTeam: project.platform.target.macSignedForTeam, requiresPaidTeam: !paidFor.isEmpty, paidFor: paidFor)
     }
 }
 
@@ -494,7 +493,8 @@ extension Store {
         PhoneSetup.shared.perform(resolve: {
             guard let current = self.current(project) else { return nil }
             var context = PhoneSetup.Context(family: current.family, phone: phone)
-            context.requiresPaidTeam = phone != nil && PhoneSetup.Context.usesICloud(current)
+            context.paidFor = phone != nil ? TeamLimits.refused(in: current) : []
+            context.requiresPaidTeam = !context.paidFor.isEmpty
             return context
         }, isReady: {
             guard let current = self.current(project) else { return false }

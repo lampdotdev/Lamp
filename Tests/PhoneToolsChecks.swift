@@ -15,6 +15,7 @@ final class PhoneToolsChecks {
         p.hasViewer = { _ in true }
         p.teams = { fail == .account ? [] : [(id: "ABCDE12345", name: "Test Team")] }
         p.freeTeams = { [] }
+        p.accountsWithoutTeams = { 0 }
         p.team = { "ABCDE12345" }
         p.chooseTeam = { _ in }
         return p
@@ -210,6 +211,24 @@ final class PhoneToolsChecks {
         expectEqual(none.issue?.needsPaidTeam, false)
         expectFalse(none.issue?.message.contains("a free one will do") == true)
         expectTrue(PhoneTools.check(phone: "phone", probe: probe(fail: .account)).issue?.message.contains("a free one will do") == true)
+        // What needs the paid team is named, and the way on without it is taking that out.
+        let named = PhoneTools.check(phone: "phone", requiresPaidTeam: true, paidFor: ["NFC", "Siri"], probe: probe(fail: .account))
+        expectTrue(named.issue?.message.contains("This app uses NFC and Siri") == true)
+    }
+
+    func testAnAccountXcodeHasNoTeamForYetSaysHowToFinishIt() {
+        // A free account just added to Xcode: signed in, but its team is listed only once it has a certificate.
+        var p = probe(fail: .account)
+        p.accountsWithoutTeams = { 1 }
+        let report = PhoneTools.check(phone: "phone", probe: p)
+        expectEqual(report.issue?.title, "Finish setting up your Apple Account")
+        expectEqual(report.issue?.action, .openXcode)
+        expectTrue(report.issue?.message.contains("Manage Certificates") == true)
+        // Read the way Xcode 27 keeps it: two accounts signed in, a team listed for one.
+        let defaults = UserDefaults(suiteName: "lamp-phone-checks-\(UUID().uuidString)")!
+        defaults.set(["IDE.Identifiers.Prod": [["identifier": "PAID"], ["identifier": "NEW"]]], forKey: "DVTDeveloperAccountManagerAppleIDLists")
+        defaults.set(["PAID": [["teamID": "FGHIJ67890", "teamName": "Test Company"]]], forKey: "IDEProvisioningTeamByIdentifier")
+        expectEqual(PhoneTools.xcodeAccountsWithoutTeams(in: defaults), 1)
     }
 
     func testXcodeSaysWhichTeamsAreFree() {
