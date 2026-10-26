@@ -284,6 +284,7 @@ struct AppMenu: View {
 /// are chosen.
 enum AppInfoView {
     static let useSettingsChoices = "settingsChoices"
+    static let basedOnPage = "basedOnPage"
 
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
     /// shown in Finder, or this app's own model choices undone.
@@ -293,6 +294,8 @@ enum AppInfoView {
         case useSettingsChoices: AppModels().save(project)
         case "showApp": NSWorkspace.shared.activateFileViewerSelecting([project.installedURL])
         case "showSource": NSWorkspace.shared.activateFileViewerSelecting([project.dir])
+        case basedOnPage:
+            if let page = Credits.load(project).upstream.first?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         default: break
         }
     }
@@ -325,6 +328,7 @@ enum AppInfoView {
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
+        if let credits = creditsSection(Credits.load(project)) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)
@@ -351,6 +355,34 @@ enum AppInfoView {
             SidebarInfoButton(title: "Show Source Code in Finder", action: "showSource"),
         ]))
         return sections
+    }
+
+    /// Where the wish came from, first, since it's the one thing here that's about someone else: the work it's based on
+    /// and its licence, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
+    static func creditsSection(_ credits: Credits) -> SidebarInfoSection? {
+        guard !credits.isEmpty else { return nil }
+        var rows: [SidebarInfoRow] = []
+        // The work it's based on and its licence, each a row; anything else it uses a row of its own, named after it, with
+        // who made it and its licence when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
+        // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
+        // by their labels.
+        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from"]
+        for (index, source) in credits.upstream.enumerated() {
+            if index == 0 {
+                rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
+                rows.append(SidebarInfoRow(label: "License", value: source.license ?? "None given"))
+                continue
+            }
+            var label = source.name
+            while !labels.insert(label).inserted { label += " " }
+            let license = source.license.map { $0.hasPrefix("LicenseRef-") ? nil : $0 } ?? "no licence"
+            rows.append(SidebarInfoRow(label: label, value: [source.author, license].compactMap { $0 }.joined(separator: " · ")))
+        }
+        if !credits.remixOf.isEmpty {
+            rows.append(SidebarInfoRow(label: "Remixed from", value: credits.remixOf.map { $0.name + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: " → ")))
+        }
+        let page = credits.upstream.first.flatMap { source in source.url.map { _ in SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage) } }
+        return SidebarInfoSection(title: "Credits", rows: rows, buttons: page.map { [$0] } ?? [])
     }
 
     /// A model's name without the description Settings shows: "Fast & cheap (Claude Haiku)" → "Claude Haiku",

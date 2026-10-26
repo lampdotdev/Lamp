@@ -126,6 +126,20 @@ keeps its folder and data), adds the ones the wish doesn't have, and leaves a pa
 files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
 with a part says 10.
 
+## Credit
+
+A wish says where it came from in `credits.json` at its root (`Credits`): `upstream`, other people's work in it (name,
+author, an https address, the commit, the licence as an SPDX id or `LicenseRef-`, the licence file's path in the wish),
+which the agent writes when it brings such work in (`Agent.Rules.about`, in every kind's prompt and so every engine's),
+and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds to: a starter's copy begins it with the
+starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
+stays one link). Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
+`.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
+changed is still shown and shared. Lamp keeps only what passes `Credits.checked`, from the agent and from a shared file
+alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the
+bundle by `Store.stageSigned`). In a shared file it's credits.json at the root, which an older Lamp ignores, so the
+file's format isn't raised for it.
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp

@@ -2564,7 +2564,7 @@ final class Store: ObservableObject {
     /// pictures and titles of the versions it shares). Not its chat, cost, engine conversations or secrets:
     /// the copy is an app of its own, and those are made afresh when it first needs them.
     private static let duplicatedState = [".lamp/notes.md", ".lamp/models.json", ".lamp/art",
-                                          ".lamp/versions", ".lamp/version-titles.json"]
+                                          ".lamp/versions", ".lamp/version-titles.json", Credits.arrivedPath]
 
     /// Makes a copy of an app to try a variation on: "<name> copy", with the same code, history and
     /// icon artwork on a different background, so the two tell apart at a glance. Then builds it.
@@ -3020,9 +3020,13 @@ final class Store: ObservableObject {
                     return
                 }
             }
+            // What the wish arrived with (`Credits.load`) is in .lamp too, and the file's credits replace it.
+            let creditsRecord = project.dir.appendingPathComponent(Credits.arrivedPath)
+            let creditsBefore = try? Data(contentsOf: creditsRecord)
             /// False when the icon's pictures couldn't be returned; the ones there are then left alone.
             func putBack() async -> Bool {
                 _ = await Versions.git("git restore --staged --worktree -- . && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
+                if let creditsBefore { try? creditsBefore.write(to: creditsRecord, options: .atomic) } else { try? fm.removeItem(at: creditsRecord) }
                 try? fm.removeItem(at: waiting)
                 if hadWaiting { try? fm.copyItem(at: waitingBefore, to: waiting) }
                 guard hadArt else {
@@ -8885,6 +8889,11 @@ final class Store: ObservableObject {
         // What the agent declared in capabilities.json, as the simulator's bundle gets its own (finishSimulatorBundle).
         let capabilities = Template.Capabilities.load(project)
         capabilities.apply(to: app, for: project)
+        // Who the wish is based on, in the About window: macOS shows Credits.html from the bundle under the app's name.
+        let creditsPage = resources.appendingPathComponent("Credits.html")
+        try? fm.removeItem(at: creditsPage)
+        // The wish's credits, which are at its root, for an app of it in a folder of its own as for the wish's own app.
+        if let page = Credits.load(wish(of: project)).aboutPage { try Data(page.utf8).write(to: creditsPage) }
         // Told once: from now on the app opens at login and keeps running, which is the person's to undo.
         let told = project.dir.appendingPathComponent(".lamp/background-told")
         if capabilities.background == true, !FileManager.default.fileExists(atPath: told.path) {
