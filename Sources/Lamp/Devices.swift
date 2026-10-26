@@ -254,6 +254,30 @@ enum Devices {
         return copy
     }
 
+    /// Puts the copy kept on a phone (`PhoneRenewals`) back with a new profile, without opening it: Lamp's project
+    /// planned again with new profiles, the same copy signed with them, installed over itself. Returns when the new
+    /// profile runs out. Throws a `PhoneFailure` the person can act on, or why the copy couldn't be signed.
+    static func renew(_ project: LampProject, record: PhoneRenewals.Record) async throws -> Date {
+        let app = PhoneRenewals.keptApp(for: project)
+        let signing = PhoneRenewals.keptSigning(for: project)
+        guard FileManager.default.fileExists(atPath: app.path), FileManager.default.fileExists(atPath: signing.path) else {
+            throw Failure(message: "Lamp no longer has the copy that's on the phone. Press Play to put the app there again.")
+        }
+        var output: [String] = []
+        let plan: TeamSigning.Plan, planDir: URL
+        do {
+            (plan, planDir) = try await TeamSigning.plan(for: project, team: record.team, place: .iphone, destination: "id=\(record.udid)", renewing: signing) { output.append($0) }
+        } catch {
+            throw PhoneFailure(stage: .build, output: output.joined(separator: "\n") + "\n" + error.localizedDescription)
+        }
+        guard let identity = await signingIdentity(for: record.team) else {
+            throw Failure(message: "This Mac has no certificate for your Apple team. Open Xcode → Settings → Accounts, choose the team and click Manage Certificates.")
+        }
+        try await TeamSigning.sign(app, with: plan, in: planDir, identity: identity)
+        try await install(app, on: record.udid)
+        return await TeamSigning.expiry(of: app.appendingPathComponent("embedded.mobileprovision")) ?? plan.expires
+    }
+
     static func install(_ app: URL, on udid: String) async throws {
         let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)
