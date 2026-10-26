@@ -77,8 +77,6 @@ public struct SidebarState: Codable, Equatable {
     /// What was pointed at in the app, on its own pill in the message box. Its picture counts as the attachment
     /// after the last of `attachments`, for `SidebarCommand.preview` and `removeAttachment`.
     public var pointed: SidebarPointed?
-    /// The version the latest change made, when Undo Last Change is offered under it (`SidebarCommand.undoChange`).
-    public var undoChange: String?
     /// The buttons above the chat, as Lamp's window has them in its toolbar.
     public var toolbar: SidebarToolbar?
     /// The panel open in place of the chat, as the sidebar asked for it (`SidebarCommand.panel`), with what it shows.
@@ -557,8 +555,6 @@ public enum SidebarCommand: Codable, Equatable {
     case askProgress(UUID, AskProgress)
     /// Takes back the save of Lamp's notes this receipt is for.
     case undoNote(UUID)
-    /// Undo Last Change, under the change that made this version.
-    case undoChange(String)
     /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
     case offer(UUID)
     /// The other answer on an offer's card (`SidebarLine.declineButton`).

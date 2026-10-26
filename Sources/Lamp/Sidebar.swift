@@ -180,7 +180,6 @@ final class SidebarServer {
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
         MagicPanel.shared.chatOpenedInApp(project)
-        Store.shared.refreshUndoOffer(project)
         connection.push(force: true)
     }
 
@@ -320,8 +319,6 @@ final class SidebarServer {
         }
         state.submitting = store.pendingSubmissions.contains(project.id)
         state.sends = sends[project.id, default: 0]
-        // As Lamp's window offers it: not while anything waits to go after the change.
-        state.undoChange = busy || !(store.queued[project.id] ?? []).isEmpty ? nil : store.undoOffers[project.id]
         let history = history(for: project, busy: busy, lines: log.count)
         // A wish not yet told, or still being found, has nothing to open, undo, share or look into: only the chat's
         // close button and its name, until it does.
@@ -1095,8 +1092,6 @@ final class SidebarServer {
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
-        case .undoChange(let version):
-            Task { await store.undo(project, change: version) }
         case .askProgress(let id, let progress):
             Self.progressFromSidebar[id] = progress
             AskProgresses.shared.set(progress, for: id)

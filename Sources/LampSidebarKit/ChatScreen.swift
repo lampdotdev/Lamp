@@ -159,9 +159,6 @@ private struct Chat: View {
                         ForEach(state.lines) { line in
                             LineView(line: line, busy: state.busy, state: state).padding(.top, line.gap).id(line.id)
                         }
-                        if let change = state.undoChange {
-                            ChatLook.UndoChange { link.send(.undoChange(change)) }.padding(.top, 12)
-                        }
                         // A first build has its live line in the part being built.
                         if let working = state.working, let since = state.workingSince,
                            !state.lines.contains(where: { $0.build?.parts.contains(where: \.live) == true }) {
@@ -223,7 +220,6 @@ private struct Chat: View {
                 .onChange(of: state.lines.last?.text) { follow(scroller) }
                 .onChange(of: state.working) { follow(scroller) }
                 .onChange(of: state.queued?.count) { old, new in follow(scroller, always: (new ?? 0) > (old ?? 0)) }
-                .onChange(of: state.undoChange) { follow(scroller) }
                 // Once the lines are laid out: scrolled before then, the chat opens partway up.
                 .onAppear {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
