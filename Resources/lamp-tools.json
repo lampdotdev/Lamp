@@ -525,6 +525,29 @@
     }
   },
   {
+    "name": "device_permission",
+    "label": "Ask about a device",
+    "description": "Asks the person, on a card of Lamp's own, whether you may change one of their real devices: press a key, open an app, change the volume or input, turn it on or off. Call it before the first such change on that device, from a command or by using the app; reading a device needs no card. Lamp keeps the answer (once, or always for that device): change nothing on the device unless it allows it. Asking ends your turn: the answer is the next message.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "doing"
+      ],
+      "properties": {
+        "device": {
+          "type": "string",
+          "description": "The device as the person knows it, from what it calls itself: \"Living Room TV\". 40 characters at most."
+        },
+        "doing": {
+          "type": "string",
+          "description": "What you'd press or change on it, 12 words at most: \"Press Home and open Netflix to check the buttons\"."
+        }
+      }
+    }
+  },
+  {
     "name": "ask",
     "label": "Ask",
     "description": "Asks the person something as a card in the chat that they answer with a click, instead of questions written in your reply. Each question comes with 2 to 4 likely answers, each with a `symbol` that pictures it; the person can also type their own, or leave it to you. `layout` is how it's shown: `steps` is one question at a time (the usual choice); `together` puts short questions on one card with their answers as chips, for two or three quick picks that don't depend on each other. Asking ends your turn: change nothing and call nothing after it. The answer is the next message, each question followed by its answer.",

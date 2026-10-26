@@ -3199,6 +3199,8 @@ final class Store: ObservableObject {
         // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
+        // Anything but a click on a card is the person going on: what they allowed once is spent.
+        if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         let files = message.attachments, pointed = message.pointed
@@ -4715,6 +4717,8 @@ final class Store: ObservableObject {
             return
         }
         stop(project)   // anything begun while the app was asking about unsaved work
+        // What the person allowed on their devices is the wish's, and goes with it.
+        DevicePermissions.forget(project)
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -5477,7 +5481,7 @@ final class Store: ObservableObject {
             case "connectors": (status, answer) = Connectors.answer(arguments, for: project)
             case "network_devices": (status, answer) = await NetworkDevices.answer()
             case "device_integration": (status, answer) = await agentIntegration(arguments, for: project)
-            case "ask", "progress", "write_wish": (status, answer) = talk(name, arguments, for: project)
+            case "ask", "progress", "write_wish", "device_permission": (status, answer) = talk(name, arguments, for: project)
             default:
                 return (200, ["jsonrpc": "2.0", "id": id, "error": ["code": -32602, "message": "Unknown tool \(name)."]])
             }
@@ -5596,6 +5600,25 @@ final class Store: ObservableObject {
                 saveChat(project)
                 return (200, ["text": Talk.told])
             }
+        case "device_permission":
+            let device = (arguments["device"] as? String ?? "").trimmed
+            let doing = (arguments["doing"] as? String ?? "").trimmed
+            guard !device.isEmpty, device.count <= 40, !device.contains("\n") else {
+                return (400, ["error": "Give the device's name in `device`, as the person knows it (\"Living Room TV\"), 40 characters at most."])
+            }
+            guard !doing.isEmpty, Talk.words(in: doing) <= 12 else {
+                return (400, ["error": "Say in `doing` what you'd press or change on it, 12 words at most."])
+            }
+            let wish = wish(of: project)
+            if DevicePermissions.kept(wish).always.contains(device) { return (200, ["text": "The person already allows \(device) for this wish: go ahead."]) }
+            if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+            let ask = DevicePermissions.card(device: device, doing: doing)
+            logs[project.id, default: []].append(chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project))
+            closeSteps(project)
+            turn.asked = true
+            away.questionAsked(project.id)
+            saveChat(project)
+            return (200, ["text": "Lamp asked the person. Change nothing on the device and end your turn now: their answer is the next message. Go ahead only if it allows \(device)."])
         case "write_wish":
             // Only for a wish being found: one the person told is already theirs, and a box they're typing in
             // isn't the agent's to fill.
@@ -5616,6 +5639,8 @@ final class Store: ObservableObject {
     func answer(_ line: LogLine, with answers: [String], in project: LampProject) {
         guard var lines = logs[project.id], let ask = Talk.give(answers, to: line.id, in: &lines) else { return }
         logs[project.id] = lines
+        // Lamp's device card: what's allowed is Lamp's to keep, from the click itself.
+        if let device = ask.device, let choice = answers.first { DevicePermissions.answer(choice, about: device, for: wish(of: project)) }
         saveChat(project)
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
     }
@@ -10756,6 +10781,10 @@ final class Store: ObservableObject {
     private func useCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
+        // An app that controls the person's devices presses on real ones: only once they've said so on Lamp's card.
+        if DevicePermissions.reachesDevices(app), DevicePermissions.allowed(wish(of: project)).isEmpty {
+            return (400, ["error": DevicePermissions.useRefusal])
+        }
         var actions = arguments
         actions["part"] = nil
         let body = (try? JSONSerialization.data(withJSONObject: actions)) ?? Data("{}".utf8)

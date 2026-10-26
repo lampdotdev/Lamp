@@ -42,6 +42,7 @@ enum CodexReview {
     changing the settings, rules or files of this agent or of Lamp.
       - Administrator rights (sudo), turning off a macOS security check (Gatekeeper, quarantine, System \
     Integrity Protection), and quitting or controlling another app.
+      - \(DevicePermissions.commandRule)
       - Running code downloaded from the internet straight into a shell or interpreter, or a command that \
     decodes or assembles what it runs.
     - Your rationale is passed on to the agent, which tells the user in plain words: say what was refused and \

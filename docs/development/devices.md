@@ -243,8 +243,9 @@ Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an 
 the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits and the
 integrations, so a device that answers only Bonjour isn't in it, and the answer says so. Kept devices not on the network
 now are listed apart. When macOS keeps Lamp off the local network (`Store.localNetworkRefused`), the
-answer says where the person turns it on rather than that nothing answered. A device-control rule in
-`deviceRules` names the tool; it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
+answer says where the person turns it on rather than that nothing answered. A rule in `deviceRules` names the tool, the
+`device-control` skill (also named with the request once an app's code reaches devices, `Skills.applying`) and
+`device_permission`, which the agent asks with before changing a real device ("Approvals and privacy"); it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
 
 ## Games
 

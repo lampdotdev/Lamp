@@ -323,6 +323,13 @@ enum Gallery {
             option("Remind me to plan at 8", "bell"),
         ])],
         offer: true)),
+        // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
+        ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
+        ask("A device of the person's, answered", {
+            var card = DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")
+            card.answers = [DevicePermissions.allowOnce]
+            return card
+        }(), isOpen: false),
     ]
 
     private static func ask(_ name: String, _ ask: Talk.Ask, isOpen: Bool = true, waiting: LiveAsk.Waiting? = nil) -> Entry {

@@ -43,4 +43,22 @@ final class TalkTests: XCTestCase {
         // Each turn's summary stays too, for how long it worked; the chat doesn't draw it as a line.
         XCTAssertEqual(LogLine.visible(lines, details: false).map(\.text), ["wish", "q", "reply", "s", "guess", "changed", "s"])
     }
+
+    /// Lamp's device card is the person's to answer, and what they chose there is all the agent may do to a device.
+    func testTheDeviceCardAllowsOnlyWhatWasChosen() {
+        let wish = LampProject(id: "remote", name: "Remote", exe: "Remote", dir: URL(fileURLWithPath: "/tmp/remote"), instance: UUID().uuidString)
+        defer { DevicePermissions.forget(wish) }
+        let card = DevicePermissions.card(device: "Living Room TV", doing: "Press Home")
+        XCTAssertEqual(card.device, "Living Room TV")
+        XCTAssertTrue(card.questions.allSatisfy { $0.personOnly == true })
+        DevicePermissions.answer(DevicePermissions.notNow, about: "Living Room TV", for: wish)
+        XCTAssertEqual(DevicePermissions.allowed(wish), [])
+        DevicePermissions.answer(DevicePermissions.allowOnce, about: "Living Room TV", for: wish)
+        XCTAssertEqual(DevicePermissions.allowed(wish), ["Living Room TV"])
+        DevicePermissions.endOnce(for: wish)
+        XCTAssertEqual(DevicePermissions.allowed(wish), [])
+        DevicePermissions.answer(DevicePermissions.allowAlways("Living Room TV"), about: "Living Room TV", for: wish)
+        DevicePermissions.endOnce(for: wish)
+        XCTAssertEqual(DevicePermissions.allowed(wish), ["Living Room TV"])
+    }
 }
