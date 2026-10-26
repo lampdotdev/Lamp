@@ -5794,7 +5794,7 @@ final class Store: ObservableObject {
             }
             said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. Build it in this " +
                         "request, made to work with the rest. `look_at_app` and `use_app` reach it with `part` \"\(Parts.word(of: part))\". " +
-                        "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n" + Parts.pack(for: kind, in: part.dir.lastPathComponent))
+                        "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n" + Parts.pack(for: kind, in: part.dir.lastPathComponent, integration: Parts.listedIntegration(of: part)))
         }
         // Each app left out goes, once the wish has another: one left with nothing beside it stays until what replaces it is made.
         let stays = Parts.staying(of: apps.map(\.id).filter(plan.remove.contains), survivors: apps.count - plan.remove.count + added)

@@ -577,8 +577,9 @@ extension Agent {
 extension Agent {
     /// The rules for a device's app as one of a wish's apps, in its folder (Roku/, whose name says which integration):
     /// the device's own rules for the files there, then how it stands beside the others.
-    static func devicePrompt(part folder: String, alone: Bool = false) -> String {
-        let integration = DeviceApps.integration(inFolder: folder)
+    /// `integration`: the app's own (its folder's marker), which the folder's name may no longer say.
+    static func devicePrompt(part folder: String, alone: Bool = false, integration id: String? = nil) -> String {
+        let integration = id.flatMap { Integrations.integration(DeviceApps.split($0).integration) } ?? DeviceApps.integration(inFolder: folder)
         let app = LampProject(id: "", name: "", exe: "", dir: URL(fileURLWithPath: "/"), platform: .device, integration: integration?.id)
         let name = integration?.name ?? "the device"
         let rules = [Rules.deviceEdit, Rules.deviceKind(integration), Rules.deviceBlocks(app), Rules.deviceAttachments, Rules.deviceTry(app),

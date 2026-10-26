@@ -401,7 +401,7 @@ enum Agent {
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
         // One app on its own is told nothing of reaching others, as an app in its wish's own folder isn't.
         let each = parts.count == 1
-            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true) }.joined()
+            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true, integration: Parts.listedIntegration(of: $0)) }.joined()
                 + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
             : Parts.rule(for: wish, parts: parts)
         return header + "\n\nRules:\n" + rules + each

@@ -343,8 +343,10 @@ enum Versions {
                 let asked = await apps(at: version, in: list(project)) ?? []
                 var listed = project
                 // A device's app is for the device the version names, else the one the list has now.
+                // What stops one, and where a game goes, are kept only for the same app: a device's app for another
+                // device keeps none of the one the list has now.
                 listed.apps = asked.map { app in
-                    let now = project.apps.first { $0.kind == app.kind }
+                    let now = project.apps.first { $0.kind == app.kind && (app.integration == nil || $0.integration == nil || $0.integration == app.integration) }
                     return WishApp(kind: app.kind, needs: now?.needs, places: now?.places, integration: app.integration ?? now?.integration)
                 }
                 let apps = Parts.wanted(in: listed, parts: parts)

@@ -446,15 +446,20 @@ enum Parts {
         var skills: [String: Skills.Skill] = [:]
         for kind in partKinds {
             let skill = skill(for: kind)
-            let folder = parts.first { $0.platform == kind }?.dir.lastPathComponent ?? folder(for: kind)
-            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(name(of: kind)) of a wish, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
-                                        body: pack(for: kind, in: folder))
+            let part = parts.first { $0.platform == kind }
+            let folder = part?.dir.lastPathComponent ?? folder(for: kind)
+            skills[skill] = Skills.Skill(name: skill, description: "The rules for \(part.map { name(of: $0) } ?? name(of: kind)) of a wish, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
+                                        body: pack(for: kind, in: folder, integration: part.flatMap(listedIntegration(of:))))
         }
         return skills
     }
 
-    static func pack(for kind: Platform, in folder: String? = nil, alone: Bool = false) -> String {
-        kind.target.part?.rules(folder ?? self.folder(for: kind), alone) ?? ""
+    /// `integration`: a device's app's, read off its folder's marker, so its rules are its device's even when the
+    /// folder's name no longer says which (an integration renamed since).
+    static func pack(for kind: Platform, in folder: String? = nil, alone: Bool = false, integration: String? = nil) -> String {
+        let folder = folder ?? self.folder(for: kind, integration: integration)
+        if let integration, kind.reaches(.device), !kind.addsPlaces { return Agent.devicePrompt(part: folder, alone: alone, integration: integration) }
+        return kind.target.part?.rules(folder, alone) ?? ""
     }
 
     /// The rule the wish's prompt gets when it's more than one app: what each is, where, how to reach each with the tools,
