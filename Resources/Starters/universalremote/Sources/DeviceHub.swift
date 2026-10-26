@@ -119,8 +119,13 @@ final class DeviceHub: ObservableObject {
         }
         for device in found {
             if let index = devices.firstIndex(where: { $0.id == device.id }) {
+                let before = devices[index]
                 devices[index] = device
                 controllers[device.id] = nil   // a new address or name: made again when next used
+                // The Samsung TV in use goes on at its new address, with its new wake address and its pairing.
+                if device.kind == .samsung, device.id == selectedID, device != before {
+                    TVRemote.shared.choose(SavedTV(id: device.id, name: device.name, address: device.address, model: device.model, mac: device.mac))
+                }
             } else {
                 devices.append(device)
             }
