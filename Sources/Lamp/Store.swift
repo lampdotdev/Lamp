@@ -245,7 +245,8 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot }
+    /// `oldCopy` asks whether to take the copy signed for the app's old team off the phone (`OldCopyLine`).
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot, oldCopy }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -970,6 +971,7 @@ final class Store: ObservableObject {
     private init() {
         root = Edition.supportFolder.appendingPathComponent("Apps")
         Migration.fromForge()
+        Integrations.dropShippedCopies()
         AppsLink.ensure()
         // The keys are read off the main thread first; what needs them (pi's auth file, the setup check, the
         // views drawn meanwhile) follows once they're in.
@@ -993,12 +995,12 @@ final class Store: ObservableObject {
         selection = nil
         startGateway()
         watchOpenApps()
-        // Asking for phones runs devicectl, so only for someone with iPhone apps; Try On asks again when it's opened.
-        // This Mac's record is read either way, off the main thread, so the first request's note has it.
-        // Only where a wish really opens counts (a phone, a TV, an Xbox), not every place its kind could: the New York starter is a game, which
-        // could go on a phone, and looking at launch for it put macOS's Local Network question in a new person's welcome.
-        if projects.contains(where: { $0.openPlaces.contains { $0.listsDevices || $0 == .device } }) { refreshDevices(); refreshSimulators() }
-        else { Task { thisMac = await Device.readThisMac() } }
+        // Lamp opens with what it knows of the person's devices and runs no tool to look for more: devicectl, adb and a
+        // search of the network can each have macOS ask about the local network, which comes only once the person does
+        // something with a device (Settings, Try On, Play on one). This Mac's record is read off the main thread, so the
+        // first request's note has it.
+        showKnownDevices()
+        Task { thisMac = await Device.readThisMac() }
         if !Provider.models.contains(where: { $0.id == UserDefaults.standard.string(forKey: "model") }) {
             UserDefaults.standard.set(Provider.model, forKey: "model")   // from the Claude Code era ("sonnet")
         }
@@ -1753,11 +1755,12 @@ final class Store: ObservableObject {
         guard let integration = kept else {
             return (400, ["error": "Lamp didn't take the integration. Fix these and call device_integration again:\n" + problems.map { "- " + $0 }.joined(separator: "\n")])
         }
-        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        let scan = await Integrations.Scan.now()
         var found: [Device] = []
         for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
         }
+        Integrations.remember(found)
         linkSetupConversations(to: found)
         // In the list at once, for the card below; the next look for devices keeps them while they answer.
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
@@ -2295,7 +2298,7 @@ final class Store: ObservableObject {
             }
             do {
                 try await Devices.pair(device.udid)
-                devices = await Devices.list()
+                await refreshAppleDevices()
                 guard let paired = devices.first(where: { $0.udid == device.udid }), paired.paired else {
                     // Paired, as far as devicectl said, but not in the list now: unplugged, or the listing
                     // failed. Not a word about Developer Mode until the phone is seen again.
@@ -2309,7 +2312,7 @@ final class Store: ObservableObject {
                 }
             } catch {
                 tell(.error, error.localizedDescription)
-                devices = await Devices.list()
+                await refreshAppleDevices()
             }
         }
     }
@@ -2320,64 +2323,148 @@ final class Store: ObservableObject {
     /// Whether a look for devices is going on, so what asked for it can say so: it takes a few seconds and most often
     /// finds the same devices, which without a sign looked like nothing happened.
     @Published private(set) var lookingForDevices = false
-    /// Counts looks, so only the latest one's findings are kept: an earlier one that ends later is out of date.
-    private var deviceLook = 0
-    /// When the last look ended, so a new wish doesn't look again within a moment of one (`lookForDevicesForWish`).
-    private var devicesLookedAt: Date?
+    /// A look was asked for while one was going on: it's made once that one ends, since what changed meanwhile (a step
+    /// passed, a device forgotten) may have come too late for it.
+    private var lookAgain = false
+    /// The last look on the network was refused by macOS: Lamp isn't allowed on the local network, or the person hasn't
+    /// answered yet. Where a look was asked for, a line says so with the way to allow it.
+    @Published private(set) var localNetworkRefused = false
+    /// A look has been made since Lamp opened, and what it found is in `devices`: before one, the person's devices are
+    /// only the TVs and devices Lamp keeps, as not found, and no phone.
+    private var looked = false
+    /// adb has been asked since Lamp opened (a look, or a recheck of Android's devices): before, no Android device is
+    /// known, which isn't the same as none being connected (`DeviceNote`).
+    @Published private(set) var androidListed = false
+    /// The first look Lamp made on the network was refused while macOS's question was up: the wait for the person's
+    /// answer and the look after it, which a wish waits for (`lookAgainOnceAllowed`).
+    private var answerAwaited: Task<Void, Never>?
+    static let localNetworkAskedKey = "localNetworkAsked"
+    /// Privacy & Security, where the person chooses Local Network and allows Lamp: System Settings has no link to
+    /// Local Network's own page.
+    static let localNetworkSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security")!
 
+    /// Looks for the person's devices: the phones with Apple's tool (devicectl), Android's with adb, and one search of
+    /// the local network for the TVs and the integrations' devices. Any of them can have macOS ask whether Lamp may use
+    /// the local network (devicectl finds phones over Wi‑Fi too, and macOS counts the tools Lamp runs as Lamp), so a
+    /// look is made only when the person is doing something with a device (Settings, Try On, a device's setup, pairing,
+    /// Play on one) or a wish has just been named for one (`lookForWish`): never as Lamp opens or a wish starts, which
+    /// show what Lamp already knows (`showKnownDevices`).
     func refreshDevices() {
-        deviceLook += 1
-        let look = deviceLook
+        guard !lookingForDevices else { lookAgain = true; return }
         lookingForDevices = true
         Task {
-            defer {
-                if look == deviceLook {
-                    lookingForDevices = false
-                    devicesLookedAt = Date()
-                }
-            }
-            // Apple's devices, Android's when Android's tools are here (adb is one of them), and the TVs on the network.
             async let apple = Devices.list()
             async let android = Adb.devices()
-            async let tvs = TVs.devices()
+            // What answers on the network: one search, which the TVs and the integrations share.
+            let scan = await Integrations.Scan.now()
+            localNetworkRefused = scan.refused
+            // Refused the first time is macOS's question still up; refused after it is the person's answer.
+            let firstAsked = scan.refused && !UserDefaults.standard.bool(forKey: Self.localNetworkAskedKey)
+            UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
+            if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed() } }
+            async let tvs = TVs.devices(answers: scan.answers)
+            async let integrated = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
-            // What integrations find, and what's on the network that nothing Lamp has knows, after the kits' own.
-            let found = kits + (await Integrations.devices(known: Set(kits.compactMap(\.address))))
-            guard look == deviceLook else { return }
+            let known = await integrated
+            // What's on the network that nothing Lamp has knows, after the rest.
+            let unknown = await Integrations.unknown(scan, except: Set((kits + known).compactMap(\.address)))
+            let found = kits + known + unknown
             if found != devices { devices = found }
+            looked = true
+            androidListed = true
             linkSetupConversations(to: found)
             let mac = await Device.readThisMac()
             if mac != thisMac { thisMac = mac }
+            lookingForDevices = false
+            if lookAgain {
+                lookAgain = false
+                refreshDevices()
+            }
         }
     }
 
-    /// A new wish may be for one of the person's devices ("tetris on my TV", "something for my Roku"), so one is
-    /// looked for as a wish begins: when something is typed in the desk's bar, when a new wish is made, and as its
-    /// first request is named. A look from the last two minutes does.
-    func lookForDevicesForWish() {
-        guard !lookingForDevices else { return }
-        if let at = devicesLookedAt, Date().timeIntervalSince(at) < 120 { return }
-        refreshDevices()
+    /// The devices Lamp knows without looking: what the last look found, and the TVs and devices it keeps, as not found
+    /// until a look sees them. What Lamp opens with and a wish starts with: no tool runs and nothing goes on the network.
+    func showKnownDevices() {
+        var known = devices
+        let keptTVs = Set(TVs.kept().map(\.id))
+        for record in TVs.kept() where !known.contains(where: { $0.id == record.id }) {
+            known.append(Device.from(tv: record, onNetwork: false, kept: keptTVs.contains(record.id)))
+        }
+        for keptOne in Integrations.kept() where !known.contains(where: { $0.id == keptOne.id }) {
+            known.append(Integrations.device(from: keptOne, onNetwork: false))
+        }
+        if known != devices { devices = known }
     }
 
-    /// The devices a new wish's naming call is told of (`AppName.suggest`): the look going on is waited for, a few
-    /// seconds at most, since the wish waits on it; one that takes longer leaves what the last look found.
+    /// Android's devices as adb lists them now, in place of the last look's, the rest of the list as it was.
+    func refreshAndroidDevices() async {
+        let android = await Adb.devices()
+        let apple = devices.filter { [.iphone, .ipad, .watch].contains($0.kind) }
+        let rest = devices.filter { ![.iphone, .ipad, .watch, .android, .androidEmulator].contains($0.kind) }
+        devices = apple + android + rest
+        androidListed = true
+    }
+
+    /// Apple's devices as devicectl lists them now, in place of the last look's: the rest of the list stays, so a
+    /// recheck of a phone doesn't take the TVs and the person's other devices out of Settings and Try On.
+    func refreshAppleDevices() async {
+        let apple = await Devices.list()
+        devices = apple + devices.filter { ![.iphone, .ipad, .watch].contains($0.kind) }
+    }
+
+    /// What a new wish is told of the person's devices as it begins (typed in the desk's bar, made, its first request
+    /// named): what Lamp knows without looking, so starting a wish never has macOS ask about the local network. A wish
+    /// named for a phone, a TV or a device looks once it's named (`lookForWish`).
+    func lookForDevicesForWish() { showKnownDevices() }
+
+    /// The devices a new wish's naming call is told of (`AppName.suggest`).
     func devicesForWish() async -> [Device] {
-        lookForDevicesForWish()
-        // Checked every fifth of a second rather than awaited: the look's own task can't be cut short, and waiting on
-        // it in a group would wait for it to end, however long that took.
-        let until = Date().addingTimeInterval(5)
-        while lookingForDevices, Date() < until { try? await Task.sleep(for: .milliseconds(200)) }
+        showKnownDevices()
         return devices
     }
 
-    /// The devices `network_devices` answers with: a fresh look unless one ended in the last half minute, waited for
-    /// as long as a look takes (the agent asked, and the answer is no use without it).
+    /// The devices `network_devices` answers with: a fresh look, waited for (the agent asked, and the answer is no use
+    /// without it), with the wait for macOS's question when this is the first look Lamp makes on the network.
     func devicesNow() async -> [Device] {
-        if !lookingForDevices, devicesLookedAt.map({ Date().timeIntervalSince($0) > 30 }) ?? true { refreshDevices() }
-        let until = Date().addingTimeInterval(20)
-        while lookingForDevices, Date() < until { try? await Task.sleep(for: .milliseconds(200)) }
+        refreshDevices()
+        await waitForLook(seconds: 20)
+        await answerAwaited?.value
         return devices
+    }
+
+    /// A wish named for a phone, a TV or a device: Lamp looks now, since the person has just said what it's for, and
+    /// says whether the look found a TV or device that wasn't known before it, which the wish is named again with.
+    func lookForWish() async -> Bool {
+        let before = Set(devices.filter { $0.kind.isTV || $0.kind == .other }.map(\.id))
+        refreshDevices()
+        await waitForLook(seconds: 8)
+        await answerAwaited?.value
+        return devices.contains { ($0.kind.isTV || $0.kind == .other) && !$0.isAway && !before.contains($0.id) }
+    }
+
+    /// A look that was the first to ask macOS about the local network heard nothing while its question was up: Lamp
+    /// waits a little for the person's answer and, given Allow, looks again, so what the wish is told comes from a look
+    /// that could see. A refusal after the first is the person's Don't Allow, which isn't waited on.
+    private func lookAgainOnceAllowed(seconds: Double = 30) async {
+        defer { answerAwaited = nil }
+        let until = Date().addingTimeInterval(seconds)
+        while Date() < until {
+            try? await Task.sleep(for: .seconds(1))
+            guard !(await DeviceProbe.localNetworkDenied()) else { continue }
+            // Allowed: a look made at once can still be refused while macOS takes the answer in, so Lamp looks until one
+            // gets through, in the same half minute.
+            refreshDevices()
+            await waitForLook(seconds: 8)
+            if !localNetworkRefused { return }
+        }
+    }
+
+    /// Checked every fifth of a second rather than awaited: the look's own task can't be cut short, and waiting on it
+    /// in a group would wait for it to end, however long that took.
+    private func waitForLook(seconds: Double) async {
+        let until = Date().addingTimeInterval(seconds)
+        while lookingForDevices, Date() < until { try? await Task.sleep(for: .milliseconds(200)) }
     }
 
     /// An untitled app you left without ever using is deleted, so trying New leaves nothing behind.
@@ -3258,7 +3345,12 @@ final class Store: ObservableObject {
         var project = project
         // A draft named before its first request (in its intro) is still asked about, for what it runs on.
         if project.untitled || !project.scaffolded {
-            let suggestion = await AppName.suggest(for: brief, devices: await devicesForWish())
+            var suggestion = await AppName.suggest(for: brief, devices: await devicesForWish())
+            // Named for a phone, a TV or a device: Lamp looks now, and names it again when that found a TV or device it
+            // didn't know ("my TV" is the Roku found just now, not a Samsung).
+            if suggestion?.forDevice == true || suggestion?.forPhone == true, await lookForWish() {
+                suggestion = await AppName.suggest(for: brief, devices: devices) ?? suggestion
+            }
             progress[project.id]?.sketch = suggestion?.sketch ?? []
             progress[project.id]?.naming = false
             if let suggestion, let candidates = suggestion.undecided {
@@ -3417,6 +3509,20 @@ final class Store: ObservableObject {
                 }
                 if project.id != untitled.id { progress[project.id] = progress.removeValue(forKey: untitled.id) }
             }
+            // A wish that opens on a TV or a device, or has a part that does (a screen or a game beside its Mac app), is
+            // told whether Lamp finds it there (`DeviceNote`), which only a look on the network can say: Lamp opens
+            // without one, so the first request to such a wish makes it, or waits for the one going on.
+            let apps = [project] + parts(of: project)
+            if apps.contains(where: { $0.openPlaces.contains { $0 == .tv || $0 == .device } }) {
+                if !looked {
+                    if !lookingForDevices { refreshDevices() }
+                    await waitForLook(seconds: 8)
+                }
+                // The first look may have been Settings' or Try On's, still waiting for the answer to macOS's question.
+                await answerAwaited?.value
+            }
+            // One set to open on the person's Android phone is told whether it's connected, which only adb can say.
+            if !androidListed, apps.contains(where: { $0.onAndroid && $0.device != nil }) { await refreshAndroidDevices() }
             var worked = false
             var result = TurnResult(end: .failed, watched: true)
             defer {
@@ -7465,11 +7571,12 @@ final class Store: ObservableObject {
     private func deviceForApp(_ project: LampProject) async -> Device? {
         if let device = DeviceApps.device(for: project, among: devices), device.connected { return device }
         guard let integration = DeviceApps.integration(for: project) else { return nil }
-        let scan = Integrations.Scan(answers: await DeviceProbe.ssdp("ssdp:all", seconds: 2))
+        let scan = await Integrations.Scan.now()
         var found: [Device] = []
         for address in await Integrations.addresses(for: integration, scan: scan) {
-            if let device = await Integrations.identify(integration, at: address) { found.append(device) }
+            if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
         }
+        Integrations.remember(found)
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
         return DeviceApps.device(for: project, among: devices)
     }
@@ -7500,6 +7607,16 @@ final class Store: ObservableObject {
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
     private func previewDevice(_ project: LampProject) -> String {
         project.onTV || ScreenKit.isScreen(project) ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
+    }
+
+    /// Ends every app's run on a device (and this app's anywhere): what replaces it there is something else, so a look
+    /// or a key in flight stops rather than reaching it, and the next look puts the app there again.
+    func endRuns(on deviceID: String, andOf projectID: String? = nil) {
+        for (id, other) in deviceRuns where id == projectID || other.device.id == deviceID {
+            other.end()
+            deviceRuns[id] = nil
+        }
+        refreshOpenApps()
     }
 
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
@@ -7535,11 +7652,7 @@ final class Store: ObservableObject {
         guard stillWanted() else { return "Stopped." }
         // The device is this app's from the upload on: every run there (another wish's, or this one's last) is over,
         // so a look or a key in flight for it stops rather than reaching what replaces it.
-        for (id, other) in deviceRuns where id == project.id || other.device.id == device.id {
-            other.end()
-            deviceRuns[id] = nil
-        }
-        refreshOpenApps()
+        endRuns(on: device.id, andOf: project.id)
         note("Putting \(project.name) on \(device.name)…", for: project)
         try? AppFolder.write(Data(), to: Runtime.logURL(project), in: project.dir)
         let file = try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)
@@ -7800,7 +7913,8 @@ final class Store: ObservableObject {
         let serial: String
         let kind = project.platform.target.androidEmulator
         if let chosen = project.device {
-            let found = await Adb.devices().first { $0.udid == chosen }
+            await refreshAndroidDevices()
+            let found = devices.first { $0.udid == chosen }
             guard let found, found.adbState == "device" else {
                 let problem = found.map { Adb.advice(for: $0.name, state: $0.adbState) }
                     ?? "Lamp can't see the Android device chosen under Try On. Plug it in and unlock it, or choose the emulator."
@@ -8222,9 +8336,11 @@ final class Store: ObservableObject {
         _ = await installOnDevice(current, owner: owner, udid: udid)
     }
 
-    private func clearPhoneRetry(_ project: LampProject) {
-        guard var lines = logs[project.id], lines.contains(where: { $0.retryPhone != nil }) else { return }
-        for index in lines.indices { lines[index].retryPhone = nil }
+    func clearPhoneRetry(_ project: LampProject) {
+        // An old-copy card's phone isn't a retry: it's where the old copy is, which another install or destination
+        // doesn't change, and the card's answers need it.
+        guard var lines = logs[project.id], lines.contains(where: { $0.retryPhone != nil && $0.kind != .oldCopy }) else { return }
+        for index in lines.indices where lines[index].kind != .oldCopy { lines[index].retryPhone = nil }
         logs[project.id] = lines
         saveChat(project)
     }
@@ -8256,7 +8372,7 @@ final class Store: ObservableObject {
         // The code as it's staged, kept once it's on the phone, so a turn that changes nothing doesn't put it there again.
         let build = Runtime.fingerprint(project)
         // Recheck after the person unlocks, trusts or restarts the phone; the menu's snapshot may be stale.
-        devices = await Devices.list()
+        await refreshAppleDevices()
         guard stillOwns() else { return nil }
         let device = devices.first(where: { $0.udid == udid })
         if let problem = Devices.problem(device, team: team) {
@@ -8318,16 +8434,11 @@ final class Store: ObservableObject {
             // What's on the phone now, kept signed so it can be put back before its profile runs out.
             let before = PhoneRenewals.record(for: project)
             let kept = await PhoneRenewals.keep(app, for: project, udid: udid, team: team)
-            // Signed for another team than last time: a new app on the phone, so the old one comes off, said once. Only
-            // once the new copy is kept for renewal (else the old record would put the old app back), and only while the
-            // turn still has the app: a person who pressed Stop doesn't lose the old copy's data.
-            if kept, stillOwns(), let old = PhoneRenewals.replaced(before, on: udid, by: project.deviceBundleID(team: team)) {
-                do {
-                    try await Devices.uninstall(old, from: udid)
-                    log(project, .status, "\(project.name) on \(name) is signed for your Apple team now, which makes it a new app there: the copy signed for the old team is off the phone, and what it saved there didn't come along.")
-                } catch {
-                    log(project, .status, "\(project.name) on \(name) is signed for your Apple team now, which makes it a new app there. The copy signed for the old team is still on the phone; delete it there when you like.")
-                }
+            // Signed for another team than last time: a new app on the phone, beside the old one. What the old one saved
+            // there doesn't come along, so it stays until the person says to take it off. Asked only once the new copy is
+            // kept for renewal, else the old record would put the old app back.
+            if kept, let old = PhoneRenewals.replaced(before, on: udid, by: project.deviceBundleID(team: team)) {
+                log(project, .oldCopy, old, retryPhone: udid)
             }
             offerKeepOpening(project)
             guard stillOwns() else { return nil }
@@ -9483,6 +9594,39 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Old-copy cards whose answer is under way, drawn with their buttons off.
+    @Published private(set) var answeringOldCopy: Set<UUID> = []
+
+    /// The person answered the old-copy card: `remove` takes the old team's copy off the phone, its data with it; else it
+    /// stays there for them to delete when they like. A removal that fails leaves the card asking, with what went wrong.
+    func answerOldCopy(_ project: LampProject, line id: UUID, remove: Bool,
+                       uninstall: (String, String) async throws -> Void = Devices.uninstall) async {
+        guard let line = logs[project.id]?.first(where: { $0.id == id }), line.kind == .oldCopy, let udid = line.retryPhone,
+              OldCopyLine.state(line.text).answer == nil, answeringOldCopy.insert(id).inserted else { return }
+        // Claimed until it's answered or the removal fails: a removal can take minutes, and a second press of either
+        // button meanwhile must not start another or say "kept" while the first is still deleting it.
+        defer { answeringOldCopy.remove(id) }
+        let old = line.text
+        var answer = OldCopyLine.kept
+        // Never the copy that's on the phone now: an install for the old team since would have made it that again.
+        if remove, PhoneRenewals.record(for: project)?.bundleID != old {
+            do {
+                try await uninstall(old, udid)
+                answer = OldCopyLine.removed
+            } catch {
+                let phone = devices.first { $0.udid == udid }?.name ?? "your phone"
+                log(project, .error, OldCopyLine.failed(phone: phone))
+                log(project, .detail, (error as? PhoneFailure)?.output ?? error.localizedDescription)
+                return
+            }
+        }
+        if var lines = logs[project.id], let index = lines.firstIndex(where: { $0.id == id }) {
+            lines[index].text = answer + old
+            logs[project.id] = lines
+            saveChat(project)
+        }
+    }
+
     /// Once per app, after it first goes on a phone with a free account's seven-day profile: the card offering to keep it
     /// opening (`KeepOpeningLine`), unless the person already chose to.
     private func offerKeepOpening(_ project: LampProject) {
@@ -9700,11 +9844,22 @@ final class Store: ObservableObject {
     /// building blocks: kept in step with the list of apps (Try On, deletion, rename, reload). A TV app's phone page has a
     /// port of its own (`PhoneSites`), opened and closed here too, with the TV preview.
     func syncLocalNetwork() {
+        // A device's app only once it's on a device, or going there now: one made and never put on one would have macOS
+        // ask about the local network as Lamp opens, for nothing.
         gateway?.setLocalNetwork(everyApp.contains {
-            (($0.hasIOS || $0.platform.reaches(.android) || $0.onTV) && $0.device != nil) || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty)
+            (($0.hasIOS || $0.platform.reaches(.android) || $0.onTV) && $0.device != nil)
+                || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty && (puttingOnDevices.contains($0.id) || DeviceApps.wentOnADevice($0)))
         })
         PhoneSites.sync(projects)
         WishRooms.sync(wishes.map { ($0, apps(of: $0)) })
+    }
+
+    /// The device apps being put on a device now, which Lamp listens on the network for (`syncLocalNetwork`).
+    private var puttingOnDevices: Set<String> = []
+
+    func puttingOnDevice(_ id: String, _ going: Bool) {
+        if going { puttingOnDevices.insert(id) } else { puttingOnDevices.remove(id) }
+        syncLocalNetwork()
     }
 
     /// Whether a TV app's phone page is handed out now: while the app runs, in the preview, or on a TV, which Lamp
@@ -10733,8 +10888,10 @@ final class Store: ObservableObject {
             if let udid = simulatorApps[project.id]?.udid, let name = await Simulator.name(of: udid) { on = " It's open on the \(name) simulator." }
             if !turn.look.toldPhone {
                 turn.look.toldPhone = true
-                devices = await Devices.list()
-                on += " " + Devices.tryOnNote(chosen: project.device, among: devices)
+                // The phones are asked for only when the app is set to open on one: devicectl can have macOS ask about
+                // the local network, and an app on the simulator gives no reason to.
+                if project.device != nil { await refreshAppleDevices() }
+                on += " " + Devices.tryOnNote(chosen: project.device, among: devices, listed: looked || project.device != nil)
             }
             var text = note + on + " " + (screenshots.isEmpty ? "No picture of the iPhone could be taken."
                 : Privacy.sharesPictures ? "A picture of the iPhone's screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)

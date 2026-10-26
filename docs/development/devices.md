@@ -18,7 +18,19 @@ a body, never a path or a command, and a command's values are quoted for the she
 folder (`Integrations.folder`), beside those Lamp ships in `Resources/Devices` (the Xbox's and the Roku's), which win over a written one with the same id, and whose id `device_integration` refuses.
 The model can only say a step was read (`known.how` "read", with its source); Lamp marks it Checked by Lamp or Worked
 before (`Integrations.mark`: done by hand or not, by whether it needed hands on the device) once its check passes on a device, with that
-device's model and version, and keeps the mark while the step's text is unchanged.
+device's model (as its model step read it, once that's passed, which is then the kept device's model too) and version, and keeps the
+mark while the step's text is unchanged. A shipped integration's marks are written in the repository, never by Lamp: a copy in
+Lamp's folder would be shadowed, and those an earlier Lamp wrote are taken away at launch (`dropShippedCopies`). An integration the builder sends with an
+`app` is held to a whole lifecycle (`IntegrationCheck.lifecycle`): `stop`, `remove` and `type` each there or named in
+`bridge.lacks`, every picture its scaffold names written or drawn (`icons`), and each `support` library named in its
+rules; one kept before this was asked is still read, and Lamp's shipped ones pass it (their test). Once a device is set
+up, its setup window offers a test run (`IntegrationProbe`, `DeviceTrialCard`): the integration's own scaffold made in
+Lamp's `Probes/` folder and taken through Lamp's own ways with an app (`DeviceApps.install`, `picture`, `press` on the
+arrows and select only, `type`, `stop`, an install over the open copy, and `DeviceApps.remove`), holding the device as
+an install does, stopping at the first stage that fails and taking the app off again. Its report goes with the next
+request of the device's setup conversation (`Agent.deviceSetupNote`), whatever the engine, and a run that passes marks
+the bridge (`bridge.known`, Lamp's alone: refused from the builder, kept while the bridge is unchanged, never written
+to a shipped integration).
 
 The primitives and their guards (DevicePrimitives.swift, DeviceRemote.swift), which every place goes through:
 `DeviceHTTP` (only the address the device was found at, which must be private or link-local and never this Mac, by loopback or by its own addresses (`DeviceAddress.thisMac`), so
@@ -102,11 +114,36 @@ packaged, the Xbox's MSIX payload, a Roku's zip made again), never into the app'
 package: Lamp opens a claim for the app just before it puts it on a device (`DeviceSupport.Claims`, from that device's
 address, for half an hour), and the app, finding no token kept, asks `/app/claim` for it and keeps it on the device. The
 TV preview needs neither: LampAI's calls reach Lamp through the web view (`TVPreview`'s `lampGateway` handler), as the
-app. The gateway listens on the network while a TV app is set to open on a TV or a device app takes the building blocks
-(`Store.syncLocalNetwork`); from the network it answers a browser's preflight and lets the device's page read the answer
+app. The gateway listens on the network while a TV app is set to open on a TV, or a device app that takes the building
+blocks is being put on a device or has been (`Store.syncLocalNetwork`, `DeviceApps.wentOnADevice`): listening is what
+has macOS ask about the local network, so an app made for a device and never put on one doesn't; from the network it answers a browser's preflight and lets the device's page read the answer
 (only there: nothing on this Mac is answered across origins), and admits this Mac's own addresses as Host beside its
 name (`Store.isMacHost`), since a web page can't choose its Host and these devices don't resolve `.local` names.
 
+**When Lamp looks.** A look (`Store.refreshDevices`) runs devicectl for the phones, adb for Android's and one search
+of the local network for the TVs and devices, and each of these can have macOS ask whether Lamp may use the local network:
+devicectl finds phones over Wi‑Fi too, and macOS counts the tools Lamp runs as Lamp. So Lamp looks only once the person
+is doing something with a device: Settings → Your Devices, Add a New Device and Look Again, Try On opening (Lamp's and the
+chat's, `SidebarCommand.tryOnOpened`), pairing, a device's setup, Play on a phone, a TV or a device, a game given the
+Xbox, `device_integration`; a wish named for a phone, a TV or a device (`AppName.Suggestion.forPhone`, `forDevice`, then
+`Store.lookForWish`, which names the wish again when the look found a TV or device Lamp didn't know); and the first
+request to a wish that opens on a TV or a device, or has a part that does, whose device line says whether Lamp finds it.
+A turn's note on the person's phone asks devicectl only when the app is set to open on one. The first look Lamp makes hears nothing while macOS's question is up, so a wish's look that
+was the first to ask waits up to half a minute for the answer and, given Allow, looks again before the agent starts
+(`lookAgainOnceAllowed`, `localNetworkAsked`); a refusal after that is the person's Don't Allow, not waited on. Never as Lamp opens or as a
+wish starts: those show what Lamp knows without looking (`showKnownDevices`: the last look's devices, and the kept TVs
+and devices as not found). A look macOS refused (`DeviceProbe.search`: nothing
+answered, and Network.framework says the path is local network prohibited, `localNetworkDenied`; a refused send itself
+succeeds) sets `Store.localNetworkRefused`, and where a look was asked for (Your
+Devices, Add a New Device, Try On) a line says so with the way to Privacy & Security, and that Local Network is chosen there (System Settings has no
+link to that page itself).
+
+A look for devices (`Store.refreshDevices`) is one at a time: one asked for while another runs is made once it ends
+(`lookAgain`). It makes one SSDP search for everything (`Integrations.Scan.now`, `ssdp:all`), which the TVs and every
+integration share: an integration's `find.ssdp` target and the description its identity reads are taken from those
+answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
+device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
+phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
 Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
 that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
@@ -185,13 +222,13 @@ devices as well as Lamp.
 
 **What's on the network, for the agent** (`network_devices`, NetworkDevices.swift): a wish that controls, plays to or
 reads the person's devices starts from what's there, not from a question about what they own. The tool waits for a
-fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, unless one ended in the last half minute) and
+fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first) and
 answers with each device on the network: its name, maker, model and address, what it said to the SSDP search, and what
 Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing). Phones,
 the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits and the
 integrations, so a device that answers only Bonjour isn't in it, and the answer says so. Kept devices not on the network
-now are listed apart. When macOS keeps Lamp off the local network the search can't even be sent
-(`DeviceProbe.localNetworkRefused`), and the answer says where the person turns it on rather than that nothing answered. A device-control rule in
+now are listed apart. When macOS keeps Lamp off the local network (`Store.localNetworkRefused`), the
+answer says where the person turns it on rather than that nothing answered. A device-control rule in
 `deviceRules` names the tool; it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
 
 ## Games

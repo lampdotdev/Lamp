@@ -788,6 +788,20 @@ final class SidebarServer {
                     // A prominent card with no button draws an empty one.
                     card.prominent = !taken
                     out.append(card)
+                case .oldCopy:
+                    let state = OldCopyLine.state(line.text)
+                    let phone = Store.shared.devices.first { $0.udid == line.retryPhone }?.name ?? "your phone"
+                    let text = OldCopyLine.text(phone: phone, answer: state.answer)
+                    var card = SidebarLine(id: line.id, kind: .offer, text: text.title, gap: gap)
+                    card.symbol = OldCopyLine.symbol
+                    card.status = text.status
+                    card.done = state.answer != nil
+                    card.disabled = Store.shared.answeringOldCopy.contains(line.id)
+                    if state.answer == nil {
+                        card.declineButton = OldCopyLine.keep
+                        card.button = OldCopyLine.remove
+                    }
+                    out.append(card)
                 case .keepOpening:
                     // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
                     let on = PhoneRenewals.staysOpen
@@ -1055,6 +1069,10 @@ final class SidebarServer {
                 Task { await store.freePhoneSlot(project, line: line.id) }
                 return
             }
+            if line.kind == .oldCopy {
+                Task { await store.answerOldCopy(project, line: line.id, remove: true) }
+                return
+            }
             if line.kind == .keepOpening {
                 store.keepPhoneAppsOpening(true, for: project)
                 return pushNow()
@@ -1071,6 +1089,9 @@ final class SidebarServer {
             // A card's keys, downloads and sign-ins, and Image Playground: Lamp's own sheet, since the chat beside an
             // app can't hold them (nothing typed there may reach the app), as Share hands over the file it makes.
             SetupSheet.shared.show(project, line: line)
+        case .decline(let id):
+            guard store.logs[project.id]?.first(where: { $0.id == id })?.kind == .oldCopy else { return }
+            Task { await store.answerOldCopy(project, line: id, remove: false) }
         case .undoNote(let id):
             Self.noteProblems[id] = store.undoNote(id, in: project)
             scheduleUpdate()
@@ -1175,6 +1196,9 @@ final class SidebarServer {
             // Beside its Mac app the chat has no Play: a place chosen there is where it opens at once.
             store.tryOn(project, id, open: Self.besideItsApp(project, place: histories[project.id]?.value?.place))
             scheduleUpdate()
+        case .tryOnOpened:
+            store.refreshDevices()
+            store.refreshSimulators()
         case .play:
             // A Mac app that can have its chat beside it opens with it there (asked from Lamp's panel, which then closes);
             // anything else, an app built before the chat could go beside it included, is opened as Play opens it.

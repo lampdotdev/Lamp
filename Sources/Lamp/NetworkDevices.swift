@@ -7,8 +7,7 @@ import Foundation
 enum NetworkDevices {
     @MainActor static func answer() async -> (Int, [String: Any]) {
         let devices = await Store.shared.devicesNow()
-        let refused = await Task.detached { DeviceProbe.localNetworkRefused() }.value
-        return (200, ["text": describe(devices, integrations: Integrations.all(), refused: refused)])
+        return (200, ["text": describe(devices, integrations: Integrations.all(), refused: Store.shared.localNetworkRefused)])
     }
 
     /// The devices on the network, one paragraph each. Phones, the Mac and anything plugged in are left out: they're

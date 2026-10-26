@@ -328,6 +328,8 @@ enum Agent {
             if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
             note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's SSDP scan as \($0)" } ?? "") + "."
         }
+        // The last test run on it: what the device did with an app made from the integration, which the builder fixes.
+        if let deviceID = project.deviceSetup, let report = IntegrationProbe.report(for: deviceID) { note += "\n\n" + report }
         return note
     }
 

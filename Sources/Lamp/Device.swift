@@ -334,7 +334,8 @@ enum DeviceNote {
             var line: String
             if let serial = project.device {
                 line = androids.first(where: { $0.udid == serial }).map { "Try On points at the person's \($0.name): \($0.forAgent)." }
-                    ?? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
+                    ?? (store.androidListed ? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
+                        : "Try On points at one of the person's Android devices, which Lamp hasn't looked for yet; Play puts it there once it's connected.")
             } else {
                 line = "Try On points at the Android emulator on this Mac (\(AndroidTools.avdName), Android \(AndroidTools.platformLevel == 36 ? "16" : "\(AndroidTools.platformLevel)"), a Pixel-sized phone): that is where the app opens and what the person sees."
             }
@@ -342,7 +343,8 @@ enum DeviceNote {
                 let state = device.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(device.setup().words.lowercased()))"
                 line += " The person's \(device.name) (\(device.forAgent)) is \(state)."
             }
-            if androids.isEmpty {
+            // Only once adb has been asked: before, Lamp doesn't know whether one is connected.
+            if androids.isEmpty, store.androidListed {
                 line += " No Android phone or tablet of the person's is connected to this Mac, so call it the emulator, never their phone; they can plug one in and choose it under Try On."
             }
             return line

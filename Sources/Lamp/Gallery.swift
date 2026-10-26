@@ -152,6 +152,15 @@ enum Gallery {
             LogLine(kind: .phoneSlot, text: PhoneSlotLine.done + "dev.lamp.app.gallery-older.abcde12345", retryPhone: "00008110-gallery"),
             LogLine(kind: .status, text: "Building for the iPhone…"),
         ]),
+        screen("A new team's copy beside the old one", group: "Chat screen", [
+            LogLine(kind: .user, text: "put it on my phone"),
+            LogLine(kind: .oldCopy, text: "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
+            LogLine(kind: .status, text: "Today is ready on the iPhone"),
+        ]),
+        screen("The old team's copy, kept and removed", group: "Chat screen", [
+            LogLine(kind: .oldCopy, text: OldCopyLine.kept + "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
+            LogLine(kind: .oldCopy, text: OldCopyLine.removed + "dev.lamp.app.gallery.abcde12345", retryPhone: "00008110-gallery"),
+        ]),
         screen("It stopped opening on the phone", group: "Chat screen", [
             LogLine(kind: .error, text: "Today on the iPhone stopped opening: Apple lets an app signed with your account open for a limited time, and Lamp couldn't put it back. Lamp can't reach the iPhone. Connect it to this Mac or join the same Wi‑Fi, unlock it, then click Retry.", retryPhone: "00008110-gallery"),
         ]),
@@ -422,7 +431,27 @@ enum Gallery {
         },
         Entry(group: "Device setup", name: "The setup window, set up") {
             AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
-                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in }, tryIt: {}))
+        },
+        Entry(group: "Device setup", name: "The setup window, a test run under way") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    trial: [.init(id: "Make a test app", state: .passed), .init(id: "Put it on and open it", state: .passed),
+                                            .init(id: "See its screen", state: .running), .init(id: "Press its keys", state: .waiting),
+                                            .init(id: "Take it off", state: .waiting)], tryIt: {}, canTry: false))
+        },
+        Entry(group: "Device setup", name: "The setup window, a test run that failed") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    trial: [.init(id: "Make a test app", state: .passed), .init(id: "Put it on and open it", state: .passed),
+                                            .init(id: "Put it on again while it's open", state: .failed("The request timed out.")),
+                                            .init(id: "Take it off", state: .skipped)], tryIt: {}))
+        },
+        Entry(group: "Device setup", name: "The setup window, a test run that passed") {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: [rokuMode.id, rokuPassword.id, rokuLook.id],
+                                    content: nil, typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    trial: [.init(id: "Make a test app", state: .passed), .init(id: "Put it on and open it", state: .passed),
+                                            .init(id: "Take it off", state: .passed)], tryIt: {}, worked: "Apps worked on 3900X, 15.3.4"))
         },
     ]
 

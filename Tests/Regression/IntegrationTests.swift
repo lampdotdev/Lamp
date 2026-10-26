@@ -179,6 +179,33 @@ final class IntegrationTests: XCTestCase {
         XCTAssertFalse(DeviceHTTP.Guardian.answers(space: ("192.168.1.20", digest), address: "192.168.1.20", digest: nil, tried: false))
     }
 
+    /// A look makes one ssdp:all search: an integration's own target, and where its description is, come from the
+    /// answers to it, so no integration searches again.
+    func testAnIntegrationFindsItsDeviceInTheLooksOneScan() async throws {
+        let xbox = """
+        {
+          "id": "xbox-test", "name": "Xbox", "maker": "Microsoft",
+          "find": [{ "ssdp": "urn:schemas-upnp-org:device:MediaRenderer:1", "contains": "UPnP-Device-Host" }],
+          "identity": { "os": "Xbox OS", "id": { "description": true, "xml": "device/UDN" },
+                        "model": { "description": true, "xml": "device/modelName", "contains": "Xbox" } },
+          "steps": []
+        }
+        """
+        let integration = try JSONDecoder().decode(Integration.self, from: Data(xbox.utf8))
+        func answer(_ address: String, _ target: String, _ server: String, _ location: String) -> DeviceProbe.SSDPAnswer {
+            DeviceProbe.answer("HTTP/1.1 200 OK\r\nST: \(target)\r\nSERVER: \(server)\r\nLOCATION: \(location)\r\n", from: address)
+        }
+        let scan = Integrations.Scan(answers: [
+            answer("192.168.1.30", "upnp:rootdevice", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0", "http://192.168.1.30:1/root.xml"),
+            answer("192.168.1.30", "urn:schemas-upnp-org:device:mediarenderer:1", "Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0",
+                   "http://192.168.1.30:10247/renderer.xml"),
+            answer("192.168.1.40", "urn:schemas-upnp-org:device:MediaRenderer:1", "Linux UPnP/1.0 Sonos/86.10", "http://192.168.1.40:1400/xml"),
+        ])
+        let addresses = await Integrations.addresses(for: integration, scan: scan)
+        XCTAssertEqual(addresses, ["192.168.1.30"])
+        XCTAssertEqual(Integrations.describedAt("192.168.1.30", by: integration, scan: scan), Request(port: 10247, path: "/renderer.xml"))
+    }
+
     func testValuesAreReadFromJSONAndXML() {
         let xml = Data("<device-info><serial-number>X01</serial-number><developer-enabled>true</developer-enabled></device-info>".utf8)
         XCTAssertEqual(DeviceHTTP.xml("developer-enabled", in: xml), "true")

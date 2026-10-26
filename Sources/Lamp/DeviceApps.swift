@@ -235,10 +235,13 @@ enum DeviceApps {
             log?.write(Data((line + "\n").utf8))
         })
         let run = Run(device: device)
-        // The app opened by this install asks for its token, which isn't in its package.
+        // The app opened by this install asks for its token, which isn't in its package, over the network: Lamp listens
+        // there from now on, and after, for as long as the app is on a device (`wentOnADevice`).
         if !DeviceSupport.libraries(for: project).isEmpty, let address = device.address {
+            await MainActor.run { Store.shared.puttingOnDevice(project.id, true) }
             DeviceSupport.Claims.shared.open(project.id, from: address)
         }
+        defer { Task { @MainActor in Store.shared.puttingOnDevice(project.id, false) } }
         // A game's or a screen's page of a wish asks for its wish's key too, as a TV app's does: open from minutes before
         // the upload, and again once it's open, since an Xbox's install can take longer than that.
         let claimsKey = (GameKit.isGame(project) || ScreenKit.isScreen(project)) && Template.talksToOtherApps(project) ? device.address : nil
@@ -374,6 +377,13 @@ enum DeviceApps {
         Edition.supportFolder.appendingPathComponent("Device Builds").appendingPathComponent("last-\(MSIX.publisherID(id)).txt")
     }
 
+    /// Whether Lamp has put the app on a device, by the record each install leaves: an app made for a device but never
+    /// put on one doesn't need Lamp listening on the network for it.
+    static func wentOnADevice(_ project: LampProject) -> Bool {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: buildFolder(for: project).path)) ?? []
+        return names.contains { $0.hasPrefix("installed-") && $0.hasSuffix(".device") }
+    }
+
     /// Where Lamp notes which package of the app is on a device (the identity, with the device's id beside it), and
     /// which one is on its way there.
     private static func installedRecord(_ project: LampProject, device id: String, pending: Bool = false) -> URL {
@@ -416,9 +426,19 @@ enum DeviceApps {
         }
     }
 
+    /// Takes the copy just put on one device off it, saying what the device answered when it refused: the test run's
+    /// last stage (`IntegrationProbe`), where a removal that fails is the finding rather than something to pass over.
+    static func remove(_ project: LampProject, from device: Device) async throws {
+        guard let integration = integration(for: project), let remove = integration.bridge?.remove, !remove.isEmpty else { return }
+        let extra = integration.app?.declared?.wrap == nil ? values(project) : (installedValues(project, on: device) ?? values(project))
+        let runner = IntegrationRunner(integration: integration, device: device)
+        if let stop = integration.bridge?.stop { _ = try? await runner.run(stop, extra: extra) }
+        _ = try await runner.run(remove, extra: extra)
+    }
+
     /// Lamp's values for the bridge: the app's id, whether it's a game, and for a wrapped package the names Windows
     /// gives it.
-    private static func values(_ project: LampProject) -> [String: String] {
+    static func values(_ project: LampProject) -> [String: String] {
         var values = values(project, identity: buildFolder(for: project).appendingPathComponent("identity.json")) ?? ["appID": project.id]
         values["isGame"] = isGame(project) ? "true" : "false"
         return values

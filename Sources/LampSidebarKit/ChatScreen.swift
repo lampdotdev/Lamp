@@ -363,7 +363,12 @@ private struct LineView: View {
             }
         case .offer:
             ChatLook.OfferCard(symbol: line.symbol ?? "sparkles", title: line.text, status: line.status ?? "", done: line.done ?? false) {
-                if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
+                // Side by side, as a pair of answers, even where the card puts its buttons under its words.
+                HStack {
+                    if let decline = line.declineButton { Button(decline) { link.send(.decline(line.id)) } }
+                    if let button = line.button { Button(button) { link.send(.offer(line.id)) } }
+                }
+                .disabled(line.disabled ?? false)
             }
         case .action:
             ChatLook.ActionLine(symbol: line.symbol ?? "sparkles", text: line.text, button: line.button ?? "",
@@ -735,6 +740,7 @@ struct ChatBar: View {
                         tryOnItems(section)
                     }
                 }
+                .onAppear { link.send(.tryOnOpened) }
             } label: {
                 ToolSymbol(tryOn.symbol, "Try On")
             }

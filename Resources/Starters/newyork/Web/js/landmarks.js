@@ -12,7 +12,6 @@ import { groundUnder } from './terrain.js';
 
 let bryantParkLawn;
 
-// js/landmarks.js
 // Custom architectural 3D models for Midtown Manhattan's iconic landmarks
 
 function buildLandmarks(scene) {

@@ -105,15 +105,17 @@ enum DeviceHTTP {
 
     /// Makes the request with Lamp's values filled in. No redirect is followed, a sign-in goes only to the device's own
     /// challenge, and the answer is cut off at `limit`. Over HTTPS, `pins` holds the device to the certificate it showed
-    /// the first time; without them (while a device is only being found and read) nothing secret is sent.
+    /// the first time; without them (while a device is only being found and read) nothing secret is sent. A look for
+    /// devices waits `timeout` for each answer, much less than an install does: a device that answered the scan but
+    /// not its port would otherwise hold up the whole look.
     static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:],
-                     pins: DeviceTLS.Pins? = nil) async throws -> Answer {
+                     pins: DeviceTLS.Pins? = nil, timeout: TimeInterval = 30) async throws -> Answer {
         let https = request.https == true
         if https, pins == nil, carriesSecret(request) {
             throw Failure(message: "Lamp sends a password over HTTPS only to a device whose certificate it keeps.")
         }
         let path = try Placeholders.fill(request.path, values, in: .path)
-        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: 30)
+        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: timeout)
         urlRequest.httpMethod = (request.method ?? "GET").uppercased()
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.httpShouldHandleCookies = false
@@ -339,29 +341,39 @@ enum DeviceProbe {
         let usn: String
     }
 
-    /// Whether macOS keeps Lamp off the local network (Privacy & Security → Local Network turned off for it, or its
-    /// question not answered yet): a search can't even be sent then, where on a quiet network it's sent and nothing
-    /// answers.
-    static func localNetworkRefused() -> Bool {
-        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        guard fd >= 0 else { return false }
-        defer { close(fd) }
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(1900).bigEndian
-        address.sin_addr.s_addr = inet_addr("239.255.255.250")
-        let message = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"
-        let sent = message.withCString { text in
-            withUnsafePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(fd, text, strlen(text), 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-            }
-        }
-        return sent < 0 && (errno == EHOSTUNREACH || errno == EPERM || errno == EACCES)
-    }
-
     /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
     static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
-        await Task.detached { search(target, seconds: seconds) }.value
+        await search(target, seconds: seconds).answers
+    }
+
+    /// The same search, and whether macOS refused it: Lamp isn't allowed on the local network (Privacy & Security →
+    /// Local Network), or hasn't been answered yet. A refused search only hears nothing, so a look that heard nothing
+    /// asks Network.framework why (`localNetworkDenied`).
+    static func search(_ target: String, seconds: Double) async -> (answers: [SSDPAnswer], refused: Bool) {
+        async let denied = localNetworkDenied()
+        let answers = await Task.detached { search(target, seconds: seconds) }.value
+        return (answers, await denied && answers.isEmpty)
+    }
+
+    /// Whether macOS refuses Lamp the local network now. A send it refuses still succeeds where Lamp makes it, so a
+    /// connection to the SSDP group is asked why its path can't be used, and closed at once.
+    static func localNetworkDenied() async -> Bool {
+        let connection = NWConnection(host: "239.255.255.250", port: 1900, using: .udp)
+        return await withCheckedContinuation { continuation in
+            let once = Once()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready, .waiting, .failed:
+                    guard once.take() else { return }
+                    let denied = connection.currentPath?.unsatisfiedReason == .localNetworkDenied
+                    connection.cancel()
+                    continuation.resume(returning: denied)
+                default: break
+                }
+            }
+            connection.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if once.take() { connection.cancel(); continuation.resume(returning: false) } }
+        }
     }
 
     private static func search(_ target: String, seconds: Double) -> [SSDPAnswer] {

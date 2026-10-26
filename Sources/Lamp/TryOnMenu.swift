@@ -7,7 +7,7 @@ import AppKit
 struct TryOnMenu: Equatable {
     struct Item: Equatable, Identifiable {
         /// What choosing it does, for `Store.tryOn`: "mac", "family:ipad", "simulator:<udid>", "phone:<udid>", "pair:<udid>", "emulator",
-        /// "android:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", or "settings" and "look".
+        /// "android:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", or "settings", "look" and "localnetwork".
         let id: String
         let title: String
         let symbol: String
@@ -95,8 +95,7 @@ struct TryOnMenu: Equatable {
             Item(id: "add:\(place.rawValue)", title: "\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too", symbol: "plus")
         }
         if !missing.isEmpty { sections.append(Section(title: nil, items: missing)) }
-        sections.append(Section(title: nil, items: [Item(id: "settings", title: "All Your Devices…", symbol: "gearshape"),
-                                                    Item(id: "look", title: "Look for Devices Again", symbol: "arrow.clockwise")]))
+        sections.append(look(store))
         let symbol = sections.flatMap(\.items).first(where: \.checked)?.symbol ?? "laptopcomputer"
         return TryOnMenu(sections: sections, symbol: symbol)
     }
@@ -105,12 +104,22 @@ struct TryOnMenu: Equatable {
 extension TryOnMenu {
     @MainActor private static func step(_ device: Device) -> String { device.setup() == .ready && !device.isAway ? "" : " (\(device.status))" }
 
+    /// Every list's last section: all the devices, and looking again; and when macOS refused the last look on the
+    /// network, the way to allow Lamp there.
+    @MainActor static func look(_ store: Store) -> Section {
+        var items = [Item(id: "settings", title: "All Your Devices…", symbol: "gearshape"),
+                     Item(id: "look", title: "Look for Devices Again", symbol: "arrow.clockwise")]
+        if store.localNetworkRefused {
+            items.insert(Item(id: "localnetwork", title: "Allow Lamp on Your Local Network…", symbol: "wifi.exclamationmark"), at: 1)
+        }
+        return Section(title: nil, items: items)
+    }
+
     /// The places of a kind given its places by what it is, not one at a time: nil for a Mac app, which has only this Mac.
     @MainActor static func choices(for project: LampProject, store: Store) -> TryOnMenu? {
         guard project.platform.target.places != [.mac] else { return nil }
         var sections: [Section] = []
-        let look = Section(title: nil, items: [Item(id: "settings", title: "All Your Devices…", symbol: "gearshape"),
-                                               Item(id: "look", title: "Look for Devices Again", symbol: "arrow.clockwise")])
+        let look = look(store)
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "device"
             let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
@@ -217,6 +226,9 @@ extension Store {
         case "look":
             refreshDevices()
             refreshSimulators()
+            return
+        case "localnetwork":
+            NSWorkspace.shared.open(Store.localNetworkSettings)
             return
         case "setup":
             if let device = devices.first(where: { $0.id == value }) { DeviceSetupWindow.show(device) }

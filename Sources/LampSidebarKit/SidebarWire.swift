@@ -161,6 +161,8 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     public var status: String?
     public var done: Bool?
     public var button: String?
+    /// A card's other answer, drawn before its button (Keep Old Copy beside Remove Old Copy), sent as `decline`.
+    public var declineButton: String?
     public var disabled: Bool?
     /// An action line's button is the one thing to do next (Reload): drawn in the accent colour.
     public var prominent: Bool?
@@ -559,6 +561,8 @@ public enum SidebarCommand: Codable, Equatable {
     case undoChange(String)
     /// The button on an offer's card or line: what it does is Lamp's to know, by the line.
     case offer(UUID)
+    /// The other answer on an offer's card (`SidebarLine.declineButton`).
+    case decline(UUID)
     /// Back to how the app was after the request with this id, or before it.
     case goBack(UUID, before: Bool)
     /// The request with this id into the message box, to change and send again; and back out of it.
@@ -610,6 +614,8 @@ public enum SidebarCommand: Codable, Equatable {
     case wishLink(SidebarWishLinkCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
+    /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
+    case tryOnOpened
     /// Play, and Stop.
     case play
     case quit

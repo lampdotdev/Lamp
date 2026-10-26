@@ -49,6 +49,27 @@ final class DeviceRecordTests: XCTestCase {
 
     /// An Xbox's description says Xbox One on every console; Device Portal names the console, and that's its model and
     /// what a game played on it is budgeted for. An Xbox not read yet is budgeted as the slowest, an Xbox One.
+    /// Only a wish for a phone, a TV or a device has Lamp look, which is what makes macOS ask about the local network:
+    /// one for this Mac, or a game played only there, never does.
+    func testOnlyAWishForAPhoneTVOrDeviceLooks() {
+        func wish(_ kinds: [Platform], places: [Platform: [Destination]] = [:], integration: String? = nil) -> AppName.Suggestion {
+            var suggestion = AppName.Suggestion(name: "A", sketch: [], kinds: kinds)
+            suggestion.places = places
+            suggestion.integration = integration
+            return suggestion
+        }
+        XCTAssertFalse(wish([.mac]).forDevice)
+        XCTAssertFalse(wish([.mac]).forPhone)
+        XCTAssertTrue(wish([.iphone]).forPhone)
+        XCTAssertFalse(wish([.game], places: [.game: [.mac, .ios]]).forDevice)
+        XCTAssertTrue(wish([.tv]).forDevice)
+        XCTAssertTrue(wish([.game], places: [.game: [.mac, .device]]).forDevice)
+        XCTAssertTrue(wish([.device], integration: "roku").forDevice)
+        var other = wish([.mac])
+        other.forOtherDevice = true
+        XCTAssertTrue(other.forDevice)
+    }
+
     func testAnXboxIsTheConsoleDevicePortalNames() throws {
         let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let xbox = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: source.appendingPathComponent("Resources/Devices/xbox-one.json")))

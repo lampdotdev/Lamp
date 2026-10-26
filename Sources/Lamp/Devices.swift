@@ -374,9 +374,12 @@ enum Devices {
 
     /// What Try On is set to and what Lamp's device lookup returned, for an iPhone preview result once per turn. The
     /// lookup holds paired phones that are away too, and one that fails returns nothing, so this says what it holds.
-    static func tryOnNote(chosen udid: String?, among all: [Device]) -> String {
+    /// `listed` is false when Lamp hasn't asked for the phones (it asks only once something is done with a device), and
+    /// then nothing is said of them.
+    static func tryOnNote(chosen udid: String?, among all: [Device], listed: Bool = true) -> String {
         let devices = all.filter { $0.kind.isPhone }
         let simulator = "Try On is set to the simulator."
+        if udid == nil, !listed { return simulator }
         if let udid {
             guard let device = devices.first(where: { $0.udid == udid }) else {
                 return "Try On is set to one of the person's phones, which Lamp's device list didn't return. To open the app there, they connect and unlock it, then press Play."
