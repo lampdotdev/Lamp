@@ -80,8 +80,12 @@ else
   SCHEME="lamp-dev${INSTANCE:+-$INSTANCE}"; HANDLER_RANK="Alternate"
 fi
 
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/Lamp"
+# Lamp Dev builds unoptimized, which is several times faster to compile: it's built again and again while a change is
+# checked, often by several worktrees at once. Lamp itself, the one people install, is always optimized.
+# CONFIG=release ./build.sh optimizes Lamp Dev too, to see how it runs for people.
+if [ "$FLAVOR" = release ]; then CONFIG=release; else CONFIG="${CONFIG:-debug}"; fi
+swift build -c "$CONFIG"
+BIN="$(swift build -c "$CONFIG" --show-bin-path)/Lamp"
 APP="${BUILD_DIR:-build}/$NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
