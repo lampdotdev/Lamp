@@ -59,7 +59,6 @@ enum TVFiles {
     static func detected(in sources: [URL]) -> [Sharing.Capability] {
         let everything = sources.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
         return checks.filter { item in item.patterns.contains { everything.contains($0) } }
-            + (Sharing.hidesEncodedText(everything) ? [Sharing.encodedData] : [])
     }
 }
 
