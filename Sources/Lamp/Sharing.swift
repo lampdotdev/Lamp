@@ -1346,10 +1346,14 @@ extension Sharing {
             case .web:
                 add(TVFiles.detected(in: app.sources))
             case .game:
-                // The page's reach as a TV app's page is read, and the Swift beside it (Native.swift) as any app's.
-                let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+                // The page's reach as a TV app's page is read, and the Swift beside it (Native.swift) as any app's, without
+                // its comments: Lamp's scaffold names its blocks there as examples. A page's data (a map, a level) is
+                // long runs of numbers and text, which isn't hidden code in a page as it would be in Swift.
+                let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
                 add(TVFiles.detected(in: app.sources) + checklist.filter { item in
-                    item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { swift.contains($0) }
+                    item == encodedData ? hidesEncodedText(swift) : item.patterns.contains { swift.contains($0) }
                 })
             default:
                 add(checklist.filter { item in
