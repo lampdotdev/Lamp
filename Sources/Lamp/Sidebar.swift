@@ -778,7 +778,7 @@ final class SidebarServer {
                     card.disabled = IPhoneSetupLine.isOff(for: project, wanted: kind, part: part)
                     out.append(card)
                 case .keepOpening:
-                    let on = PhoneRenewals.staysOpen
+                    let on = PhoneRenewals.staysOpen || line.text == KeepOpeningLine.chosen
                     var card = SidebarLine(id: line.id, kind: .action, text: KeepOpeningLine.text(project.name, on: on), gap: gap)
                     card.symbol = KeepOpeningLine.symbol
                     card.button = on ? nil : KeepOpeningLine.button

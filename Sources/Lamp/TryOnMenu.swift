@@ -35,6 +35,7 @@ struct TryOnMenu: Equatable {
         let places = project.openPlaces, verb = project.platform == .screen ? "Show" : "Play"
         var sections: [Section] = []
         func step(_ device: Device) -> String { device.setup() == .ready && !device.isAway ? "" : " (\(device.status))" }
+        func stopped(_ device: Device) -> String { PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "" }
         if places.contains(.mac) {
             sections.append(Section(title: nil, items: [Item(id: "mac", title: "My Mac", symbol: "laptopcomputer", checked: project.destination == .mac)]))
         }
@@ -54,7 +55,7 @@ struct TryOnMenu: Equatable {
             if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
-                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))", symbol: device.kind.symbol,
+                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(stopped(device))", symbol: device.kind.symbol,
                      checked: project.onIOS && project.device == device.udid)
             }
             mine += phones.filter { !$0.paired }.map { device in
@@ -166,7 +167,7 @@ extension TryOnMenu {
             if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
-                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))", symbol: device.kind.symbol,
+                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "")", symbol: device.kind.symbol,
                      checked: project.onIOS && project.device == device.udid)
             }
             if let chosen = project.device, project.onIOS, !phones.contains(where: { $0.udid == chosen && $0.paired }) {

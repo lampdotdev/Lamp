@@ -68,6 +68,9 @@ enum PhoneRenewals {
     /// Whether any of these apps is on a phone, kept for renewal.
     static func anyOnPhones(_ projects: [LampProject]) -> Bool { projects.contains { record(for: $0) != nil } }
 
+    /// Whether `project`'s copy on the phone `udid` has stopped opening.
+    static func stoppedOpening(_ project: LampProject, on udid: String) -> Bool { record(for: project)?.udid == udid && hasExpired(project) }
+
     /// Whether `project`'s copy on its phone has stopped opening.
     static func hasExpired(_ project: LampProject, now: Date = Date()) -> Bool { (record(for: project)?.expires).map { $0 < now } ?? false }
 
@@ -116,5 +119,7 @@ enum KeepOpeningLine {
             : "Apple lets apps signed with a free account open for seven days. Lamp can put \(name) back on your phone before then if it opens when you log in and keeps running with its window closed."
     }
     static let button = "Keep It Opening"
+    /// The line's text once the person chose it from the card: the card says so even if Settings is changed later.
+    static let chosen = "chosen"
     static let symbol = "clock.arrow.circlepath"
 }

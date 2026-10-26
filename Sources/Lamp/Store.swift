@@ -9380,9 +9380,15 @@ final class Store: ObservableObject {
         log(project, .keepOpening, "")
     }
 
-    /// The person chose to keep their phone apps opening, from the card or Settings.
+    /// The person chose to keep their phone apps opening, from the card (`project`) or Settings.
     func keepPhoneAppsOpening(_ on: Bool, for project: LampProject? = nil) {
-        if let problem = PhoneRenewals.setStaysOpen(on), let project { log(project, .error, problem) }
+        if let problem = PhoneRenewals.setStaysOpen(on) {
+            if let project { log(project, .error, problem) }
+        } else if let project, var lines = logs[project.id], let index = lines.lastIndex(where: { $0.kind == .keepOpening }) {
+            lines[index].text = KeepOpeningLine.chosen
+            logs[project.id] = lines
+            saveChat(project)
+        }
         objectWillChange.send()
     }
 
