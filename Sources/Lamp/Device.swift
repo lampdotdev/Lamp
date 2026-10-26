@@ -336,6 +336,8 @@ enum DeviceNote {
                 line = androids.first(where: { $0.udid == serial }).map { "Try On points at the person's \($0.name): \($0.forAgent)." }
                     ?? (store.androidListed ? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
                         : "Try On points at one of the person's Android devices, which Lamp hasn't looked for yet; Play puts it there once it's connected.")
+            } else if project.destination == .androidTV {
+                line = "Try On points at the Android TV emulator on this Mac (\(AndroidTools.tvAVDName), a 1080p Google TV driven by a remote's keys): that is where the app opens and what the person sees."
             } else {
                 line = "Try On points at the Android emulator on this Mac (\(AndroidTools.avdName), Android \(AndroidTools.platformLevel == 36 ? "16" : "\(AndroidTools.platformLevel)"), a Pixel-sized phone): that is where the app opens and what the person sees."
             }

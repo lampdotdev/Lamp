@@ -46,7 +46,7 @@ final class PlacesTests: XCTestCase {
 
     func testEveryStoredKindReadsAsAMakeAndDevicesThatLeadBackToIt() {
         let samples: [(Platform, Set<String>)] = [(.mac, []), (.iphone, []), (.iphone, ["watch"]), (.universal, []), (.android, []),
-                                                  (.androidTV, []), (.tv, []), (.game, []), (.game, ["iphone", "android"]),
+                                                  (.androidTV, []), (.tv, []), (.game, []), (.game, ["iphone", "android"]), (.game, ["android-tv", "tv"]),
                                                   (.screen, []), (.screen, ["ipad", "tv"])]
         for (kind, places) in samples {
             let model = Places.model(of: kind, places: places)
@@ -55,7 +55,23 @@ final class PlacesTests: XCTestCase {
         }
         XCTAssertEqual(Places.model(of: .game, places: ["ipad"]).devices, ["mac", "iphone"])
         XCTAssertEqual(Places.kinds(make: .native, devices: ["mac", "iphone"]), [.universal])
-        XCTAssertEqual(Places.kinds(make: .web, devices: ["mac", "tv"]), [.screen], "a game isn't shown on a TV")
+        XCTAssertEqual(Places.kinds(make: .web, devices: ["mac", "tv"]), [.game, .screen])
+    }
+
+    /// A page goes wherever one of Lamp's web hosts is, whatever kind of page it is, and a device with none is refused
+    /// with why: it needs a native version.
+    func testAPageGoesWhereverAHostIs() throws {
+        for kind in [Platform.game, .screen] {
+            XCTAssertEqual(kind.target.places, Places.pagePlaces)
+            XCTAssertEqual(Parts.placeWords(of: kind), Set(Places.pageWords.keys))
+            guard case .apps = Parts.asked(apps: [.init(kind: kind.rawValue, places: ["android-tv", "tv", "ipad", "android", "xbox-one"])]) else {
+                return XCTFail("\(kind.rawValue) is refused a place a page goes")
+            }
+            guard case .wrong(let why) = Parts.asked(apps: [.init(kind: kind.rawValue, places: ["apple-tv"])]) else { return XCTFail("a page on an Apple TV") }
+            XCTAssertTrue(why.contains("needs a native version"), why)
+        }
+        XCTAssertEqual(Places.pagePlaces, [.mac, .ios, .android, .androidTV, .tv, .device])
+        XCTAssertEqual(Places.named("android-tv")?.web?.host, Places.named("android")?.web?.host, "one Android host for phones and TVs")
     }
 
     func testAnIntegrationsRowIsWhatItSupports() throws {

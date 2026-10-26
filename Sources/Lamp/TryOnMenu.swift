@@ -7,7 +7,7 @@ import AppKit
 struct TryOnMenu: Equatable {
     struct Item: Equatable, Identifiable {
         /// What choosing it does, for `Store.tryOn`: "mac", "family:ipad", "simulator:<udid>", "phone:<udid>", "pair:<udid>", "emulator",
-        /// "android:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", or "settings", "look" and "localnetwork".
+        /// "emulator:tv", "android:<serial>", "androidtv:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", or "settings", "look" and "localnetwork".
         let id: String
         let title: String
         let symbol: String
@@ -65,14 +65,16 @@ struct TryOnMenu: Equatable {
             }
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
         }
-        if places.contains(.android) {
-            let tv = project.platform.target.androidEmulator == .tv
-            var items = [Item(id: "emulator", title: tv ? AndroidTools.tvAVDName : AndroidTools.avdName, symbol: tv ? "tv" : "smartphone", checked: project.onAndroid && project.device == nil)]
-            items += store.devices.filter { $0.kind == .android }.map { device in
-                Item(id: "android:\(device.udid)", title: "\(device.name)\(step(device))", symbol: "smartphone",
-                     checked: project.onAndroid && project.device == device.udid)
+        // One app of Lamp's around the page on Android phones and TVs alike: each place its emulator and its devices.
+        for place in [Destination.android, .androidTV] where places.contains(place) {
+            let tv = place == .androidTV, here = project.destination == place
+            var items = [Item(id: tv ? "emulator:tv" : "emulator", title: tv ? AndroidTools.tvAVDName : AndroidTools.avdName,
+                              symbol: tv ? "tv" : "smartphone", checked: here && project.device == nil)]
+            items += store.devices.filter { $0.kind == .android && $0.features.contains("tv") == tv }.map { device in
+                Item(id: (tv ? "androidtv:" : "android:") + device.udid, title: "\(device.name)\(step(device))", symbol: tv ? "tv" : "smartphone",
+                     checked: here && project.device == device.udid)
             }
-            sections.append(Section(title: "Android", items: items))
+            sections.append(Section(title: tv ? "Android TV" : "Android", items: items))
         }
         if places.contains(.tv) {
             var items = [Item(id: "preview", title: "TV Preview", symbol: "tv", checked: project.onTV && project.device == nil)]
@@ -91,8 +93,15 @@ struct TryOnMenu: Equatable {
             sections.append(Section(title: "Your \(name)s", items: items.isEmpty
                 ? [Item(id: "look", title: "No \(name) found. Look Again", symbol: Device.Kind.other.symbol, checked: project.onDevice)] : items))
         }
-        let missing = Store.placesToAdd(project).map { place in
+        var missing = Store.placesToAdd(project).map { place in
             Item(id: "add:\(place.rawValue)", title: "\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too", symbol: "plus")
+        }
+        // Where a page can't go, said where the places are: the Apple TV, and a device of the person's with no web engine.
+        if !missing.isEmpty {
+            let mine = Set(store.devices.compactMap(\.integration))
+            missing += Places.noPage.filter { $0.destination != .device || mine.contains($0.id) }.map { place in
+                Item(id: "native:\(place.id)", title: "\(place.name): Needs a Native Version", symbol: "nosign", disabled: true)
+            }
         }
         if !missing.isEmpty { sections.append(Section(title: nil, items: missing)) }
         sections.append(look(store))
@@ -149,11 +158,11 @@ extension TryOnMenu {
             if !setups.isEmpty { sections.append(Section(title: nil, items: setups)) }
         } else if project.onAndroid {
             let devices = store.devices.filter { $0.kind == .android }
-            let tv = project.platform.target.androidEmulator == .tv
-            var items = [Item(id: "emulator", title: tv ? AndroidTools.tvAVDName : AndroidTools.avdName, symbol: tv ? "tv" : "smartphone", checked: project.device == nil)]
-            items += devices.map { Item(id: "android:\($0.udid)", title: "\($0.name)\(step($0))", symbol: "smartphone", checked: project.device == $0.udid) }
+            let tv = project.destination == .androidTV, prefix = tv ? "androidtv:" : "android:"
+            var items = [Item(id: tv ? "emulator:tv" : "emulator", title: tv ? AndroidTools.tvAVDName : AndroidTools.avdName, symbol: tv ? "tv" : "smartphone", checked: project.device == nil)]
+            items += devices.map { Item(id: prefix + $0.udid, title: "\($0.name)\(step($0))", symbol: "smartphone", checked: project.device == $0.udid) }
             if let chosen = project.device, !devices.contains(where: { $0.udid == chosen }) {
-                items.append(Item(id: "android:\(chosen)", title: "Chosen device (not connected)", symbol: "smartphone", checked: true))
+                items.append(Item(id: prefix + chosen, title: "Chosen device (not connected)", symbol: "smartphone", checked: true))
             }
             sections.append(Section(title: "Android", items: items))
             sections.append(Section(title: nil, items: [Item(id: "wifi:android", title: tv ? "Connect a TV Over Wi‑Fi…" : "Connect Over Wi‑Fi…", symbol: "wifi"),
@@ -211,8 +220,9 @@ extension Store {
         case "simulator": if let choice = simulators.first(where: { $0.udid == value }) { setSimulator(project, choice) }
         case "phone": choosePreparedDevice(project, value)
         case "pair": if let device = devices.first(where: { $0.udid == value }) { pairDevice(device, for: project) }
-        case "emulator": setAndroidDevice(project, nil)
+        case "emulator": setAndroidDevice(project, nil, place: value == "tv" ? .androidTV : .android)
         case "android": setAndroidDevice(project, value)
+        case "androidtv": setAndroidDevice(project, value, place: .androidTV)
         case "preview": setTVDevice(project, nil)
         case "tv": setTVDevice(project, value)
         case "device": setDeviceAppDevice(project, value)
@@ -272,8 +282,9 @@ extension Store {
             case "family": (place, device, family, simulator) = (.ios, nil, DeviceFamily(rawValue: value), .some(nil))
             case "simulator": (place, device, simulator) = (.ios, nil, .some(value))
             case "phone": (place, device) = (.ios, value)
-            case "emulator": (place, device) = (.android, nil)
+            case "emulator": (place, device) = (value == "tv" ? .androidTV : .android, nil)
             case "android": (place, device) = (.android, value)
+            case "androidtv": (place, device) = (.androidTV, value)
             case "preview": (place, device) = (.tv, nil)
             case "tv": (place, device) = (.tv, value)
             case "device": (place, device) = (.device, value)

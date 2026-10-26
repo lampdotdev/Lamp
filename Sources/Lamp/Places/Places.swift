@@ -1,9 +1,8 @@
 import Foundation
 
 /// What each device can run, and how a build gets onto it: facts about devices, one row each, never a preference. A
-/// build is one of two makes: **web**, a page shown by Lamp's host on the device (an app of Lamp's around the page, the
-/// TVs' package, the Xbox's web host), or **native**, the device's own code (Swift on Apple's, Kotlin on Android's, what
-/// an integration declares). Which make and which devices an app gets is the agent's choice; this table only says what
+/// build is one of two makes: **web**, a page shown by Lamp's host for the device's web engine (`PageHost`), or
+/// **native**, the device's own code (Swift on Apple's, Kotlin on Android's, what an integration declares). Which make and which devices an app gets is the agent's choice; this table only says what
 /// can exist, so a row claims a make only once Lamp has a host or a recipe that builds it there (`PlacesTests`).
 ///
 /// The rows are shown to the agent as text (`forAgent`, in `make_app_for`'s description) and checked when it asks for
@@ -26,51 +25,110 @@ struct Place: Equatable {
         let reach: String
     }
 
+    /// A page's way onto the device: the host it's shown in, and how a build gets there.
+    struct Web: Equatable {
+        let host: PageHost
+        let reach: String
+    }
+
     let id: String
     let name: String
     /// How `make_app_for` and the naming call name it.
     let words: [String]
     /// Where its build opens.
     let destination: Destination
-    /// How a web build gets onto it; nil when there's none.
-    let web: String?
+    /// The host a page is shown in there, and how a web build gets onto it; nil when there's none.
+    let web: Web?
     let native: Native?
     /// Why it has no web build or no native build, said when one is asked for.
     var noWeb: String? = nil
     var noNative: String? = nil
 
-    func reach(_ make: Make) -> String? { make == .web ? web : native?.reach }
+    func reach(_ make: Make) -> String? { make == .web ? web?.reach : native?.reach }
     func runs(_ make: Make) -> Bool { reach(make) != nil }
+}
+
+/// Lamp's hosts for a page, one per web engine. Every kind whose app is a page (a three.js game, a screen) goes wherever
+/// one of these is (`Places.pagePlaces`), from the same files, and nowhere else: a device with no web engine Lamp can
+/// reach (the Apple TV, the Apple Watch, a Roku) has no row with a host, and a page there needs a native version.
+enum PageHost: String, Equatable {
+    /// WebKit, in an app of Lamp's around the page on the Mac, the iPhone and the iPad (LampPage.swift, with
+    /// LampWebGame.swift or LampScreen.swift).
+    case webKit
+    /// Android's WebView, in an app of Lamp's around the page on phones, tablets, photo frames and TVs (`GameAndroid`): one
+    /// app for all of them, on a TV's home screen as on a phone's.
+    case androidWebView
+    /// The TV's own browser engine, Tizen's on a Samsung and webOS's on an LG, in the TV app's package (`TVs`).
+    case tvBrowser
+    /// The integration's own host for its web apps (the Xbox's, WebView2: `WebHost`).
+    case integration
 }
 
 enum Places {
     /// The devices Lamp knows without an integration, in the order they're shown.
     static let builtIn: [Place] = [
         Place(id: "mac", name: "This Mac", words: ["mac"], destination: .mac,
-              web: "right away: Lamp builds an app of its own around the page here",
+              web: .init(host: .webKit, reach: "right away: Lamp builds an app of its own around the page here"),
               native: .init(code: .apple, reach: "right away: Lamp builds it here")),
         Place(id: "iphone", name: "iPhone / iPad", words: ["iphone", "ipad"], destination: .ios,
-              web: "in an app of Lamp's around the page, the same way as a native app",
+              web: .init(host: .webKit, reach: "in an app of Lamp's around the page, the same way as a native app"),
               native: .init(code: .apple, reach: "in the simulator on this Mac, or on the person's own iPhone or iPad paired with this Mac, one device at a time")),
         Place(id: "watch", name: "Apple Watch", words: ["watch"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "with the iPhone app, onto the watch paired with that iPhone"),
-              noWeb: "watchOS has no web view"),
+              noWeb: "watchOS has no web view, so a page there needs a native version"),
         Place(id: "apple-tv", name: "Apple TV", words: ["apple-tv"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Apple TV simulator on this Mac; Lamp can't put it on a real Apple TV yet"),
-              noWeb: "tvOS has no web view"),
+              noWeb: "tvOS has no web view, so a page there needs a native version"),
         Place(id: "vision-pro", name: "Vision Pro", words: ["vision-pro"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Vision Pro simulator on this Mac; Lamp can't put it on a real Vision Pro yet"),
-              noWeb: "Lamp has no host for a page on Vision Pro yet"),
+              noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version"),
         Place(id: "android", name: "Android phone / tablet", words: ["android"], destination: .android,
-              web: "in an app of Lamp's around the page, the same way as a native app",
+              web: .init(host: .androidWebView, reach: "in an app of Lamp's around the page, the same way as a native app"),
               native: .init(code: .android, reach: "in the Android emulator on this Mac, or on the person's own device with USB debugging, one device at a time")),
-        Place(id: "android-tv", name: "Android TV / Google TV / Fire TV", words: ["android-tv"], destination: .android, web: nil,
-              native: .init(code: .androidTV, reach: "in the TV emulator on this Mac, or Lamp installs it on each of the person's TVs over Wi‑Fi"),
-              noWeb: "Lamp has no host for a page on Android TV yet"),
+        Place(id: "android-tv", name: "Android TV / Google TV / Fire TV", words: ["android-tv"], destination: .androidTV,
+              web: .init(host: .androidWebView, reach: "in the same app of Lamp's around the page as on Android phones, on the TV's home screen: in the TV emulator on this Mac, or on the person's TV over Wi‑Fi"),
+              native: .init(code: .androidTV, reach: "in the TV emulator on this Mac, or Lamp installs it on each of the person's TVs over Wi‑Fi")),
         Place(id: "tv", name: "Samsung / LG TV", words: ["tv"], destination: .tv,
-              web: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)",
+              web: .init(host: .tvBrowser, reach: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)"),
               native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs"),
     ]
+
+    /// Where a page can open: every place one of Lamp's web hosts is, in the table's order, and last an integration's own
+    /// host (the Xbox's). A kind whose app is a page takes these as its places, so a new host is a new place for every
+    /// page at once.
+    static let pagePlaces: [Destination] = {
+        var places: [Destination] = []
+        for place in builtIn where place.web != nil && !places.contains(place.destination) { places.append(place.destination) }
+        return places + [.device]
+    }()
+
+    /// The words a page's places are given by (`make_app_for`'s `places`, the naming call's), each with where it opens:
+    /// every row with a host, and the Xbox's words, whose integration hosts it.
+    static var pageWords: [String: Destination] {
+        var words: [String: Destination] = [:]
+        for place in builtIn where place.web != nil { for word in place.words { words[word] = place.destination } }
+        for word in [GameKit.xbox, GameKit.xboxKind, "xbox"] { words[word] = .device }
+        return words
+    }
+
+    /// The screens across a room that have no web engine Lamp can reach (the Apple TV, and a device such as a Roku whose
+    /// integration makes only native apps), said where a page's places are offered: a page there needs a native version.
+    static var noPage: [Place] { all.filter { !$0.runs(.web) && ($0.id == "apple-tv" || $0.destination == .device) } }
+
+    /// A page's places as the agent is told them (`make_app_for`'s `{{PAGE_PLACES}}`, a game's and a screen's rules): each
+    /// place's words and device, then the screens across a room it can't go to, and why.
+    static var pageList: String {
+        let words = all.filter { $0.web != nil && $0.id != "mac" }.map { place in
+            place.words.map { "\"\($0)\"" }.joined(separator: " or ") + " (\(place.name))"
+        }
+        let none = noPage.map(\.name)
+        return words.joined(separator: ", ") + (none.isEmpty ? "" : ". " + sentence(none)
+            + " \(none.count == 1 ? "has" : "have") no web engine, so a game or a screen can't go there: it needs a native version, an app of its own")
+    }
+
+    private static func sentence(_ items: [String]) -> String {
+        items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " and " + items.last!
+    }
 
     /// Every row: the built-in devices, then each integration that declares apps, as its JSON says.
     static var all: [Place] { builtIn + Integrations.all().compactMap(row(for:)) }
@@ -81,9 +139,9 @@ enum Places {
         let makes = supports(integration) ?? [declaredMake(declared)]
         let reach = "Lamp installs it on each of the person's \(integration.name) devices once it's set up"
         return Place(id: integration.id, name: integration.name, words: [integration.id], destination: .device,
-                     web: makes.contains(.web) ? reach : nil,
+                     web: makes.contains(.web) ? .init(host: .integration, reach: reach) : nil,
                      native: makes.contains(.native) ? .init(code: .integration, reach: reach) : nil,
-                     noWeb: "its integration declares no web app", noNative: "its integration declares no native app")
+                     noWeb: "it has no web engine Lamp can reach, so a page there needs a native version", noNative: "its integration declares no native app")
     }
 
     /// The makes an integration's `supports` names, or nil when it names none (or one Lamp doesn't know).
@@ -109,7 +167,7 @@ enum Places {
     /// The table as `make_app_for`'s description gives it (`{{PLACES}}`): one line per device.
     static var forAgent: String {
         all.map { place in
-            let web = place.web.map { "web: \($0)" } ?? "no web (\(place.noWeb ?? "none"))"
+            let web = place.web.map { "web: \($0.reach)" } ?? "no web (\(place.noWeb ?? "none"))"
             let native = place.native.map { "native (\($0.code.rawValue) code): \($0.reach)" } ?? "no native (\(place.noNative ?? "none"))"
             return "\(place.name) [\(place.words.map { "\"\($0)\"" }.joined(separator: ", "))]: \(web); \(native)"
         }.joined(separator: ". ") + "."
@@ -145,7 +203,7 @@ enum Places {
         guard !refused.isEmpty else { return nil }
         return refused.map { place in
             let why = make == .web ? place.noWeb : place.noNative
-            let other = make == .web ? place.native.map { "; it runs a native app: \($0.reach)" } : place.web.map { "; it runs a web app: \($0)" }
+            let other = make == .web ? place.native.map { "; it runs a native app: \($0.reach)" } : place.web.map { "; it runs a web app: \($0.reach)" }
             return "\(place.name) can't run a \(make.rawValue) app (\(why ?? "Lamp has no way to build one there"))\(other ?? "")."
         }.joined(separator: " ")
     }

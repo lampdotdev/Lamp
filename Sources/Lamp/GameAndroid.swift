@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// A three.js game on Android: a small Android app of Lamp's own in the game's `Lamp/Android` folder, none of it the agent's
 /// (never a folder of its own at the top, where Lamp would take it for another app of the wish's: `Parts.folders`),
@@ -8,7 +8,11 @@ import Foundation
 /// motion events), handing them to Lamp's runtime in the page (`lampNativePad`), since a WebView doesn't promise the
 /// Gamepad API. The touch controls are the runtime's own. The build is Lamp's Android build (Gradle from Lamp's tools,
 /// in the app's sandbox), and the app is installed, launched, looked at and used like any Android app of Lamp's
-/// (`Store.installOnAndroid`, its package and `.MainActivity`). A screen on Android is the same app around its page
+/// (`Store.installOnAndroid`, its package and `.MainActivity`). It's Lamp's one host for a page on Android
+/// (`PageHost.androidWebView`): the same app goes on a phone, a tablet and a Google TV, Android TV or Fire TV, where it's on
+/// the TV's home screen with a banner (the leanback launcher, no touch screen needed) and the remote's keys reach the
+/// page as a TV's do (the d-pad as the controller's for a game; Back, OK and the media keys as Web/lamp.js reads them for
+/// a screen). A screen on Android is the same app around its page
 /// (`ScreenKit`), not a game to the system, laid out as its viewport asks (filling the screen, or a fixed 1920x1080 page
 /// fitted to it), and kept awake, as a photo frame's own app would be.
 enum GameAndroid {
@@ -38,6 +42,9 @@ enum GameAndroid {
         try Template.write((talks ? activity : withoutWish(activity: activity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),
                            to: kotlin + "/MainActivity.kt", for: project)
         try Template.write(".gradle/\n.kotlin/\nlocal.properties\n", to: "\(folder)/.gitignore", for: project)
+        // The banner a TV's home screen shows: the app's icon on a dark tile, or the tile alone until it has one.
+        let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
+        try Template.put(DeviceSupport.iconPNG(icon, width: 320, height: 180), at: project.dir.appendingPathComponent("\(folder)/\(banner)"), for: project)
         let wish = [(kotlin + "/" + Template.androidSupportFile, Template.androidSupportKotlin(for: project)),
                     (kotlin + "/LampPageWish.kt", pageWish),
                     ("\(folder)/" + Template.androidDebugManifest, Template.androidDebugManifestXML)]
@@ -54,15 +61,22 @@ enum GameAndroid {
         return [".gitignore", "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml", "app/build.gradle.kts",
                 "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt",
                 "app/src/main/kotlin/\(package)/\(Template.androidSupportFile)", "app/src/main/kotlin/\(package)/LampPageWish.kt",
-                Template.androidDebugManifest].map { "\(folder)/\($0)" }
+                Template.androidDebugManifest, banner].map { "\(folder)/\($0)" }
     }
 
-    /// The activity for a game, without a screen's lines, and for a screen, with them unmarked.
+    /// Where the banner goes, in the app's own resources (the icon is the game's build/, drawn by build.sh).
+    static let banner = "app/src/main/res/drawable-xhdpi/lamp_banner.png"
+
+    /// The activity for a game, without a screen's lines, and for a screen, without a game's; each kind's own unmarked.
     static var gameActivity: String {
         mainActivity.components(separatedBy: "\n").filter { !$0.hasSuffix(screenLine) }.joined(separator: "\n")
+            .replacingOccurrences(of: " " + gameLine, with: "")
     }
-    static var screenActivity: String { mainActivity.replacingOccurrences(of: " " + screenLine, with: "") }
-    private static let screenLine = "// a screen"
+    static var screenActivity: String {
+        mainActivity.components(separatedBy: "\n").filter { !$0.hasSuffix(gameLine) }.joined(separator: "\n")
+            .replacingOccurrences(of: " " + screenLine, with: "")
+    }
+    private static let screenLine = "// a screen", gameLine = "// a game"
 
     /// A screen's manifest: no game to the system.
     static var screenManifest: String { manifest.replacingOccurrences(of: "        android:isGame=\"true\"\n", with: "") }
@@ -181,10 +195,13 @@ enum GameAndroid {
     <?xml version="1.0" encoding="utf-8"?>
     <!-- Written by Lamp before every build; don't edit. -->
     <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <!-- One app for phones and TVs: no touch screen needed, and on a TV's home screen through the leanback launcher. -->
         <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
         <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+        <uses-feature android:name="android.software.leanback" android:required="false" />
         <application
             android:allowBackup="true"
+            android:banner="@drawable/lamp_banner"
             android:icon="@mipmap/ic_launcher"
             android:label="{{NAME}}"
             android:hardwareAccelerated="true"
@@ -198,6 +215,7 @@ enum GameAndroid {
                 <intent-filter>
                     <action android:name="android.intent.action.MAIN" />
                     <category android:name="android.intent.category.LAUNCHER" />
+                    <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                 </intent-filter>
             </activity>
         </application>
@@ -221,6 +239,7 @@ enum GameAndroid {
     import android.view.WindowInsets
     import android.view.WindowInsetsController
     import android.webkit.ConsoleMessage
+    import android.webkit.JavascriptInterface // a screen
     import android.webkit.WebChromeClient
     import android.webkit.WebResourceRequest
     import android.webkit.WebResourceResponse
@@ -251,6 +270,8 @@ enum GameAndroid {
             web.settings.useWideViewPort = true // a screen
             web.settings.loadWithOverviewMode = true // a screen
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // a screen
+            // Back on the page's first view leaves the app, as on a TV (Web/lamp.js's exit). // a screen
+            web.addJavascriptInterface(object { @JavascriptInterface fun exit() { runOnUiThread { finish() } } }, "lampAndroid") // a screen
             web.webViewClient = object : WebViewClient() {
                 // The page's files, from the app's own assets, at an address of the game's own.
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -322,20 +343,40 @@ enum GameAndroid {
             else -> 0
         }
 
+        // A TV remote's d-pad is a controller's to a game: its arrows the d-pad, OK the A button, play/pause Start.
         private fun fromController(event: KeyEvent) =
             event.isFromSource(InputDevice.SOURCE_GAMEPAD) || event.isFromSource(InputDevice.SOURCE_JOYSTICK) || KeyEvent.isGamepadButton(event.keyCode)
+                || event.isFromSource(InputDevice.SOURCE_DPAD) || event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE // a game
+        private fun remote(code: Int) = when (code) { // a game
+            KeyEvent.KEYCODE_DPAD_CENTER -> KeyEvent.KEYCODE_BUTTON_A; KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> KeyEvent.KEYCODE_BUTTON_START; else -> code // a game
+        } // a game
+
+        // The keys of a TV's remote a WebView passes on as nothing, as the page reads them on a TV (Web/lamp.js's // a screen
+        // key codes): Back, the media, colour and channel keys. The arrows, OK and the digits reach the page by themselves. // a screen
+        private fun tvKey(code: Int) = when (code) { // a screen
+            KeyEvent.KEYCODE_BACK -> 27; KeyEvent.KEYCODE_MEDIA_PLAY -> 415; KeyEvent.KEYCODE_MEDIA_PAUSE -> 19 // a screen
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> 10252; KeyEvent.KEYCODE_MEDIA_STOP -> 413 // a screen
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> 417; KeyEvent.KEYCODE_MEDIA_REWIND -> 412 // a screen
+            KeyEvent.KEYCODE_PROG_RED -> 403; KeyEvent.KEYCODE_PROG_GREEN -> 404; KeyEvent.KEYCODE_PROG_YELLOW -> 405; KeyEvent.KEYCODE_PROG_BLUE -> 406 // a screen
+            KeyEvent.KEYCODE_CHANNEL_UP -> 427; KeyEvent.KEYCODE_CHANNEL_DOWN -> 428; KeyEvent.KEYCODE_INFO -> 457 // a screen
+            else -> 0 // a screen
+        } // a screen
 
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-            // Back is the game's B, as on a console: the game says what going back means, and stays open.
-            val code = if (event.keyCode == KeyEvent.KEYCODE_BACK) KeyEvent.KEYCODE_BUTTON_B else event.keyCode
-            val b = bit(code)
-            if (b != 0 && (fromController(event) || event.keyCode == KeyEvent.KEYCODE_BACK)) {
-                if (fromController(event)) vendor = event.device?.vendorId ?: 0
-                down = if (event.action == KeyEvent.ACTION_DOWN) down or b else down and b.inv()
-                send()
-                return true
-            }
-            return super.dispatchKeyEvent(event)
+            val key = tvKey(event.keyCode) // a screen
+            if (key == 0) return super.dispatchKeyEvent(event) // a screen
+            if (event.action == KeyEvent.ACTION_DOWN) web.evaluateJavascript(PRESS.replace("KEY", "$key"), null) // a screen
+            return true // a screen
+            // Back is the game's B, as on a console: the game says what going back means, and stays open. // a game
+            val code = if (event.keyCode == KeyEvent.KEYCODE_BACK) KeyEvent.KEYCODE_BUTTON_B else remote(event.keyCode) // a game
+            val b = bit(code) // a game
+            if (b != 0 && (fromController(event) || event.keyCode == KeyEvent.KEYCODE_BACK)) { // a game
+                if (fromController(event)) vendor = event.device?.vendorId ?: 0 // a game
+                down = if (event.action == KeyEvent.ACTION_DOWN) down or b else down and b.inv() // a game
+                send() // a game
+                return true // a game
+            } // a game
+            return super.dispatchKeyEvent(event) // a game
         }
 
         private fun dead(v: Float) = if (abs(v) < 0.15f) 0f else (v - Math.signum(v) * 0.15f) / 0.85f
@@ -372,7 +413,13 @@ enum GameAndroid {
 
         private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), "".byteInputStream())
 
-        companion object { const val HOST = "lamp.game" }
+        companion object {
+            const val HOST = "lamp.game"
+            // A key pressed on the page where it has focus, with the code a TV's browser gives it. // a screen
+            const val PRESS = "(function(){var e=new KeyboardEvent('keydown',{bubbles:true,cancelable:true});" + // a screen
+                "Object.defineProperty(e,'keyCode',{get:function(){return KEY}});Object.defineProperty(e,'which',{get:function(){return KEY}});" + // a screen
+                "(document.activeElement||document.body).dispatchEvent(e)})()" // a screen
+        }
     }
 
     """#

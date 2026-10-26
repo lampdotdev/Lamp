@@ -116,7 +116,7 @@ enum Parts {
     static func kinds(for devices: Set<String>) -> [Platform]? { asked(devices)?.kinds }
 
     /// What `make_app_for` and the naming call ask for: the apps, one per family, and for a game or a screen among them
-    /// the words of the places it's played or shown beside the Mac, its home (`GameKit.placeWords`).
+    /// the words of the places it's played or shown beside the Mac, its home (`Places.pageWords`).
     struct Asked: Equatable {
         var kinds: [Platform]
         var places: [Platform: Set<String>] = [:]
@@ -181,6 +181,8 @@ enum Parts {
             let kind: Platform
             if let host {
                 let allowed = placeWords(of: host).subtracting(["mac"])
+                // A device with no web engine (the Apple TV, a Roku) is refused with its row's reason: it needs a native version.
+                if let refusal = Places.refusal(make: .web, devices: app.places.filter { Places.named($0) != nil }) { return .wrong(refusal) }
                 guard app.places.subtracting(["mac"]).isSubset(of: allowed) else {
                     return .wrong("A \(host.rawValue)'s `places` are where it's \(host == .screen ? "shown" : "played") beside the Mac: \(sentence(allowed.sorted())).")
                 }
@@ -240,7 +242,7 @@ enum Parts {
 
     /// The words of the places a game or a screen can be on.
     static func placeWords(of kind: Platform) -> Set<String> {
-        Set(GameKit.placeWords.compactMap { word, place in place.map(kind.reaches) == true ? word : nil })
+        Set(Places.pageWords.compactMap { word, place in kind.reaches(place) ? word : nil })
     }
 
     private static func appKinds(for devices: Set<String>) -> [Platform]? {

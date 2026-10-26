@@ -181,7 +181,7 @@ enum AppName {
             if forOtherDevice || integration != nil { return true }
             return kinds.contains { kind in
                 let places = kind.addsPlaces ? (self.places[kind] ?? []) : kind.target.places
-                return places.contains(.tv) || places.contains(.device)
+                return places.contains(.tv) || places.contains(.androidTV) || places.contains(.device)
             }
         }
     }

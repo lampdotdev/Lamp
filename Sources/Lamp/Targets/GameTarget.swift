@@ -1,24 +1,27 @@
 import Foundation
 
 extension Platform {
-    /// A game: C++ on Lamp's game kit, one code wherever it's played (`GameKit`). Its home is the Mac; an iPhone or iPad
-    /// and an Xbox are places it's given as well (`LampProject.places`), never another kind.
+    /// A game: a page drawn with three.js (or, made before those, C++ on Lamp's game kit), one code wherever it's played
+    /// (`GameKit`). Its home is the Mac; every other place a page goes (`Places.pagePlaces`) is one it's given as well
+    /// (`LampProject.places`), never another kind.
     static let game = Platform(kind: "game")
 }
 
 extension Target {
     static let game = Target(
-        platform: .game, places: [.mac, .ios, .android, .device],
-        identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, Android or an Xbox", analytics: "game",
+        // A page: wherever one of Lamp's web hosts is.
+        platform: .game, places: Places.pagePlaces,
+        identity: Identity(name: "the game", phrase: "a game played on the Mac, an iPhone or iPad, Android, a TV or an Xbox", analytics: "game",
                            made: { _, _ in "a game" },
-                           devices: Words(words: [("game", "\"game\" for a game (where it's played, \"iphone\", \"android\" or \"xbox-one\" beside the Mac, goes in `places`)",
+                           devices: Words(words: [("game", "\"game\" for a game (where it's played beside the Mac, any place a page goes, goes in `places`)",
                                                    "\"game\" for a game played in real time")],
                                           hint: "[\"game\"] for a game played in real time (3D, racing, a platformer, a shooter, an arcade or sports game, "
                                               + "anything played with a controller or on their Xbox), whatever device it names, with where else it's played in \"places\": "
-                                              + "\"iphone\" for an iPhone or iPad, \"android\" for an Android phone, \"xbox-one\" for their Xbox. "
+                                              + "\"iphone\" for an iPhone or iPad, \"android\" for an Android phone, \"android-tv\" for a Google TV, Android TV or Fire TV, "
+                                              + "\"tv\" for a Samsung or LG TV, \"xbox-one\" for their Xbox. "
                                               + "A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
-                           tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, an Android phone or tablet, or your Xbox" },
+                           tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, an Android phone, tablet or TV, a Samsung or LG TV, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.gamePrompt(for:), changeRules: Agent.Rules.gameChange,
                            skills: { [] },
@@ -32,7 +35,8 @@ extension Target {
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again.
                        inputs: { _ in GameKit.stamp },
                        builtURL: { project in
-                           project.onDevice ? DeviceApps.packageURL(for: project) : project.onAndroid ? GameAndroid.apk(project)
+                           project.onTV ? TVs.stagingFolder(for: project).appendingPathComponent("web/index.html")
+                               : project.onDevice ? DeviceApps.packageURL(for: project) : project.onAndroid ? GameAndroid.apk(project)
                                : project.dir.appendingPathComponent(project.onIOS ? "build/iOS/\(project.exe).app" : "build/\(project.exe).app")
                        },
                        marker: GameKit.marker,
