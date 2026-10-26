@@ -3,8 +3,8 @@ import Foundation
 /// Putting the person's iPhone apps back on their phones before Apple lets them stop opening. A profile made for a free
 /// Apple account's team lasts seven days (a paid team's, a year); after that the app won't open until it's signed again
 /// and installed over itself, which keeps its data. So Lamp keeps what it last put on each phone, signed, with when its
-/// profile runs out (`Record`), and within a couple of days of that signs the same copy again with a new profile and
-/// installs it, never opening it (`Store.renewPhoneApps`). The copy is what the person has, never the code as it is now:
+/// profile runs out (`Record`), and once a day signs the same copy again with a new profile and installs it, never
+/// opening it (`Store.renewPhoneApps`), so a phone away for a weekend still comes back to an app that opens. The copy is what the person has, never the code as it is now:
 /// a turn halfway through must not reach the phone. Kept in the app's signing folder, which the agent can't write.
 enum PhoneRenewals {
     /// What's on one phone for one app, and how its last renewal went.
@@ -20,8 +20,10 @@ enum PhoneRenewals {
         var told: Date?
     }
 
-    /// How long before its profile runs out an app is put back: time for a phone that's away for a day or so.
-    static let window: TimeInterval = 2 * 24 * 3600
+    /// How long before its profile runs out an app is put back: six days, so a free account's seven-day profile is renewed
+    /// every day and a phone can be away for most of a week; a paid team's, which lasts a year, near its end. A renewal
+    /// keeps the app's id, so it spends none of a free account's ten new ids a week.
+    static let window: TimeInterval = 6 * 24 * 3600
 
     /// When to try again after a renewal that didn't work: soon for a phone that's away or locked, which comes back by
     /// itself; a day for a problem with the account or Apple, which the person fixes.
