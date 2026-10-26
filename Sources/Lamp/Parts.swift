@@ -22,8 +22,18 @@ struct WishApp: Codable, Hashable {
     var needs: String? = nil
     /// For a game or a screen not made yet, where it's to be played or shown from the start (`LampProject.places`).
     var places: [Destination]? = nil
+    /// The devices it was asked for, as they were named ("ipad"), which give the family Try On opens it on: kept whole
+    /// while it waits, so it's made as asked whenever it's made (`AppTarget.waiting`). Nil in a list from before.
+    var devices: [String]? = nil
     /// For a device's app, the integration it's for (`LampProject.integration`), which names its folder (Roku/).
     var integration: String? = nil
+
+    /// The same app, now stopped by this (or no longer, for nil), and nothing else changed.
+    func needing(_ problem: String?) -> WishApp {
+        var app = self
+        app.needs = problem
+        return app
+    }
 }
 
 enum Parts {
@@ -151,190 +161,6 @@ enum Parts {
             if kind.reaches(.device), !kind.addsPlaces { part.integration = kind.target.recipe.integration(dir) ?? meta?.integration }
             return part
         }
-    }
-
-    /// The kinds a wish for these devices is made of, in Lamp's order (`asked`). Nil for a list Lamp can't make.
-    static func kinds(for devices: Set<String>) -> [Platform]? { asked(devices)?.kinds }
-
-    /// What `make_app_for` and the naming call ask for: the apps, one per family, and for a game or a screen among them
-    /// the words of the places it's played or shown beside the Mac, its home (`GameKit.placeWords`).
-    struct Asked: Equatable {
-        var kinds: [Platform]
-        var places: [Platform: Set<String>] = [:]
-        /// The device words each app was given with, for what's made of them (an Apple app's watch, an integration's id).
-        var words: [Platform: Set<String>] = [:]
-    }
-
-    /// The apps a list of device words asks for, in Lamp's order, with each game's or screen's places given apart
-    /// (`places`, by that app's word: `["game": ["iphone"]]`), so each word means one thing: "mac" in the list is a Mac
-    /// app, and a game played on the iPhone too is "game" in the list and "iphone" in its places. A wish with a game and a
-    /// screen says which places are whose. The devices of one part family are one kind between them (Apple's: `Platform(devices:)`);
-    /// a TV app, an Android app, a game and a screen are each a kind of their own. No kind leads: what a wish does with
-    /// the list is `plan`. A device whose integration declares its apps is one app among them like any other. Nil for a list Lamp can't
-    /// make, or places no game or screen of the list can be on.
-    static func asked(_ devices: Set<String>, places: [String: Set<String>] = [:]) -> Asked? {
-        guard let kinds = appKinds(for: devices) else { return nil }
-        let hosts = kinds.filter(\.addsPlaces)
-        var asked = Asked(kinds: kinds)
-        for host in hosts { asked.places[host] = [] }
-        for (word, wanted) in places {
-            guard let host = hosts.first(where: { $0.rawValue == word }),
-                  wanted.allSatisfy({ $0 == "mac" || placeWords(of: host).contains($0) }) else { return nil }
-            asked.places[host] = wanted.intersection(placeWords(of: host))
-        }
-        return asked
-    }
-
-    /// One app of `make_app_for`'s `apps`, as the agent gives it: what it is (`kind`: "mac", "iphone", "game", a device
-    /// integration's id…) and where it runs beyond its kind's home (`places`). An object, so more can be said of an app
-    /// later without changing the list's shape.
-    struct AppAsked: Equatable {
-        var kind: String
-        var places: Set<String> = []
-
-        /// Read off the tool's arguments; nil for an entry that isn't one: no kind, or places that aren't a list of words.
-        init?(_ value: Any) {
-            guard let entry = value as? [String: Any], let kind = (entry["kind"] as? String)?.trimmed.lowercased(), !kind.isEmpty else { return nil }
-            self.kind = kind
-            switch entry["places"] {
-            case nil, is NSNull: places = []
-            case let words as [String]: places = Set(words.map { $0.trimmed.lowercased() })
-            default: return nil
-            }
-        }
-        init(kind: String, places: Set<String> = []) { self.kind = kind; self.places = places }
-    }
-
-    /// Why `make_app_for`'s `apps` can't be made, in the agent's words, or what they ask for.
-    enum AppsAsked: Equatable {
-        case apps(Asked)
-        case wrong(String)
-    }
-
-    /// The wish's apps as `make_app_for` gives them, one entry each: a kind and its places, so a word is never at once
-    /// an app and a place. A game's or a screen's places are where it's played or shown beside the Mac, its home; an
-    /// Apple app's are its other Apple devices (a Mac app given "iphone" is one app for both, an iPhone app given "watch"
-    /// has an Apple Watch app). In Lamp's order, one app per family.
-    static func asked(apps: [AppAsked]) -> AppsAsked {
-        var asked = Asked(kinds: [])
-        for app in apps {
-            let host = [Platform.game, .screen].first { $0.rawValue == app.kind }
-            let kind: Platform
-            if let host {
-                let allowed = placeWords(of: host).subtracting(["mac"])
-                // A device that can't show a page (a Roku) is refused with what it does run, never with Lamp's own list.
-                if let refusal = Places.refusal(make: .web, devices: app.places.subtracting(allowed).subtracting(["mac"])) { return .wrong(refusal) }
-                guard app.places.subtracting(["mac"]).isSubset(of: allowed) else {
-                    return .wrong("A \(host.rawValue)'s `places` are where it's \(host == .screen ? "shown" : "played") beside the Mac: \(sentence(allowed.sorted())).")
-                }
-                kind = host
-                asked.places[host] = app.places.subtracting(["mac"])
-            } else {
-                guard let one = Platform(devices: app.places.union([app.kind])), !one.addsPlaces else {
-                    return .wrong("Lamp makes no app of kind \"\(app.kind)\" with places \(app.places.sorted()): `kind` is one of \(Targets.toolWords), " +
-                                  "and `places` are other devices of the same app (\"iphone\" for a Mac app, \"watch\" for an iPhone app), or a game's or a screen's.")
-                }
-                kind = one
-            }
-            // What each device can run is a fact Lamp holds (`Places`): an app on one that can't run its make is refused
-            // here, with the device's reason, rather than by a build that fails after a turn.
-            let model = Places.model(of: kind, places: app.places, integration: kind == .device ? app.kind : nil)
-            if let refusal = Places.refusal(make: model.make, devices: model.devices) { return .wrong(refusal) }
-            guard !asked.kinds.contains(where: { group($0) == group(kind) }) else {
-                return .wrong(kind.reaches(.device) && !kind.addsPlaces
-                              ? "A wish has one app for a device of its own kind for now: choose which device's app it keeps."
-                              : "A wish has one app of each kind: give \(name(of: kind)) once, with all its places.")
-            }
-            asked.kinds.append(kind)
-            asked.words[kind] = app.places.union([app.kind])
-        }
-        guard !asked.kinds.isEmpty else { return .wrong("`apps` lists the wish's apps: at least one.") }
-        asked.kinds = Targets.all.map(\.platform).filter(asked.kinds.contains)
-        return .apps(asked)
-    }
-
-    private static func sentence(_ words: [String]) -> String {
-        let quoted = words.map { "\"\($0)\"" }
-        return quoted.count < 2 ? quoted.joined() : quoted.dropLast().joined(separator: ", ") + " or " + quoted.last!
-    }
-
-    /// `places` as the tool and the naming call give it: by app (`{"game": ["iphone"]}`), each word trimmed and lowercased.
-    /// A plain list (`["iphone"]`, as the tool once took it) is the places of the list's one game or screen, and nothing
-    /// when the list has none or both. Nil when it's neither shape.
-    static func places(_ value: Any?, devices: Set<String>) -> [String: Set<String>]? {
-        let clean = { (words: [String]) in Set(words.map { $0.trimmed.lowercased() }) }
-        switch value {
-        case nil, is NSNull: return [:]
-        case let byApp as [String: Any]:
-            var out: [String: Set<String>] = [:]
-            for (app, words) in byApp {
-                guard let words = words as? [String] else { return nil }
-                out[app.trimmed.lowercased()] = clean(words)
-            }
-            return out
-        case let words as [String]:
-            if words.isEmpty { return [:] }
-            let hosts = devices.filter { ["game", "screen"].contains($0) }
-            return hosts.count == 1 ? [hosts.first!: clean(words)] : nil
-        default: return nil
-        }
-    }
-
-    /// The words of the places a game or a screen can be on.
-    static func placeWords(of kind: Platform) -> Set<String> {
-        Set(GameKit.placeWords.compactMap { word, place in place.map(kind.reaches) == true ? word : nil })
-    }
-
-    private static func appKinds(for devices: Set<String>) -> [Platform]? {
-        if let one = Platform(devices: devices) { return [one] }
-        var byFamily: [String: Set<String>] = [:]
-        for word in devices {
-            guard let owner = Targets.owner(of: word) else { return nil }
-            byFamily[group(owner.platform), default: []].insert(word)
-        }
-        let kinds = byFamily.values.map { Platform(devices: $0) }
-        guard kinds.count > 1, !kinds.contains(nil) else { return nil }
-        let all = Targets.all.map(\.platform).filter { kinds.contains($0) }
-        guard all.allSatisfy({ $0.target.part != nil && ($0.addsPlaces || !$0.target.identity.devices.alone) }) else { return nil }
-        return all
-    }
-
-    /// What `make_app_for` does to a wish's apps (`apps`, as `Store.apps(of:)` has them) for the kinds listed: every app
-    /// is treated alike, the one in the wish's own folder as much as any other. An app whose family is listed stays, its
-    /// code kept, and is changed in place when listed as another kind of that family (an iPhone app that's to be for the
-    /// Mac too); a family listed that the wish has no app of is added, in its own folder; an app whose family is left out
-    /// is taken away. So "tv" added to a Mac wish keeps the Mac app and adds the TV app beside it, and "tv" alone for it
-    /// replaces the Mac app with the TV app: the wish, its chat and its history stay.
-    struct Plan: Equatable {
-        /// Apps that stay, by id, each with the kind it's to be (its own, or another of its family).
-        var keep: [String: Platform] = [:]
-        var add: [Platform] = []
-        var remove: [String] = []
-    }
-
-    /// Of the apps a plan takes away (`remove`, in order), those that stay for now: none while another app survives
-    /// the request (`survivors`: those kept and those just added), else the first, so a wish always has an app.
-    static func staying(of remove: [String], survivors: Int) -> [String] {
-        survivors > 0 ? [] : Array(remove.prefix(1))
-    }
-
-    /// Whether `make_app_for`'s answer for an app that stays says nothing the agent needs: its kind was already right,
-    /// with no more to do. One that goes on to say what to do about a watch app (`Store.changeKind`) says something.
-    static func saysNothingNew(_ text: String) -> Bool { text.hasPrefix("It's already made for") && !text.contains("\n\n") }
-
-    /// `integrations`: for a device's app, the device it's for. One in a folder named for another device (Roku/ when the
-    /// wish now wants the Xbox's) is replaced rather than changed in place, so its folder always names its device.
-    static func plan(_ kinds: [Platform], for apps: [LampProject], integrations: [Platform: String] = [:]) -> Plan {
-        var plan = Plan()
-        let replaced = { (app: LampProject) in
-            app.isPart && listedIntegration(of: app) != nil && integrations[app.platform].map { DeviceApps.split($0).integration } != app.deviceIntegration
-        }
-        for app in apps {
-            if let wanted = kinds.first(where: { group($0) == group(app.platform) }), !replaced(app) { plan.keep[app.id] = wanted }
-            else { plan.remove.append(app.id) }
-        }
-        plan.add = kinds.filter { kind in !apps.contains { group($0.platform) == group(kind) && !replaced($0) } }
-        return plan
     }
 
     /// What a wish has one of: a part family, or for a kind that's no part the kind itself.
@@ -478,7 +304,7 @@ enum Parts {
 
         - This wish is \(apps.count) apps: \(listed.joined(separator: ", and ")). Each is an app of its own kind with its own \
         build files, made to work with the others, and each is the person's: none comes first, and any of them can be \
-        added, replaced or taken away when the person asks (`make_app_for`). Before you write or change one in a folder of \
+        added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks. Before you write or change one in a folder of \
         its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
         `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing.
         """ + (Set(apps.map(\.platform).filter(WishRooms.joins).map(group)).count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.compactMap { kind in
@@ -530,39 +356,89 @@ extension Agent.Rules {
 }
 
 extension Agent {
-    /// The prompt of a new wish that could be for more than one kind of device and didn't say which (`undecided`):
-    /// no kind's rules yet, only what it takes to ask and to give the wish its kinds. `make_app_for`'s answer then
-    /// carries the rules of every kind it was given (`Store.convert`), and the next request starts a conversation
-    /// with that kind's prompt (`Store.decided`).
-    static func undecidedPrompt(candidates: [String]) -> String {
-        let named = candidates.compactMap(Parts.device).joined(separator: ", or ")
+    /// The prompt of a new wish, with nothing made for it yet (`undecided`): no kind's rules, only what it takes to choose
+    /// what it is and where it runs, which is the agent's to decide, asking only when the answer changes what's made.
+    /// `devices` are the ones the request names (the naming call's, in the table's words). `make_app_for`'s answer then
+    /// carries the rules of the app it made (`Store.convert`), and the next request starts a conversation with that
+    /// kind's prompt (`Store.decided`).
+    static func undecidedPrompt(candidates devices: [String]) -> String {
+        let named = devices.compactMap { Places.named($0) }.map(\.name)
         return """
-        You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Lamp makes apps \
-        \(Targets.lampMakes), and one wish can be more than \
-        one of them, made to work together: a TV app with an iPhone app, a Mac app with its TV app. \
-        This wish could be \(named.isEmpty ? "for more than one of them" : named), and it didn't say which, so nothing \
-        is written until it's known.
+        You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Before anything         is written, you decide what it is and where it runs, and give it its first app with `make_app_for`: the devices         the app is to be on, and whether it's made as a web page or as each device's own native code.         \(named.isEmpty ? "The request names no device." : "The request names: \(named.joined(separator: ", ")).")
 
         Rules:
-        - Ask first, with `ask`: one question, in the person's words for their wish, whose answers are those devices \
-        one by one and, when the wish could be on both, both together ("TV, Mac or both?"), the likeliest first. \
-        Nothing else in the card, and change no files.
-        - When the answer comes, call `make_app_for` with an app for each device it chose (both of them for "both"); left to you, \
-        take the first answer. If the person has said where it runs since, skip the question and call it straight \
-        away. Its reply carries the rules for each kind, which take the place of these: follow them and build the wish \
-        in the same request.
+        - Choose from the request and from what each device can run (the table in `make_app_for`'s description, and the         person's own devices Lamp knows of, below the request). Think about who will use it, on whose devices, how many,         which one matters most, and how the app gets onto each: a native app looks and does more, but each phone has to         be set up with this Mac, while a web app reaches the devices that run one the way the table says. Most wishes         that name nothing are for this Mac, made natively.
+        - Ask with `ask` only when the answer really changes what you make, in one short question about people and         devices ("Just your phone, or your family's too?"), never "web or native". Nothing else in the card, and change         no files until it's answered. When it's clear, call `make_app_for` straight away.
+        - A wish can be more than one app, made to work together (an iPhone app and its TV app): give the first with         `make_app_for`, then each other one the same way.
+        - `make_app_for`'s reply carries the rules for the app it made, which take the place of these: follow them and         build the wish in the same request.
         """ + Rules.audience + Rules.begin
     }
 }
 
 extension Parts {
-    /// A device the naming call or the agent names, in the words the undecided prompt says it with.
-    static func device(_ word: String) -> String? {
-        Targets.asked(word.lowercased())
-    }
-}
+    /// What `make_app_for` would have said about an app Lamp made from the wish's list as a request began
+    /// (`Store.makeWaitingParts`: its watch app, a game's places, its rules), with the app it's about.
+    struct Made: Codable, Equatable {
+        /// The app as it was made: who it is and what it was made for, never where Try On opens it (its family or the
+        /// person's phone), which the person changes freely and which changes nothing the note says.
+        struct App: Codable, Hashable {
+            let id: String, folder: String?, instance: String, platform: Platform
+            let places: [Destination]?, integration: String?
 
-extension Parts {
+            init(_ app: LampProject) {
+                id = app.id
+                folder = app.isPart ? app.dir.lastPathComponent : nil
+                instance = app.instance
+                platform = app.platform
+                places = app.places
+                integration = app.integration
+            }
+        }
+
+        let app: App
+        let said: [String]
+    }
+
+    private static func madeURL(_ wish: LampProject) -> URL { wish.dir.appendingPathComponent(".lamp/made-notes.json") }
+
+    private static func made(in wish: LampProject) -> [Made] {
+        AppFile.read(madeURL(wish), in: wish).flatMap { try? JSONDecoder().decode([Made].self, from: $0) } ?? []
+    }
+
+    private static func keep(_ notes: [Made], for wish: LampProject) {
+        guard !notes.isEmpty, let data = try? JSONEncoder().encode(notes) else { return AppFolder.remove(madeURL(wish), in: wish.dir) }
+        try? AppFolder.write(data, to: madeURL(wish), in: wish.dir)
+    }
+
+    /// Kept, in place of an earlier note about the same app, so it reaches the agent however many requests it takes.
+    static func rememberMade(_ said: [String], about app: LampProject, in wish: LampProject) {
+        guard !said.isEmpty else { return }
+        keep(made(in: wish).filter { $0.app.id != app.id } + [Made(app: Made.App(app), said: said)], for: wish)
+    }
+
+    /// The notes about apps made from the list that the agent hasn't had yet, each only while its app is one of the
+    /// wish's (`apps`) as it was made: gone with a version restored without it, or made for something else since, the
+    /// note no longer holds. They stay until a request with them reaches the agent (`forgetMade`), as the note about
+    /// going back does; `sent` is which went, so only those count as told.
+    static func madeNote(for wish: LampProject, apps: [LampProject]) -> (text: String, sent: [Made]) {
+        let present = Set(apps.map(Made.App.init))
+        let sent = made(in: wish).filter { present.contains($0.app) }
+        guard !sent.isEmpty else { return ("", []) }
+        return ("\n\n---\nApps this wish was waiting for that Lamp has made (from Lamp, not part of the request above):\n\n"
+                + sent.flatMap(\.said).joined(separator: "\n\n"), sent)
+    }
+
+    /// The notes a request carried, once it reached the agent.
+    static func forgetMade(_ sent: [Made], for wish: LampProject) {
+        guard !sent.isEmpty else { return }
+        keep(made(in: wish).filter { !sent.contains($0) }, for: wish)
+    }
+
+    /// The note about `app`, which `make_app_for` has just told the agent about afresh.
+    static func forgetMade(about app: LampProject, in wish: LampProject) {
+        keep(made(in: wish).filter { $0.app.id != app.id }, for: wish)
+    }
+
     /// The line at the end of a request about the apps the wish should have and doesn't yet, sent as `Skills.brief` is:
     /// once per conversation and again when it changes. Nothing while none wait.
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {

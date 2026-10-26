@@ -19,21 +19,20 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
   entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
-  allowed tools (`Agent.run`), and a `case` in `Store.mcp`. The devices `make_app_for` takes are each kind's own:
-  `{{DEVICES}}` in its description is filled once from `Targets.toolDevices`, and `{{PLACES}}`, what each device can run,
-  from the table of devices (`Places.forAgent`) (`Store.toolsJSON`), which the endpoint
-  serves and pi's extension reads from `Store.toolsFile`.
+  allowed tools (`Agent.run`), and a `case` in `Store.mcp`. The devices `make_app_for` takes are the table's words:
+  `{{PLACES}}` in its description, what each device can run, is filled from the table of devices (`Places.forAgent`)
+  as the tools are served (`Store.toolsJSON`), which the endpoint serves and pi's extension reads from `Store.toolsFile`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the

@@ -11,19 +11,20 @@ final class PlacesTests: XCTestCase {
         return (data, try JSONDecoder().decode(Integration.self, from: data))
     }
 
-    func testEveryMakeARowClaimsHasAKindThatBuildsItThere() {
+    func testEveryMakeARowClaimsHasAKindThatBuildsItThere() throws {
         for place in Places.builtIn {
             for make in Place.Make.allCases where place.runs(make) {
-                let kinds = Places.kinds(make: make, devices: [place.id])
-                XCTAssertFalse(kinds.isEmpty, "\(place.name) claims \(make) but no kind builds it")
-                for kind in kinds {
-                    XCTAssertTrue(kind.target.places.contains(place.destination), "\(kind.rawValue) doesn't open on \(place.name)")
+                let device = try XCTUnwrap(DeviceWord(place.words[0], in: Places.builtIn))
+                guard case .success(let target) = AppKinds.target(make, on: [device], in: Places.builtIn) else {
+                    return XCTFail("\(place.name) claims \(make) but no kind builds it")
                 }
+                XCTAssertTrue(target.kind.target.places.contains(place.destination), "\(target.kind.rawValue) doesn't open on \(place.name)")
             }
         }
         // The Apple TV and Vision Pro are the Apple kinds' own builds for another system.
         for id in ["apple-tv", "vision-pro"] {
-            XCTAssertTrue(Places.kinds(make: .native, devices: [id]).allSatisfy(\.target.otherSystems))
+            guard case .success(let target) = AppKinds.target(.native, on: [try XCTUnwrap(DeviceWord(id, in: Places.builtIn))], in: Places.builtIn) else { return XCTFail() }
+            XCTAssertTrue(target.kind.target.otherSystems)
         }
     }
 
@@ -44,18 +45,28 @@ final class PlacesTests: XCTestCase {
         XCTAssertNil(Places.refusal(make: .web, devices: ["iphone", "mac"]))
     }
 
-    func testEveryStoredKindReadsAsAMakeAndDevicesThatLeadBackToIt() {
-        let samples: [(Platform, Set<String>)] = [(.mac, []), (.iphone, []), (.iphone, ["watch"]), (.universal, []), (.android, []),
-                                                  (.androidTV, []), (.tv, []), (.game, []), (.game, ["iphone", "android"]),
-                                                  (.screen, []), (.screen, ["ipad", "tv"])]
-        for (kind, places) in samples {
-            let model = Places.model(of: kind, places: places)
-            XCTAssertTrue(Places.kinds(make: model.make, devices: model.devices).contains(kind),
-                          "\(kind.rawValue) \(places.sorted()) reads as \(model.make) on \(model.devices.sorted()), which leads elsewhere")
+    /// Every stored kind reads back as devices that, asked for again as it's made, plan the same kind: nothing changes.
+    func testEveryStoredKindReadsBackAsItself() throws {
+        let dir = URL(fileURLWithPath: "/tmp/places-kinds")
+        let apps: [LampProject] = [
+            LampProject(id: "a", name: "A", exe: "A", dir: dir, platform: .mac),
+            LampProject(id: "b", name: "B", exe: "B", dir: dir, platform: .iphone),
+            LampProject(id: "c", name: "C", exe: "C", dir: dir, platform: .universal),
+            LampProject(id: "d", name: "D", exe: "D", dir: dir, platform: .android),
+            LampProject(id: "e", name: "E", exe: "E", dir: dir, platform: .androidTV),
+            LampProject(id: "f", name: "F", exe: "F", dir: dir, platform: .tv),
+            LampProject(id: "g", name: "G", exe: "G", dir: dir, platform: .game, places: [.mac, .ios, .android]),
+            LampProject(id: "h", name: "H", exe: "H", dir: dir, platform: .screen, places: [.mac, .tv]),
+        ]
+        for app in apps {
+            let member = AppKinds.member(of: app)
+            let make: Place.Make = [Platform.game, .screen, .tv].contains(app.platform) ? .web : .native
+            guard case .success(let again) = AppKinds.target(make, on: member.target.devices, existing: [member], in: Places.builtIn) else {
+                return XCTFail("\(app.platform.rawValue) reads back as devices it can't be made on")
+            }
+            XCTAssertEqual(again.kind, app.platform)
+            XCTAssertEqual(again.code, member.target.code)
         }
-        XCTAssertEqual(Places.model(of: .game, places: ["ipad"]).devices, ["mac", "iphone"])
-        XCTAssertEqual(Places.kinds(make: .native, devices: ["mac", "iphone"]), [.universal])
-        XCTAssertEqual(Places.kinds(make: .web, devices: ["mac", "tv"]), [.screen], "a game isn't shown on a TV")
     }
 
     func testAnIntegrationsRowIsWhatItSupports() throws {

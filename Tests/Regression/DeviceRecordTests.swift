@@ -52,20 +52,16 @@ final class DeviceRecordTests: XCTestCase {
     /// Only a wish for a phone, a TV or a device has Lamp look, which is what makes macOS ask about the local network:
     /// one for this Mac, or a game played only there, never does.
     func testOnlyAWishForAPhoneTVOrDeviceLooks() {
-        func wish(_ kinds: [Platform], places: [Platform: [Destination]] = [:], integration: String? = nil) -> AppName.Suggestion {
-            var suggestion = AppName.Suggestion(name: "A", sketch: [], kinds: kinds)
-            suggestion.places = places
-            suggestion.integration = integration
-            return suggestion
-        }
-        XCTAssertFalse(wish([.mac]).forDevice)
-        XCTAssertFalse(wish([.mac]).forPhone)
-        XCTAssertTrue(wish([.iphone]).forPhone)
-        XCTAssertFalse(wish([.game], places: [.game: [.mac, .ios]]).forDevice)
-        XCTAssertTrue(wish([.tv]).forDevice)
-        XCTAssertTrue(wish([.game], places: [.game: [.mac, .device]]).forDevice)
-        XCTAssertTrue(wish([.device], integration: "roku").forDevice)
-        var other = wish([.mac])
+        func wish(_ devices: [String]) -> AppName.Suggestion { AppName.Suggestion(name: "A", sketch: [], devices: devices) }
+        XCTAssertFalse(wish(["mac"]).forDevice)
+        XCTAssertFalse(wish(["mac"]).forPhone)
+        XCTAssertFalse(wish([]).forPhone)
+        XCTAssertTrue(wish(["iphone"]).forPhone)
+        XCTAssertTrue(wish(["android"]).forPhone)
+        XCTAssertFalse(wish(["mac", "iphone"]).forDevice)
+        XCTAssertTrue(wish(["tv"]).forDevice)
+        XCTAssertTrue(wish(["mac", "android-tv"]).forPhone, "an Android TV is found the way Android phones are")
+        var other = wish([])
         other.forOtherDevice = true
         XCTAssertTrue(other.forDevice)
     }
