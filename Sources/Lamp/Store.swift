@@ -8268,6 +8268,8 @@ final class Store: ObservableObject {
             // What's on the phone is about to change, whether or not the launch after it works.
             onPhone[project.id] = nil
             try await Devices.install(app, on: udid)
+            // What's on the phone now, kept signed so it can be put back before its profile runs out.
+            await PhoneRenewals.keep(app, for: project, udid: udid, team: team)
             guard stillOwns() else { return nil }
             deviceApps[project.id]?.terminate()
             deviceApps[project.id] = nil
@@ -8302,6 +8304,7 @@ final class Store: ObservableObject {
     /// For each app, the phone Lamp last put it on and the code it put there (`Runtime.fingerprint`).
     private struct PhoneBuild: Equatable { let udid: String; let build: String }
     private var onPhone: [String: PhoneBuild] = [:]
+    private var renewingPhoneApps = false
 
     /// The code as it is now is on the phone chosen under Try On.
     private func isOnChosenPhone(_ project: LampProject) -> Bool {
@@ -9352,6 +9355,49 @@ final class Store: ObservableObject {
         }
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in
             MainActor.assumeIsolated { Store.shared.reloadIfAway() }
+        }
+        // Apps on the person's phones go back before their profiles run out: now, every quarter of an hour, and when the
+        // Mac wakes, since a Mac asleep through the window is the usual reason one was missed.
+        Task { await renewPhoneApps() }
+        Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { _ in
+            MainActor.assumeIsolated { Task { await Store.shared.renewPhoneApps() } }
+        }
+        workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Task { await Store.shared.renewPhoneApps() } }
+        }
+    }
+
+    /// Puts each app back on the person's phone whose profile runs out soon (`PhoneRenewals`), one at a time and never
+    /// while a turn has the app, without opening it or saying anything while it works. The person hears of it only when
+    /// the app has stopped opening and Lamp couldn't put it back: in its chat, with Retry, and in a notification.
+    func renewPhoneApps() async {
+        guard !renewingPhoneApps else { return }
+        renewingPhoneApps = true
+        defer { renewingPhoneApps = false }
+        for project in projects where project.hasIOS {
+            guard var record = PhoneRenewals.record(for: project), PhoneRenewals.isDue(record, now: Date()),
+                  turns[project.id] == nil else { continue }
+            do {
+                record.expires = try await Devices.renew(project, record: record)
+                record.failedAt = nil
+                record.failure = nil
+                record.told = nil
+                PhoneRenewals.save(record, for: project)
+            } catch {
+                let failure = error as? PhoneFailure
+                record.failedAt = Date()
+                record.failure = failure?.cause.rawValue
+                if PhoneRenewals.shouldTell(record, now: Date()), exists(project) {
+                    record.told = record.expires
+                    let name = devices.first { $0.udid == record.udid }?.name ?? "your phone"
+                    let message = "\(project.name) on \(name) stopped opening: Apple lets an app signed with your account open for a limited time, and Lamp couldn't put it back. "
+                        + (failure?.message ?? error.localizedDescription)
+                    if let output = failure?.output, !output.isEmpty { log(project, .detail, output) }
+                    log(project, .error, message, retryPhone: record.udid)
+                    Notifier.shared.post(for: project, subtitle: "Stopped opening on \(name)", body: message)
+                }
+                PhoneRenewals.save(record, for: project)
+            }
         }
     }
 

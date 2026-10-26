@@ -46,8 +46,10 @@ enum TeamSigning {
     /// What each piece of the app is signed with for `place`, made by Xcode from Lamp's own project the first time and
     /// whenever that project, the team or the destination changes (a phone's profile must list that phone), or its
     /// profiles are about to run out. `destination` is xcodebuild's;
-    /// a phone's (`id=…`) has Xcode register the phone in its profile.
-    static func plan(for project: LampProject, team: String, place: Place, destination: String,
+    /// a phone's (`id=…`) has Xcode register the phone in its profile. `renew` asks for new profiles even while the ones
+    /// made before are good (`PhoneRenewals`): Xcode hands back the profile it keeps while it has one, so its copies of
+    /// this app's profiles are taken away first, and it makes new ones good for their whole term from now.
+    static func plan(for project: LampProject, team: String, place: Place, destination: String, renew: Bool = false,
                      started: (@MainActor (Process) -> Void)? = nil,
                      onLine: @escaping @MainActor (String) -> Void = { _ in }) async throws -> (plan: Plan, folder: URL) {
         let fm = FileManager.default
@@ -64,11 +66,11 @@ enum TeamSigning {
         try writeStubCode(for: project, in: code)
         try Template.writeDeviceProject(for: stub, team: team, in: projectDir, reading: code, forSigning: true)
         let stamp = self.stamp(of: [projectDir, code], extra: [team, place.rawValue, destination].joined(separator: "\n"))
-        if let data = try? Data(contentsOf: planDir.appendingPathComponent("plan.json")),
-           let saved = try? JSONDecoder().decode(Plan.self, from: data),
-           saved.stamp == stamp, saved.expires > Date().addingTimeInterval(3600) {
+        let saved = (try? Data(contentsOf: planDir.appendingPathComponent("plan.json"))).flatMap { try? JSONDecoder().decode(Plan.self, from: $0) }
+        if !renew, let saved, saved.stamp == stamp, saved.expires > Date().addingTimeInterval(3600) {
             return (saved, planDir)
         }
+        if renew, let saved { await forgetXcodeProfiles(for: saved.pieces.map { "\(team).\($0.id)" }) }
         let derived = dir.appendingPathComponent("DerivedData")
         let registration = destination.hasPrefix("id=") ? " -allowProvisioningDeviceRegistration" : ""
         var output: [String] = []
@@ -260,7 +262,23 @@ enum TeamSigning {
         return path == base ? "" : String(path.dropFirst(base.count + 1))
     }
 
-    private static func expiry(of profile: URL) async -> Date? {
+    /// Removes Xcode's own copies of the development profiles for these app ids ("TEAM.bundle.id"), so its next signing
+    /// makes new ones. Only profiles Xcode made for its automatic signing, matched by their exact app id.
+    private static func forgetXcodeProfiles(for appIDs: [String]) async {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        for folder in ["Library/Developer/Xcode/UserData/Provisioning Profiles", "Library/MobileDevice/Provisioning Profiles"] {
+            for file in (try? FileManager.default.contentsOfDirectory(at: home.appendingPathComponent(folder), includingPropertiesForKeys: nil)) ?? []
+            where file.pathExtension == "mobileprovision" {
+                let decoded = await Subprocess.run("/usr/bin/security", ["cms", "-D", "-i", file.path], mergeErrors: false, timeout: 30)
+                guard decoded.ok, let plist = try? PropertyListSerialization.propertyList(from: Data(decoded.output.utf8), format: nil) as? [String: Any],
+                      plist["IsXcodeManaged"] as? Bool == true,
+                      let appID = (plist["Entitlements"] as? [String: Any])?["application-identifier"] as? String, appIDs.contains(appID) else { continue }
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+
+    static func expiry(of profile: URL) async -> Date? {
         let decoded = await Subprocess.run("/usr/bin/security", ["cms", "-D", "-i", profile.path], mergeErrors: false, timeout: 30)
         guard decoded.ok, let plist = try? PropertyListSerialization.propertyList(from: Data(decoded.output.utf8), format: nil) as? [String: Any]
         else { return nil }
