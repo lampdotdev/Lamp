@@ -105,15 +105,17 @@ enum DeviceHTTP {
 
     /// Makes the request with Lamp's values filled in. No redirect is followed, a sign-in goes only to the device's own
     /// challenge, and the answer is cut off at `limit`. Over HTTPS, `pins` holds the device to the certificate it showed
-    /// the first time; without them (while a device is only being found and read) nothing secret is sent.
+    /// the first time; without them (while a device is only being found and read) nothing secret is sent. A look for
+    /// devices waits `timeout` for each answer, much less than an install does: a device that answered the scan but
+    /// not its port would otherwise hold up the whole look.
     static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:],
-                     pins: DeviceTLS.Pins? = nil) async throws -> Answer {
+                     pins: DeviceTLS.Pins? = nil, timeout: TimeInterval = 30) async throws -> Answer {
         let https = request.https == true
         if https, pins == nil, carriesSecret(request) {
             throw Failure(message: "Lamp sends a password over HTTPS only to a device whose certificate it keeps.")
         }
         let path = try Placeholders.fill(request.path, values, in: .path)
-        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: 30)
+        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: timeout)
         urlRequest.httpMethod = (request.method ?? "GET").uppercased()
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.httpShouldHandleCookies = false
