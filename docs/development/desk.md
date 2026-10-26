@@ -90,7 +90,7 @@ someone typed their first wish, and is asked once (a no stays until System Setti
 only once `Store.looksOnNetwork` is true (`lookForDevicesForWish`): set by Look in the tile's list, which first says in
 one line that Lamp looks for TVs, consoles and phones and that macOS will ask (`Store.lookOnNetwork`), or already true for someone who has used a device (a TV or
 another device Lamp set up, or a wish that opens on a phone or a TV, which looks as Lamp starts). Until then the tile
-shows a TV, a controller and a phone; after, up to four of what was found. Its list has each device with Make…, which puts
+shows a TV, a controller, a phone and an ellipsis; after, up to four of what was found. Its list has each device with Make…, which puts
 the start of a wish in the bar ("A game for my Xbox: ", `DeskDevices.wishStart`, in the words the naming call reads as
 that device) for the person to finish; what the device still needs is asked for when a wish first goes there. A
 device nothing in Lamp knows yet has its Set Up… instead (`DeviceNextStep`). Local Network turned down is found by a

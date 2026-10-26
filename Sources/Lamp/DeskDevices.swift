@@ -63,26 +63,18 @@ struct DeskDevices: View {
     }
 
     /// Up to four of what was found, two by two, in a dashed outline the size of a wish's icon; before anything is found,
-    /// a TV, a controller and a phone, in a row.
+    /// a TV, a controller, a phone and an ellipsis for the rest.
     private var tile: some View {
-        let symbols = store.looksOnNetwork && !devices.isEmpty ? Array(devices.prefix(4).map(Self.symbol)) : ["tv", "gamecontroller", "iphone"]
+        let symbols = store.looksOnNetwork && !devices.isEmpty ? Array(devices.prefix(4).map(Self.symbol)) : ["tv", "gamecontroller", "iphone", "ellipsis"]
         return RoundedRectangle(cornerRadius: 17, style: .continuous)
             .strokeBorder(Color.primary.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
             .frame(width: 76, height: 76)
             .overlay {
-                if symbols.count == 3 {
-                    // Two above, the third centred under them.
-                    VStack(spacing: 8) {
-                        HStack(spacing: 10) { symbol(symbols[0]); symbol(symbols[1]) }
-                        symbol(symbols[2])
-                    }
-                } else {
-                    Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                        ForEach(Array(stride(from: 0, to: symbols.count, by: 2)), id: \.self) { row in
-                            GridRow {
-                                ForEach(row..<min(row + 2, symbols.count), id: \.self) { index in
-                                    symbol(symbols[index], size: symbols.count > 2 ? 17 : 22)
-                                }
+                Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                    ForEach(Array(stride(from: 0, to: symbols.count, by: 2)), id: \.self) { row in
+                        GridRow {
+                            ForEach(row..<min(row + 2, symbols.count), id: \.self) { index in
+                                symbol(symbols[index], size: symbols.count > 2 ? 17 : 22)
                             }
                         }
                     }
