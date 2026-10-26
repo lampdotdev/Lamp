@@ -201,10 +201,11 @@ enum Template {
     }
 
     static func write(_ template: String, to path: String, for project: LampProject, executable: Bool = false) throws {
+        let reason = Capabilities.load(project).localNetworkReason
         let contents = template
             .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
-            .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: reason))
+            .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: reason))
             .replacingOccurrences(of: "{{NAME}}", with: project.name)
             .replacingOccurrences(of: "{{EXE}}", with: project.exe)
             .replacingOccurrences(of: "{{SLUG}}", with: project.id)
@@ -1612,7 +1613,9 @@ enum Template {
     ]
 
     /// The usage descriptions as Info.plist lines, with the app's name in.
-    static func iosUsagePlistLines(name: String) -> String { usagePlistLines(iosUsageDescriptions, name: name) }
+    static func iosUsagePlistLines(name: String, localNetwork: String? = nil) -> String {
+        usagePlistLines(iosUsageDescriptions, name: name, localNetwork: localNetwork)
+    }
 
     /// The same for a Mac app: macOS kills an app that asks for one of these without its reason (microphone,
     /// speech, camera, photos, calendar, reminders, contacts, Bluetooth, Mail), and asks about the network
@@ -1635,11 +1638,16 @@ enum Template {
         ("NSAppleMusicUsageDescription", "{{NAME}} plays music from your library."),
     ]
 
-    static func macUsagePlistLines(name: String) -> String { usagePlistLines(macUsageDescriptions, name: name) }
+    static func macUsagePlistLines(name: String, localNetwork: String? = nil) -> String {
+        usagePlistLines(macUsageDescriptions, name: name, localNetwork: localNetwork)
+    }
 
-    private static func usagePlistLines(_ descriptions: [(key: String, text: String)], name: String) -> String {
-        descriptions.map { "  <key>\($0.key)</key><string>\($0.text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>" }
-            .joined(separator: "\n")
+    /// The reasons as Info.plist lines, the app's own local network reason (`Capabilities.localNetwork`) in place of Lamp's.
+    private static func usagePlistLines(_ descriptions: [(key: String, text: String)], name: String, localNetwork: String? = nil) -> String {
+        descriptions.map { entry in
+            let text = entry.key == "NSLocalNetworkUsageDescription" ? localNetwork ?? entry.text : entry.text
+            return "  <key>\(entry.key)</key><string>\(text.replacingOccurrences(of: "{{NAME}}", with: name).xmlEscaped)</string>"
+        }.joined(separator: "\n")
     }
 
     /// What the agent declares in capabilities.json at the app's root when the app needs more than its code
@@ -1680,6 +1688,9 @@ enum Template {
         /// Device apps: the app is a game, which a console installs as one (an Xbox gives a game far more memory and
         /// graphics than an app): `DeviceApps.isGame`.
         var game: Bool?
+        /// The app's own reason for the local network, the sentence the system's question shows ("TV Remote finds your
+        /// TV and speakers to control them."), in place of Lamp's general one.
+        var localNetwork: String?
 
         static func load(_ project: LampProject) -> Capabilities { load(project.dir.appendingPathComponent(file)) }
 
@@ -1696,7 +1707,17 @@ enum Template {
                                 backgroundModes: some(modes), bonjourServices: some(services), backgroundTasks: some(tasks), opens: some(kinds),
                                 background: background == true ? true : nil, icloud: icloud == true ? true : nil,
                                 weather: weather == true ? true : nil, homekit: homekit == true ? true : nil,
-                                timeSensitive: timeSensitive == true ? true : nil, game: game == true ? true : nil)
+                                timeSensitive: timeSensitive == true ? true : nil, game: game == true ? true : nil,
+                                localNetwork: localNetworkReason)
+        }
+
+        /// The local network reason, kept to one plain sentence of 150 characters at most, in words and plain punctuation:
+        /// it's shown as it is in the system's question, and goes into Info.plist through build scripts whose heredocs the
+        /// shell expands, so nothing in it may mean anything to a shell or to XML (`$`, backticks, backslashes, quotes, `<>&`).
+        var localNetworkReason: String? {
+            guard let text = localNetwork?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, text.count <= 150,
+                  text.range(of: #"^[\p{L}\p{N} .,;:!?'’()–-]+$"#, options: .regularExpression) != nil else { return nil }
+            return text
         }
 
         var isEmpty: Bool { checked == Capabilities() }
@@ -1850,6 +1871,8 @@ enum Template {
         /// The Info.plist keys a Mac app's capabilities own, each with its value or nil when nothing is declared.
         func macInfo(for project: LampProject) -> [String: Any?] {
             ["CFBundleDocumentTypes": documentTypes.isEmpty ? nil : documentTypes,
+             // What LampNetwork.find() looks for besides its own (an iPhone app's are in its own Info.plist, `lists`).
+             "NSBonjourServices": services.isEmpty ? nil : services,
              "LampBackground": background == true ? true : nil,
              "LampICloudContainer": container(for: project)]
         }
@@ -1862,6 +1885,8 @@ enum Template {
             for (key, value) in macInfo(for: project) {
                 if let value { info[key] = value } else { info.removeObject(forKey: key) }
             }
+            // Lamp's general reason is the one written before this, so an app that no longer declares its own gets it back.
+            if let reason = localNetworkReason { info["NSLocalNetworkUsageDescription"] = reason }
             info.write(to: url, atomically: true)
         }
 
@@ -2002,8 +2027,8 @@ enum Template {
                 .replacingOccurrences(of: "{{WIDGET_PLIST}}", with: widgetPlist)
                 .replacingOccurrences(of: "{{APP_GROUP}}", with: group)
                 .replacingOccurrences(of: "{{WATCH_PLIST}}", with: watchPlistLines(for: project))
-            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name))
-                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name))
+            .replacingOccurrences(of: "{{USAGE}}", with: iosUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
+                .replacingOccurrences(of: "{{MAC_USAGE}}", with: macUsagePlistLines(name: project.name, localNetwork: capabilities.localNetworkReason))
                 .replacingOccurrences(of: "{{BACKGROUND}}", with: background)
                 .replacingOccurrences(of: "{{ICLOUD}}", with: capabilities.icloudPlistLine(for: project))
                 .replacingOccurrences(of: "{{EXE}}", with: project.exe)
@@ -3363,6 +3388,7 @@ enum Template {
     import ExtensionKit
     import Carbon.HIToolbox
     import Network
+    import dnssd
     #if canImport(WidgetKit)
     import WidgetKit
     #endif
@@ -3380,6 +3406,7 @@ enum Template {
     import BackgroundTasks
     #endif
     import Network
+    import dnssd
     #if canImport(HomeKit)
     import HomeKit
     #endif
@@ -10926,7 +10953,341 @@ enum Template {
         }
 
         /// The other addresses of this device's home network (its /24), for the sweep.
-        private static func neighbours() -> [String] {
+        private static func neighbours() -> [String] { LampNetwork.neighbours() }
+    }
+
+    // MARK: - Network
+
+    /// What's on the person's home network, for an app that controls, plays to or reads their devices (a remote for
+    /// the TV and speakers, what's playing, a light), and the system's Local Network permission that comes first: on
+    /// the iPhone, and on a Mac since macOS 15, nothing on the network answers until the person allows it.
+    ///
+    ///     // After the app has said in its own words why it looks (a first screen, a button):
+    ///     switch await LampNetwork.requestAccess() {             // the system asks the person once
+    ///     case .allowed: devices = await LampNetwork.find()       // everything that answers, with what it says of itself
+    ///     case .denied: Text(LampNetwork.allowHint)               // where to turn it on; offer to look again
+    ///     default: Text("Join your home Wi-Fi to find your devices.")
+    ///     }
+    ///     LampNetwork.access                                      // the last answer, without asking
+    ///
+    /// `find()` asks with SSDP (to the whole network on a Mac, and to each address on it, which also works on an
+    /// iPhone) and with Bonjour, for the types the app declares in capabilities.json's `bonjourServices` (an iPhone
+    /// app sees only those; a Mac app also looks for common ones: AirPlay, Google Cast, Sonos, Spotify Connect,
+    /// HomeKit). Each device comes with its address, name, maker and model, what it answered SSDP for and the
+    /// Bonjour services it offers: enough to work out how to reach it. A Roku is `LampRoku`'s.
+    enum LampNetwork {
+        struct Access: RawRepresentable, Hashable, Codable {
+            var rawValue: String
+            /// Not asked yet, or not on a home network (no Wi-Fi or Ethernet with a private address).
+            static let unknown = Access(rawValue: "unknown")
+            static let allowed = Access(rawValue: "allowed")
+            /// The person said no, or hasn't answered the system's question.
+            static let denied = Access(rawValue: "denied")
+        }
+
+        struct Device: Identifiable, Codable, Hashable {
+            var id: String { address }
+            var address: String
+            /// What it calls itself (its UPnP friendly name or Bonjour name), else its address.
+            var name: String
+            var maker: String
+            var model: String
+            /// The SERVER line of its SSDP answer ("Roku/15.3.4 UPnP/1.0 Roku/15.3.4"); empty when it didn't answer SSDP.
+            var server: String
+            /// What it answered SSDP for ("roku:ecp", "urn:schemas-upnp-org:device:MediaRenderer:1").
+            var ssdp: [String]
+            /// Where its UPnP description is, from its SSDP answer.
+            var location: String?
+            var bonjour: [Service]
+        }
+
+        struct Service: Codable, Hashable {
+            var type: String    // "_sonos._tcp"
+            var name: String
+            var port: Int?
+            /// What it says of itself in its TXT record (an AirPlay device's "model", a Cast device's "md" and "fn").
+            var txt: [String: String] = [:]
+        }
+
+        /// Where the person turns Local Network on for this app.
+        static var allowHint: String {
+            #if os(iOS)
+            "Allow Local Network for this app in Settings, Privacy & Security, Local Network."
+            #else
+            "Allow this app in System Settings, Privacy & Security, Local Network."
+            #endif
+        }
+
+        private static let accessKey = "lamp.network.access", askedKey = "lamp.network.asked"
+
+        /// The last answer `requestAccess()` heard, without asking.
+        static var access: Access {
+            Access(rawValue: UserDefaults.standard.string(forKey: accessKey) ?? "unknown")
+        }
+
+        /// Asks for the local network. The first time, the system puts its question up and this waits for the
+        /// person's answer (`timeout` at most); after that it says how things stand at once. Call it after the app has
+        /// said why, never at launch.
+        static func requestAccess(timeout: TimeInterval = 60) async -> Access {
+            guard let target = neighbours().first else { return remember(.unknown) }
+            let asked = UserDefaults.standard.bool(forKey: askedKey)
+            UserDefaults.standard.set(true, forKey: askedKey)
+            let until = Date().addingTimeInterval(asked ? 0 : timeout)
+            while true {
+                let now = await probe(target)
+                if now == .allowed || Date() >= until { return remember(now) }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+
+        @discardableResult private static func remember(_ access: Access) -> Access {
+            UserDefaults.standard.set(access.rawValue, forKey: accessKey)
+            return access
+        }
+
+        /// A datagram to a neighbour, which is what has the system ask; its path says whether the network is allowed.
+        private static func probe(_ address: String) async -> Access {
+            let connection = NWConnection(host: NWEndpoint.Host(address), port: 1900, using: .udp)
+            return await withCheckedContinuation { continuation in
+                let once = Once()
+                @Sendable func finish(_ access: Access) {
+                    guard once.take() else { return }
+                    connection.cancel()
+                    continuation.resume(returning: access)
+                }
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        connection.send(content: Data(search("ssdp:all").utf8), completion: .contentProcessed { _ in finish(.allowed) })
+                    case .waiting, .failed:
+                        finish(connection.currentPath?.unsatisfiedReason == .localNetworkDenied ? .denied : .unknown)
+                    default: break
+                    }
+                }
+                connection.start(queue: .global())
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { finish(.unknown) }
+            }
+        }
+
+        // MARK: Finding
+
+        /// Everything that answers on the home network, by name. `bonjour` adds Bonjour types to look for; on an iPhone
+        /// each must be in capabilities.json's `bonjourServices`, or the system refuses to look.
+        static func find(bonjour: [String] = [], timeout: TimeInterval = 3) async -> [Device] {
+            var wanted = Set(bonjour + (Bundle.main.object(forInfoDictionaryKey: "NSBonjourServices") as? [String] ?? []))
+            #if os(macOS)
+            wanted.formUnion(["_airplay._tcp", "_googlecast._tcp", "_sonos._tcp", "_spotify-connect._tcp", "_hap._tcp"])
+            #endif
+            let types = Array(wanted)
+            async let answered = ssdp(timeout: timeout)
+            async let advertised = browse(types, timeout: timeout)
+            var byAddress: [String: Device] = [:]
+            for answer in await answered {
+                var device = byAddress[answer.address] ?? Device(address: answer.address, name: answer.address, maker: "", model: "", server: "", ssdp: [], bonjour: [])
+                if device.server.isEmpty { device.server = answer.server }
+                if !answer.target.isEmpty, !answer.target.hasPrefix("uuid:"), !device.ssdp.contains(answer.target) { device.ssdp.append(answer.target) }
+                if device.location == nil, let location = answer.location, URL(string: location)?.host == answer.address { device.location = location }
+                byAddress[answer.address] = device
+            }
+            for (address, service) in await advertised {
+                var device = byAddress[address] ?? Device(address: address, name: service.name, maker: "", model: "", server: "", ssdp: [], bonjour: [])
+                if !device.bonjour.contains(service) { device.bonjour.append(service) }
+                if device.name == address { device.name = service.name }
+                byAddress[address] = device
+            }
+            // Each SSDP device's own description: what it's called, who made it, what it is.
+            await withTaskGroup(of: Device.self) { group in
+                for device in byAddress.values {
+                    group.addTask { await described(device) }
+                }
+                for await device in group { byAddress[device.address] = device }
+            }
+            // This device answers its own Bonjour look; it isn't one of the person's things to control.
+            let mine = own()
+            return byAddress.values.filter { !mine.contains($0.address) && !$0.address.hasPrefix("127.") }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+
+        private static func described(_ device: Device) async -> Device {
+            guard let location = device.location, let url = URL(string: location), url.scheme == "http",
+                  let (data, _) = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 2)) else { return device }
+            let xml = String(decoding: data, as: UTF8.self)
+            func tag(_ name: String) -> String? {
+                guard let open = xml.range(of: "<\(name)>"), let close = xml.range(of: "</\(name)>", range: open.upperBound..<xml.endIndex) else { return nil }
+                let text = String(xml[open.upperBound..<close.lowerBound]).replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">")
+                    .replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&apos;", with: "'")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }
+            var device = device
+            // A speaker's room ("Living Room") is what the person calls it, where its friendly name is a serial number.
+            if let name = tag("roomName") ?? tag("friendlyName") { device.name = name }
+            device.maker = tag("manufacturer") ?? device.maker
+            device.model = tag("modelName") ?? tag("modelDescription") ?? device.model
+            return device
+        }
+
+        private struct Answer {
+            let address: String, server: String, location: String?, target: String
+        }
+
+        private static func search(_ target: String) -> String {
+            "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: \(target)\r\n\r\n"
+        }
+
+        /// One SSDP search, to the whole network where the system lets it (a Mac) and to each address near this
+        /// device's, which needs no multicast and so works on an iPhone too. Most players and TVs answer either.
+        private static func ssdp(timeout: TimeInterval) async -> [Answer] {
+            let hosts = neighbours()
+            return await Task.detached { () -> [Answer] in
+                let socketID = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+                guard socketID >= 0 else { return [] }
+                defer { close(socketID) }
+                var wait = timeval(tv_sec: 0, tv_usec: 250_000)
+                setsockopt(socketID, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+                let message = Array(search("ssdp:all").utf8)
+                // Sent without waiting: a send to an address nobody has can stall while the network looks for it.
+                let flags = fcntl(socketID, F_GETFL)
+                _ = fcntl(socketID, F_SETFL, flags | O_NONBLOCK)
+                for host in ["239.255.255.250"] + hosts {
+                    var to = sockaddr_in()
+                    to.sin_family = sa_family_t(AF_INET)
+                    to.sin_port = in_port_t(1900).bigEndian
+                    to.sin_addr.s_addr = inet_addr(host)
+                    for _ in 0..<2 {
+                        let sent = withUnsafePointer(to: &to) { pointer in
+                            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(socketID, message, message.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+                        }
+                        // A full buffer is given a moment; any other refusal (no route, an address that's away) is skipped.
+                        guard sent < 0, errno == EAGAIN || errno == ENOBUFS else { break }
+                        usleep(5_000)
+                    }
+                }
+                _ = fcntl(socketID, F_SETFL, flags)
+                var found: [Answer] = []
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                let end = Date().addingTimeInterval(timeout)
+                while Date() < end {
+                    var from = sockaddr_in()
+                    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+                    let count = withUnsafeMutablePointer(to: &from) {
+                        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { recvfrom(socketID, &buffer, buffer.count, 0, $0, &length) }
+                    }
+                    guard count > 0 else { continue }
+                    let address = String(cString: inet_ntoa(from.sin_addr))
+                    var fields: [String: String] = [:]
+                    for line in String(decoding: buffer[0..<count], as: UTF8.self).split(whereSeparator: \.isNewline).dropFirst() {
+                        guard let colon = line.firstIndex(of: ":") else { continue }
+                        fields[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+                    }
+                    found.append(Answer(address: address, server: fields["server"] ?? "", location: fields["location"], target: fields["st"] ?? ""))
+                }
+                return found
+            }.value
+        }
+
+        /// The devices that advertise these Bonjour types, each resolved to its address, without reaching the device.
+        private static func browse(_ types: [String], timeout: TimeInterval) async -> [(String, Service)] {
+            await withTaskGroup(of: [(String, Service)].self) { group in
+                for type in types {
+                    group.addTask {
+                        // Resolved all at once: a home can have a dozen AirPlay speakers, each a moment's wait.
+                        await withTaskGroup(of: (String, Service)?.self) { each in
+                            for (endpoint, txt) in await services(of: type, timeout: timeout) {
+                                guard case .service(let name, _, let domain, _) = endpoint else { continue }
+                                each.addTask {
+                                    await Task.detached { resolve(name: name, type: type, domain: domain) }.value
+                                        .map { ($0.0, Service(type: type, name: name, port: $0.1, txt: txt)) }
+                                }
+                            }
+                            var found: [(String, Service)] = []
+                            for await one in each { if let one { found.append(one) } }
+                            return found
+                        }
+                    }
+                }
+                var all: [(String, Service)] = []
+                for await found in group { all += found }
+                return all
+            }
+        }
+
+        private static func services(of type: String, timeout: TimeInterval) async -> [(NWEndpoint, [String: String])] {
+            let browser = NWBrowser(for: .bonjourWithTXTRecord(type: type, domain: nil), using: .tcp)
+            let seen = Seen()
+            browser.browseResultsChangedHandler = { results, _ in
+                seen.set(results.map { result in
+                    if case .bonjour(let record) = result.metadata { return (result.endpoint, record.dictionary) }
+                    return (result.endpoint, [:])
+                })
+            }
+            browser.start(queue: .global())
+            try? await Task.sleep(for: .seconds(timeout))
+            browser.cancel()
+            return seen.endpoints
+        }
+
+        /// What a browser has seen so far, from its own queue.
+        private final class Seen: @unchecked Sendable {
+            private let lock = NSLock()
+            private var list: [(NWEndpoint, [String: String])] = []
+            func set(_ endpoints: [(NWEndpoint, [String: String])]) { lock.lock(); list = endpoints; lock.unlock() }
+            var endpoints: [(NWEndpoint, [String: String])] { lock.lock(); defer { lock.unlock() }; return list }
+        }
+
+        /// The first of several callers to finish a wait, so it's resumed once.
+        private final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var done = false
+            func take() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+        }
+
+        /// A Bonjour service's IPv4 address and port, asked of the network (mDNS) and never of the device: its host and
+        /// port from the service's record, then the host's address.
+        private static func resolve(name: String, type: String, domain: String) -> (String, Int?)? {
+            final class Answer { var host: String?; var port: Int? }
+            let answer = Answer()
+            var reference: DNSServiceRef?
+            let heard: DNSServiceResolveReply = { _, _, _, code, _, host, port, _, _, context in
+                guard code == kDNSServiceErr_NoError, let host, let context else { return }
+                let answer = Unmanaged<Answer>.fromOpaque(context).takeUnretainedValue()
+                answer.host = String(cString: host)
+                answer.port = Int(UInt16(bigEndian: port))
+            }
+            let started = withExtendedLifetime(answer) {
+                DNSServiceResolve(&reference, 0, 0, name, type, domain, heard, Unmanaged.passUnretained(answer).toOpaque())
+            }
+            guard started == kDNSServiceErr_NoError, let reference else { return nil }
+            defer { DNSServiceRefDeallocate(reference) }
+            var waiting = pollfd(fd: DNSServiceRefSockFD(reference), events: Int16(POLLIN), revents: 0)
+            if poll(&waiting, 1, 3000) > 0 { DNSServiceProcessResult(reference) }
+            guard let host = answer.host else { return nil }
+            var hints = addrinfo()
+            hints.ai_family = AF_INET
+            hints.ai_socktype = SOCK_STREAM
+            var found: UnsafeMutablePointer<addrinfo>?
+            guard getaddrinfo(host, nil, &hints, &found) == 0, let first = found, let address = first.pointee.ai_addr else { return nil }
+            defer { freeaddrinfo(found) }
+            let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { String(cString: inet_ntoa($0.pointee.sin_addr)) }
+            return (ip, answer.port)
+        }
+
+        /// The other addresses of this device's home network (its /24).
+        static func neighbours() -> [String] {
+            var hosts: [String] = []
+            for ip in homeAddresses().sorted() {
+                for last in UInt32(1)...254 where ip & 0xFFFF_FF00 | last != ip {
+                    let host = ip & 0xFFFF_FF00 | last
+                    let text = "\(host >> 24).\(host >> 16 & 0xFF).\(host >> 8 & 0xFF).\(host & 0xFF)"
+                    if !hosts.contains(text) { hosts.append(text) }
+                }
+            }
+            return hosts
+        }
+
+        /// This device's own addresses on a home network: 10/8, 172.16/12 and 192.168/16.
+        private static func homeAddresses() -> Set<UInt32> {
             var list: UnsafeMutablePointer<ifaddrs>?
             guard getifaddrs(&list) == 0, let first = list else { return [] }
             defer { freeifaddrs(list) }
@@ -10936,18 +11297,13 @@ enum Template {
                 guard let address = entry.ifa_addr, address.pointee.sa_family == sa_family_t(AF_INET),
                       Int32(entry.ifa_flags) & IFF_UP != 0, Int32(entry.ifa_flags) & IFF_LOOPBACK == 0 else { continue }
                 let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
-                // Only a home network's own addresses: 10/8, 172.16/12 and 192.168/16.
                 if ip >> 24 == 10 || ip >> 20 == 0xAC1 || ip >> 16 == 0xC0A8 { own.insert(ip) }
             }
-            var hosts: [String] = []
-            for ip in own {
-                for last in UInt32(1)...254 where ip & 0xFFFF_FF00 | last != ip {
-                    let host = ip & 0xFFFF_FF00 | last
-                    let text = "\(host >> 24).\(host >> 16 & 0xFF).\(host >> 8 & 0xFF).\(host & 0xFF)"
-                    if !hosts.contains(text) { hosts.append(text) }
-                }
-            }
-            return hosts
+            return own
+        }
+
+        private static func own() -> Set<String> {
+            Set(homeAddresses().map { "\($0 >> 24).\($0 >> 16 & 0xFF).\($0 >> 8 & 0xFF).\($0 & 0xFF)" })
         }
     }
 

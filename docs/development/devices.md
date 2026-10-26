@@ -210,6 +210,21 @@ hears them (`padKeys`: the d-pad and left stick are the arrows, A is Enter and p
 the rest Edge's `Gamepad…` names), and `navigator.getGamepads()` gives the standard mapping. Its web view never shakes the controller, so lamp.js puts its own `vibrationActuator` on every gamepad in the host, whose `playEffect` and `reset` go to the host as `rumble` messages, played with Windows.Gaming.Input as a native game's `lamp_rumble` is. The web view numbers controllers in another order than the host, so each effect carries what the page sees on its gamepad (buttons, sticks) and the host shakes the controller whose reading matches, remembering the pair for effects asked while nothing tells them apart. A package Lamp put on a
 console before installs over the earlier EdgeHTML one (same family, newer version), so nothing moves an app across.
 
+**What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
+person's devices itself, for the ones Lamp has no block for. `requestAccess()` is the system's Local Network question,
+asked when the app chooses (after saying why, never at launch): a datagram to a neighbour has the system ask, and the
+connection's path says whether it's allowed (`unsatisfiedReason == .localNetworkDenied`); the first time it waits for
+the person's answer, after that it says how things stand at once (`access` keeps the last). `find()` asks SSDP twice
+over, to the multicast group (a Mac) and to each address of the /24 (no multicast, so an iPhone app without Apple's
+multicast entitlement gets answers too; most players and TVs answer, a Sonos doesn't), reads each SSDP device's UPnP
+description for its name (a speaker's room before its friendly name, which a Sonos fills with its serial number), maker
+and model, and browses Bonjour for the types in the app's `NSBonjourServices` (an
+iPhone app may browse no others; a Mac copy is given them by `Capabilities.macInfo`), plus common media and home types on a Mac; each Bonjour service is resolved to its
+address by a connection opened and closed at once. This device's own addresses are left out. The app's own reason for
+the question is `localNetwork` in capabilities.json (`Capabilities.localNetworkReason`: one line, 150 characters at
+most, words and plain punctuation only, since it passes through build scripts' heredocs), written in place of Lamp's general one wherever the reasons are (build.sh, the phone's project, the simulator's
+bundle, `apply(to:)` for a Mac copy).
+
 **Controlling a Roku from another app** (`LampRoku`, in LampSupport.swift): a wish's Mac or iPhone app drives the
 person's Roku over ECP (port 8060) with nothing installed on it: find (SSDP, then the Rokus found before, then a sweep of
 the device's own /24, since an iPhone app can't send multicast without an entitlement Apple grants on request),

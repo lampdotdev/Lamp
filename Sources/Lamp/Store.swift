@@ -8478,14 +8478,16 @@ final class Store: ObservableObject {
             plutil -replace CFBundleDisplayName -string "$LAMP_NAME" "$P"
 
             """
-        // Every usage description, from the one list, so apps made before a reason was added get it too.
-        for (key, text) in Template.iosUsageDescriptions {
-            let reason = text.replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
-            script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
-        }
         // What the agent declared in capabilities.json: background work in Info.plist, the rest as
         // entitlements the ad hoc signature carries (the simulator checks them for Health and the like).
         let capabilities = Template.Capabilities.load(project)
+        // Every usage description, from the one list, so apps made before a reason was added get it too; the app's own
+        // local network reason in place of Lamp's.
+        for (key, text) in Template.iosUsageDescriptions {
+            let own = key == "NSLocalNetworkUsageDescription" ? capabilities.localNetworkReason : nil
+            let reason = (own ?? text).replacingOccurrences(of: "{{NAME}}", with: project.name).replacingOccurrences(of: "'", with: "'\\''")
+            script += "plutil -replace \(key) -string '\(reason)' \"$P\"\n"
+        }
         var lists = capabilities.lists
         // An app of a wish of several is found by the wish's other apps on the network, and finds them, by Bonjour.
         if Template.talksToOtherApps(project), !(lists["NSBonjourServices"] ?? []).contains(Template.wishServiceType) {
