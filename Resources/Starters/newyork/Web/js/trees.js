@@ -2,17 +2,9 @@ import * as THREE from 'three/webgpu';
 import { createTreeMaterial } from './tsl-materials.js';
 import { groundHeight } from './terrain.js';
 
-// js/trees.js
-// Procedural NYC street & park trees, planted by street-details.js (section 7):
-// - London plane, honey locust & American elm grown from seeded per-species rules: a flared trunk / leader carrying
-//   scaffold limbs, branches and twigs as tapered, curving bark tubes (uv in metres for the bark shader)
-// - Leaf sprays on alpha-tested cards hung from the twigs, cut from a generated leaf atlas (palmate plane leaves,
-//   feathery locust fronds, toothed elm leaves and a dense far-canopy clump) whose mipmaps keep their coverage, so
-//   distant crowns don't thin out
-// - Crown-shell normals, interior occlusion & sway weights baked per vertex (attributes: createTreeMaterial in
-//   tsl-materials.js)
-// - Three levels of detail (two variants per species up close), picked per tree from the camera distance and
-//   regrouped per spatial cell / species / variant / level whenever the camera has moved a few metres
+// Seeded street and park trees with three geometry levels, regrouped by spatial cell as the camera moves.
+// Bark tubes and leaf cards share a material; atlas mipmaps preserve leaf coverage at a distance.
+// Crown normals, occlusion and wind weights are baked into the geometry (see createTreeMaterial).
 
 const V3 = THREE.Vector3;
 
@@ -48,7 +40,6 @@ const tileOrigin = (k) => [(k % 2) * TILE, (k >> 1) * TILE];
 // Spray primitives in metres (x right, y up from the card's attachment point): twigs (polylines) & leaves
 function buildSprays(rng) {
   const R = (a, b) => a + (b - a) * rng();
-  const dirOf = (a) => [Math.sin(a), Math.cos(a)]; // a = angle from straight up
 
   // Curving twig from (x, y) at angle a off vertical, len m long, curling by `curl` rad over its length
   const twig = (x, y, a, len, curl, segs = 12) => {
