@@ -19,10 +19,9 @@ style.textContent = `
   .lamp-making p { margin: 0; font-size: 20px; color: rgba(255, 255, 255, 0.55); }`;
 const making = document.createElement('div');
 making.className = 'lamp-making';
-making.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"'
-    + ' stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/>'
-    + '<path d="m21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1'
-    + ' 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5"/></svg>'   // Lucide's hammer (ISC, see NOTICE.md)
+making.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">'
+    + '<g transform="rotate(40 12 12)"><rect x="10.8" y="8.5" width="2.4" height="13" rx="1.2"/>'
+    + '<path d="M7 3.5h8.5l2.5 2.2v2.8H7z"/></g></svg>'
     + '<h1></h1><p>Lamp is making this game.</p>';
 making.querySelector('h1').textContent = '{{NAME}}';
 document.head.append(style);

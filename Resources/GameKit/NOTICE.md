@@ -13,8 +13,6 @@ commit named, under its own licence.
   licence or public domain, Copyright (c) 2017 Sean Barrett (the licence is at the end of each file).
 - dr_wav.h, dr_mp3.h: https://github.com/mackron/dr_libs at dfe8377631000664666519fdb83da193fd8037f4, public domain
   (Unlicense) or MIT No Attribution, Copyright 2023 David Reid (the licence is at the end of each file).
-- The hammer on a new web game's card (scaffold-web/Web/game.js): Lucide's "hammer" icon, https://lucide.dev, ISC
-  licence (below).
 
 ## sokol
 
@@ -62,19 +60,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-## Lucide
-
-ISC License
-
-Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright
-(c) for Lucide are held by Lucide Contributors 2022.
-
-Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby
-granted, provided that the above copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
-INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
-AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
-PERFORMANCE OF THIS SOFTWARE.
