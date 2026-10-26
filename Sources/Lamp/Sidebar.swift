@@ -785,7 +785,8 @@ final class SidebarServer {
                     var card = SidebarLine(id: line.id, kind: .action, text: text, gap: gap)
                     card.symbol = PhoneSlotLine.symbol
                     card.button = taken ? nil : PhoneSlotLine.button
-                    card.prominent = true
+                    // A prominent card with no button draws an empty one.
+                    card.prominent = !taken
                     out.append(card)
                 case .keepOpening:
                     // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
@@ -793,7 +794,7 @@ final class SidebarServer {
                     var card = SidebarLine(id: line.id, kind: .action, text: KeepOpeningLine.text(project.name, on: on), gap: gap)
                     card.symbol = KeepOpeningLine.symbol
                     card.button = on ? nil : KeepOpeningLine.button
-                    card.prominent = true
+                    card.prominent = !on
                     out.append(card)
                 case .deviceStep:
                     // The step's card has a field and a sign-in, which happen in Lamp's window.

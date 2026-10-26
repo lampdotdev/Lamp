@@ -49,7 +49,7 @@ enum PhoneSlotLine {
     static let done = "done:"
     static func text(this: String, other: String, phone: String, taken: Bool) -> String {
         taken ? "Took \(other) off \(phone)."
-            : "Your free Apple account lets \(phone) hold \(PhoneSlots.limit) apps, and it has \(PhoneSlots.limit). Take \(other) off it to put \(this) there? What \(other) saved on the phone goes with it."
+            : "Your free Apple account lets \(phone) hold \(PhoneSlots.limit) apps, and it has \(PhoneSlots.limit). Take \(other) off it to put \(this) there? What it saved on the phone goes with it."
     }
     static let button = "Take It Off"
     static let symbol = "iphone"
