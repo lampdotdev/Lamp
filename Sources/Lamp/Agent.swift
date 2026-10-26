@@ -335,8 +335,9 @@ enum Agent {
         // Its host's facts, for working out what it is and how it's reached: all there is for one set up from Everything
         // Else, which may be something Lamp can't reach at all (say so plainly then). The names it goes by on the network
         // are often people's, so they stay out of the integration.
-        let address = device?.address ?? project.deviceSetup.flatMap { $0.hasPrefix("found:") ? String($0.dropFirst("found:".count)) : nil }
-        if let host = Store.shared.hosts.first(where: { $0.address == address }) {
+        let address = device?.address ?? project.deviceSetup.flatMap(Device.foundAddress)
+        let hardware = project.deviceSetup.flatMap(Device.foundHardware)
+        if let host = Store.shared.hosts.first(where: { $0.address == address && (hardware == nil || $0.mac == hardware) }) {
             if device == nil { note += " Work out what it is first, from what Lamp found of it, and tell the person; if nothing on the home network can reach it (it's controlled only through its maker's cloud, or has no local interface), say so in a sentence rather than writing an integration." }
             note += " Its host: " + HomeNetwork.facts(host) + ". Keep the names it goes by out of the integration: find it by its service, maker or model."
         }

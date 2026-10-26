@@ -158,6 +158,13 @@ enum HomeNetwork {
     }
 
     /// Whether this Mac is still on the network a whole look swept: the same subnet, and the same router at its gateway.
+    /// The hosts of the last whole look still at their address now, by the neighbour table (read, nothing sent): one
+    /// gone, or another device at its address, is left out.
+    static func stillHere(_ hosts: [NetworkHost]) -> [NetworkHost] {
+        let table = Neighbours.table()
+        return hosts.filter { host in host.mac.map { table[host.address] == $0 } ?? false }
+    }
+
     static func sameNetwork(as swept: Subnet?, router: String?) -> Bool {
         guard let swept, let now = Subnet.current(), now.network == swept.network, now.prefix == swept.prefix else { return false }
         guard let router else { return true }
@@ -223,7 +230,9 @@ enum HomeNetwork {
         let maker = host.maker ?? ""
         let model = host.model ?? ""
         let name = [maker, model].filter { !$0.isEmpty }.joined(separator: " ").nilIfEmpty ?? "Device at \(host.address)"
-        var device = Device(id: "found:\(host.address)", kind: .other, maker: maker, model: model.isEmpty ? maker : model,
+        // The hardware address goes in the id too: the same address may be another device's later (a new lease, another
+        // network), and Set Up… reopens a conversation by its id.
+        var device = Device(id: "found:\(host.address)" + (host.mac.map { "#" + $0 } ?? ""), kind: .other, maker: maker, model: model.isEmpty ? maker : model,
                             modelID: "", name: name, os: "", osVersion: "", reach: .network)
         device.address = host.address
         return device

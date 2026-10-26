@@ -176,6 +176,18 @@ struct Device: Identifiable, Hashable {
         }
     }
 
+    /// The address in the id of a device found on the network that Lamp doesn't know yet ("found:<address>", with
+    /// "#<hardware address>" after it when the look knew that), and the hardware address.
+    static func foundAddress(_ id: String) -> String? {
+        guard id.hasPrefix("found:") else { return nil }
+        return String(id.dropFirst("found:".count)).components(separatedBy: "#").first
+    }
+
+    static func foundHardware(_ id: String) -> String? {
+        guard id.hasPrefix("found:"), let mark = id.firstIndex(of: "#") else { return nil }
+        return String(id[id.index(after: mark)...])
+    }
+
     /// What it is rather than what it's called, for one found on the network that Lamp doesn't know yet: the name a
     /// device gives itself there is often a person's, and this one is written into its setup conversation's folder.
     var plainName: String {

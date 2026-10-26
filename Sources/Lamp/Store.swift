@@ -1690,8 +1690,8 @@ final class Store: ObservableObject {
     func linkSetupConversations(to found: [Device]) {
         var changed = false
         for project in projects {
-            guard let id = project.deviceSetup, id.hasPrefix("found:"),
-                  let device = found.first(where: { $0.integration != nil && $0.address == String(id.dropFirst("found:".count)) }),
+            guard let id = project.deviceSetup, let address = Device.foundAddress(id),
+                  let device = found.first(where: { $0.integration != nil && $0.address == address }),
                   !projects.contains(where: { $0.deviceSetup == device.id }) else { continue }
             var linked = project
             linked.deviceSetup = device.id
@@ -2384,7 +2384,10 @@ final class Store: ObservableObject {
                 swept = nil
                 sweptRouter = nil
             } else {
-                // A look of SSDP alone keeps what the last whole look learned of the rest, on the same network.
+                // A look of SSDP alone keeps what the last whole look learned of the rest, on the same network, for the
+                // hosts still at their address.
+                let here = HomeNetwork.stillHere(hosts)
+                if here != hosts { hosts = here }
                 let taken = Set(found.compactMap(\.address))
                 found += hosts.filter { !taken.contains($0.address) && HomeNetwork.couldLearn($0) }.map(HomeNetwork.device(for:))
                 if found != devices { devices = found }
