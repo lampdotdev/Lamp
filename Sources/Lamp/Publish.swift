@@ -81,9 +81,10 @@ enum Publish {
 
     // MARK: The page
 
-    /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), which Publish makes when the wish has none:
-    /// that page works for someone without Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it
-    /// with this wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file
+    /// Where the page's Open in Lamp goes. Its Share Link first (`WishLink`), once the person has made one (the card offers
+    /// to, through Share Link's own card, where they see and change what it shows): that page works for someone without
+    /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"), where a file beside
+    /// the page means nothing to a browser without Lamp. With no link, Lamp's site. The wish as a shared file
     /// goes beside the page too, when its kind can be shared as one (not a game yet), for the README's download.
     struct OpenInLamp: Equatable {
         var link: URL?
@@ -386,16 +387,6 @@ enum Publish {
         Task {
             do {
                 let id = project.id
-                // Open in Lamp is the wish's Share Link, made now if it has none, and the page is staged again with it.
-                var staged = staged
-                if staged.open.link == nil {
-                    set(project, .publishing("Making its Share Link…"))
-                    let link = try await shareLink(for: project, icon: card.icon)
-                    let again = try await Task.detached(priority: .userInitiated) { try Publish.stage(project, url: Publish.pageURL(repo), link: link) }.value
-                    try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
-                    staged = again
-                    cards[project.id]?.staged = again
-                }
                 let page = try await Publish.upload(staged, of: project, to: repo, gh: gh, login: login, isNew: isNew) { step in
                     Task { @MainActor in PublishCards.shared.cards[id]?.stage = .publishing(step) }
                 }
@@ -412,22 +403,11 @@ enum Publish {
         }
     }
 
-    /// The wish's Share Link, made with what Share Link would start from (its name, line, first request, picture and
-    /// icon) when it has none. The person changes what it shows from Share Link… as for any.
-    private func shareLink(for project: LampProject, icon: Data?) async throws -> URL {
-        if let kept = WishLink.kept(for: project) { return kept.url }
-        let picture = WishLink.picture(of: project)
-        let line = WishLink.line(of: project)
-        let asked = WishLink.firstRequest(of: project, store: Store.shared).trimmed
-        let words = WishLink.Words(name: WishLink.clip(project.name, WishLink.Limit.name), line: line,
-                                   words: WishLink.clip(asked.isEmpty ? line : asked, WishLink.Limit.words),
-                                   picture: picture.map(WishLinkCards.digest))
-        let (jpeg, png) = await Task.detached(priority: .userInitiated) {
-            (picture.flatMap(NSImage.init(data:)).flatMap(WishLink.jpeg), WishLink.iconPNG(icon))
-        }.value
-        let shared = try await WishLink.publish(words, picture: jpeg, icon: png, replacing: nil)
-        WishLink.keep(shared, for: project)
-        return shared.url
+    /// Share Link's card in the Publish card's place, for the person to see and change what the link shows before it's
+    /// made: Publish never sends the wish's words or picture itself. Publish is opened again once the link is out.
+    func makeLink(_ project: LampProject) {
+        close(project)
+        WishLinkCards.shared.open(project, inSidebar: true)
     }
 
     func fix(_ project: LampProject) {
@@ -473,9 +453,9 @@ enum Publish {
         var notes = ShareCheck.notes(for: credits)
         if !credits.generated.isEmpty { notes.append(Credits.generatedLine(credits.generated.count) + ", marked as such.") }
         let size = card.staged.map { "\($0.files) files · " + ByteCountFormatter.string(fromByteCount: Int64($0.bytes), countStyle: .file) }
-        // Where its Open in Lamp goes: the Share Link it has, or the one Publish makes.
+        // Where its Open in Lamp goes: the Share Link the person made, or nothing yet, with a button to make one.
         let link = card.staged?.open.link ?? WishLink.kept(for: project)?.url
-        let openInLamp = link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString } ?? "A new Share Link on lamp.dev"
+        let openInLamp = link.map { url in url.host.map { $0 + url.path } ?? url.absoluteString }
         return SidebarPublish(name: project.name, icon: card.icon, stage: card.stage, repo: card.repo,
                               page: card.page?.url, credit: credits.basedOn, openInLamp: openInLamp, notes: notes, size: size, copied: card.copied,
                               republish: card.page != nil, canPublish: card.canPublish)

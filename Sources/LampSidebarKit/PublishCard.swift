@@ -42,13 +42,15 @@ public struct PublishCard: View {
     let canPublish: Bool
     let publish: () -> Void
     let fix: () -> Void
+    /// Opens Share Link's card, to make the link Open in Lamp goes to.
+    let makeLink: () -> Void
     let openPage: () -> Void
     let copy: () -> Void
     let close: () -> Void
     let width: CGFloat?
 
     public init(icon: NSImage?, name: String, stage: Stage, repo: String?, page: String?, credit: String?, openInLamp: String?, notes: [String],
-                size: String?, copied: Bool, republish: Bool, canPublish: Bool, publish: @escaping () -> Void, fix: @escaping () -> Void,
+                size: String?, copied: Bool, republish: Bool, canPublish: Bool, publish: @escaping () -> Void, fix: @escaping () -> Void, makeLink: @escaping () -> Void = {},
                 openPage: @escaping () -> Void, copy: @escaping () -> Void, close: @escaping () -> Void, width: CGFloat? = 480) {
         self.icon = icon
         self.name = name
@@ -64,6 +66,7 @@ public struct PublishCard: View {
         self.canPublish = canPublish
         self.publish = publish
         self.fix = fix
+        self.makeLink = makeLink
         self.openPage = openPage
         self.copy = copy
         self.close = close
@@ -97,7 +100,17 @@ public struct PublishCard: View {
                     if let repo { row("Goes to", "github.com/" + repo) }
                     if let page { row("Page", page) }
                     if let credit { row("Credit", credit) }
-                    if let openInLamp { row("Open in Lamp", openInLamp) }
+                    if let openInLamp {
+                        row("Open in Lamp", openInLamp)
+                    } else if stage == .ready || stage == .published {
+                        // Without a Share Link the page offers Lamp's site; the link is what lets someone without Lamp make it.
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("Open in Lamp").foregroundStyle(.secondary).frame(width: 92, alignment: .leading)
+                            Button("Make Share Link…", action: makeLink).controlSize(.small)
+                            Spacer(minLength: 0)
+                        }
+                        .font(.callout)
+                    }
                     if let size { row("Files", size) }
                 }
                 ForEach(notes, id: \.self) { note in

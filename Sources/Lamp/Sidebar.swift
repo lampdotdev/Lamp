@@ -1181,6 +1181,7 @@ final class SidebarServer {
             case .openPage: cards.openPage(project)
             case .copy: cards.copy(project)
             case .close: cards.close(project)
+            case .makeLink: cards.makeLink(project)
             }
         case .infoAction(let action):
             AppInfoView.perform(action, for: project) { tab in

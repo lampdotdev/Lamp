@@ -168,8 +168,9 @@ Before anything goes up the card shows what will: the repository (the wish's nam
 already has gets a number), the credit, the licence notes, the AI pictures and the size, all worked out by staging the
 page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it with Lamp's credit bar over it ("Based on Slop New York by Mr.doob · Open in
 Lamp", settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding its link on a
-narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), which Publish makes from what Share Link
-would start from when the wish has none (the card says so before anything goes): that page is the one that works for
+narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), once the person has made one: Publish never sends
+the wish's words or picture itself, and a wish with none has Make Share Link… on the card, which opens Share Link's own
+card where they see and change what it shows (with none, the bar links Lamp's site). That page is the one that works for
 someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
 wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
 the page too when its kind can be shared as one (a game can't yet), offered in the README, and made by

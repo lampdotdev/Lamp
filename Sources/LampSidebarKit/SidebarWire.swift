@@ -806,7 +806,7 @@ public struct SidebarPublish: Codable, Equatable {
     public var repo: String?
     public var page: String?
     public var credit: String?
-    /// Where the page's Open in Lamp goes (the wish's Share Link, or the one Publish will make).
+    /// Where the page's Open in Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
     public var openInLamp: String?
     public var notes: [String]
     public var size: String?
@@ -834,4 +834,6 @@ public struct SidebarPublish: Codable, Equatable {
 
 public enum SidebarPublishCommand: Codable, Equatable {
     case open, publish, fix, openPage, copy, close
+    /// Make a Share Link first, through its own card.
+    case makeLink
 }
