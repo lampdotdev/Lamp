@@ -2428,11 +2428,12 @@ final class Store: ObservableObject {
         let until = Date().addingTimeInterval(seconds)
         while Date() < until {
             try? await Task.sleep(for: .seconds(1))
-            if !(await DeviceProbe.localNetworkDenied()) {
-                refreshDevices()
-                await waitForLook(seconds: 8)
-                return
-            }
+            guard !(await DeviceProbe.localNetworkDenied()) else { continue }
+            // Allowed: a look made at once can still be refused while macOS takes the answer in, so Lamp looks until one
+            // gets through, in the same half minute.
+            refreshDevices()
+            await waitForLook(seconds: 8)
+            if !localNetworkRefused { return }
         }
     }
 
