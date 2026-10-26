@@ -3758,6 +3758,12 @@ final class Store: ObservableObject {
                 logs[project.id]?[last].fromCard = true
                 saveChat(project)
             }
+            // Lamp's device card: what was clicked on it is kept now that the answer is delivered, so one taken back
+            // while it waited in line never allowed anything.
+            if let card = message.card, let ask = logs[project.id]?.first(where: { $0.id == card })?.ask,
+               let device = ask.device, let choice = ask.answers?.first {
+                DevicePermissions.answer(choice, about: device, for: wish(of: project))
+            }
             if message.byLamp, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].byLamp = true
                 saveChat(project)
@@ -5621,8 +5627,6 @@ final class Store: ObservableObject {
     func answer(_ line: LogLine, with answers: [String], in project: LampProject) {
         guard var lines = logs[project.id], let ask = Talk.give(answers, to: line.id, in: &lines) else { return }
         logs[project.id] = lines
-        // Lamp's device card: what's allowed is Lamp's to keep, from the click itself.
-        if let device = ask.device, let choice = answers.first { DevicePermissions.answer(choice, about: device, for: wish(of: project)) }
         saveChat(project)
         send(Talk.message(for: ask, answers: answers), answering: line.id, to: project)
     }
@@ -10310,6 +10314,13 @@ final class Store: ObservableObject {
                 }
                 return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "updatedInput": ["command": confined]]])
             }
+            // Under "Only when risky" Codex's ordinary commands run in its sandbox with the network open, where no reviewer
+            // sees them: this hook only keeps them off the person's devices until one is allowed.
+            if request.path.contains("format=codex-devices") {
+                guard DevicePermissions.allowed(wish(of: project)).isEmpty, DevicePermissions.mayChangeADevice(command) else { return (200, [:]) }
+                return (200, ["hookSpecificOutput": ["hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                     "permissionDecisionReason": DevicePermissions.commandRefusal]])
+            }
             if request.path.contains("format=codex") {
                 // Codex's PreToolUse hook can only block: an empty answer lets the command run.
                 // Codex says what its commands are for in its reasoning, which comes before them (`AgentEvent.naming`).
@@ -10757,12 +10768,17 @@ final class Store: ObservableObject {
     private func useCall(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         let (app, refusal) = target(arguments, in: project)
         guard let app else { return (400, ["error": refusal ?? "No such part."]) }
-        // An app that controls the person's devices presses on real ones: only once they've said so on Lamp's card.
-        if DevicePermissions.reachesDevices(app), DevicePermissions.allowed(wish(of: project)).isEmpty {
-            return (400, ["error": DevicePermissions.useRefusal])
+        // An app that controls the person's devices presses on real ones: only on the device the person allowed on Lamp's
+        // card, which the call names.
+        if DevicePermissions.reachesDevices(app) {
+            let device = (arguments["device"] as? String)?.trimmed ?? ""
+            guard !device.isEmpty, DevicePermissions.allowed(wish(of: project)).contains(device) else {
+                return (400, ["error": DevicePermissions.useRefusal])
+            }
         }
         var actions = arguments
         actions["part"] = nil
+        actions["device"] = nil
         let body = (try? JSONSerialization.data(withJSONObject: actions)) ?? Data("{}".utf8)
         return await underTurn(of: project, app) { await use(app, request: body) }
     }

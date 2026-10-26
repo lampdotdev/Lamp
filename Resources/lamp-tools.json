@@ -143,6 +143,10 @@
           "type": "string",
           "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Needed then; left out only when the wish has one app."
         },
+        "device": {
+          "type": "string",
+          "description": "In an app that controls the person's devices: the device these actions would change, named as on Lamp's device card. Lamp refuses them unless the person allowed that device with `device_permission`."
+        },
         "doing": {
           "type": "string",
           "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."

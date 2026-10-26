@@ -442,9 +442,11 @@ extension Agent {
             // as a command does.
             let approval = CommandApproval.current
             env["LAMP_TOKEN"] = token
-            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
+            // Under "Only when risky" the hook asks only whether a command would change one of the person's devices
+            // (`DevicePermissions.mayChangeADevice`): Codex's reviewer never sees what runs inside its sandbox.
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=" + (approval == .risky ? "codex-devices" : "codex")
             let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
-            env["LAMP_CODEX_HOOKS"] = approval != .always ? "hooks={}"
+            env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
             env["LAMP_CODEX_PERMISSIONS"] = Sandbox.codexPermissions(for: project)
             env["LAMP_CODEX_POLICY"] = "auto_review.policy=" + Self.tomlString(CodexReview.policy)

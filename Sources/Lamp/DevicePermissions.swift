@@ -78,6 +78,22 @@ enum DevicePermissions {
     /// device on the network needs the person's yes on the card; reading one doesn't.
     static let commandRule = "Sending a command that changes a device on the user's home network (a TV, speaker, light or console: a key press, opening an app, a volume, input, power or setting change), unless the user allowed that device on Lamp's device card in this conversation: their answer to \"Try it on your <device>?\" is \"\(allowOnce)\" or \"Always for <device>\". Asking a device what it is or what it's playing changes nothing and is fine."
 
+    /// Whether a shell command reaches a device on the home network (a private address or a `.local` name) in a way
+    /// that could change it: every part of it that names one must be a plain `curl` read. Codex's own check, where
+    /// Codex runs ordinary commands in its sandbox with the network open and no reviewer sees them.
+    static func mayChangeADevice(_ command: String) -> Bool {
+        let home = #"\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b|[A-Za-z0-9-]\.local\b"#
+        let writes = #"(^|\s)(-X|--request)\s*(?!GET\b)\S|(^|\s)(-d|--data[a-z-]*|--json|-F|--form|-T|--upload-file)(\s|=|$)"#
+        let parts = command.components(separatedBy: CharacterSet(charactersIn: ";|&\n"))
+        return parts.contains { part in
+            let part = part.trimmingCharacters(in: .whitespaces)
+            guard part.range(of: home, options: .regularExpression) != nil else { return false }
+            return !part.hasPrefix("curl ") || part.range(of: writes, options: .regularExpression) != nil
+        }
+    }
+
+    static let commandRefusal = "This reaches a device on the person's network in a way that could change it. Ask with `device_permission` first; to read a device, use a plain `curl` GET."
+
     /// What `use_app` says on an app that reaches devices before the person has allowed one.
-    static let useRefusal = "This app controls the person's devices, and they haven't said you may press anything on them. Ask with `device_permission` first, naming the device and what you'd press, and use the app only once they allow it."
+    static let useRefusal = "This app controls the person's devices: use it only on a device they've allowed, named in `device` as on Lamp's card. Ask with `device_permission` first for a device they haven't allowed, naming it and what you'd press."
 }

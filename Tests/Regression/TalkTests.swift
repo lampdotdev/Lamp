@@ -60,5 +60,12 @@ final class TalkTests: XCTestCase {
         DevicePermissions.answer(DevicePermissions.allowAlways("Living Room TV"), about: "Living Room TV", for: wish)
         DevicePermissions.endOnce(for: wish)
         XCTAssertEqual(DevicePermissions.allowed(wish), ["Living Room TV"])
+        // Codex's commands are kept off the person's devices by what they do: a plain read passes, a press doesn't.
+        XCTAssertFalse(DevicePermissions.mayChangeADevice("curl -s -m 4 http://10.0.0.120:8060/query/device-info | grep model"))
+        XCTAssertFalse(DevicePermissions.mayChangeADevice("swift build && curl https://example.com -d x=1"))
+        XCTAssertTrue(DevicePermissions.mayChangeADevice("curl -s -X POST http://10.0.0.120:8060/keypress/Home"))
+        XCTAssertTrue(DevicePermissions.mayChangeADevice("curl -d '' http://192.168.1.9:1400/MediaRenderer/AVTransport/Control"))
+        XCTAssertTrue(DevicePermissions.mayChangeADevice("python3 press.py 172.20.0.5"))
+        XCTAssertTrue(DevicePermissions.mayChangeADevice("echo hi | nc living-room.local 1234"))
     }
 }
