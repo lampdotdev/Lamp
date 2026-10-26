@@ -200,8 +200,12 @@ enum Integrations {
         for integration in integrations {
             for device in byIntegration[integration.id] ?? [] where !found.contains(where: { $0.address == device.address }) { found.append(device) }
         }
-        // One found a moment ago that missed this scan (SSDP is a shout, and a busy device misses some) is still here.
-        for device in recentlyFound() where !found.contains(where: { $0.id == device.id }) { found.append(device) }
+        // Only what won its address is remembered: another integration's reading of the same device would come back
+        // from `recent` as a second device.
+        remember(found)
+        // One found a moment ago that missed this scan (SSDP is a shout, and a busy device misses some) is still here,
+        // unless what's at its address now is another.
+        for device in recentlyFound() where !found.contains(where: { $0.id == device.id || $0.address == device.address }) { found.append(device) }
         // A kept device not found now keeps what was known of it, at its last address.
         for keptOne in kept() where !found.contains(where: { $0.id == keptOne.id }) {
             found.append(device(from: keptOne, onNetwork: false))
@@ -249,6 +253,12 @@ enum Integrations {
     /// The devices integrations found in the last few minutes, by id: shown until a scan has missed them for that long.
     nonisolated(unsafe) private static var recent: [String: (device: Device, at: Date)] = [:]
 
+    /// Devices an integration found now, shown for a while though a later scan misses them.
+    static func remember(_ devices: [Device]) {
+        lock.lock(); defer { lock.unlock() }
+        for device in devices { recent[device.id] = (device, Date()) }
+    }
+
     static func recentlyFound() -> [Device] {
         lock.lock(); defer { lock.unlock() }
         recent = recent.filter { $0.value.at > Date().addingTimeInterval(-600) }
@@ -295,9 +305,6 @@ enum Integrations {
                             osVersion: await read(identity.osVersion) ?? "", reach: .network)
         device.integration = integration.id
         device.address = address
-        lock.lock()
-        recent[id] = (device, Date())
-        lock.unlock()
         if var keptOne = kept(id) {
             keptOne.name = device.name
             keptOne.osVersion = device.osVersion

@@ -1758,6 +1758,7 @@ final class Store: ObservableObject {
         for address in await Integrations.addresses(for: integration, scan: scan) {
             if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
         }
+        Integrations.remember(found)
         linkSetupConversations(to: found)
         // In the list at once, for the card below; the next look for devices keeps them while they answer.
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
@@ -7471,6 +7472,7 @@ final class Store: ObservableObject {
         for address in await Integrations.addresses(for: integration, scan: scan) {
             if let device = await Integrations.identify(integration, at: address, scan: scan) { found.append(device) }
         }
+        Integrations.remember(found)
         for device in found { devices.removeAll { $0.id == device.id }; devices.append(device) }
         return DeviceApps.device(for: project, among: devices)
     }
