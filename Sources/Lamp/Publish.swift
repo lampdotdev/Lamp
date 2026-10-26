@@ -170,7 +170,9 @@ enum Publish {
         if let link = open.link {
             parts.append("<a href=\"\(escaped(link.absoluteString))\" target=\"_blank\" rel=\"noopener\">Open in Lamp</a>")
         } else if let file = open.file {
+            // The file means nothing without Lamp, so Lamp's site is beside it.
             parts.append("<a href=\"\(escaped(file))\" download>Open in Lamp</a>")
+            parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Get Lamp</a>")
         } else {
             parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
         }
