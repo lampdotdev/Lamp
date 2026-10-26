@@ -101,7 +101,7 @@ extension Agent {
     static func screenPrompt(for project: LampProject) -> String {
         let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
-                     Rules.begin, Rules.finish]
+                     Skills.index(Skills.offered(.screen)), Rules.begin, Rules.finish]
         return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -112,7 +112,8 @@ extension Agent {
     /// there, without those about the wish as a whole.
     static func screenPrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
-                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk]
+                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
+                     Skills.index(Skills.offered(.screen))]
         return (Rules.partHeader("a screen, a page in Web/ shown full screen and glanced at from across a room, at home on the Mac and shown on an iPhone or iPad, a TV and an Xbox too once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")

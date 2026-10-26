@@ -681,7 +681,8 @@ extension Agent {
         let web = GameKit.engine(project) == .web
         let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, web ? Rules.gameWebKit : Rules.gameKit,
                      web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
-                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Skills.index(Skills.offered(.game)),
+                     Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -692,7 +693,7 @@ extension Agent {
     /// without those about the wish as a whole. A game made beside other apps is three.js, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
-                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk]
+                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
