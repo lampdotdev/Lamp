@@ -15,6 +15,9 @@
 //   const renderer = new THREE.WebGLRenderer({ antialias: true });
 //   game({ renderer, async init() { … }, frame(f) { … renderer.render(scene, camera); } });
 
+import device from './lamp-device.js';
+import controllers from './lamp-controllers.js';
+
 export const WIDTH = 1920, HEIGHT = 1080;
 
 // The controller's buttons, as bits of a pad's down, pressed and released.
@@ -320,7 +323,7 @@ function buildTouch() {
     };
     // Kept clear of a phone's rounded corners and its camera (the safe area).
     const at = (x, side, y, edge) => `${side}:calc(${x}px + env(safe-area-inset-${side}));${edge}:calc(${y}px + env(safe-area-inset-${edge}))`;
-    const face = bit => TOUCH_FACES[bit] || NAMES.xbox[nameOf(bit)];
+    const face = bit => TOUCH_FACES[bit] || BASE.names[nameOf(bit)];
     button(BUTTON.A, face(BUTTON.A), at(110, 'right', 40, 'bottom'));
     button(BUTTON.B, face(BUTTON.B), at(40, 'right', 110, 'bottom'));
     button(BUTTON.X, face(BUTTON.X), at(180, 'right', 110, 'bottom'));
@@ -337,14 +340,23 @@ function hideTouch() { if (touchLayer) touchLayer.style.display = 'none'; touchS
 
 // MARK: What the player plays with, and what to call its buttons
 
+// The page never works out which device it's on. Lamp writes it beside this file in every copy of the page
+// (lamp-device.js, from the device's row in Lamp's table of devices): what its keyboard calls the keys keyboards name
+// differently, the controller that comes with it, and the one layout every controller there has, where the device
+// has one. The controllers a game names buttons for, and how each is told apart, are Lamp's list (lamp-controllers.js).
+const LAYOUTS = Object.fromEntries(controllers.layouts.map(layout => [layout.id, layout]));
+const BASE = LAYOUTS[controllers.base];
+
 // The input the player used last: a controller (and whose), the keyboard (with the mouse) or the touch screen. A
-// console starts on its controller, a touch screen on touch, the Mac and Lamp's preview on the keyboard; it changes as
-// soon as the player presses a key, touches the screen or moves a controller.
-const xboxHost = !preview && (!!(window.chrome && window.chrome.webview) || /Xbox/i.test(navigator.userAgent));
-let current = preview ? { kind: 'keyboard' } : xboxHost ? { kind: 'controller', family: 'xbox' } : touchScreen ? { kind: 'touch' } : { kind: 'keyboard' };
-// The controller's own name, for the one difference within a family a prompt shows (a DualShock's Share button).
+// device that comes with a controller starts on it, a touch screen on touch, anything else and Lamp's preview on the
+// keyboard (the controller named by the device's one layout where it has one, as every controller there is); it
+// changes as soon as the player presses a key, touches the screen or moves a controller.
+let current = preview ? { kind: 'keyboard' } : device.controller ? { kind: 'controller', family: device.layout || device.controller }
+    : touchScreen ? { kind: 'touch' } : { kind: 'keyboard' };
+// The controller's own name, for a model that marks a button differently from the rest of its layout (a DualShock's
+// Share where a DualSense has Create).
 let padName = '';
-const dualShock = name => /dualshock|05c4|09cc/i.test(name);
+const variantOf = (family, name) => ((LAYOUTS[family] || {}).variants || []).find(v => new RegExp(v.match, 'i').test(name)) || null;
 const listeners = new Set();
 
 export function input() { return Object.assign({}, current); }
@@ -359,25 +371,28 @@ export function onInput(changed) {
 function use(kind, family, name = '') {
     if (preview) return;
     // A new controller of the same family can still change a label (a DualShock's Share where a DualSense has Create).
-    const relabels = dualShock(name) !== dualShock(padName);
+    const relabels = variantOf(family, name) !== variantOf(family, padName);
     padName = name;
     if (current.kind === kind && current.family === family && !relabels) return;
     current = family ? { kind, family } : { kind };
-    const spoken = { xbox: 'an Xbox controller', playstation: 'a PlayStation controller', switch: 'a Switch controller', other: 'a controller' };
-    log(`Lamp: playing with ${family ? spoken[family] : 'the ' + kind}.`);
+    log(`Lamp: playing with ${family ? (LAYOUTS[family] || {}).spoken || controllers.unknown : 'the ' + kind}.`);
     for (const changed of listeners) try { changed(input()); } catch (e) { log(`Error: ${e.message}`); }
 }
 
-// Whose controller it is, from the name the browser gives it (with its USB vendor in Chrome's), or from the vendor
-// Lamp's Android app sends. On a console, and from an app that doesn't say, it's an Xbox controller.
+// Whose controller it is: the device's one layout where it has one, or else what the controller reports, its name as
+// the browser gives it (with its USB vendor in Chrome's) or the vendor an app around the page sends with the pad. One
+// from an app that doesn't send a vendor is taken as the base layout.
 function familyOf(id) {
-    if (xboxHost) return 'xbox';
-    if (/054c|playstation|dualshock|dualsense/i.test(id)) return 'playstation';
-    if (/057e|nintendo|pro controller|joy-?con/i.test(id)) return 'switch';
-    if (/045e|xbox|xinput|microsoft/i.test(id)) return 'xbox';
-    return 'other';
+    if (device.layout) return device.layout;
+    const found = controllers.layouts.find(layout => new RegExp(layout.match, 'i').test(id));
+    return found ? found.id : 'other';
 }
-const vendorFamily = vendor => !vendor ? 'xbox' : ({ 0x054c: 'playstation', 0x057e: 'switch', 0x045e: 'xbox' })[vendor] || 'other';
+function vendorFamily(vendor) {
+    if (device.layout) return device.layout;
+    if (!vendor) return controllers.base;
+    const found = controllers.layouts.find(layout => layout.vendors.includes(vendor));
+    return found ? found.id : 'other';
+}
 
 if (!preview) {
     window.addEventListener('keydown', e => { if (e.isTrusted) use('keyboard'); }, { capture: true });
@@ -386,30 +401,23 @@ if (!preview) {
     }, { capture: true, passive: true });
 }
 
-// What a prompt names each part of the pad by. A Switch controller's letters are the other way round from an Xbox's,
-// and BUTTON.A is a place (the bottom face button, as the Gamepad API's standard layout has it), so on a Switch it's
-// the button marked B: a prompt names the letter printed on the button to press, never the one in the same place
-// on an Xbox, or the player presses the wrong one.
-const NAMES = {
-    xbox: { A: 'A', B: 'B', X: 'X', Y: 'Y', LB: 'LB', RB: 'RB', LT: 'LT', RT: 'RT', MENU: 'Menu', VIEW: 'View', LSTICK: 'LS', RSTICK: 'RS',
-            UP: 'D-pad up', DOWN: 'D-pad down', LEFT: 'D-pad left', RIGHT: 'D-pad right', STICK_L: 'Left stick', STICK_R: 'Right stick' },
-    playstation: { A: '✕', B: '○', X: '□', Y: '△', LB: 'L1', RB: 'R1', LT: 'L2', RT: 'R2', MENU: 'Options', VIEW: 'Create', LSTICK: 'L3', RSTICK: 'R3' },
-    switch: { A: 'B', B: 'A', X: 'Y', Y: 'X', LB: 'L', RB: 'R', LT: 'ZL', RT: 'ZR', MENU: '+', VIEW: '−' },
-    touch: { MENU: 'Menu', VIEW: 'View' },
-};
+// What a prompt names each part of the pad by is the layout's (a part it leaves out is the base layout's): BUTTON.A
+// is a place, the bottom face button, so a prompt names what's printed on the button in that place on the player's
+// controller. The touch controls name their word buttons as these do.
+const TOUCH_NAMES = { MENU: 'Menu', VIEW: 'View' };
 // What the touch controls draw on a button whose name is a word.
 const TOUCH_FACES = { [BUTTON.MENU]: '≡', [BUTTON.VIEW]: '⧉' };
 const nameOf = what => typeof what === 'number' ? Object.keys(BUTTON).find(name => BUTTON[name] === what)
     : ({ [STICK.LEFT]: 'STICK_L', [STICK.RIGHT]: 'STICK_R', [TRIGGER.LT]: 'LT', [TRIGGER.RT]: 'RT' })[what];
-const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
-// A key's name as it's printed on the key, from its code (KeyboardEvent.code).
+// A key's name as it's printed on the key, from its code (KeyboardEvent.code): the device's own name for it, or a PC
+// keyboard's.
 function keyName(code) {
-    const named = { Space: 'Space', Enter: mac ? 'Return' : 'Enter', Escape: 'Esc', Backspace: mac ? 'Delete' : 'Backspace', Tab: 'Tab',
+    const named = { Space: 'Space', Enter: 'Enter', Escape: 'Esc', Backspace: 'Backspace', Tab: 'Tab',
                     ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', ShiftLeft: 'Shift', ShiftRight: 'Shift',
-                    ControlLeft: 'Ctrl', ControlRight: 'Ctrl', AltLeft: mac ? 'Option' : 'Alt', AltRight: mac ? 'Option' : 'Alt',
-                    MetaLeft: mac ? '⌘' : 'Win', MetaRight: mac ? '⌘' : 'Win', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/' };
-    return named[code] || (/^(Key|Digit|Numpad)(.+)$/.exec(code) || [])[2] || code;
+                    ControlLeft: 'Ctrl', ControlRight: 'Ctrl', AltLeft: 'Alt', AltRight: 'Alt',
+                    MetaLeft: 'Win', MetaRight: 'Win', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/' };
+    return (device.keys || {})[code] || named[code] || (/^(Key|Digit|Numpad)(.+)$/.exec(code) || [])[2] || code;
 }
 
 function keysFor(name) {
@@ -432,20 +440,18 @@ export function label(what, on = current) {
     if (on.kind === 'keyboard') { const codes = readsKeyboard ? keysFor(name) : null; return codes ? codes.map(keyName).join(' ') : null; }
     if (on.kind === 'touch') {
         if (!drawsTouch) return null;
-        if (name === 'STICK_L') return NAMES.xbox.STICK_L;
-        if (name === 'STICK_R') return touchButtons & BUTTON.RSTICK ? NAMES.xbox.STICK_R : null;
+        if (name === 'STICK_L') return BASE.names.STICK_L;
+        if (name === 'STICK_R') return touchButtons & BUTTON.RSTICK ? BASE.names.STICK_R : null;
         const bit = BUTTON[name];
-        return bit && bit < BUTTON.UP && (touchButtons & bit) ? NAMES.touch[name] || NAMES.xbox[name] : null;
+        return bit && bit < BUTTON.UP && (touchButtons & bit) ? TOUCH_NAMES[name] || BASE.names[name] : null;
     }
-    if (on.family === 'playstation' && name === 'VIEW' && dualShock(padName)) return 'Share';
-    return (NAMES[on.family] || {})[name] || NAMES.xbox[name];
+    const variant = variantOf(on.family, padName);
+    return (variant && variant.names[name]) || ((LAYOUTS[on.family] || {}).names || {})[name] || BASE.names[name];
 }
 
 // A badge for a button, stick or trigger as the player's input draws it (an Xbox controller's coloured round letters,
 // a PlayStation controller's shapes, a key's keycap), sized to the text around it: a <span> to put in a prompt or
 // a help screen, or null where `label` is.
-const FACE_COLOURS = { xbox: { A: '#5dc21e', B: '#f04e3e', X: '#2f8ee8', Y: '#f2b51d' },
-                       playstation: { A: '#9aaeff', B: '#ff6b70', X: '#f48fd6', Y: '#3fd5b0' } };
 export function glyph(what, on = current) {
     const text = label(what, on);
     if (text == null) return null;
@@ -473,10 +479,10 @@ export function glyph(what, on = current) {
             + (name.startsWith('STICK') ? 'border:.12em solid rgba(255,255,255,.45)' : 'border:0'));
         return el;
     }
-    const family = on.family;
+    const layout = LAYOUTS[on.family] || {};
     if (['A', 'B', 'X', 'Y'].includes(name)) {
-        const colour = (FACE_COLOURS[family] || {})[name] || '#fff';
-        badge(text, dark + `border-radius:50%;padding:0;color:${colour};` + (family === 'playstation' ? 'font-size:.95em' : ''));
+        const colour = (layout.faces || {})[name] || '#fff';
+        badge(text, dark + `border-radius:50%;padding:0;color:${colour};` + (layout.faceSize ? `font-size:${layout.faceSize}` : ''));
     } else if (name.startsWith('STICK')) {
         // A stick: a ring with its side's letter in it.
         badge(name === 'STICK_L' ? 'L' : 'R', dark + 'border-radius:50%;padding:0;box-shadow:inset 0 0 0 .2em #18191d,inset 0 0 0 .3em rgba(255,255,255,.35)');
@@ -486,8 +492,8 @@ export function glyph(what, on = current) {
         badge(text, dark + 'border-radius:.75em .75em .3em .3em');
     } else if (name === 'LB' || name === 'RB') {
         badge(text, dark + 'border-radius:.3em .3em .6em .6em');
-    } else if (family === 'xbox' && (name === 'MENU' || name === 'VIEW')) {
-        badge(name === 'MENU' ? '≡' : '⧉', dark + 'border-radius:50%;padding:0');
+    } else if ((layout.menuGlyphs || {})[name]) {
+        badge(layout.menuGlyphs[name], dark + 'border-radius:50%;padding:0');
     } else {
         // Menu and View by their words (Options, Create, + and −), and a stick's click.
         badge(text, dark + 'border-radius:.85em;' + (text.length > 2 ? 'font-size:.62em;text-transform:uppercase;letter-spacing:.04em' : ''));

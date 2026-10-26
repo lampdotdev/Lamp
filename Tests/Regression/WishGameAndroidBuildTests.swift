@@ -31,7 +31,7 @@ final class WishGameAndroidBuildTests: XCTestCase {
         let gradle = try String(contentsOf: dir.appendingPathComponent(GameAndroid.folder + "/app/build.gradle.kts"), encoding: .utf8)
         for needed in ["compose.compiler", "compose = true", "libs.androidx.webkit", "libs.kotlinx.serialization.json"] { XCTAssertTrue(gradle.contains(needed), needed) }
 
-        let script = "PLACE=android\n" + GameAndroid.buildSteps().replacingOccurrences(of: "{{SLUG}}", with: "scoreboard-game")
+        let script = "PLACE=android\n" + GameKit.stagePageSh + GameAndroid.buildSteps().replacingOccurrences(of: "{{SLUG}}", with: "scoreboard-game")
         try script.write(to: dir.appendingPathComponent("build-android.sh"), atomically: true, encoding: .utf8)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")

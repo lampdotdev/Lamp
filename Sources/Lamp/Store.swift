@@ -6772,6 +6772,11 @@ final class Store: ObservableObject {
         // takes several more. That build goes on afterwards, for the app to be installed from when it closes.
         // An iOS app Try On points at an Apple TV or a Vision Pro is the same code built for tvOS or visionOS.
         if project.onIOS, project.family.isOtherOS { env["LAMP_FAMILY"] = project.family.rawValue }
+        // A game's page is told the device it's built for (`GamePage`), which build.sh writes into its copy.
+        do { env.merge(try GamePage.buildEnvironment(for: project)) { $1 } } catch {
+            log(project, .error, error.localizedDescription)
+            return error.localizedDescription
+        }
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
         // Said again: a change that couldn't go into the open app left the line on putting it in, through the whole build.
         note("Building…", for: project)
@@ -6938,7 +6943,9 @@ final class Store: ObservableObject {
                     guard turns[project.id] === turn, !turn.stopped, exists(current) else { return }
                     let universal = current.platform == .universal
                     let command = universal ? "./build.sh mac" : "./build.sh"
-                    let env: [String: String] = universal ? ["LAMP_TEAM": Devices.team] : [:]
+                    // A game's page is told its device as in a whole build; one that can't be stops build.sh, which says why.
+                    let env: [String: String] = (universal ? ["LAMP_TEAM": Devices.team] : [:])
+                        .merging((try? GamePage.buildEnvironment(for: current)) ?? [:]) { $1 }
                     let glowing = AppTransition.begin(current)
                     let went = await reloadBeforeBuilding(current, command: command, env: env, fingerprint: now)
                     // Stopped meanwhile: whatever went in stays in, and the turn that's over says nothing of it.

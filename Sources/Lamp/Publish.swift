@@ -121,6 +121,9 @@ enum Publish {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
+        // Played in whatever browser opens it, so it's told no one device's facts (`GamePage.anyBrowser`).
+        let anyBrowser = GamePage.anyBrowser
+        try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
         let index = site.appendingPathComponent("index.html")
         guard let html = try? String(contentsOf: index, encoding: .utf8) else { throw Failure(message: "\(project.name) has no page to publish.") }
 
@@ -224,7 +227,7 @@ enum Publish {
         if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
         if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
         text += "\n\n"
-        text += "`lamp-game.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
+        text += "`lamp-game.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
         return text
     }
 
