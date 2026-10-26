@@ -62,16 +62,21 @@ making.querySelector('h1').textContent = '{{NAME}}';
 document.head.append(style);
 document.body.append(making);
 
+// With Reduce Motion on, the stage stands still: shapes already up, no pulse, the camera where it starts. Asked every
+// frame, so turning it on while the game is made takes effect at once.
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
 const ease = (t) => 1 - Math.pow(1 - Math.min(Math.max(t, 0), 1), 3);
 let time = 0;
 game({
     renderer,
     frame(f) {
-        time += f.dt;
+        const still = reduced.matches;
+        if (!still) time += f.dt;
         for (const { outline, delay } of shapes) {
-            const grown = ease((time - delay) / 1.2);
+            const grown = still ? 1 : ease((time - delay) / 1.2);
+            const pulse = still ? 0.9 : 0.8 + 0.2 * Math.sin(time * 2 + delay * 3);
             outline.scale.set(1, Math.max(grown, 0.001), 1);
-            outline.material.opacity = 0.25 + 0.65 * grown * (0.8 + 0.2 * Math.sin(time * 2 + delay * 3));
+            outline.material.opacity = 0.25 + 0.65 * grown * pulse;
         }
         const angle = time * 0.12;
         camera.position.set(Math.sin(angle) * 15, 7, Math.cos(angle) * 15);
