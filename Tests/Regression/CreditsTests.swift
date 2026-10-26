@@ -94,4 +94,30 @@ final class CreditsTests: XCTestCase {
         XCTAssertFalse(AIMark.isMarked(png))
         XCTAssertTrue(AIMark.isMarked(AIMark.marked(png)))
     }
+
+    /// A three.js game travels as its page and its Native.swift, without Lamp's runtime, as a file only a Lamp that
+    /// knows games opens, with its credits and its licence; the copy is a game again.
+    func testAGameIsSharedAsItsPage() throws {
+        let fm = FileManager.default
+        let game = try app("city")
+        var project = game
+        project.platform = .game
+        try Template.saveMeta(project)
+        let starter = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Starters/newyork")
+        try fm.copyItem(at: starter.appendingPathComponent("Web"), to: project.dir.appendingPathComponent("Web"))
+        try Data("// Lamp's runtime\n".utf8).write(to: project.dir.appendingPathComponent("Web/lamp-game.js"))
+        try Data("import Foundation\nenum Native {}\n".utf8).write(to: project.dir.appendingPathComponent("Sources/Native.swift"))
+        try Data("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n".utf8).write(to: project.dir.appendingPathComponent(GameKit.marker))
+        try fm.copyItem(at: starter.appendingPathComponent(Credits.file), to: project.dir.appendingPathComponent(Credits.file))
+
+        let package = try opened(try exported(project))
+        let paths = Set(package.sources.map(package.path(of:)))
+        XCTAssertTrue(paths.contains("Web/index.html") && paths.contains("Web/js/main.js") && paths.contains("Sources/Native.swift"))
+        XCTAssertFalse(paths.contains("Web/lamp-game.js"), "Lamp's runtime is written by the Mac that opens the file")
+        XCTAssertTrue(package.webData.contains { package.path(of: $0) == "Web/LICENSE-slop-newyork" })
+        XCTAssertEqual(package.credits?.basedOn, "Based on Slop New York by Mr.doob")
+        let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: package.folder.appendingPathComponent("lamp-app.json"))) as? [String: Any]
+        XCTAssertEqual(manifest?["format"] as? Int, 11)
+    }
 }

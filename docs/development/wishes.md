@@ -126,6 +126,13 @@ keeps its folder and data), adds the ones the wish doesn't have, and leaves a pa
 files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
 with a part says 10.
 
+A three.js game travels as its page (`GameFiles`): Web/ without Lamp's runtime beside it (lamp-game.js, lamp.js,
+three/), its scripts and pages as code the review reads (as a TV app's page is read, and its Sources/Native.swift as any
+app's Swift) and its models, pictures and sounds as data. The Mac that opens it makes a three.js game and writes Lamp's
+files around the page (`GameKit.write`); the copy opens on the Mac, wherever the sender had put it. Such a file says 11,
+so a Lamp from before asks to be updated rather than looking for Swift and finding none. A game in C++ isn't shared:
+Lamp makes no new ones.
+
 ## Credit
 
 A wish says where it came from in `credits.json` at its root (`Credits`): `upstream`, other people's work in it (name,
@@ -173,7 +180,7 @@ the wish's words or picture itself, and a wish with none has Make Share Link… 
 card where they see and change what it shows (with none, the bar links Lamp's site). That page is the one that works for
 someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
 wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
-the page too when its kind can be shared as one (a game can't yet), offered in the README, and made by
+the page too (a three.js game's as its page, `GameFiles`), offered in the README, and made by
 `Sharing.export`, so held to its checks. With them go credits.json with this wish at the end of the
 chain, a README with the credits and licences, and `.nojekyll`; the staged page is searched for secrets again. The push
 signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built

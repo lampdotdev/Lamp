@@ -38,7 +38,8 @@ extension Target {
                        marker: GameKit.marker,
                        // A game from before games were a kind of their own carries the device app's marker.
                        refines: .device,
-                       shareRefusal: "Lamp doesn't share games yet."),
+                       // A three.js game is shared as its page (`GameFiles`); one in C++ is refused in `Sharing.export`.
+                       shareRefusal: nil),
         part: Part(folder: "Game", family: "game", word: "game", menu: ("Game", "gamecontroller"), rules: { Agent.gamePrompt(part: $0, alone: $1) },
                    // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.gameAmongApps) { dir, wish in
