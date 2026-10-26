@@ -9404,7 +9404,8 @@ final class Store: ObservableObject {
         let other = line.text
         // The app coming off is held as a turn holds it, so a renewal or install of it can't put it back meanwhile.
         if let held = projects.first(where: { app in
-            app.id != project.id && (PhoneRenewals.record(for: app).map { $0.bundleID == other && $0.udid == udid } ?? (app.hasIOS && app.deviceBundleID(team: Devices.team) == other))
+            // By its bundle id alone, whichever phone its record is for: an install of it here may be under way.
+            app.id != project.id && (PhoneRenewals.record(for: app)?.bundleID == other || (app.hasIOS && app.deviceBundleID(team: Devices.team) == other))
         }) {
             guard begin(held) != nil else {
                 log(project, .status, "\(held.name) is busy just now. Press Take It Off again in a moment.")
