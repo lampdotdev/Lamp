@@ -1394,6 +1394,14 @@ body[data-mode='helicopter'] .gauge-alt {
 .touch-action > [aria-hidden] { font-size: 23px; line-height: 1; }
 .touch-action.is-pressed { color: var(--taxi-ink); background: var(--taxi); border-color: var(--taxi); }
 
+/* With a controller (body[data-input], from main.js), a key's badge shows the button that does the same, drawn by
+   Lamp's runtime; a key with no such button is hidden, and LB and RB, which change the mode, flank the modes. */
+.pad-only { display: none; }
+body[data-input="controller"] .pad-only { display: inline-flex; align-self: center; margin: 0 4px; }
+body[data-input="controller"] kbd:not([data-pad]) { display: none; }
+body[data-input="controller"] kbd[data-pad] { min-width: 0; height: auto; padding: 0; background: none; box-shadow: none; font-size: 13px; }
+body[data-input="controller"] .controls-hint { font-size: 13px; gap: 8px 18px; }
+
 body.touch-enabled .controls-hint,
 body.touch-enabled .radar,
 body.touch-enabled .gauge,

@@ -30,33 +30,12 @@ struct LampGameApp: SwiftUI.App {
 }
 
 struct LampGameScreen: View {
-    #if os(macOS)
-    @State private var showsKeys = true
-    #endif
-
+    // How to play is the game's own to show, named for what the player holds (label() and glyph() in lamp-game.js), so
+    // nothing here lists keys that may not be the game's or the player's.
     var body: some View {
         ZStack {
             Color.black
             LampGameSurface()
-            #if os(macOS)
-            if showsKeys {
-                // How to play, over the game for its first seconds: there may be no controller connected to the Mac.
-                Text("WASD or arrows to move · IJKL to look · Space A · Esc B · F X · R Y · Q E bumpers · Z C triggers · P Menu\nA controller connected to this Mac works too.")
-                    .font(.system(size: 12, weight: .medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-                    .padding(16)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-                    .task {
-                        try? await Task.sleep(for: .seconds(8))
-                        withAnimation(.easeOut(duration: 1)) { showsKeys = false }
-                    }
-            }
-            #endif
         }
         .ignoresSafeArea()
         #if os(macOS)

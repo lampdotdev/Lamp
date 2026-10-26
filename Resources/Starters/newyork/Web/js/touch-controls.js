@@ -1,3 +1,5 @@
+import { input } from '../lamp-game.js';
+
 // Touch input stays separate from the keyboard, so releasing a finger never releases a held key.
 const DEAD_ZONE = 0.15;
 const MAX_RADIUS = 44;
@@ -13,9 +15,7 @@ class TouchControls {
     this.stickPointer = null;
     this.enabled = true;
     this.available = false;
-    this.touchSeen = false;
     this.onAvailabilityChange = null;
-    this.media = window.matchMedia('(any-pointer: coarse)');
 
     if (!this.root || !this.stick || !this.knob) return;
 
@@ -56,13 +56,6 @@ class TouchControls {
       }
     }
 
-    this.media.addEventListener('change', () => this.updateAvailability());
-    // Hybrid devices can report a fine pointer until their first touch. Capture runs before the control handlers.
-    document.addEventListener('pointerdown', (event) => {
-      if (event.pointerType !== 'touch' || this.touchSeen) return;
-      this.touchSeen = true;
-      this.updateAvailability();
-    }, { capture: true, passive: true });
     window.addEventListener('blur', () => this.reset());
     window.addEventListener('resize', () => this.reset());
     document.addEventListener('visibilitychange', () => {
@@ -78,9 +71,10 @@ class TouchControls {
   }
 
   updateAvailability() {
-    // On a touch screen (an iPhone, an iPad, an Android phone): a Mac has none, and is played with the keyboard or a
-    // controller. Lamp's own touch controls are off for the city (`touch: false` in main.js), so these are its only ones.
-    const available = this.touchSeen || this.media.matches || navigator.maxTouchPoints > 0;
+    // While the player is playing by touch (Lamp's runtime says, main.js asks again as it changes): from the start on
+    // an iPhone, an iPad or an Android phone, until a controller or the keyboard is used. A Mac has no touch screen.
+    // Lamp's own touch controls are off for the city (`touch: false` in main.js), so these are its only ones.
+    const available = input().kind === 'touch';
     const changed = available !== this.available;
     if (changed) this.reset();
     this.available = available;
