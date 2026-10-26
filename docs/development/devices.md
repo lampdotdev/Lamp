@@ -285,8 +285,8 @@ its family, from the Gamepad API's id or the vendor Lamp's Android app sends wit
 device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
 keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick
 or trigger for it. The page never works out which device it's on: what it needs of one comes from the device's row in
-the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, a layout it fixes
-for every controller), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
+the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, the one controller
+layout its host supports, where it supports one), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
 [kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognised, what's printed on its buttons)
 from Lamp's one list of them, `Controllers`, as `Web/lamp-controllers.js`. The keys a prompt names come from the same
 table `keyboardPad` reads, and the touch controls' from the one they're drawn

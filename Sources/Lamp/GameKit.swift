@@ -254,7 +254,6 @@ enum GameKit {
             // The controllers lamp-game.js names buttons for. The device the page is on isn't written here: each copy of
             // the page gets its own (`GamePage`).
             try Template.put(Controllers.pageJS, at: project.dir.appendingPathComponent(controllersFile), for: project)
-            AppFolder.remove(project.dir.appendingPathComponent("\(webFolder)/\(GamePage.deviceFile)"), in: project.dir)
             try writePage(for: project)
             for file in DeviceSupport.threeFiles(for: project, page: webFolder) {
                 try Template.put(file.contents, at: project.dir.appendingPathComponent("\(webFolder)/three/\(file.name)"), for: project)

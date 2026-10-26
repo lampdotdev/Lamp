@@ -346,8 +346,9 @@ const BASE = LAYOUTS[controllers.base];
 
 // The input the player used last: a controller (and whose), the keyboard (with the mouse) or the touch screen. A
 // device that comes with a controller starts on it, a touch screen on touch, anything else and Lamp's preview on the
-// keyboard; it changes as soon as the player presses a key, touches the screen or moves a controller.
-let current = preview ? { kind: 'keyboard' } : device.controller ? { kind: 'controller', family: device.controller }
+// keyboard (the controller named by the device's one layout where it has one, as every controller there is); it
+// changes as soon as the player presses a key, touches the screen or moves a controller.
+let current = preview ? { kind: 'keyboard' } : device.controller ? { kind: 'controller', family: device.layout || device.controller }
     : touchScreen ? { kind: 'touch' } : { kind: 'keyboard' };
 // The controller's own name, for a model that marks a button differently from the rest of its layout (a DualShock's
 // Share where a DualSense has Create).

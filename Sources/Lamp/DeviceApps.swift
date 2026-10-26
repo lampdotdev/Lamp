@@ -132,24 +132,22 @@ enum DeviceApps {
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
         }
-        let output = project.dir.appendingPathComponent(declared.output)
-        AppFolder.remove(output, in: project.dir)
-        // A game's page is told the device it's on: written into the page for the package step to take, checked in
-        // what it made, and taken out again, so no other copy of the page claims this device.
+        // The package step runs on Lamp's copy of the app, where a game's page is told the device it's on (`GamePage`),
+        // and that copy is checked for it after the step, whatever the package it made.
+        let source = try await packageSource(project)
         let page = GameKit.isGame(project) ? try GamePage.place(for: project) : nil
-        let web = project.dir.appendingPathComponent(GameKit.webFolder)
-        if let page { try GamePage.stage(web, for: page) { try Template.put($0, at: $1, for: project) } }
-        defer { if page != nil { AppFolder.remove(web.appendingPathComponent(GamePage.deviceFile), in: project.dir) } }
+        if let page { try GamePage.stage(source.appendingPathComponent(GameKit.webFolder), for: page) }
+        let output = source.appendingPathComponent(declared.output)
         var printed: [String] = []
-        let status = await Sandbox.run(declared.package, for: project, started: started) { printed.append($0) }
+        let status = await Sandbox.run(declared.package, for: project, cwd: source, opening: [source.path], started: started) { printed.append($0) }
         guard status == 0 else {
             throw Failure(message: (["The package step failed:"] + printed.suffix(30)).joined(separator: "\n"))
         }
-        guard let data = AppFile.read(output, in: project), !data.isEmpty else {
+        if let page { try GamePage.check(source, for: page) }
+        guard let data = AppFile.read(output, inFolder: source), !data.isEmpty else {
             throw Failure(message: "The package step ran but left nothing at \(declared.output).")
         }
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
-        if let page { try GamePage.check(try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
             try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
@@ -158,6 +156,25 @@ enum DeviceApps {
         } else {
             try data.write(to: packageURL(for: project), options: .atomic)
         }
+    }
+
+    /// The app's folder as its package step takes it: a copy in Lamp's own folder (`buildFolder`), never the app's, so
+    /// what Lamp adds for this device goes into the package alone, and nothing in the app's folder changes while the
+    /// package is made. What builds leave there (.build, build) and its history (.git) stay behind; the copy is made
+    /// under the app's sandbox, as the preview's page is (`GameKit.stageWeb`).
+    static func packageSource(_ project: LampProject, in folder: URL? = nil) async throws -> URL {
+        let fm = FileManager.default
+        let source = (folder ?? buildFolder(for: project)).appendingPathComponent("source")
+        try? fm.removeItem(at: source)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        let copy = "cd \"$LAMP_FROM\" && /usr/bin/rsync -a --exclude=/.build --exclude=/build --exclude=/.git ./ \"$LAMP_TO/\""
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [source.path]) else {
+            throw Failure(message: "Lamp couldn't copy the app's files to package it.")
+        }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: source, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": source.path], login: false) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        return source
     }
 
     /// The package step's zip with Lamp's own files filled in with where Lamp is (`DeviceSupport.fill`), zipped again in

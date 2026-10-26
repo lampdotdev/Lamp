@@ -79,13 +79,39 @@ final class GamePageTests: XCTestCase {
         XCTAssertTrue(Controllers.pageJS.contains(#""base":"xbox""#))
     }
 
-    func testAPackageWithoutTheDeviceBesideTheRuntimeIsRefused() throws {
+    /// An integration's package step runs on Lamp's copy of the app: the device is written there, never in the app's
+    /// own page, what builds leave behind isn't copied, and a copy whose runtime lost its device is refused.
+    func testAnIntegrationsPackageIsMadeFromACopyToldItsDevice() async throws {
+        let project = try game(chosen: .mac)
+        try FileManager.default.createDirectory(at: project.dir.appendingPathComponent("build"), withIntermediateDirectories: true)
+        try "old".write(to: project.dir.appendingPathComponent("build/app.zip"), atomically: true, encoding: .utf8)
         let xbox = try XCTUnwrap(Places.row(for: try shipped("xbox-one").integration))
-        let runtime = (path: "lamp-game.js", data: Data("// runtime".utf8))
-        XCTAssertThrowsError(try GamePage.check([runtime], for: xbox))
-        XCTAssertThrowsError(try GamePage.check([runtime, ("lamp-device.js", Data("export default {};".utf8))], for: xbox))
-        XCTAssertNoThrow(try GamePage.check([runtime, ("lamp-device.js", Data(try GamePage.descriptor(for: xbox).utf8))], for: xbox))
-        XCTAssertNoThrow(try GamePage.check([("index.html", Data())], for: xbox), "a page that isn't a game's needs no device")
+        let source = try await DeviceApps.packageSource(project, in: try XCTUnwrap(root).appendingPathComponent("Device Builds/hopper"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.appendingPathComponent("Web/lamp-game.js").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.appendingPathComponent("build").path))
+        try GamePage.stage(source.appendingPathComponent("Web"), for: xbox)
+        XCTAssertNoThrow(try GamePage.check(source, for: xbox))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Web/lamp-device.js").path))
+        try "export default {};".write(to: source.appendingPathComponent("Web/lamp-device.js"), atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try GamePage.check(source, for: xbox), "another device's facts")
+        try FileManager.default.removeItem(at: source.appendingPathComponent("Web/lamp-device.js"))
+        XCTAssertThrowsError(try GamePage.check(source, for: xbox), "none at all")
+    }
+
+    /// An iOS app built for an Apple TV or a Vision Pro is that device's, whose row shows no page: never the iPhone's.
+    func testTheFamilyPicksTheRowBeforeAskingForAPage() throws {
+        XCTAssertThrowsError(try GamePage.place(for: game(chosen: .ios, family: .appletv))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Apple TV"), error.localizedDescription)
+        }
+        XCTAssertThrowsError(try GamePage.place(for: game(chosen: .ios, family: .vision)))
+    }
+
+    /// What the page is told is part of what the game is built from, so a change to the device's row builds it again.
+    func testWhatThePageIsToldIsPartOfTheBuildsInputs() throws {
+        let mac = try game(chosen: .mac), android = try game(chosen: .android)
+        let inputs = { (project: LampProject) in project.platform.target.recipe.inputs(project) ?? "" }
+        XCTAssertTrue(inputs(mac).hasSuffix(try GamePage.descriptor(for: GamePage.place(for: mac))))
+        XCTAssertNotEqual(inputs(mac), inputs(android))
     }
 
     /// build.sh's one step for its copies: the page with the device it was handed, and no copy of a game's page without one.

@@ -53,11 +53,17 @@ struct Place: Equatable {
         /// The controller that comes with it, by its layout's id in `Controllers`: a game there starts on it, until the
         /// player takes up something else.
         var controller: String? = nil
-        /// The one layout every controller the device takes has, whatever the controller reports itself as: a game
-        /// names every controller's buttons by it. nil where the controller's own report says which it is.
+        /// The one controller layout the device's host supports, by its id in `Controllers`: a game there names every
+        /// controller's buttons by it, whatever the controller reports itself as. nil where the controller's own report
+        /// says which it is.
         var layout: String? = nil
 
         static let generic = Input()
+        /// A keyboard that may be anyone's (a page published to the web): each key keyboards name differently named
+        /// both ways. The spaces around the slash don't break, so a keycap draws the name as one key.
+        static let anyKeyboard = Input(keys: ["Enter": "Enter\u{A0}/\u{A0}Return", "Backspace": "Backspace\u{A0}/\u{A0}Delete",
+                                              "AltLeft": "Alt\u{A0}/\u{A0}Option", "AltRight": "Alt\u{A0}/\u{A0}Option",
+                                              "MetaLeft": "Win\u{A0}/\u{A0}⌘", "MetaRight": "Win\u{A0}/\u{A0}⌘"])
         static let apple = Input(keys: ["Enter": "Return", "Backspace": "Delete", "AltLeft": "Option", "AltRight": "Option",
                                         "MetaLeft": "⌘", "MetaRight": "⌘"])
     }

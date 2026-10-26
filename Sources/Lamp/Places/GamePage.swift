@@ -4,8 +4,9 @@ import Foundation
 /// table of devices is resolved once for the copy of the page being made (`place`), and its input (`Place.Input`) is
 /// written beside lamp-game.js in that copy as `lamp-device.js` (`stage`). Every copy goes through here: the
 /// preview's, a build for the Mac, the simulator or Android (build.sh writes what `buildEnvironment` hands it), a real
-/// iPhone's or iPad's (`Devices.stage`) and an integration's package (`DeviceApps`). The app's own Web/ never holds
-/// one, so a copy made some other way fails to load rather than claiming another device's facts.
+/// iPhone's or iPad's (`Devices.stage`), the copy of the app an integration's package step runs on (`DeviceApps`) and a
+/// published page (`Publish`). The app's own Web/ never holds one, so a copy made some other way fails to load rather
+/// than claiming another device's facts.
 enum GamePage {
     struct Failure: LocalizedError {
         let message: String
@@ -18,8 +19,9 @@ enum GamePage {
     static let runtimeFile = "lamp-game.js"
 
     /// The row of the device this copy of the project's page is for: where the project is built for now, or the
-    /// destination given (the preview is played on this Mac). One row of the table that runs a page there, picked
-    /// out by the project's family where several do; an integration's device is its own row.
+    /// destination given (the preview is played on this Mac). The project's family picks out its row among those
+    /// sharing a destination (an iOS app built for an Apple TV is the Apple TV's), and that row must show a page;
+    /// an integration's device is its own row.
     static func place(for project: LampProject, at destination: Destination? = nil) throws -> Place {
         let destination = destination ?? project.destination
         if destination == .device {
@@ -28,10 +30,11 @@ enum GamePage {
             }
             return row
         }
-        var rows = Places.builtIn.filter { $0.destination == destination && $0.runs(.web) }
-        if rows.count > 1 { rows = rows.filter { $0.families.contains(project.family) } }
-        guard rows.count == 1, let row = rows.first else {
-            throw Failure(message: "Lamp has no one device that shows a game's page there (\(destination)).")
+        let here = Places.builtIn.filter { $0.destination == destination && ($0.families.isEmpty || $0.families.contains(project.family)) }
+        let pages = here.filter { $0.runs(.web) }
+        guard pages.count == 1, let row = pages.first else {
+            let named = here.first { $0.families.contains(project.family) } ?? here.first
+            throw Failure(message: "\(named?.name ?? "That device") can't show a game's page" + (named?.noWeb.map { " (\($0))" } ?? "") + ".")
         }
         return row
     }
@@ -46,9 +49,9 @@ enum GamePage {
         return try descriptor(id: place.id, name: place.name, input: input)
     }
 
-    /// A page published to the web is played in whatever browser opens it, on no one device: it's told the generic
-    /// input, said as such.
-    static let anyBrowser = (id: "any-browser", name: "a browser on any device", input: Place.Input.generic)
+    /// A page published to the web is played in whatever browser opens it, on no one device: it names a key both ways
+    /// where keyboards differ (`Place.Input.anyKeyboard`), and has no controller of its own.
+    static let anyBrowser = (id: "any-browser", name: "a browser on any device", input: Place.Input.anyKeyboard)
 
     static func descriptor(id: String, name: String, input: Place.Input) throws -> String {
         if let problem = Controllers.problem(in: input) { throw Failure(message: "\(name): \(problem)") }
@@ -77,16 +80,24 @@ enum GamePage {
         return ["LAMP_PAGE_DEVICE": try descriptor(for: place(for: project))]
     }
 
-    /// Whether every copy of the runtime in a package has this device beside it, as `stage` wrote it.
-    static func check(_ files: [(path: String, data: Data)], for place: Place) throws {
+    /// Whether every copy of the runtime in a staged page or app has this device beside it, as `stage` wrote it: read
+    /// in the copy the package step ran on, whatever the package it made.
+    static func check(_ folder: URL, for place: Place) throws {
         let expected = Data(try descriptor(for: place).utf8)
-        let byPath = Dictionary(files.map { ($0.path, $0.data) }, uniquingKeysWith: { a, _ in a })
-        for file in files where (file.path as NSString).lastPathComponent == runtimeFile {
-            let beside = ((file.path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(deviceFile)
-            guard byPath[beside] == expected else {
-                throw Failure(message: "The package's \(file.path) has no \(deviceFile) for \(place.name) beside it: its package step must take the whole page folder.")
+        let found = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        for runtime in found where runtime.lastPathComponent == runtimeFile {
+            let beside = runtime.deletingLastPathComponent().appendingPathComponent(deviceFile)
+            guard AppFile.read(beside, inFolder: folder) == expected else {
+                throw Failure(message: "\(runtime.path.dropFirst(folder.path.count + 1)) has no \(deviceFile) for \(place.name) beside it.")
             }
         }
+    }
+
+    /// What the copy of the project's page is told where it's built for now, as part of what its build is made from
+    /// (`GameTarget`'s inputs): a change to that device's row builds the game again. What stops it being resolved is
+    /// said instead, so the build that follows says it too.
+    static func buildInput(for project: LampProject) -> String {
+        do { return try descriptor(for: place(for: project)) } catch { return error.localizedDescription }
     }
 
     /// JSON as the page reads it: keys sorted, so a copy changes only when what it says does.
