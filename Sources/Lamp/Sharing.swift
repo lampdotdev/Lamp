@@ -531,6 +531,14 @@ enum Sharing {
                                 name: package.name, identity: nil, description: nil, fileCount: 0)
             package.parts.append(Package.Part(folder: part.folder, package: read))
         }
+        // A licence inside one of the other apps' folders goes in with that app too: its install replaces what its folder
+        // held, the licence the wish's own install put there included.
+        package.parts = package.parts.map { part in
+            var app = part.package
+            let inside = folder.appendingPathComponent(part.folder).standardizedFileURL.path + "/"
+            app.licences = package.licences.filter { $0.standardizedFileURL.path.hasPrefix(inside) }
+            return Package.Part(folder: part.folder, package: app)
+        }
         // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
         // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
         for app in [package] + package.parts.map(\.package) where app.platform.target.recipe.language == .kotlin && AndroidFiles.senderPackage(in: app) == nil {
