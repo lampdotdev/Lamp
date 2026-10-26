@@ -5,7 +5,8 @@
 // its top right and the chat opens beside it like any app's. On an iPhone or iPad it's the whole screen, on its side.
 // The page is served from the app's bundle at an address of its own (lamp-game://app/), never as a file, so it reads its
 // own files with fetch and loads its modules; what it logs goes to the app's log. Its sound plays without a tap first.
-// Its LampAI calls and its calls of this device go through LampPage.swift.
+// Its saves are kept in a file of the app's (LampGameSaves). Its LampAI calls and its calls of this device go through
+// LampPage.swift.
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
@@ -111,6 +112,7 @@ final class LampGameFiles: NSObject, WKURLSchemeHandler {
         configuration.setURLSchemeHandler(files, forURLScheme: LampGameFiles.scheme)
         // LampAI and the page's calls of this device (LampPage.swift), and its console into the app's log.
         LampPage.attach(to: configuration, scheme: LampGameFiles.scheme, catchErrors: false)
+        LampGameSaves.shared.attach(to: configuration)
         configuration.mediaTypesRequiringUserActionForPlayback = []
         #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
@@ -127,6 +129,52 @@ final class LampGameFiles: NSObject, WKURLSchemeHandler {
         #endif
         view.load(URLRequest(url: URL(string: "\(LampGameFiles.scheme)://app/index.html")!))
         return view
+    }
+}
+
+/// The game's saves (`save` and `load` in lamp-game.js), kept in a file in the app's data folder rather than in the web
+/// view's own storage, which WebKit keeps by the app's bundle id: a game whose id changes keeps its saves. The page is
+/// given them as it opens and hands back each change; saves an earlier build kept in the web view's storage are handed
+/// over once, the first time the page opens with this file missing.
+@MainActor final class LampGameSaves: NSObject, WKScriptMessageHandler {
+    static let shared = LampGameSaves()
+    static var file: URL { LampStore.folder.appendingPathComponent("Game Saves.json") }
+
+    private var saves: [String: String]
+    private var moved: Bool
+
+    override init() {
+        let data = try? Data(contentsOf: Self.file)
+        saves = data.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        // A file that's there but can't be read is never handed over again: its saves would be overwritten by older ones.
+        moved = data != nil
+    }
+
+    func attach(to configuration: WKWebViewConfiguration) {
+        configuration.userContentController.add(self, contentWorld: .page, name: "lampSaves")
+        let given = (try? JSONSerialization.data(withJSONObject: ["saves": saves, "moved": moved])).map { String(decoding: $0, as: UTF8.self) } ?? "null"
+        configuration.userContentController.addUserScript(WKUserScript(source: "window.lampSaves = \(given);",
+                                                                       injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard LampPage.isOwnPage(message, scheme: LampGameFiles.scheme), let call = message.body as? [String: Any] else { return }
+        switch call["op"] as? String {
+        case "set":
+            guard let name = call["name"] as? String else { return }
+            saves[name] = call["text"] as? String
+        case "move":
+            // What an earlier build saved, under what this file doesn't have yet.
+            for (name, text) in call["saves"] as? [String: String] ?? [:] where saves[name] == nil { saves[name] = text }
+            moved = true
+        default:
+            return
+        }
+        do {
+            try JSONEncoder().encode(saves).write(to: Self.file, options: .atomic)
+        } catch {
+            FileHandle.standardError.write(Data("The game's saves couldn't be kept: \(error.localizedDescription)\n".utf8))
+        }
     }
 }
 

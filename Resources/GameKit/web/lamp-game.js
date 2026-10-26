@@ -51,10 +51,29 @@ export function log(...parts) {
 window.addEventListener('error', e => log(`Error: ${e.message} (${(e.filename || '').split('/').pop()}:${e.lineno})`));
 window.addEventListener('unhandledrejection', e => log(`Error: ${e.reason && e.reason.message || e.reason}`));
 
-const saved = preview ? new Map() : null;
+// The app around the page on the Mac and iOS keeps the saves in a file of the app's own (window.lampSaves, given as the
+// page opens), so they outlast a change of the app's id; it's handed what an earlier build kept in localStorage, once.
+// Elsewhere they're in localStorage; in the preview, only for the play.
+const kept = preview ? null : window.lampSaves || null;
+const saved = preview ? new Map() : kept ? new Map(Object.entries(kept.saves || {})) : null;
+function tellHost(message) { try { window.webkit.messageHandlers.lampSaves.postMessage(message); } catch (e) {} }
+if (kept && !kept.moved) {
+    const earlier = {};
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('lamp.save.') && !saved.has(key.slice(10))) earlier[key.slice(10)] = localStorage.getItem(key);
+        }
+    } catch (e) {}
+    for (const name in earlier) saved.set(name, earlier[name]);
+    tellHost({ op: 'move', saves: earlier });
+}
 export function save(name, value) {
     const text = JSON.stringify(value);
-    if (saved) saved.set(name, text); else try { localStorage.setItem('lamp.save.' + name, text); } catch (e) { return false; }
+    if (saved) {
+        if (text === undefined) saved.delete(name); else saved.set(name, text);
+        if (kept) tellHost({ op: 'set', name, text: text === undefined ? null : text });
+    } else try { localStorage.setItem('lamp.save.' + name, text); } catch (e) { return false; }
     return true;
 }
 export function load(name) {

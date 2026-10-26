@@ -234,7 +234,9 @@ with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen) and three.js in `Web/three` beside it. On the Mac and iOS the Swift around it is
 `LampWebGame.swift` (a web view serving the bundle's Web/ at `lamp-game://app/`, its log into the app's log, sound with
-no tap first), built by `GameKit.webBuildSh`; on the Xbox it goes as the integration's web app ("xbox-one", the package
+no tap first, its saves in `Game Saves.json` in the app's data folder rather than in WebKit's storage, which is kept by
+bundle id: `LampGameSaves` gives the page them as it opens and keeps each change, and takes over once what an earlier build
+left in `localStorage`), built by `GameKit.webBuildSh`; on the Xbox it goes as the integration's web app ("xbox-one", the package
 its declared step makes, `Web/lamp.js` written then), installed as a game. The agent's preview of it is
 `WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
 script as the C++ kit's preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
