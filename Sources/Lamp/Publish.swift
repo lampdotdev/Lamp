@@ -123,7 +123,7 @@ enum Publish {
         }
         // Played in whatever browser opens it, so it's told no one device's facts (`GamePage.anyBrowser`).
         let anyBrowser = GamePage.anyBrowser
-        try GamePage.stage(site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
+        try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
         let index = site.appendingPathComponent("index.html")
         guard let html = try? String(contentsOf: index, encoding: .utf8) else { throw Failure(message: "\(project.name) has no page to publish.") }
 

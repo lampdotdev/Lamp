@@ -89,13 +89,57 @@ final class GamePageTests: XCTestCase {
         let source = try await DeviceApps.packageSource(project, in: try XCTUnwrap(root).appendingPathComponent("Device Builds/hopper"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.appendingPathComponent("Web/lamp-game.js").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.appendingPathComponent("build").path))
-        try GamePage.stage(source.appendingPathComponent("Web"), for: xbox)
+        try GamePage.stage(source.appendingPathComponent("Web"), in: source, for: xbox)
         XCTAssertNoThrow(try GamePage.check(source, for: xbox))
         XCTAssertFalse(FileManager.default.fileExists(atPath: project.dir.appendingPathComponent("Web/lamp-device.js").path))
         try "export default {};".write(to: source.appendingPathComponent("Web/lamp-device.js"), atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try GamePage.check(source, for: xbox), "another device's facts")
         try FileManager.default.removeItem(at: source.appendingPathComponent("Web/lamp-device.js"))
         XCTAssertThrowsError(try GamePage.check(source, for: xbox), "none at all")
+    }
+
+    /// A link in the app's folder can't take Lamp's write anywhere: the copy that holds one is refused, and staging a
+    /// copy that kept one reads and writes nothing through it.
+    func testALinkInTheAppCantCarryTheDeviceElsewhere() async throws {
+        let project = try game(chosen: .mac)
+        let other = try XCTUnwrap(root).appendingPathComponent("Apps/other/Web")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try "// runtime".write(to: other.appendingPathComponent("lamp-game.js"), atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: project.dir.appendingPathComponent("Web"))
+        try FileManager.default.createSymbolicLink(at: project.dir.appendingPathComponent("Web"), withDestinationURL: other)
+        let xbox = try XCTUnwrap(Places.row(for: try shipped("xbox-one").integration))
+        let builds = try XCTUnwrap(root).appendingPathComponent("Device Builds/hopper")
+        do {
+            let source = try await DeviceApps.packageSource(project, in: builds)
+            try GamePage.stage(source.appendingPathComponent("Web"), in: source, for: xbox)
+            XCTFail("a copy holding a link was staged")
+        } catch {}
+        // And should a copy keep one, nothing is read or written through it.
+        let kept = builds.appendingPathComponent("kept")
+        try FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: kept.appendingPathComponent("Web"), withDestinationURL: other)
+        try? GamePage.stage(kept.appendingPathComponent("Web"), in: kept, for: xbox)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: other.appendingPathComponent("lamp-device.js").path), "another game's folder was written")
+    }
+
+    /// An old package that came along in the copy is taken away before the step, so one that makes nothing fails.
+    func testAnOldPackageInTheCopyIsTakenAway() throws {
+        _ = try game()
+        let source = try XCTUnwrap(root).appendingPathComponent("copy")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try "old".write(to: source.appendingPathComponent("app.zip"), atomically: true, encoding: .utf8)
+        let output = DeviceApps.freshOutput("app.zip", in: source)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+    }
+
+    /// Where Lamp can read the package (a ZIP), the device must be in it beside the runtime, as staged.
+    func testAPackageWithoutTheDeviceBesideTheRuntimeIsRefused() throws {
+        let xbox = try XCTUnwrap(Places.row(for: try shipped("xbox-one").integration))
+        let runtime = (path: "lamp-game.js", data: Data("// runtime".utf8))
+        XCTAssertThrowsError(try GamePage.check(payload: [runtime], for: xbox))
+        XCTAssertThrowsError(try GamePage.check(payload: [runtime, ("lamp-device.js", Data("export default {};".utf8))], for: xbox))
+        XCTAssertNoThrow(try GamePage.check(payload: [runtime, ("lamp-device.js", Data(try GamePage.descriptor(for: xbox).utf8))], for: xbox))
+        XCTAssertNoThrow(try GamePage.check(payload: [("index.html", Data())], for: xbox), "a page that isn't a game's needs no device")
     }
 
     /// An iOS app built for an Apple TV or a Vision Pro is that device's, whose row shows no page: never the iPhone's.

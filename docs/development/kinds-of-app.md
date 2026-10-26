@@ -59,8 +59,10 @@ or its integration on a device) and writes that row's input beside lamp-game.js 
 - the preview's copy (this Mac's row) and a real iPhone's or iPad's (`Devices.stage`);
 - build.sh's copies for the Mac, the simulator and Android, which take it from `LAMP_PAGE_DEVICE`
   (`GamePage.buildEnvironment`) in their one `stage_page` step;
-- the copy of the app an integration's package step runs on (`DeviceApps.packageSource`, in Lamp's own folder), checked
-  after the step whatever the package it made;
+- the copy of the app an integration's package step runs on (`DeviceApps.packageSource`, in Lamp's own folder; a copy
+  holding a link is refused, and an old package in it is taken away before the step), checked after the step, and the
+  package itself checked too where Lamp can read it (a ZIP, and so an MSIX made from one); a package in another form
+  is the integration's own, and only the copy is checked;
 - a page published to the web (`GamePage.anyBrowser`), which names each key keyboards differ on both ways ("Enter /
   Return", `Place.Input.anyKeyboard`), since it may be played on any device.
 

@@ -132,12 +132,13 @@ enum DeviceApps {
             try wrapMSIX(data, for: project, entry: .program("App.exe"))
             return
         }
-        // The package step runs on Lamp's copy of the app, where a game's page is told the device it's on (`GamePage`),
-        // and that copy is checked for it after the step, whatever the package it made.
+        // The package step runs on Lamp's copy of the app, where a game's page is told the device it's on (`GamePage`).
+        // That copy is checked for it after the step, and so is the package where Lamp can read it (a ZIP): a package
+        // in any other form is the integration's own, which Lamp doesn't look inside.
         let source = try await packageSource(project)
         let page = GameKit.isGame(project) ? try GamePage.place(for: project) : nil
-        if let page { try GamePage.stage(source.appendingPathComponent(GameKit.webFolder), for: page) }
-        let output = source.appendingPathComponent(declared.output)
+        if let page { try GamePage.stage(source.appendingPathComponent(GameKit.webFolder), in: source, for: page) }
+        let output = freshOutput(declared.output, in: source)
         var printed: [String] = []
         let status = await Sandbox.run(declared.package, for: project, cwd: source, opening: [source.path], started: started) { printed.append($0) }
         guard status == 0 else {
@@ -148,6 +149,7 @@ enum DeviceApps {
             throw Failure(message: "The package step ran but left nothing at \(declared.output).")
         }
         guard data.count <= DeviceHTTP.limit else { throw Failure(message: "The package is bigger than Lamp sends to a device.") }
+        if let page, declared.output.lowercased().hasSuffix(".zip") { try GamePage.check(payload: try MSIX.files(inZip: data), for: page) }
         try FileManager.default.createDirectory(at: buildFolder(for: project), withIntermediateDirectories: true)
         if declared.wrap == "msix" {
             try wrapMSIX(data, for: project, entry: WebHost.isUsed(by: declared) ? .webHost : .page(declared.start ?? "index.html"))
@@ -156,6 +158,14 @@ enum DeviceApps {
         } else {
             try data.write(to: packageURL(for: project), options: .atomic)
         }
+    }
+
+    /// Where the package step leaves its package in the copy, with what an earlier package left in the app's folder
+    /// (and so came along in the copy) taken away: a step that makes nothing mustn't pass on an old one.
+    static func freshOutput(_ path: String, in source: URL) -> URL {
+        let output = source.appendingPathComponent(path)
+        AppFolder.remove(output, in: source)
+        return output
     }
 
     /// The app's folder as its package step takes it: a copy in Lamp's own folder (`buildFolder`), never the app's, so
@@ -174,6 +184,14 @@ enum DeviceApps {
         var output: [String] = []
         let status = await Shell.run(confined, cwd: source, env: ["LAMP_FROM": project.dir.path, "LAMP_TO": source.path], login: false) { output.append($0) }
         guard status == 0 else { throw Failure(message: "Lamp couldn't copy the app's files to package it.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        // Links stay links in the copy, and Lamp writes in it: one anywhere in it refuses the package, as it refuses the
+        // page for the preview or a phone (`GameKit.stageWeb`, `Devices.checkUnlinked`).
+        let linked = (fm.enumerator(at: source, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? [])
+            .first { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        if let linked {
+            try? fm.removeItem(at: source)
+            throw Failure(message: "\(linked.path.dropFirst(source.path.count + 1)) is a shortcut to another file. Put the file itself in its place.")
+        }
         return source
     }
 

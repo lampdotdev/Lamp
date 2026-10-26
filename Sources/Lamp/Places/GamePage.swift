@@ -61,16 +61,16 @@ enum GamePage {
         return "// Written by Lamp for the device this copy of the game is on (\(id)); don't edit.\nexport default \(json(facts));\n"
     }
 
-    /// Writes the device beside the runtime in a copy of the page; nothing in a page that isn't a game's. A copy in
-    /// Lamp's own folder is written as any file; the app's own page goes through `write` (`Template.put`).
-    static func stage(_ page: URL, for place: Place, write: ((String, URL) throws -> Void)? = nil) throws {
-        try stage(page, descriptor: { try descriptor(for: place) }, write: write)
+    /// Writes the device beside the runtime in a copy of the page; nothing in a page that isn't a game's. The copy is
+    /// made from the app's files, so it's read and written within `root` (`AppFile`, `AppFolder`), no link followed:
+    /// a link the copy kept can't carry the write anywhere else.
+    static func stage(_ page: URL, in root: URL, for place: Place) throws {
+        try stage(page, in: root, descriptor: { try descriptor(for: place) })
     }
 
-    static func stage(_ page: URL, descriptor: () throws -> String, write: ((String, URL) throws -> Void)? = nil) throws {
-        guard FileManager.default.fileExists(atPath: page.appendingPathComponent(runtimeFile).path) else { return }
-        let text = try descriptor(), url = page.appendingPathComponent(deviceFile)
-        if let write { try write(text, url) } else { try Data(text.utf8).write(to: url, options: .atomic) }
+    static func stage(_ page: URL, in root: URL, descriptor: () throws -> String) throws {
+        guard AppFile.read(page.appendingPathComponent(runtimeFile), inFolder: root) != nil else { return }
+        try AppFolder.write(try descriptor(), to: page.appendingPathComponent(deviceFile), in: root)
     }
 
     /// What build.sh is handed to write into the copy of the page it builds (`LAMP_PAGE_DEVICE`): the device the
@@ -81,7 +81,7 @@ enum GamePage {
     }
 
     /// Whether every copy of the runtime in a staged page or app has this device beside it, as `stage` wrote it: read
-    /// in the copy the package step ran on, whatever the package it made.
+    /// in the copy the package step ran on.
     static func check(_ folder: URL, for place: Place) throws {
         let expected = Data(try descriptor(for: place).utf8)
         let found = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
@@ -89,6 +89,19 @@ enum GamePage {
             let beside = runtime.deletingLastPathComponent().appendingPathComponent(deviceFile)
             guard AppFile.read(beside, inFolder: folder) == expected else {
                 throw Failure(message: "\(runtime.path.dropFirst(folder.path.count + 1)) has no \(deviceFile) for \(place.name) beside it.")
+            }
+        }
+    }
+
+    /// The same in a package's files, where Lamp knows how to read the package (a ZIP, and so an MSIX made from one):
+    /// what the device gets is what the package step took, which the copy alone doesn't prove.
+    static func check(payload files: [(path: String, data: Data)], for place: Place) throws {
+        let expected = Data(try descriptor(for: place).utf8)
+        let byPath = Dictionary(files.map { ($0.path, $0.data) }, uniquingKeysWith: { a, _ in a })
+        for file in files where (file.path as NSString).lastPathComponent == runtimeFile {
+            let beside = ((file.path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(deviceFile)
+            guard byPath[beside] == expected else {
+                throw Failure(message: "The package's \(file.path) has no \(deviceFile) for \(place.name) beside it: the package step must take the page's whole folder.")
             }
         }
     }

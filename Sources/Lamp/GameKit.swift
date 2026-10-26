@@ -596,7 +596,7 @@ enum GameKit {
         }
         guard fm.fileExists(atPath: page.appendingPathComponent("index.html").path) else { throw Failure(message: "The game has no Web/index.html.") }
         // The preview is played on this Mac, so its page is told it's the Mac's.
-        try GamePage.stage(page, for: GamePage.place(for: project, at: .mac))
+        try GamePage.stage(page, in: dir, for: GamePage.place(for: project, at: .mac))
         return page
     }
 
