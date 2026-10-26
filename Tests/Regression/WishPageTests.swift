@@ -325,7 +325,7 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("[early, odd, big, unnamed].join(',')")?.toString(), "true,false,false,false",
                        "set with nobody there, and refused when it can't be a value")
         let join = try handshake(context)
-        XCTAssertEqual(join["wire"] as? Int, 4, "the page says what it speaks")
+        XCTAssertEqual(join["wire"] as? Int, 5, "the page says what it speaks")
         let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
                           "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 5]]])
@@ -567,7 +567,7 @@ final class WishPageTests: XCTestCase {
         let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
                           "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1],
-                                    ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 1, "wire": 5]]])
+                                    ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 1, "wire": 6]]])
         XCTAssertEqual(context.evaluateScript("var p = Lamp.wish.peer('iphone'); p.open + '|' + p.status.state + '|' + p.status.reason")?.toString(),
                        "true|outOfDate|The iPhone app is out of date. Open it from Lamp on your Mac to update it.")
         XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),
