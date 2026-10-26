@@ -35,12 +35,13 @@ enum GameAndroid {
         try Template.write(talks ? Template.androidRootBuildGradle : rootBuildGradle, to: "\(folder)/build.gradle.kts", for: project)
         try Template.write(Template.androidGradleProperties, to: "\(folder)/gradle.properties", for: project)
         try Template.write(Template.androidVersionsCatalogue, to: "\(folder)/gradle/libs.versions.toml", for: project)
-        try Template.write(talks ? wishBuildGradle : appBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
+        try Template.write(talks ? wishBuildGradle : aloneBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
         let screen = project.platform == .screen
         try Template.write(screen ? screenManifest : manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
         let activity = screen ? screenActivity : gameActivity
         try Template.write((talks ? activity : withoutWish(activity: activity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),
                            to: kotlin + "/MainActivity.kt", for: project)
+        try Template.write(pageGateway.replacingOccurrences(of: "{{PACKAGE}}", with: package), to: kotlin + "/LampPageGateway.kt", for: project)
         try Template.write(".gradle/\n.kotlin/\nlocal.properties\n", to: "\(folder)/.gitignore", for: project)
         // The banner a TV's home screen shows: the app's icon on a dark tile, or the tile alone until it has one.
         let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
@@ -59,7 +60,7 @@ enum GameAndroid {
     static func paths(for project: LampProject) -> [String] {
         let package = Template.androidPackage(for: project).replacingOccurrences(of: ".", with: "/")
         return [".gitignore", "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml", "app/build.gradle.kts",
-                "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt",
+                "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt", "app/src/main/kotlin/\(package)/LampPageGateway.kt",
                 "app/src/main/kotlin/\(package)/\(Template.androidSupportFile)", "app/src/main/kotlin/\(package)/LampPageWish.kt",
                 Template.androidDebugManifest, banner].map { "\(folder)/\($0)" }
     }
@@ -151,6 +152,103 @@ enum GameAndroid {
     }
 
     """
+
+    /// The build of a page on its own: AndroidX's WebKit alone, whose message listener lets only the page's own origin in
+    /// its main frame reach Lamp (`pageGateway`).
+    static let aloneBuildGradle = appBuildGradle + """
+
+    dependencies {
+        implementation(libs.androidx.webkit)
+    }
+
+    """
+
+    /// What a new Lamp's Android host is made of, for the builds it changes (`Target.Recipe.inputs`): its folder isn't
+    /// among a page's sources.
+    static var stamp: String { manifest + mainActivity + pageGateway + aloneBuildGradle + wishBuildGradle }
+
+    /// The page's LampAI (Web/lamp.js's `lampGatewayHost`), answered by the app with its own token, which Lamp writes
+    /// into the app's storage as it installs it (`Adb.tellApp`), as the app around the page answers it on the Mac
+    /// (`lampGateway`, LampPage.swift): only LampAI's routes, only from the page's own origin in its main frame. The page
+    /// never sees the token.
+    static let pageGateway = #"""
+    // Written by Lamp before every build; don't edit. The page's LampAI (Web/lamp.js), answered through this app.
+    package {{PACKAGE}}
+
+    import android.webkit.WebView
+    import androidx.webkit.WebViewCompat
+    import androidx.webkit.WebViewFeature
+    import java.io.File
+    import java.net.InetSocketAddress
+    import java.net.Socket
+    import org.json.JSONObject
+    import kotlin.concurrent.thread
+
+    object LampPageGateway {
+        private val routes = setOf("/ai", "/ai/status", "/ai/image", "/ai/decide")
+
+        /** Answers the page at `origin`, the page's own, in its main frame: no other page or frame reaches Lamp. */
+        fun attach(web: WebView, origin: String) {
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+            val files = web.context.filesDir
+            WebViewCompat.addWebMessageListener(web, "lampGatewayHost", setOf(origin)) { _, message, _, isMainFrame, reply ->
+                val call = try { JSONObject(message.data ?: "") } catch (e: Exception) { null }
+                if (!isMainFrame || call == null) return@addWebMessageListener
+                val id = call.optInt("id")
+                val path = call.optString("path")
+                val body = call.optString("body", "{}")
+                thread {
+                    val (status, text) = if (path in routes) post(files, path, body) else 404 to JSONObject().put("error", "Not found").toString()
+                    val answer = JSONObject().put("id", id).put("status", status).put("body", text).toString()
+                    web.post { reply.postMessage(answer) }
+                }
+            }
+        }
+
+        private fun failure(message: String) = 503 to JSONObject().put("error", message).toString()
+
+        /** Plain HTTP on the Mac's own network, on a socket, as the Kotlin building blocks speak it: each way to the Mac
+         *  Lamp wrote down in turn, and all of them once more after a moment, in case Lamp is just starting. */
+        private fun post(files: File, path: String, body: String): Pair<Int, String> {
+            val install = try { JSONObject(File(files, "lamp-install.json").readText()) } catch (e: Exception) {
+                return failure("This copy of the app wasn't opened from Lamp, so it can't use AI. Open it from Lamp on your Mac.")
+            }
+            val token = install.optString("token")
+            val list = install.optJSONArray("routes") ?: return failure("Couldn't reach Lamp. Open Lamp on your Mac and try again.")
+            val bytes = body.toByteArray(Charsets.UTF_8)
+            for (attempt in 0 until 2) {
+                for (i in 0 until list.length()) {
+                    val route = list.optJSONObject(i) ?: continue
+                    try {
+                        return exchange(route, path, token, bytes)
+                    } catch (e: Exception) {
+                        continue
+                    }
+                }
+                if (attempt == 0) Thread.sleep(3000)
+            }
+            return failure(if (install.optBoolean("device")) "Couldn't reach Lamp on your Mac. Keep this device on the same Wi‑Fi as the Mac, with Lamp open, and try again."
+                           else "Couldn't reach Lamp. Open Lamp on your Mac and try again.")
+        }
+
+        private fun exchange(route: JSONObject, path: String, token: String, body: ByteArray): Pair<Int, String> {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(route.getString("address"), route.getInt("port")), 4000)
+                socket.soTimeout = 240_000
+                val head = "POST $path HTTP/1.1\r\nHost: ${route.getString("host")}\r\nAuthorization: Bearer $token\r\n" +
+                    "Content-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+                socket.getOutputStream().apply { write(head.toByteArray()); write(body); flush() }
+                val all = socket.getInputStream().readBytes()
+                val split = (0..all.size - 4).firstOrNull { all[it] == '\r'.code.toByte() && all[it + 1] == '\n'.code.toByte() && all[it + 2] == '\r'.code.toByte() && all[it + 3] == '\n'.code.toByte() }
+                    ?: throw java.io.IOException("Lamp's answer was cut short.")
+                val status = String(all, 0, split).split("\r\n").first().split(" ").getOrNull(1)?.toIntOrNull()
+                    ?: throw java.io.IOException("Lamp's answer couldn't be read.")
+                return status to String(all, split + 4, all.size - split - 4)
+            }
+        }
+    }
+
+    """#
 
     /// The build of a game with other apps in its wish: an Android app's plugins and libraries, which Lamp's Kotlin
     /// building blocks are written against, and AndroidX's WebKit, whose message listener lets only the game's own page
@@ -295,6 +393,7 @@ enum GameAndroid {
                 }
             }
             setContentView(web)
+            LampPageGateway.attach(web, "https://$HOST")
             LampPageWish.attach(web, "https://$HOST") // the wish's other apps
             (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
             immerse()

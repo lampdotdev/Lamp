@@ -767,7 +767,7 @@ extension Agent.Rules {
     LampLocation…; read their doc comments there), and ask for it from the page with \
     `LampNative.call("unanswered", { limit: 30 })`, a Promise of the JSON it returned. Return only what the page \
     shows. AI in the page is LampAI from Web/lamp.js (read it), which reaches Lamp through the app. Both answer only in \
-    the app on the Mac, iPhone and iPad (LampAI on the Xbox too): elsewhere, and in Lamp's preview, \
+    the app on the Mac, iPhone and iPad (LampAI on Android and the Xbox too): elsewhere, and in Lamp's preview, \
     `LampNative.available` is false and the calls reject, so the page shows example content then, never an error. \
     Make these calls once as it opens or from a menu, never every frame; `look_at_app` with `on_device` shows the \
     real thing.

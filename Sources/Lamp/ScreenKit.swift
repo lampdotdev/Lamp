@@ -97,7 +97,7 @@ enum ScreenKit {
     /// Names what Lamp writes into a screen, so a new Lamp's builds it again (`Target.Recipe.inputs`).
     static var stamp: String {
         (host ?? "") + (GameKit.page?.text ?? "") + GameKit.webBuildSh + packageSwift + TVTemplate.lampJS
-            + GameAndroid.screenActivity + GameAndroid.screenManifest
+            + GameAndroid.stamp
     }
 }
 

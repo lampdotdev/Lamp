@@ -261,7 +261,10 @@ launcher, a banner Lamp draws from the icon, no touch screen required), Android 
 (`.androidTV`, opened in Lamp's TV emulator: `Destination.emulator`), and the remote reaches the page as a TV's does: the
 d-pad, OK and play/pause are a game's controller (`lampNativePad`), and for a screen Back, the media, colour and channel
 keys are sent as the key codes Web/lamp.js reads on a TV, with Back on the first view leaving the app
-(`lampAndroid.exit`). On a Samsung or LG, `lamp-game.js` reads the remote's numbered keys as the keyboard's. A device
+(`lampAndroid.exit`). The page's LampAI is answered by the Android app as the Mac's app answers it: Web/lamp.js
+finds `lampGatewayHost` (an AndroidX WebKit message listener for the page's own origin in its main frame,
+`LampPageGateway.kt`), and the app sends LampAI's routes to Lamp with the token Lamp wrote into its storage at install
+(`Adb.tellApp`), so the page never holds it. On a Samsung or LG, `lamp-game.js` reads the remote's numbered keys as the keyboard's. A device
 with no web engine Lamp reaches (the Apple TV, a Roku) has no host: a page asked to go there is refused with the row's
 reason, that it needs a native version (`Parts.asked`, `Places.refusal`), Try On lists it under the places to add as
 "Needs a Native Version" (`Places.noPage`), and the agent's rules and `make_app_for` say so (`Places.pageList`,
@@ -419,7 +422,7 @@ which has every building block in LampSupport.swift: the person's mail, calendar
 So a game made of the person's unanswered emails, or a family calendar on the kitchen iPad, is a game or a screen and not
 a Mac app. `Native.swift` is the app's own: Lamp writes it only when it isn't there and takes it away with the kind only
 while it's still Lamp's scaffold, and the two Package.swift files compile all of `Sources/`. Everywhere else (a TV, the
-Xbox, Android, Lamp's preview of either) `LampNative.available` is false and its calls reject, so the rule
+Xbox, Android, Lamp's preview of either; LampAI still answers on Android and the Xbox) `LampNative.available` is false and its calls reject, so the rule
 (`Rules.pageNative`) has the page show example content then, which also keeps the game preview's replay exact; a C++
 game has no such bridge. In a wish of several apps the same app answers the page's `Lamp.wish` with its own `LampWish`
 (`LampPageWish`, written only for such an app, as `LampWish` is), so a game or a screen on the Mac, the iPhone or the

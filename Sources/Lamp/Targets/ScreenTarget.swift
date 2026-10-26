@@ -28,7 +28,7 @@ extension Target {
         guidance: Guidance(prompt: Agent.screenPrompt(for:),
                            changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.tvFrameworks + Agent.Rules.tvDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
                            skills: { [] },
-                           elsewhere: { _ in "- On the person's TV, iPad or Xbox: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI\n- On Android (a tablet, a photo frame, a Google TV): none yet" }),
+                           elsewhere: { _ in "- On the person's TV, iPad, Android tablet, photo frame or Google TV, or Xbox: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI" }),
         recipe: Recipe(language: .web, fill: ScreenKit.fill, ownedFiles: ScreenKit.write(for:), support: ScreenKit.write(for:),
                        isMade: ScreenKit.isMade, scaffolded: { dir, _ in ScreenKit.isMade(dir) },
                        // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
