@@ -204,6 +204,7 @@ struct TurnProgress {
         case .offer: return "Suggesting a better setup"
         case .kind: return "Making it for other devices"
         case .connectors: return "Looking up a connector"
+        case .network: return "Looking around your network"
         case .ask: return "Asking you"
         // What it's doing goes on being what it was: the line it wrote says the rest.
         case .progress: return ""

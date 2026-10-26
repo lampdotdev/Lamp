@@ -57,7 +57,7 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,device_integration,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,network_devices,device_integration,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
@@ -312,6 +312,9 @@ enum Agent {
     skill and hand Lamp the device's integration with `device_integration` before writing any app for it. Lamp finds, \
     checks and sets up the device itself, and draws every step's card: never walk the person through its steps in your \
     own words, and never try to reach the device with a command of yours.
+    - When a wish controls, plays to or reads devices on the person's network (a remote, buttons for the speakers, \
+    what's playing on the TV), call `network_devices` before asking what they have, and start from what it finds: \
+    "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you.
     """
 
     /// With every request in a device's setup conversation: the conversation outlives what it began with, and a
