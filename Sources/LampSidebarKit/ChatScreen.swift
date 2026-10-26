@@ -126,7 +126,15 @@ private struct Chat: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let card = state.wishLink {
+            if let card = state.publish {
+                ScrollView {
+                    PublishCard(icon: card.icon.flatMap(NSImage.init(data:)), name: card.name, stage: card.stage, repo: card.repo,
+                                page: card.page, credit: card.credit, notes: card.notes, size: card.size, copied: card.copied,
+                                republish: card.republish, publish: { link.send(.publish(.publish)) }, fix: { link.send(.publish(.fix)) },
+                                openPage: { link.send(.publish(.openPage)) }, copy: { link.send(.publish(.copy)) },
+                                close: { link.send(.publish(.close)) }, width: nil)
+                }
+            } else if let card = state.wishLink {
                 WishLinkPanel(card: card)
             } else {
                 switch state.panel {
@@ -789,6 +797,7 @@ struct ChatBar: View {
         .help(toolbar.usage.map { "Usage, cost and models. \($0)" } ?? "Usage, cost and models")
         Menu {
             Button("Share Link…") { link.send(.wishLink(.open)) }
+            if toolbar.canPublish == true { Button("Publish as Web Page…") { link.send(.publish(.open)) } }
             Divider()
             Button("Copy Wish File") { link.send(.copyWishFile) }
             Button("Share…") { link.send(.share) }

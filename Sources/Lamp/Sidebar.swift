@@ -159,7 +159,7 @@ final class SidebarServer {
         listener = Listener(server: self)
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
-            .merge(with: WishLinkCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -327,6 +327,7 @@ final class SidebarServer {
             let made = history?.made ?? false
             var toolbar = SidebarToolbar(canUndo: !busy && (history?.undoable ?? false), canShare: store.canShare(project) && made,
                                          hasVersions: history?.saved ?? false, details: details, usage: store.usageSummary(project))
+            toolbar.canPublish = Publish.canPublish(project) && made ? true : nil
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
             let open = store.isWishOpen(project)
@@ -353,6 +354,7 @@ final class SidebarServer {
         }
         state.sharing = sharing.removeValue(forKey: project.id)
         if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
+        if let card = PublishCards.shared.card(for: project) { state.publish = PublishCards.shared.wire(card, of: project) }
         return state
     }
 
@@ -1168,6 +1170,16 @@ final class SidebarServer {
             case .copy: cards.copy(project)
             case .stop: cards.stop(project)
             case .retake: cards.retake(project)
+            case .close: cards.close(project)
+            }
+        case .publish(let command):
+            let cards = PublishCards.shared
+            switch command {
+            case .open: cards.open(project)
+            case .publish: cards.publish(project)
+            case .fix: cards.fix(project)
+            case .openPage: cards.openPage(project)
+            case .copy: cards.copy(project)
             case .close: cards.close(project)
             }
         case .infoAction(let action):

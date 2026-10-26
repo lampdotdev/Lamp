@@ -90,6 +90,8 @@ public struct SidebarState: Codable, Equatable {
     public var sharing: SidebarSharing?
     /// The Share Link card, while it's open in this chat (`SidebarCommand.wishLink`): shown in the chat's place.
     public var wishLink: SidebarWishLink?
+    /// The Publish card, while it's open in this chat (`SidebarCommand.publish`): shown in the chat's place.
+    public var publish: SidebarPublish?
     /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
     /// the bar's device button opens them, and a click is `SidebarCommand.tryOn`. Nil for a Mac app, which has none.
     public var tryOn: SidebarTryOn?
@@ -209,6 +211,8 @@ public struct SidebarToolbar: Codable, Equatable {
     public var canUndo: Bool
     /// The wish has been made: there's a file to share.
     public var canShare: Bool
+    /// Its page can be published (a game drawn with three.js, while the experiment is on): the share menu offers it.
+    public var canPublish: Bool?
     /// It has versions to look back at.
     public var hasVersions: Bool
     public var details: Bool
@@ -608,6 +612,8 @@ public enum SidebarCommand: Codable, Equatable {
     case infoAction(String)
     /// The Share Link card: open it, or what was done on it.
     case wishLink(SidebarWishLinkCommand)
+    /// The Publish card: open it, or what was done on it.
+    case publish(SidebarPublishCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
     /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
@@ -790,4 +796,36 @@ public enum SidebarWishLinkCommand: Codable, Equatable {
     case stop
     case retake
     case close
+}
+
+/// The Publish card as Lamp has it (`PublishCard`): everything on it is Lamp's, worked out before the person confirms.
+public struct SidebarPublish: Codable, Equatable {
+    public var name: String
+    public var icon: Data?
+    public var stage: PublishCard.Stage
+    public var repo: String?
+    public var page: String?
+    public var credit: String?
+    public var notes: [String]
+    public var size: String?
+    public var copied: Bool
+    public var republish: Bool
+
+    public init(name: String, icon: Data?, stage: PublishCard.Stage, repo: String?, page: String?, credit: String?, notes: [String],
+                size: String?, copied: Bool, republish: Bool) {
+        self.name = name
+        self.icon = icon
+        self.stage = stage
+        self.repo = repo
+        self.page = page
+        self.credit = credit
+        self.notes = notes
+        self.size = size
+        self.copied = copied
+        self.republish = republish
+    }
+}
+
+public enum SidebarPublishCommand: Codable, Equatable {
+    case open, publish, fix, openPage, copy, close
 }
