@@ -38,10 +38,16 @@ struct NetworkHost: Hashable, Identifiable {
     var names: [String] {
         var names: [String] = []
         for name in services.map(\.name) + services.map(\.hostLabel) + [upnp?.name].compactMap({ $0 })
-        where !name.isEmpty && !names.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
+        where !name.isEmpty && !Self.isID(name) && !names.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
             names.append(name)
         }
         return names
+    }
+
+    /// A name that is an identifier rather than a name: a pairing service's hardware address and link-local address, or
+    /// a UUID.
+    static func isID(_ name: String) -> Bool {
+        name.contains("@fe80") || name.range(of: "^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$", options: .regularExpression) != nil
     }
 
     /// The model it says it is, in a service's record ("Chromecast", "AppleTV14,1") or its UPnP description.
@@ -64,7 +70,7 @@ struct NetworkHost: Hashable, Identifiable {
     /// often have private addresses, so their hardware says nothing.
     var apple: String? {
         guard let model = services.lazy.compactMap({ $0.txt["model"] ?? $0.txt["am"] }).first, model.contains(",") else {
-            return types.contains("_companion-link._tcp") || vendor == "Apple" ? "Apple device" : nil
+            return !types.isDisjoint(with: ["_companion-link._tcp", "_apple-mobdev2._tcp", "_remotepairing._tcp"]) || vendor == "Apple" ? "Apple device" : nil
         }
         for (prefix, kind) in [("AppleTV", "Apple TV"), ("AudioAccessory", "HomePod"), ("iPhone", "iPhone"), ("iPad", "iPad"),
                                ("Watch", "Apple Watch"), ("iMac", "Mac"), ("Mac", "Mac")] where model.hasPrefix(prefix) {
@@ -149,6 +155,13 @@ enum HomeNetwork {
             hosts[address] = host
         }
         return hosts.values.sorted { order($0.address) < order($1.address) }
+    }
+
+    /// Whether this Mac is still on the network a whole look swept: the same subnet, and the same router at its gateway.
+    static func sameNetwork(as swept: Subnet?, router: String?) -> Bool {
+        guard let swept, let now = Subnet.current(), now.network == swept.network, now.prefix == swept.prefix else { return false }
+        guard let router else { return true }
+        return Neighbours.gateway().flatMap { Neighbours.table()[$0] } == router
     }
 
     private static func order(_ address: String) -> UInt32 { Subnet.value(address) ?? .max }
@@ -511,30 +524,42 @@ enum Bonjour {
         let addresses: [String]
     }
 
-    static let browseFor: Duration = .seconds(2)
+    static let browseFor: Duration = .seconds(3)
+    /// Browsed whether or not the meta-query names them: a device that's asleep often misses that one answer, and
+    /// these are the services that say most about what a quiet device is (a Cast device, a printer, a gadget's web page).
+    static let alwaysBrowse = ["_googlecast._tcp", "_ipp._tcp", "_printer._tcp", "_http._tcp", "_esphomelib._tcp"]
 
     static func everything() async -> [Found] {
         let types = await browse("_services._dns-sd._udp").map { name, type in
             // The meta-query's answers are "_airplay" in "_tcp.local.".
             name + "." + (type.components(separatedBy: ".").first ?? "_tcp")
         }
-        let unique = Array(Set(types)).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,40}\._(tcp|udp)$"#, options: .regularExpression) != nil }.prefix(60)
-        var found: [Found] = []
-        await withTaskGroup(of: [Found].self) { group in
+        let unique = Array(Set(types + alwaysBrowse)).filter { $0.range(of: #"^_[A-Za-z0-9-]{1,40}\._(tcp|udp)$"#, options: .regularExpression) != nil }.prefix(60)
+        var services: [BonjourService] = []
+        await withTaskGroup(of: [BonjourService].self) { group in
             for type in unique {
                 group.addTask {
-                    var found: [Found] = []
+                    var found: [BonjourService] = []
                     let instances = Array(Set(await browse(type).map(\.name))).prefix(40)
-                    await withTaskGroup(of: Found?.self) { each in
+                    await withTaskGroup(of: BonjourService?.self) { each in
                         for name in instances { each.addTask { await resolve(name: name, type: type) } }
                         for await one in each { if let one { found.append(one) } }
                     }
                     return found
                 }
             }
-            for await some in group { found += some }
+            for await some in group { services += some }
         }
-        return found
+        // Each host's address is looked up once for all its services: a device with many (a printer has eight) answered
+        // some of them and not others when each asked for itself.
+        var byHost: [String: [String]] = [:]
+        await withTaskGroup(of: (String, [String]).self) { group in
+            for host in Set(services.map(\.host)) { group.addTask { (host, await addresses(of: host)) } }
+            for await (host, addresses) in group { byHost[host] = addresses }
+        }
+        return services.compactMap { service in
+            byHost[service.host].flatMap { $0.isEmpty ? nil : Found(service: service, addresses: $0) }
+        }
     }
 
     /// The names a browse hears for a while, with the type each answered for.
@@ -560,14 +585,13 @@ enum Bonjour {
         return heard.lock.withLock { heard.items }
     }
 
-    /// One service's host and record, then the host's IPv4 addresses, each waited for a second or two.
-    private static func resolve(name: String, type: String) async -> Found? {
-        final class Resolved: @unchecked Sendable { var host: String?; var txt: [String: String] = [:]; var addresses: [String] = []; let lock = NSLock() }
+    /// One service's host and record, waited for up to three seconds.
+    private static func resolve(name: String, type: String) async -> BonjourService? {
+        final class Resolved: @unchecked Sendable { var host: String?; var txt: [String: String] = [:]; let lock = NSLock() }
         let resolved = Resolved()
         let queue = DispatchQueue(label: "lamp.bonjour.resolve")
         let retained = Unmanaged.passRetained(resolved)
         defer { retained.release() }
-
         var ref: DNSServiceRef?
         let reply: DNSServiceResolveReply = { _, _, _, error, fullName, host, _, length, record, context in
             guard error == DNSServiceErrorType(kDNSServiceErr_NoError), let host, let context else { return }
@@ -586,30 +610,37 @@ enum Bonjour {
         }
         guard DNSServiceResolve(&ref, 0, 0, name, type, "local.", reply, retained.toOpaque()) == DNSServiceErrorType(kDNSServiceErr_NoError), let ref else { return nil }
         DNSServiceSetDispatchQueue(ref, queue)
-        for _ in 0..<20 {
+        for _ in 0..<30 {
             try? await Task.sleep(for: .milliseconds(100))
             if (resolved.lock.withLock { resolved.host }) != nil { break }
         }
         queue.sync { DNSServiceRefDeallocate(ref) }
         guard let host = resolved.lock.withLock({ resolved.host }) else { return nil }
+        return BonjourService(type: type, name: name, host: host, txt: resolved.lock.withLock { resolved.txt })
+    }
 
+    /// A Bonjour host's IPv4 addresses, waited for up to three seconds.
+    private static func addresses(of host: String) async -> [String] {
+        final class Heard: @unchecked Sendable { var addresses: [String] = []; let lock = NSLock() }
+        let heard = Heard()
+        let queue = DispatchQueue(label: "lamp.bonjour.address")
+        let retained = Unmanaged.passRetained(heard)
+        defer { retained.release() }
         var lookup: DNSServiceRef?
-        let address: DNSServiceGetAddrInfoReply = { _, _, _, error, _, socket, _, context in
+        let reply: DNSServiceGetAddrInfoReply = { _, _, _, error, _, socket, _, context in
             guard error == DNSServiceErrorType(kDNSServiceErr_NoError), let socket, let context, Int32(socket.pointee.sa_family) == AF_INET else { return }
-            let resolved = Unmanaged<Resolved>.fromOpaque(context).takeUnretainedValue()
+            let heard = Unmanaged<Heard>.fromOpaque(context).takeUnretainedValue()
             let text = socket.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { String(cString: inet_ntoa($0.pointee.sin_addr)) }
-            resolved.lock.lock(); if !resolved.addresses.contains(text) { resolved.addresses.append(text) }; resolved.lock.unlock()
+            heard.lock.lock(); if !heard.addresses.contains(text) { heard.addresses.append(text) }; heard.lock.unlock()
         }
-        guard DNSServiceGetAddrInfo(&lookup, 0, 0, DNSServiceProtocol(kDNSServiceProtocol_IPv4), host, address, retained.toOpaque()) == DNSServiceErrorType(kDNSServiceErr_NoError),
-              let lookup else { return nil }
+        guard DNSServiceGetAddrInfo(&lookup, 0, 0, DNSServiceProtocol(kDNSServiceProtocol_IPv4), host, reply, retained.toOpaque()) == DNSServiceErrorType(kDNSServiceErr_NoError),
+              let lookup else { return [] }
         DNSServiceSetDispatchQueue(lookup, queue)
-        for _ in 0..<15 {
+        for _ in 0..<30 {
             try? await Task.sleep(for: .milliseconds(100))
-            if !(resolved.lock.withLock { resolved.addresses }).isEmpty { break }
+            if !(heard.lock.withLock { heard.addresses }).isEmpty { break }
         }
         queue.sync { DNSServiceRefDeallocate(lookup) }
-        let addresses = resolved.lock.withLock { resolved.addresses }
-        guard !addresses.isEmpty else { return nil }
-        return Found(service: BonjourService(type: type, name: name, host: host, txt: resolved.lock.withLock { resolved.txt }), addresses: addresses)
+        return heard.lock.withLock { heard.addresses }
     }
 }

@@ -326,15 +326,19 @@ enum Agent {
         var note = "\n\n---\nThis conversation is the setup of a device of the person's (from Lamp, not part of the request above): no app is made here. Write no files and open nothing; write or fix the device's integration with `device_integration` (the `device-integrations` skill), and answer about the device in a sentence or two. Lamp shows its setup steps as cards. When the person wants something on the device, tell them to make a wish for it on Lamp's desk."
         // What the device said of itself when it was found, for writing its integration: the agent's to read, not the
         // person's, so it isn't in the request they see.
-        if let device = Store.shared.devices.first(where: { $0.id == project.deviceSetup }) {
+        let device = Store.shared.devices.first(where: { $0.id == project.deviceSetup })
+        if let device {
             var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
             if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
             note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's scan as \($0)" } ?? "") + "."
-            // Its host's facts, for working out what it is and how it's reached. The names it goes by on the network are
-            // often people's, so they stay out of the integration.
-            if let host = Store.shared.hosts.first(where: { $0.address == device.address }) {
-                note += " Its host: " + HomeNetwork.facts(host) + ". Keep the names it goes by out of the integration: find it by its service, maker or model."
-            }
+        }
+        // Its host's facts, for working out what it is and how it's reached: all there is for one set up from Everything
+        // Else, which may be something Lamp can't reach at all (say so plainly then). The names it goes by on the network
+        // are often people's, so they stay out of the integration.
+        let address = device?.address ?? project.deviceSetup.flatMap { $0.hasPrefix("found:") ? String($0.dropFirst("found:".count)) : nil }
+        if let host = Store.shared.hosts.first(where: { $0.address == address }) {
+            if device == nil { note += " Work out what it is first, from what Lamp found of it, and tell the person; if nothing on the home network can reach it (it's controlled only through its maker's cloud, or has no local interface), say so in a sentence rather than writing an integration." }
+            note += " Its host: " + HomeNetwork.facts(host) + ". Keep the names it goes by out of the integration: find it by its service, maker or model."
         }
         // The last test run on it: what the device did with an app made from the integration, which the builder fixes.
         if let deviceID = project.deviceSetup, let report = IntegrationProbe.report(for: deviceID) { note += "\n\n" + report }

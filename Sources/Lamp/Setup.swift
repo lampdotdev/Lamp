@@ -1018,6 +1018,10 @@ struct DevicesSection: View {
                 Text((host.names.prefix(2) + [host.address]).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            // The agent works out what it is and whether anything can reach it; the router and this Mac aren't for that.
+            if !host.isGateway, !host.isThisMac {
+                Button("Set Up…") { store.setUpDevice(HomeNetwork.device(for: host)) }.controlSize(.small)
+            }
         }
         .help(HomeNetwork.facts(host))
     }

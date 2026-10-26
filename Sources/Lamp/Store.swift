@@ -2316,6 +2316,8 @@ final class Store: ObservableObject {
     @Published private(set) var hosts: [NetworkHost] = []
     /// How much of the subnet that look swept, for the agent.
     private(set) var swept: Subnet?
+    /// The router's hardware address on that network: the hosts are this network's only while it's the same.
+    private var sweptRouter: String?
     /// The last look on the network was refused by macOS: Lamp isn't allowed on the local network, or the person hasn't
     /// answered yet. Where a look was asked for, a line says so with the way to allow it.
     @Published private(set) var localNetworkRefused = false
@@ -2357,7 +2359,7 @@ final class Store: ObservableObject {
             // Refused the first time is macOS's question still up; refused after it is the person's answer.
             let firstAsked = scan.refused && !UserDefaults.standard.bool(forKey: Self.localNetworkAskedKey)
             UserDefaults.standard.set(true, forKey: Self.localNetworkAskedKey)
-            if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed() } }
+            if firstAsked { answerAwaited = Task { await lookAgainOnceAllowed(everything: everything) } }
             async let tvs = TVs.devices(answers: scan.answers)
             async let integrated = Integrations.devices(scan: scan)
             let kits = await apple + android + tvs
@@ -2375,8 +2377,14 @@ final class Store: ObservableObject {
                 if found != devices { devices = found }
                 if merged != hosts { hosts = merged }
                 swept = look.swept
+                sweptRouter = merged.first(where: \.isGateway)?.mac
+            } else if !HomeNetwork.sameNetwork(as: swept, router: sweptRouter) {
+                // Another network since the last whole look: its hosts aren't here, and an address may be another's now.
+                if !hosts.isEmpty { hosts = [] }
+                swept = nil
+                sweptRouter = nil
             } else {
-                // A look of SSDP alone keeps what the last whole look learned of the rest, while Lamp runs.
+                // A look of SSDP alone keeps what the last whole look learned of the rest, on the same network.
                 let taken = Set(found.compactMap(\.address))
                 found += hosts.filter { !taken.contains($0.address) && HomeNetwork.couldLearn($0) }.map(HomeNetwork.device(for:))
                 if found != devices { devices = found }
@@ -2460,7 +2468,7 @@ final class Store: ObservableObject {
     /// A look that was the first to ask macOS about the local network heard nothing while its question was up: Lamp
     /// waits a little for the person's answer and, given Allow, looks again, so what the wish is told comes from a look
     /// that could see. A refusal after the first is the person's Don't Allow, which isn't waited on.
-    private func lookAgainOnceAllowed(seconds: Double = 30) async {
+    private func lookAgainOnceAllowed(everything: Bool = false, seconds: Double = 30) async {
         defer { answerAwaited = nil }
         let until = Date().addingTimeInterval(seconds)
         while Date() < until {
@@ -2468,7 +2476,7 @@ final class Store: ObservableObject {
             guard !(await DeviceProbe.localNetworkDenied()) else { continue }
             // Allowed: a look made at once can still be refused while macOS takes the answer in, so Lamp looks until one
             // gets through, in the same half minute.
-            refreshDevices()
+            refreshDevices(everything: everything)
             await waitForLook(seconds: 8)
             if !localNetworkRefused { return }
         }
