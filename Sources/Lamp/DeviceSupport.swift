@@ -949,6 +949,8 @@ enum DeviceSupport {
 
       // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
       Object.defineProperty(LampAI, '_post', { value: post });
+      // One call to one way to Lamp, as LampAI makes it (through the Xbox's host where there is one), for a wish's key claim.
+      Object.defineProperty(LampAI, '_exchange', { value: exchange });
 
       /**
        * What only the app around the page can reach: the person's mail, calendar, reminders, contacts, photos and the

@@ -38,9 +38,8 @@ own comment there before using it.
   or iPhone, `localNetworkDenied`: the person turned off Local Network for it). An open app built by an earlier Lamp is
   `outOfDate`: still open, with a reason saying to open it from Lamp. More states may come: treat any you don't name as
   not connected.
-- A game or a screen on the Xbox, and a game in Lamp's own preview, can't reach the others yet: there `Lamp.wish` is
-  `away`, with a reason saying so. Write the sharing the same way for every place, and keep the game or screen whole
-  without it.
+- A game in Lamp's own preview can't reach the others: there `Lamp.wish` is `away`, with a reason saying so. Write the
+  sharing the same way for every place, and keep the game or screen whole without it.
 - `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line
   for each other app, or one app's line with its peer name. Use them, restyle them, or show the statuses your own way.
 

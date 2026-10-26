@@ -1158,7 +1158,12 @@ extension TVTemplate {
           // This link's handshake while it's under way, then its seals each way: what goes, and what comes, each counted.
           var hello = null, sent = 0, opened = 0, sendKey = null, openKey = null;
           var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
-          var device = bridge ? 'TV preview' : 'TV';
+          // In Lamp's WebView2 host on the Xbox the page is https, which may not open the plain links the wish's apps
+          // speak: the host opens them for it and passes each frame both ways as it is (`opener`, below), while
+          // everything here, the handshake and the seals included, stays the page's.
+          var pipe = !bridge && window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function'
+            ? window.chrome.webview : null;
+          var device = bridge ? 'TV preview' : pipe ? 'Xbox' : 'TV';
           // Where Lamp is, filled in by Lamp in the package it puts on a TV, and the wish's key: the preview is given it by
           // Lamp through its bridge; a TV asks Lamp for it sealed to a key pair it makes, just after Lamp put the app
           // there (`claim`), and keeps it.
@@ -1167,14 +1172,16 @@ extension TVTemplate {
           // In the app of Lamp's own around a game's or a screen's page on the Mac, an iPhone or an iPad, and around a
           // game's on Android, that app is the wish's peer, with the same LampWish as the wish's Swift and Kotlin apps (it
           // listens, is found, keeps the values on the device), and this page mirrors it (`hosted`, below); Android's
-          // takes text. A page served over https anywhere else (the Xbox) can't open the plain links the wish's apps
-          // speak, nor ask Lamp itself, and a game's page in Lamp's own preview has no way to Lamp at all, so each says so.
+          // takes text. On the Xbox the page is the peer itself, as on a TV, its links opened by the host. A page served
+          // over https anywhere else can't open the plain links the wish's apps speak, nor ask Lamp itself, and a game's
+          // page in Lamp's own preview has no way to Lamp at all, so each says so.
           var host = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampWish;
           if (!host && window.lampWishHost && typeof window.lampWishHost.postMessage === 'function') {
             host = { postMessage: function (m) { window.lampWishHost.postMessage(JSON.stringify(m)); } };
           }
+          if (host) pipe = null;
           var where = window.location ? window.location.protocol : '';
-          var stranded = !host && !bridge && (where === 'https:' || where === 'lamp-game:');
+          var stranded = !host && !bridge && !pipe && (where === 'https:' || where === 'lamp-game:');
           var STRANDED = "Can't reach the wish's other apps on this device yet.";
           // Two ways to the others, used together: Lamp's room while Lamp is open on the Mac, and a link straight to each
           // app of the wish that listens (a TV page can't listen itself), at the address it was last reached at or said it
@@ -1570,6 +1577,66 @@ extension TVTemplate {
             keep();
           }
 
+          // A link as a WebSocket, or on the Xbox its stand-in over the host's pipe, with the same calls the code below
+          // uses (send, close, readyState, bufferedAmount, onopen, onmessage, onclose, onerror). The host may open only
+          // links to this network, and tells the page as each frame has gone, so a file's flow counts what's still to go.
+          var piped = {}, pipeIds = 0;
+          function opener(url) {
+            if (!pipe) return new WebSocket(url);
+            var id = ++pipeIds, sizes = [];
+            var s = piped[id] = { readyState: 0, bufferedAmount: 0, binaryType: 'arraybuffer', onopen: null, onmessage: null, onclose: null, onerror: null,
+              send: function (data) {
+                if (s.readyState !== 1) throw new Error('The link is not open.');
+                var m = { lamp: 'ws', op: 'send', id: id }, n;
+                if (typeof data === 'string') { m.text = data; n = data.length; }
+                else {
+                  var b = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength), t = '';
+                  for (var i = 0; i < b.length; i += 32768) t += String.fromCharCode.apply(null, b.subarray(i, i + 32768));
+                  m.data = btoa(t); n = b.length;
+                }
+                sizes.push(n); s.bufferedAmount += n;
+                pipe.postMessage(m);
+              },
+              close: function () {
+                if (s.readyState >= 2) return;
+                s.readyState = 2;
+                pipe.postMessage({ lamp: 'ws', op: 'close', id: id });
+                setTimeout(function () { gone(1000); }, 0);
+              } };
+            function gone(code) {
+              if (piped[id] !== s) return;
+              delete piped[id];
+              s.readyState = 3;
+              if (code === 1006 && s.onerror) s.onerror({});
+              if (s.onclose) s.onclose({ code: code });
+            }
+            s._heard = function (m) {
+              if (m.ev === 'open' && s.readyState === 0) { s.readyState = 1; if (s.onopen) s.onopen({}); }
+              else if (m.ev === 'message' && s.readyState === 1 && s.onmessage) {
+                var data = m.text;
+                if (typeof data !== 'string') {
+                  var t = atob(m.data || ''), b = new Uint8Array(t.length);
+                  for (var i = 0; i < t.length; i++) b[i] = t.charCodeAt(i);
+                  data = b.buffer;
+                }
+                s.onmessage({ data: data });
+              } else if (m.ev === 'sent' && sizes.length) s.bufferedAmount -= sizes.shift();
+              else if (m.ev === 'close') gone(typeof m.code === 'number' ? m.code : 1006);
+            };
+            pipe.postMessage({ lamp: 'ws', op: 'open', id: id, url: url });
+            return s;
+          }
+          if (pipe) pipe.addEventListener('message', function (e) {
+            var m = e.data;
+            if (!m || m.lamp !== 'ws') return;
+            if (m.ev === 'here') {
+              var list = m.addresses instanceof Array ? m.addresses : [];
+              for (var i = 0; i < list.length; i++) if (typeof list[i] === 'string' && /^\d+\.\d+\.\d+\.\d+$/.test(list[i])) { here = list[i]; break; }
+              return;
+            }
+            if (piped[m.id]) piped[m.id]._heard(m);
+          });
+
           // The wish's key from Lamp, sealed to a key pair made here and now, so nobody else on the network can open it.
           function claim() {
             if (claiming) return claiming;
@@ -1581,15 +1648,18 @@ extension TVTemplate {
             var secret = claimPair.secret, ours = claimPair.ours;
             function attempt(i) {
               if (i >= routes.length) return Promise.reject(new Error(UNCLAIMED));
-              return new Promise(function (resolve, reject) {
+              var body = JSON.stringify({ app: installed.app, 'public': C.toBase64(ours) });
+              // On the Xbox, Lamp's plain-http gateway is asked through the host, as LampAI asks it.
+              var asked = pipe && LampAI._exchange ? LampAI._exchange(routes[i], '/app/wish/claim', '', body, 10000) : new Promise(function (resolve, reject) {
                 var xhr = new XMLHttpRequest();
                 xhr.open('POST', routes[i] + '/app/wish/claim');
                 xhr.timeout = 10000;
                 xhr.setRequestHeader('Content-Type', 'application/json');
                 xhr.onload = function () { var r = null; try { r = JSON.parse(xhr.responseText); } catch (e) {} resolve({ status: xhr.status, reply: r || {} }); };
                 xhr.onerror = xhr.ontimeout = function () { reject(new Error('unreachable')); };
-                xhr.send(JSON.stringify({ app: installed.app, 'public': C.toBase64(ours) }));
-              }).then(function (answer) {
+                xhr.send(body);
+              });
+              return asked.then(function (answer) {
                 if (answer.status !== 200) throw new Error(UNCLAIMED);
                 var theirs = C.fromBase64(answer.reply['public']), nonce = C.fromBase64(answer.reply.nonce), box = C.fromBase64(answer.reply.sealed);
                 if (!theirs || theirs.length !== 32 || !nonce || nonce.length !== 12 || !box) throw new Error(UNCLAIMED);
@@ -1703,7 +1773,7 @@ extension TVTemplate {
           function connect() {
             if (!started || socket) return;
             var s;
-            try { s = new WebSocket(address); } catch (e) { return lost(0); }
+            try { s = opener(address); } catch (e) { return lost(0); }
             s.binaryType = 'arraybuffer';
             socket = s;
             sendKey = openKey = null;
@@ -1783,7 +1853,7 @@ extension TVTemplate {
           function attempt(id, place, failed, settled) {
             var ws, d, timer, mine_ = epoch;
             if (!started) return;
-            try { ws = new WebSocket('ws://' + place + '/'); } catch (e) { return failed(); }
+            try { ws = opener('ws://' + place + '/'); } catch (e) { return failed(); }
             ws.binaryType = 'arraybuffer';
             d = { ws: ws, peer: id, place: place, ready: false, over: false, hello: null, sendKey: null, openKey: null, sent: 0, opened: 0, heard: Date.now(), device: '', settled: settled || null,
                   way: 'd' + (++links_) };
@@ -2032,6 +2102,7 @@ extension TVTemplate {
           }
           // This TV's own address, where its system says it: the network to look on when nothing was remembered.
           function whereAmI() {
+            if (pipe) { try { pipe.postMessage({ lamp: 'ws', op: 'here' }); } catch (e) {} return; }
             try {
               if (window.tizen && tizen.systeminfo) {
                 ['WIFI_NETWORK', 'ETHERNET_NETWORK'].forEach(function (kind) {

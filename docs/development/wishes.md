@@ -91,10 +91,23 @@ it listens, is found and keeps the values on the device as every Swift app of a 
 closed. A game on Android is the same: Lamp's Android app around its page carries LampSupport.kt with `LampWish`, and
 the Android app's libraries and Lamp's debug manifest with it, and answers the page (`GameAndroid.pageWish`, through
 AndroidX WebKit's message listener, which hears only the game's own page in its main frame; `lampWishHost` in
-lamp.js). A screen on a TV is a TV page as a TV app is. A page served over https elsewhere (the Xbox's host) can
-neither open the plain links nor ask Lamp itself, and a game's page in Lamp's own preview has no way
-to Lamp, so there `Lamp.wish` stays `away` with a reason saying it can't reach the others yet (`stranded`); the
-agent is told where it works (`Rules.gameAmongApps`, `Rules.screenAmongApps`). The TV preview of a screen joins the
+lamp.js). A screen on a TV is a TV page as a TV app is. On the Xbox the page itself is the peer, as a TV's is, but
+it's https in Lamp's WebView2 host, which may not open the plain links the wish speaks: the host opens them for it
+(C++/WinRT's `MessageWebSocket`) and passes each frame both ways as it is (`ws` web messages, `pipe` in
+lamp_web_host.cpp; `opener` in lamp.js, a stand-in with WebSocket's calls, so the room's link and the direct links are
+the same code as a TV's), saying as each frame has gone so a file's flow counts what's still to go. The page keeps the
+handshake and the seals, so the host never holds the wish's key; only the app's own page may ask, and only for a
+`ws://` link to this network (a private or link-local address, or a `.local` name, never the console's loopback;
+`may_dial`), at most 64 at once. The page claims the wish's key as a TV page does, through the host's HTTP relay
+(`LampAI._exchange`), the claim opened by the install (`DeviceApps.install`), and keeps it and the values in
+localStorage. It doesn't listen (a listener on the console would need inbound traffic the console may not let in, and
+every other kind of app of a wish listens), so with Lamp closed it reaches the apps that do, at the address it last
+reached them at or by its sweep, using the console's own address, which the host gives (`here`). Turning Chromium's
+own rules off instead (insecure content allowed, Local Network Access off) was ruled out: it would loosen the page for
+everything it loads, not just the wish's links, and the console's web view may not honour those switches. A game's
+page in Lamp's own preview has no way to Lamp, and a page over https anywhere else no host, so there `Lamp.wish` stays
+`away` with a reason saying it can't reach the others (`stranded`); the agent is told where it works
+(`Rules.gameAmongApps`, `Rules.screenAmongApps`). The TV preview of a screen joins the
 wish only when the screen is shown there (`Store.wishRoom`), so the agent's look never takes the screen's place.
 Every app of a wish, Android's included, has `LampWish` (below) to reach the wish's other apps,
 and is pointed to the `wish-links` skill on how they can share data (`Rules.wishTalk`, `Rules.androidPartTalk`). A wish is shared whole (`Sharing.export`, format 10 once it has a part): the app in its own folder (or, for a wish whose apps are all in folders, one whose folder is
