@@ -257,6 +257,12 @@ enum Sharing {
 
         // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
         // like a key.
+        // A licence the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) else { continue }
+            throw ImportError("\(project.name) can't be shared.",
+                              detail: "The licence of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+        }
         // Every app's: each of a wish's apps keeps its own secrets and token.
         let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
         let leaks = ShareCheck.secrets(in: stage, known: known)
@@ -684,10 +690,12 @@ enum Sharing {
         // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
         // each licence it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        // An update replaces what's there, so a licence whose text changed upstream never stays as it was; one the kind's
+        // files already brought is the same text written again.
         for file in package.licences {
             let target = project.dir.appendingPathComponent(Sharing.relativePath(of: file, in: package.folder))
-            guard !fm.fileExists(atPath: target.path) else { continue }
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
             try fm.copyItem(at: file, to: target)
         }
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
