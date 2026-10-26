@@ -71,12 +71,18 @@ final class CreditsTests: XCTestCase {
         try Data("GPL".utf8).write(to: project.dir.appendingPathComponent("LICENSE-engine"))
         XCTAssertNil(share())
         XCTAssertEqual(ShareCheck.notes(for: Credits.load(project)).count, 1)
+        // The licence goes with the file, so the copy can be shared on.
+        let copy = try app("copy")
+        try Sharing.install(try opened(try exported(project)), into: copy)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.dir.appendingPathComponent("LICENSE-engine").path))
 
         try Data("let key = \"sk-or-v1-made-up-key-for-the-test-0123456789\"\n".utf8).write(to: project.dir.appendingPathComponent("Sources/Key.swift"))
         XCTAssertEqual(share()?.hasPrefix("It's in Sources/Key.swift"), true)
 
         XCTAssertEqual(ShareCheck.licence("MIT OR GPL-2.0"), .open)
         XCTAssertEqual(ShareCheck.licence("MIT AND GPL-2.0"), .shareAlike)
+        XCTAssertEqual(ShareCheck.licence("GPL-3.0-only AND (MIT OR Apache-2.0)"), .shareAlike)
+        XCTAssertEqual(ShareCheck.licence("(MIT OR GPL-2.0) AND Apache-2.0 WITH LLVM-exception"), .open)
         XCTAssertEqual(ShareCheck.licence("LicenseRef-NYC-Open-Data"), .ownTerms)
         XCTAssertEqual(ShareCheck.licence(nil), .none)
     }

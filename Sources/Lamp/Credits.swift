@@ -252,6 +252,17 @@ struct Credits: Codable, Equatable {
         return value.allSatisfy(allowed.contains) && value.contains(where: \.isLetter) ? value : nil
     }
 
+    /// A licence text: LICENSE, LICENCE, COPYING or NOTICE (with anything after it, "LICENSE-slop-newyork"), plain text
+    /// or Markdown, inside the wish. Only such a file goes with a share beside the kind's own files, and is put in place on
+    /// the way in: never code.
+    static func isLicenceFile(_ path: String) -> Bool {
+        guard let path = validPath(path) else { return false }
+        let name = (path as NSString).lastPathComponent
+        let upper = name.uppercased()
+        let ext = (name as NSString).pathExtension.lowercased()
+        return ["LICENSE", "LICENCE", "COPYING", "NOTICE"].contains(where: upper.hasPrefix) && ["", "txt", "md"].contains(ext)
+    }
+
     static func validPath(_ value: String?) -> String? {
         guard let value = text(value), !value.hasPrefix("/"), !value.hasPrefix("~"),
               !value.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { return nil }

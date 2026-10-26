@@ -218,9 +218,24 @@ enum Sharing {
             case .waiting, nil: break
             }
         }
-        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it.
-        try credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project))).encoded()
-            .write(to: stage.appendingPathComponent(Credits.file))
+        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it. Its paths
+        // are the wish's; when one of its apps in a folder goes at the file's root, paths into that folder lose it.
+        let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
+        func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
+        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
+        carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
+        carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
+        try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // Each licence the credits name goes with the work it covers, wherever the kind's own files left it.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, Credits.isLicenceFile(path) else { continue }
+            let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
+            guard !fm.fileExists(atPath: to.path),
+                  (try? from.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map({ $0.isRegularFile == true && $0.isSymbolicLink != true }) == true
+            else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: from, to: to)
+        }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
         if let icon = icon ?? drawnIcon(of: project) {
@@ -242,7 +257,9 @@ enum Sharing {
 
         // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
         // like a key.
-        let leaks = ShareCheck.secrets(in: stage, known: knownSecrets(project))
+        // Every app's: each of a wish's apps keeps its own secrets and token.
+        let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
+        let leaks = ShareCheck.secrets(in: stage, known: known)
         if let first = leaks.first {
             throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
                               detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
@@ -418,6 +435,8 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
+        /// The licence texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
+        var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
         /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
@@ -492,6 +511,11 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.licences = (package.credits?.upstream ?? []).compactMap(\.licenseFile).filter(Credits.isLicenceFile).compactMap { path in
+            let file = folder.appendingPathComponent(path)
+            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            return values?.isRegularFile == true && values?.isSymbolicLink != true ? file : nil
+        }
         // The wish's other apps, each read from its folder as the app at the root is: only a folder Lamp keeps a part
         // in, named once, holding a kind that can be a part. The manifest is the sender's word, so the folder's name
         // and kind are taken only within those.
@@ -657,8 +681,15 @@ enum Sharing {
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
         try AppDescription.write(package.description, for: project)
-        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`).
+        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
+        // each licence it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
+        for file in package.licences {
+            let target = project.dir.appendingPathComponent(Sharing.relativePath(of: file, in: package.folder))
+            guard !fm.fileExists(atPath: target.path) else { continue }
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: target)
+        }
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)

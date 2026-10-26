@@ -15,19 +15,73 @@ enum ShareCheck {
     enum Licence: Equatable { case open, shareAlike, ownTerms, none }
 
     /// What an SPDX id or expression lets a remix do. An `OR` takes the most open choice and an `AND` the strictest, so
-    /// "MIT OR GPL-3.0" is open and "MIT AND GPL-3.0" share-alike. A `LicenseRef-` is the work's own terms, which Lamp
-    /// can't read: it goes, with its credit.
+    /// "MIT OR GPL-3.0" is open and "MIT AND GPL-3.0" share-alike; brackets group as SPDX has them (`WITH` binds
+    /// tightest, then `AND`, then `OR`), so "GPL-3.0-only AND (MIT OR Apache-2.0)" is share-alike. A `LicenseRef-` is the
+    /// work's own terms, which Lamp can't read: it goes, with its credit. An expression that doesn't parse is no licence.
     static func licence(_ expression: String?) -> Licence {
         guard let expression = expression?.trimmed, !expression.isEmpty else { return .none }
-        let alternatives = expression.replacingOccurrences(of: "(", with: " ").replacingOccurrences(of: ")", with: " ")
-            .components(separatedBy: " OR ")
-        func strictness(_ licence: Licence) -> Int { [.open: 0, .ownTerms: 1, .shareAlike: 2, .none: 3][licence]! }
-        let each = alternatives.map { alternative in
-            alternative.components(separatedBy: " AND ").map { term in
-                single(term.components(separatedBy: " WITH ")[0].trimmed)
-            }.max { strictness($0) < strictness($1) } ?? .none
+        var tokens: [String] = []
+        var word = ""
+        for character in expression {
+            if character == "(" || character == ")" || character == " " {
+                if !word.isEmpty { tokens.append(word); word = "" }
+                if character != " " { tokens.append(String(character)) }
+            } else {
+                word.append(character)
+            }
         }
-        return each.min { strictness($0) < strictness($1) } ?? .none
+        if !word.isEmpty { tokens.append(word) }
+        var at = 0
+        func strictness(_ licence: Licence) -> Int { [.open: 0, .ownTerms: 1, .shareAlike: 2, .none: 3][licence]! }
+        func peek() -> String? { at < tokens.count ? tokens[at] : nil }
+        func term() -> Licence? {
+            guard let token = peek() else { return nil }
+            at += 1
+            var result: Licence
+            if token == "(" {
+                guard let inner = or(), peek() == ")" else { return nil }
+                at += 1
+                result = inner
+            } else if ["AND", "OR", "WITH", ")"].contains(token.uppercased()) {
+                return nil
+            } else {
+                result = single(token)
+            }
+            // An exception (`WITH Classpath-exception-2.0`) only loosens a licence: it's read as the licence itself.
+            while peek()?.uppercased() == "WITH" {
+                at += 1
+                guard let exception = peek(), exception != "(", exception != ")" else { return nil }
+                at += 1
+            }
+            return result
+        }
+        func and() -> Licence? {
+            guard var result = term() else { return nil }
+            while peek()?.uppercased() == "AND" {
+                at += 1
+                guard let next = term() else { return nil }
+                if strictness(next) > strictness(result) { result = next }
+            }
+            return result
+        }
+        func or() -> Licence? {
+            guard var result = and() else { return nil }
+            while peek()?.uppercased() == "OR" {
+                at += 1
+                guard let next = and() else { return nil }
+                if strictness(next) < strictness(result) { result = next }
+            }
+            return result
+        }
+        guard let result = or(), at == tokens.count else { return .none }
+        return result
+    }
+
+    /// Share-alike licences for data rather than code (OpenStreetMap's ODbL, CDLA-Sharing): the data stays under them,
+    /// not the remix as a whole.
+    static func isDataLicence(_ id: String?) -> Bool {
+        guard let id = id?.uppercased() else { return false }
+        return id.hasPrefix("ODBL-") || id.hasPrefix("CDLA-SHARING-")
     }
 
     private static func single(_ id: String) -> Licence {
@@ -71,6 +125,8 @@ enum ShareCheck {
         var notes: [String] = []
         for source in credits.upstream {
             switch licence(source.license) {
+            case .shareAlike where isDataLicence(source.license):
+                notes.append("\(source.name) is \(source.license ?? ""): it stays under that licence, credited, in this remix.")
             case .shareAlike: notes.append("\(source.name) is \(source.license ?? ""), so this remix is too: anyone may share it on under the same licence.")
             case .ownTerms: notes.append("\(source.name) is used under its own terms (\(source.license ?? "")).")
             case .open, .none: break
@@ -103,17 +159,33 @@ enum ShareCheck {
     ].map { try! NSRegularExpression(pattern: $0) }
 
     /// The files in `folder` (as staged to go) that hold one of `known` or something shaped like a key, by their path in it.
+    /// Every file is read, whatever its size, in pieces that overlap by more than any key is long, so a key across two
+    /// pieces is still found; one that can't be read is counted as holding one, since it can't be said not to.
     static func secrets(in folder: URL, known: [String]) -> [String] {
         let fm = FileManager.default
         var found: [String] = []
-        for case let file as URL in fm.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]) ?? FileManager.DirectoryEnumerator() {
-            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
-                  (values.fileSize ?? 0) <= 20_000_000, let data = try? Data(contentsOf: file) else { continue }
-            // Text in any file, pictures included: a key pasted into a JSON or left in a picture's metadata goes as well.
-            let text = String(decoding: data, as: UTF8.self)
-            let hit = known.contains { text.contains($0) }
-                || tokenShapes.contains { $0.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil }
-            if hit { found.append(Sharing.relativePath(of: file, in: folder)) }
+        let piece = 4 << 20, overlap = 4096
+        for case let file as URL in fm.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator() {
+            guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+            guard let handle = try? FileHandle(forReadingFrom: file) else { found.append(Sharing.relativePath(of: file, in: folder)); continue }
+            defer { try? handle.close() }
+            var tail = Data()
+            while true {
+                let next: Data
+                do { next = try handle.read(upToCount: piece) ?? Data() } catch {
+                    found.append(Sharing.relativePath(of: file, in: folder))
+                    break
+                }
+                if next.isEmpty { break }
+                // Text in any file, pictures included: a key pasted into a JSON or left in a picture's metadata goes as well.
+                let text = String(decoding: tail + next, as: UTF8.self)
+                if known.contains(where: { text.contains($0) })
+                    || tokenShapes.contains(where: { $0.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil }) {
+                    found.append(Sharing.relativePath(of: file, in: folder))
+                    break
+                }
+                tail = next.suffix(overlap)
+            }
         }
         return found.sorted()
     }
