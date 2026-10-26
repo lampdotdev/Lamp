@@ -114,12 +114,22 @@ enum Chapters {
                 if let stamped = line.part { part = min(max(stamped, 0), count - 1) }
                 parts[part].append(line)
             }
-            segments.append(.build(Build(id: lines[min(body, end - 1)].id, titles: titles, parts: parts,
+            // Its first line, or before anything came of the request one of its own: the request's id would be the
+            // chat's line twice, and the chat, which lists its lines by id, would draw the request twice.
+            let id = body < end ? lines[body].id : Self.emptyBuildID(after: lines[end - 1].id)
+            segments.append(.build(Build(id: id, titles: titles, parts: parts,
                                          summary: summary.map { lines[$0] }, live: live, answer: answer, chat: lines,
                                          built: built)))
             start = summary.map { $0 + 1 } ?? end
         }
         if !plain.isEmpty { segments.append(.lines(plain)) }
         return segments
+    }
+
+    /// An id for a build with nothing in it yet, made from its request's so it's the same at every redraw.
+    static func emptyBuildID(after request: UUID) -> UUID {
+        var bytes = request.uuid
+        withUnsafeMutableBytes(of: &bytes) { raw in for index in raw.indices { raw[index] ^= 0x5A } }
+        return UUID(uuid: bytes)
     }
 }
