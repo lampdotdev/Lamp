@@ -245,7 +245,7 @@ struct LogLine: Identifiable, Codable, Equatable {
     /// `progress` is the agent's line on how the work is going (`Talk`'s `progress`), folded with the turn's
     /// steps once it ends.
     /// `deviceStep` is a device's next setup step, drawn from its integration (`DeviceStepLine`); its text is the device's id.
-    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening }
+    enum Kind: String, Codable { case user, agent, status, error, detail, tool, summary, needsKey, offer, noted, drawIcon, widget, ask, result, iphoneSetup, progress, reload, deviceStep, keepOpening, phoneSlot }
     var id = UUID()
     let kind: Kind
     var text: String
@@ -8234,6 +8234,15 @@ final class Store: ObservableObject {
             failed(problem)
             return nil
         }
+        // A free account's phone holds three of its apps: asked before a fourth is built, rather than refused after.
+        if PhoneTools.xcodeFreeTeams().contains(team), let installed = await Devices.developerApps(on: udid) {
+            guard stillOwns() else { return nil }
+            if let other = PhoneSlots.toTakeOff(installed: PhoneSlots.teamApps(installed, team: team), mine: project.deviceBundleID(team: team),
+                                                known: knownOnPhone(udid, team: team, installed: installed)) {
+                log(project, .phoneSlot, other, retryPhone: udid)
+                return nil
+            }
+        }
         do {
             try await Devices.stage(project, team: team, wishKey: wishKey(for: project), started: { owner.build = $0 })
             owner.build = nil
@@ -9369,6 +9378,62 @@ final class Store: ObservableObject {
         }
         workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { Task { await Store.shared.renewPhoneApps() } }
+        }
+    }
+
+    /// The person's apps Lamp knows on the phone `udid`: those it keeps for renewal there, and those put there before
+    /// Lamp kept them, found by their bundle id.
+    private func knownOnPhone(_ udid: String, team: String, installed: [String]) -> [PhoneSlots.Known] {
+        projects.compactMap { other in
+            if let record = PhoneRenewals.record(for: other), record.udid == udid { return .init(bundleID: record.bundleID, expires: record.expires) }
+            let id = other.deviceBundleID(team: team)
+            return other.hasIOS && installed.contains(id) ? .init(bundleID: id, expires: nil) : nil
+        }
+    }
+
+    /// The name of the app of the person's whose bundle id on a phone is `bundleID`, if this Lamp knows it.
+    func appName(onPhone bundleID: String) -> String? {
+        projects.first { PhoneRenewals.record(for: $0)?.bundleID == bundleID || ($0.hasIOS && $0.deviceBundleID(team: Devices.team) == bundleID) }?.name
+    }
+
+    /// The person chose, on the card, to take an app off a full phone: it comes off (its data with it), Lamp forgets
+    /// keeping it there, and this app goes on.
+    func freePhoneSlot(_ project: LampProject, line id: UUID) async {
+        guard let line = logs[project.id]?.first(where: { $0.id == id }), let udid = line.retryPhone,
+              !line.text.hasPrefix(PhoneSlotLine.done) else { return }
+        let other = line.text
+        // The app coming off is held as a turn holds it, so a renewal or install of it can't put it back meanwhile.
+        if let held = projects.first(where: { app in
+            // By its bundle id alone, whichever phone its record is for: an install of it here may be under way.
+            app.id != project.id && (PhoneRenewals.record(for: app)?.bundleID == other || (app.hasIOS && app.deviceBundleID(team: Devices.team) == other))
+        }) {
+            guard begin(held) != nil else {
+                log(project, .status, "\(held.name) is busy just now. Press Take It Off again in a moment.")
+                return
+            }
+            defer { finish(held) }
+            guard await takeOff(other, from: udid, for: project) else { return }
+            // Only the copy on this phone: the same app kept on another phone goes on being renewed there.
+            if PhoneRenewals.record(for: held)?.udid == udid { PhoneRenewals.forget(held) }
+        } else {
+            guard await takeOff(other, from: udid, for: project) else { return }
+        }
+        if var lines = logs[project.id], let index = lines.firstIndex(where: { $0.id == id }) {
+            lines[index].text = PhoneSlotLine.done + other
+            logs[project.id] = lines
+            saveChat(project)
+        }
+        await retryPhone(project, udid: udid)
+    }
+
+    /// Uninstalls `bundleID` from the phone for the slot card, saying in `project`'s chat when it couldn't.
+    private func takeOff(_ bundleID: String, from udid: String, for project: LampProject) async -> Bool {
+        do {
+            try await Devices.uninstall(bundleID, from: udid)
+            return true
+        } catch {
+            log(project, .error, (error as? PhoneFailure)?.message ?? error.localizedDescription)
+            return false
         }
     }
 

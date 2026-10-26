@@ -777,13 +777,24 @@ final class SidebarServer {
                     card.button = "See What's Needed…"
                     card.disabled = IPhoneSetupLine.isOff(for: project, wanted: kind, part: part)
                     out.append(card)
+                case .phoneSlot:
+                    let taken = line.text.hasPrefix(PhoneSlotLine.done)
+                    let other = String(line.text.dropFirst(taken ? PhoneSlotLine.done.count : 0))
+                    let phone = Store.shared.devices.first { $0.udid == line.retryPhone }?.name ?? "your phone"
+                    let text = PhoneSlotLine.text(this: project.name, other: Store.shared.appName(onPhone: other) ?? "an older app", phone: phone, taken: taken)
+                    var card = SidebarLine(id: line.id, kind: .action, text: text, gap: gap)
+                    card.symbol = PhoneSlotLine.symbol
+                    card.button = taken ? nil : PhoneSlotLine.button
+                    // A prominent card with no button draws an empty one.
+                    card.prominent = !taken
+                    out.append(card)
                 case .keepOpening:
                     // What Lamp does now, whatever was pressed before: turned off in Settings, the card offers it again.
                     let on = PhoneRenewals.staysOpen
                     var card = SidebarLine(id: line.id, kind: .action, text: KeepOpeningLine.text(project.name, on: on), gap: gap)
                     card.symbol = KeepOpeningLine.symbol
                     card.button = on ? nil : KeepOpeningLine.button
-                    card.prominent = true
+                    card.prominent = !on
                     out.append(card)
                 case .deviceStep:
                     // The step's card has a field and a sign-in, which happen in Lamp's window.
@@ -1038,6 +1049,10 @@ final class SidebarServer {
             if line.kind == .reload { return store.reloadWaiting(project.id) }
             if line.kind == .error, let udid = line.retryPhone {
                 Task { await store.retryPhone(project, udid: udid) }
+                return
+            }
+            if line.kind == .phoneSlot {
+                Task { await store.freePhoneSlot(project, line: line.id) }
                 return
             }
             if line.kind == .keepOpening {

@@ -278,6 +278,22 @@ enum Devices {
         return await TeamSigning.expiry(of: app.appendingPathComponent("embedded.mobileprovision")) ?? plan.expires
     }
 
+    /// The bundle ids of the apps a developer built on the phone, or nil when it couldn't be asked.
+    static func developerApps(on udid: String) async -> [String]? {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-phone-apps-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "info", "apps", "--device", udid, "--json-output", file.path],
+                                          mergeErrors: true, timeout: 60)
+        guard result.ok, let data = try? Data(contentsOf: file) else { return nil }
+        return PhoneSlots.developerApps(in: data)
+    }
+
+    static func uninstall(_ bundleID: String, from udid: String) async throws {
+        let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "uninstall", "app", "--device", udid, bundleID],
+                                          mergeErrors: true, timeout: 120)
+        guard result.ok else { throw PhoneFailure(stage: .install, output: result.output + "\n" + result.errors) }
+    }
+
     static func install(_ app: URL, on udid: String) async throws {
         let result = await Subprocess.run(DeveloperTools.path("devicectl"), ["device", "install", "app", "--device", udid, app.path],
                                           mergeErrors: true, timeout: 300)

@@ -892,7 +892,11 @@ struct PhoneSigningSection: View {
                     } else {
                         Picker("Apple Team", selection: $team) {
                             if !phoneApps { Text("None").tag("") }
-                            ForEach(teams, id: \.id) { Text("\($0.name) (\(free.contains($0.id) ? "Personal Team, " : "")\($0.id))").tag($0.id) }
+                            // Xcode may already name a free team "… (Personal Team)": said once.
+                            ForEach(teams, id: \.id) { team in
+                                let mark = free.contains(team.id) && !team.name.localizedCaseInsensitiveContains("Personal Team") ? "Personal Team, " : ""
+                                Text("\(team.name) (\(mark)\(team.id))").tag(team.id)
+                            }
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
                     }
