@@ -3596,19 +3596,21 @@ enum Template {
             var system = body["system"] as? String ?? ""
             let json = body["json"] as? Bool ?? false
             if json { system += "\n\nRespond with only valid JSON. No prose, no code fences." }
-            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, key: key, model: model)
+            let schema = body["schema"] as? [String: Any]
+            var text = try await chat(prompt: prompt, system: system, images: body["images"] as? [[String: String]] ?? [], json: json, schema: schema, key: key, model: model)
             guard json else { return text }
             // A JSON reply that doesn't parse is useless to the app: once more, saying so.
             text = unfenced(text)
             if !isJSON(text) {
                 let again = "\(prompt)\n\nYour previous reply was not valid JSON (it may have been cut off). Reply with the complete JSON only."
-                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, key: key, model: model))
+                text = unfenced(try await chat(prompt: again, system: system, images: body["images"] as? [[String: String]] ?? [], json: true, schema: schema, key: key, model: model))
                 if !isJSON(text) { throw LampAI.Failure(message: "The AI's reply wasn't valid JSON, even on a second try. Ask for less at once.") }
             }
             return text
         }
 
-        private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, key: String, model: String) async throws -> String {
+        private static func chat(prompt: String, system: String, images: [[String: String]], json: Bool, schema: [String: Any]? = nil,
+                                 key: String, model: String) async throws -> String {
             var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
             request.httpMethod = "POST"
             request.timeoutInterval = 120
@@ -3624,7 +3626,9 @@ enum Template {
             messages.append(["role": "user", "content": content])
             var payload: [String: Any] = ["model": model, "messages": messages]
             if json {
-                payload["response_format"] = ["type": "json_object"]
+                // With a schema, the reply must fit it (a decision's every key, its exact options).
+                payload["response_format"] = schema.map { ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": $0]] }
+                    ?? ["type": "json_object"]
                 payload["max_tokens"] = 16_000
             }
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -3644,6 +3648,36 @@ enum Template {
             }
             throw LampAI.Failure(message: "The AI didn't answer.")
         }
+        /// The answers' shape as a JSON schema the model is held to: every question's key, and a choice's own options.
+        private static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
+            func object(_ properties: [String: Any]) -> [String: Any] {
+                ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
+            }
+            let number: [String: Any] = ["type": "number"]
+            var answers: [String: Any] = [:]
+            for (id, value) in questions {
+                guard let question = value as? [String: Any], let type = question["type"] as? String else { continue }
+                switch type {
+                case "noul":
+                    answers[id] = object(["noul": number])
+                case "choice":
+                    // Each option once: an app may list one twice, and the schema's properties can't hold it twice.
+                    let options = Set((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
+                    answers[id] = object(["choice": ["type": "string", "enum": options] as [String: Any],
+                                          "probabilities": object(Dictionary(uniqueKeysWithValues: options.map { ($0, number as Any) })),
+                                          "confidence": number])
+                case "score":
+                    let levels = (question["criteria"] as? [Any])?.count ?? 0
+                    answers[id] = object(["score": number,
+                                          "probabilities": object(Dictionary(uniqueKeysWithValues: (0..<levels).map { (String($0), number as Any) })),
+                                          "confidence": number])
+                default:
+                    continue
+                }
+            }
+            return object(answers)
+        }
+
 
         /// Decisions without a decision model: the questions go to the text model as JSON, and its answers
         /// come back in the shape Jev's would, checked against each question as Lamp checks them.
@@ -3671,7 +3705,8 @@ enum Template {
             probability per level index, summing to 1; s is the probability-weighted index; confidence (0 to 1) is \
             how concentrated the probabilities are.
             """
-            let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true], key: key, model: model)
+            let text = try await complete(["prompt": "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)", "system": system, "json": true,
+                                           "schema": decisionSchema(questions)], key: key, model: model)
             guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
                 throw LampAI.Failure(message: "The model's decision wasn't valid JSON.")
             }

@@ -375,7 +375,11 @@ enum AppAI {
         case .codex: if let route = route(canonicalRoute("engine:codex")) { return route }
         case .pi: break
         }
-        return routes.first(where: \.available) ?? routes.first { $0.id == "sonnet" }!
+        // Never a model on this Mac by default: it's for those who choose it (here, or pi building with it, above).
+        return routes.first { route in
+            if case .localModel = route.kind { return false }
+            return route.available
+        } ?? routes.first { $0.id == "sonnet" }!
     }
 
     /// The OpenRouter model an app on the person's phone uses away from the Mac, where only OpenRouter can
@@ -552,11 +556,11 @@ enum AppAI {
             throw Failure(message: noTextRoute, needs: .text)
         case .engine(let engine, let model):
             return try await viaEngine(engine, prompt: prompt, images: images, system: system, model: engineModel ?? model,
-                                       timeLimit: timeLimit)
+                                       schema: json ? schema : nil, timeLimit: timeLimit)
         case .localModel(_, let model):
             let base = try await LocalModels.shared.ensureServer(for: model)
             return try await viaOpenAICompatible("\(base)/v1/chat/completions", key: nil,
-                                                 prompt: prompt, images: images, system: system, model: model)
+                                                 prompt: prompt, images: images, system: system, model: model, schema: json ? schema : nil)
         }
     }
 
@@ -570,7 +574,8 @@ enum AppAI {
     /// One-shot answer from an external coding agent, using the user's own sign-in (and so their subscription).
     /// Isolated from their setup like a build turn, with no tools except reading the images it's given.
     private static func viaEngine(_ engine: Engine, prompt: String, images: [Image],
-                                  system: String, model: String, timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
+                                  system: String, model: String, schema: [String: Any]? = nil,
+                                  timeLimit: TimeInterval? = nil) async throws -> (String, Double) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-ai-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -586,6 +591,13 @@ enum AppAI {
                                      "LAMP_PROMPT": prompt]
         env.merge(EngineInstall.environment(for: engine)) { $1 }
         for (index, file) in files.enumerated() { env["LAMP_FILE_\(index)"] = file }
+        // A JSON schema the answer must fit: Claude Code takes it as text, Codex as a file.
+        var schemaArg = ""
+        if let schema, let data = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]) {
+            env["LAMP_SCHEMA"] = String(decoding: data, as: UTF8.self)
+            if engine == .codex { try data.write(to: folder.appendingPathComponent("schema.json")) }
+            schemaArg = engine == .codex ? "--output-schema schema.json " : "--json-schema \"$LAMP_SCHEMA\" "
+        }
         let command: String
         switch engine {
         case .claude:
@@ -595,7 +607,7 @@ enum AppAI {
             command = """
             "$LAMP_TOOL" -p "$LAMP_PROMPT" --output-format stream-json --verbose --no-session-persistence \\
               --restricted --strict-mcp-config --disable-slash-commands \\
-              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$LAMP_MODEL" --system-prompt "$LAMP_SYSTEM"
+              --tools \(files.isEmpty ? "''" : "Read --allowedTools Read") --model "$LAMP_MODEL" \(schemaArg)--system-prompt "$LAMP_SYSTEM"
             """
         case .codex:
             env["LAMP_CODEX_INSTRUCTIONS"] = "developer_instructions="
@@ -610,7 +622,7 @@ enum AppAI {
             }
             command = """
             "$LAMP_TOOL" exec --json --ignore-user-config --ignore-rules --skip-git-repo-check --ephemeral \\
-              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
+              -s read-only -c hooks={} -c model_reasoning_effort="low" \(modelArg)\(schemaArg)-c "$LAMP_CODEX_INSTRUCTIONS" \(imageArgs) -- "$LAMP_PROMPT"
             """
         case .pi:
             throw Failure(message: noTextRoute, needs: .text)
@@ -631,6 +643,13 @@ enum AppAI {
                 Subprocess.terminateTree(process)
             }
         }) { line in
+            // With a schema, Claude Code gives the answer in its result, not as a message.
+            if schema != nil, engine == .claude, line.contains("\"structured_output\""),
+               let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any], obj["type"] as? String == "result",
+               let answer = obj["structured_output"], let data = try? JSONSerialization.data(withJSONObject: answer) {
+                text = String(decoding: data, as: UTF8.self)
+                return
+            }
             for event in Agent.parse(line, engine: engine) {
                 switch event {
                 case .text(let chunk): text = chunk   // the last message is the answer
@@ -650,7 +669,7 @@ enum AppAI {
 
     /// Chat completion against an OpenAI-compatible endpoint: Lamp's own model servers on this Mac.
     private static func viaOpenAICompatible(_ endpoint: String, key: String?, prompt: String, images: [Image],
-                                            system: String, model: String) async throws -> (String, Double) {
+                                            system: String, model: String, schema: [String: Any]? = nil) async throws -> (String, Double) {
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.timeoutInterval = 600   // local models may need to load first
@@ -662,7 +681,9 @@ enum AppAI {
             ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.data)"]]
         }
         messages.append(["role": "user", "content": content])
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": model, "messages": messages] as [String: Any])
+        var body: [String: Any] = ["model": model, "messages": messages]
+        if let schema { body["response_format"] = ["type": "json_schema", "json_schema": ["name": "answer", "strict": true, "schema": schema]] }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         guard (response as? HTTPURLResponse)?.statusCode == 200,
@@ -715,7 +736,8 @@ enum AppAI {
     @MainActor static func decisionRoute(for appChoice: String?, appText: String? = nil) -> (id: String, label: String, provider: String, model: String)? {
         let wanted = decisionModels.first { $0.id == appChoice } ?? decisionModel
         if canDecide(with: wanted, appText: appText) { return wanted }
-        return decisionModels.first { $0.provider != "text" && canDecide(with: $0, appText: appText) }
+        // Not the model on this Mac unless it's the one chosen: it's for those who choose it.
+        return decisionModels.first { $0.provider == "openrouter" && canDecide(with: $0, appText: appText) }
             ?? decisionModels.first { $0.provider == "text" && canDecide(with: $0, appText: appText) }
     }
 
@@ -889,6 +911,38 @@ enum AppAI {
         }
     }
 
+    /// The answers' shape as a JSON schema, which the routes that take one hold the model to: every question's key,
+    /// and for a choice only its own options, written exactly. Without it a small model sometimes left the
+    /// question's key off its answer.
+    static func decisionSchema(_ questions: [String: Any]) -> [String: Any] {
+        func object(_ properties: [String: Any]) -> [String: Any] {
+            ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
+        }
+        let number: [String: Any] = ["type": "number"]
+        var answers: [String: Any] = [:]
+        for (id, value) in questions {
+            guard let question = value as? [String: Any], let type = question["type"] as? String else { continue }
+            switch type {
+            case "noul":
+                answers[id] = object(["noul": number])
+            case "choice":
+                // Each option once: an app may list one twice, and the schema's properties can't hold it twice.
+                let options = Set((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
+                answers[id] = object(["choice": ["type": "string", "enum": options] as [String: Any],
+                                      "probabilities": object(Dictionary(uniqueKeysWithValues: options.map { ($0, number as Any) })),
+                                      "confidence": number])
+            case "score":
+                let levels = (question["criteria"] as? [Any])?.count ?? 0
+                answers[id] = object(["score": number,
+                                      "probabilities": object(Dictionary(uniqueKeysWithValues: (0..<levels).map { (String($0), number as Any) })),
+                                      "confidence": number])
+            default:
+                continue
+            }
+        }
+        return object(answers)
+    }
+
     /// Decisions without a decision model: the questions go to a small text model as JSON, and its answers
     /// come back in the same shape Jev's would (`noul`, `choice`/`score` with `probabilities` and
     /// `confidence`), checked against each question so an app can't be handed a made-up option.
@@ -918,7 +972,8 @@ enum AppAI {
         """
         let prompt = "State:\n\(stateJSON)\n\nQuestions:\n\(questionsJSON)"
         let fast = await fastModel(for: route(for: appText))
-        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: appText, engineModel: fast)
+        let (text, cost) = try await complete(prompt: prompt, images: [], system: system, json: true, appModel: appText, engineModel: fast,
+                                              schema: decisionSchema(questions))
         guard let raw = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw Failure(message: "The model's decision wasn't valid JSON.", cost: cost)
         }
