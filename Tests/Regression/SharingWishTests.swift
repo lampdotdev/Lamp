@@ -38,6 +38,11 @@ final class SharingWishTests: XCTestCase {
     func testAWishTravelsWholeWithItsTVAppsWebFiles() throws {
         let wish = try tvWishWithPhone()
         XCTAssertEqual(Parts.load(try XCTUnwrap(Store.readWish(at: wish.dir))).map(\.platform), [.iphone])
+        // three.js in the TV app's page is Lamp's (`TVTemplate.writeOwnedFiles` writes it from Lamp's resources, which a
+        // test run doesn't have), so a copy there stands in for it.
+        try write("export const REVISION = '187dev';\n", to: "Web/three/three.module.js", in: wish.dir)
+        XCTAssertTrue(TVTemplate.isLamps("Web/three/three.module.js") && TVTemplate.isLamps("Web/lamp.js"))
+        XCTAssertFalse(TVTemplate.isLamps("Web/threes.js") || TVTemplate.isLamps("Web/app.js"))
         let package = try opened(try exported(wish))
         let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: package.folder.appendingPathComponent("lamp-app.json"))) as? [String: Any]
         XCTAssertEqual(manifest?["format"] as? Int, 10)
@@ -46,6 +51,7 @@ final class SharingWishTests: XCTestCase {
         let carried = Set((FileManager.default.enumerator(atPath: package.folder.path)?.allObjects as? [String]) ?? [])
         XCTAssertTrue(carried.isSuperset(of: ["Web/index.html", "Web/app.js", "Web/logo.png", "Phone/index.html", "iPhone/Sources/Pad.swift", "iPhone/APP.md"]), "\(carried)")
         XCTAssertFalse(carried.contains("Web/lamp.js"))
+        XCTAssertFalse(carried.contains { $0.hasPrefix("Web/three") }, "three.js is Lamp's, written again where the file opens")
         XCTAssertFalse(carried.contains("iPhone/Sources/LampSupport.swift"))
         XCTAssertFalse(carried.contains("iPhone/Package.swift"))
 

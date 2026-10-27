@@ -344,6 +344,8 @@ enum WishLink {
                 // down, so a file that fails after this leaves a link the card can still stop.
                 shared.shown.file = card.shared?.shown.file
                 WishLink.keep(shared, for: project)
+                // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
+                Store.shared.refreshInstalled(project)
                 cards[project.id]?.shared = shared
                 // The wish itself, made as Share… makes it (with its checks), sent with the link; or taken away from a link
                 // that carried it and shouldn't now.
@@ -352,6 +354,8 @@ enum WishLink {
                     // whole file whose answer was lost, so unticking later takes it away (`removeFile` clears both).
                     shared.shown.file = true
                     WishLink.keep(shared, for: project)
+                // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
+                Store.shared.refreshInstalled(project)
                     cards[project.id]?.shared = shared
                     let data = try await Task.detached(priority: .userInitiated) { () throws -> Data in
                         let file = try Sharing.export(project)
@@ -364,6 +368,8 @@ enum WishLink {
                 }
                 shared.shown = words
                 WishLink.keep(shared, for: project)
+                // The link goes into the installed app too, for a Mac without Lamp (`RemixPanel`).
+                Store.shared.refreshInstalled(project)
                 guard cards[project.id] != nil else { return }
                 cards[project.id]?.shared = shared
                 cards[project.id]?.stage = .editing
@@ -398,6 +404,7 @@ enum WishLink {
             do {
                 try await WishLink.remove(shared)
                 WishLink.keep(nil, for: project)
+                Store.shared.refreshInstalled(project)
                 cards[project.id] = nil
             } catch {
                 cards[project.id]?.stage = .failed(error.localizedDescription)

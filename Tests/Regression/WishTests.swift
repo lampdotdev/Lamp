@@ -28,6 +28,12 @@ final class WishTests: XCTestCase {
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://edit?app=tally")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp-dev://wish?text=hello")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://wish")), scheme: "lamp"))
+        // The exact wish a link names, with its request: an https address only.
+        let exact = Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?file=https%3A%2F%2Ffiles.example%2Fw%2Fabc.lampapp&text=Add%20a%20map")), scheme: "lamp")
+        XCTAssertEqual(exact, Wish.Exact(file: try XCTUnwrap(URL(string: "https://files.example/w/abc.lampapp")), text: "Add a map"))
+        XCTAssertNil(Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?file=http%3A%2F%2Ffiles.example%2Fabc.lampapp&text=x")), scheme: "lamp"))
+        XCTAssertNil(Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?file=file%3A%2F%2F%2Fetc%2Fpasswd")), scheme: "lamp"))
+        XCTAssertNil(Wish.exact(from: try XCTUnwrap(URL(string: "lamp://wish?text=hello")), scheme: "lamp"))
         XCTAssertNil(Wish.from(link: try XCTUnwrap(URL(string: "lamp://wish?text=%20%20")), scheme: "lamp"))
     }
 

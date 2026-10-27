@@ -111,5 +111,6 @@ something needs the user.
 ## Game or toy
 
 Played rather than used: fully custom, with no standard chrome while playing; pause, settings and scores are standard
-and large. SwiftUI animation for the simplest toy. Anything played in real time is a game: open the game skill, which
-has its controls, sound, saves and smoothness for each way it's made.
+and large. SwiftUI animation for the simplest toy in a native app. Anything played in real time is a game, made web
+with three.js by default wherever Lamp has a host for a page (the web-or-native skill): open the game skill, which has
+its controls, sound, saves and smoothness for each way it's made.

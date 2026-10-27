@@ -21,8 +21,29 @@ enum TVTemplate {
         FileManager.default.fileExists(atPath: dir.appendingPathComponent(supportFile).path) && !DeviceApps.isScaffolded(dir)
     }
 
+    /// Where three.js goes in a TV app's page, as a game's page has it: Lamp's, written before every build, so a game
+    /// played with phones on the TV can draw in 3D as a game on Lamp's runtime does.
+    static let threeFolder = "\(webFolder)/three"
+
+    /// Lamp's own files in a TV app's folder, by their path there: its script, and three.js.
+    static func isLamps(_ relative: String) -> Bool {
+        relative == supportFile || relative.hasPrefix(threeFolder + "/")
+    }
+
+    /// three.js as a TV app's page is given it: Lamp's copy (`DeviceSupport.threeFiles`). Tests stand in their own, since
+    /// a test run has none of Lamp's resources.
+    static var threeSource: (LampProject) -> [(name: String, contents: String)] = { DeviceSupport.threeFiles(for: $0, page: webFolder) }
+
+    /// lamp.js, and for a TV app three.js too. A web app or a screen made before writes lamp.js through here as well
+    /// (`ScreenKit.write`), but three.js isn't Lamp's in those (`DeviceSupport.paths`): a copy of their own at Web/three
+    /// stays theirs, and none is added to a page that never asked for one.
     static func writeOwnedFiles(for project: LampProject) throws {
         try Template.write(lampJS(for: project), to: supportFile, for: project)
+        guard !ScreenKit.isScreen(project) else { return }
+        // `put`, as a game's are: only where they differ, and never into the app's versions (`DeviceSupport.paths`).
+        for file in threeSource(project) {
+            try Template.put(file.contents, at: project.dir.appendingPathComponent("\(threeFolder)/\(file.name)"), for: project)
+        }
     }
 
     static func fill(_ project: LampProject) throws {
@@ -2428,6 +2449,10 @@ extension TVTemplate {
           }
           function heldItem(id, v) { return bytes(id) + (v === undefined ? 32 : Math.max(32, bytes(JSON.stringify(v)))); }
           function heldAll() { var t = 0; for (var n in cols) for (var id in cols[n]) t += cols[n][id].h; return t; }
+          // Only what this app set counts toward its own limit: a wish's own collections also hold what its other apps set,
+          // which this one can't make room for. An item set before this app knew its own name is its own.
+          function isOwn(item) { return !item.c[2] || (!!mine && appOf(item.c[2]) === mine); }
+          function heldOwn() { var t = 0; for (var n in cols) for (var id in cols[n]) if (isOwn(cols[n][id])) t += cols[n][id].h; return t; }
           function colItems(name) {
             var list = [], c = cols[name] || {};
             for (var id in c) if (c[id].v !== undefined) list.push([id, c[id].v]);
@@ -2453,9 +2478,10 @@ extension TVTemplate {
             for (var k in cols) count++;
             if (!cols[name] && count >= COLLECTIONS) { say(what + ': an app shares at most ' + COLLECTIONS + ' collections.'); return false; }
             dropExpiredItems();
-            var held = heldAll(), sets = {}, changed = [], failed = false;
+            var held = heldOwn(), sets = {}, changed = [], failed = false;
             for (var i = 0; i < given.length; i++) {
-              var id = given[i][0], value = given[i][1], had = cols[name] && cols[name][id], v, size = 32;
+              // v is set afresh for each item: a deletion after a put must not take the put's value.
+              var id = given[i][0], value = given[i][1], had = cols[name] && cols[name][id], v = undefined, size = 32;
               if (!itemOk(id)) { say(what + ': an item\'s id is 1 to 128 bytes; "' + String(id).slice(0, 40) + '" was not set.'); failed = true; continue; }
               if (value !== null && value !== undefined) {
                 var text;
@@ -2468,9 +2494,10 @@ extension TVTemplate {
                 if (had && had.v !== undefined && v !== undefined && canon(had.v) === canon(v)) continue;
               }
               if (v === undefined && (!had || had.v === undefined)) continue;
-              var need = bytes(id) + Math.max(32, v === undefined ? 32 : size);
-              if (held - (had ? had.h : 0) + need > SHARED) { say(what + ': the item "' + id + '" was not set: the app\'s shared collections would pass ' + SHARED + ' bytes (a deleted item counts 32 bytes for a month).'); failed = true; continue; }
-              held += need - (had ? had.h : 0);
+              var need = bytes(id) + Math.max(32, v === undefined ? 32 : size), ownHad = had && isOwn(had) ? had.h : 0;
+              // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+              if (v !== undefined && held - ownHad + need > SHARED) { say(what + ': the item "' + id + '" was not set: this app\'s items in shared collections would pass ' + SHARED + ' bytes (a deleted item counts 32 bytes for a month).'); failed = true; continue; }
+              held += need - ownHad;
               var now = Date.now();
               clock = now > clock[0] ? [now, 0] : clock[1] < COUNTS ? [clock[0], clock[1] + 1] : [clock[0] + 1, 0];
               if (!cols[name]) cols[name] = Object.create(null);
@@ -3281,11 +3308,11 @@ extension Agent {
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`), as `prompt(platform:…)` takes it.
     static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil, alone: Bool = false) -> String {
         let rules = part == nil
-            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound,
+            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.tvPhoneApps, Rules.webAI, Rules.webSound,
                Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
-            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound, Rules.tvLogs, Rules.tvTry,
-               alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
+            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, alone ? "" : Rules.tvPhoneApps, Rules.webAI, Rules.webSound, Rules.tvLogs,
+               Rules.tvTry, alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
         let header = part.map { Rules.partHeader("a TV app (HTML, CSS and JavaScript in Web/, the same files for Samsung and LG TVs, with no build step)", folder: $0) }
             ?? Rules.tvHeader
         return (header + "\n\nRules:\n" + rules.joined())
@@ -3312,10 +3339,21 @@ extension Agent.Rules {
     """
 
     static let tvFrameworks = """
-    - Write code that runs first time on the TVs' browsers, which are about as old as Chrome 79: plain JavaScript and \
-    CSS, no optional chaining (?.) or ?? or other syntax newer than 2019, no modules or top-level await, no build step, \
-    no npm and no frameworks loaded from the internet. CSS grid and flexbox, CSS variables and transitions are fine. \
-    The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
+    - Write code that runs first time on the TVs' browsers, the oldest of which are about as old as Chrome 79: plain \
+    JavaScript and CSS, no optional chaining (?.) or ?? or other syntax newer than 2019, no top-level await, no build \
+    step, no npm and no frameworks loaded from the internet. CSS grid and flexbox, CSS variables and transitions are \
+    fine. The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
+    """
+
+    /// three.js in a TV app's page: Lamp writes it there (`TVTemplate.writeOwnedFiles`), which no screen or web app has.
+    static let tvThree = """
+    - 3D, a game's included, is three.js, which Lamp writes in Web/three before every build (never edit it, never load \
+    it from the network): in index.html, after lamp.js, put the import map <script type="importmap">{ "imports": { \
+    "three": "./three/three.module.js", "three/addons/": "./three/addons/" } }</script>, then the 3D code in a \
+    <script type="module"> (or a module file of your own beside it), with import * as THREE from 'three' and addons \
+    from 'three/addons/…'. Make the renderer yourself, sized 1920×1080 at a pixel ratio of 1, and drive it with \
+    requestAnimationFrame, moving everything by the time since the last frame. three.js needs WebGL 2, and modules and \
+    import maps a newer TV browser than the oldest. Some platforms might not be powerful enough to run three.js.
     """
 
     /// What the page's host lays it out at, a fact of the TV app's and a screen's; how to design for a TV is the
@@ -3352,8 +3390,15 @@ extension Agent.Rules {
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
     what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
     the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. Apps of the wish's own on the iPhone or Android (`make_app_for`) suit what a page does poorly, such as the \
+    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
     phone's hardware or data the phone keeps.
+    """
+
+    /// How the wish's own phone apps join the TV app: said only where it may have them beside it, so the one app of a
+    /// wish is told nothing of other apps' building blocks.
+    static let tvPhoneApps = """
+    - An iPhone app of the wish's own joins the TV app's game as a player too; an Android app sends the TV app \
+    messages through `LampWish` but has no `LampController`, so game controls on an Android phone are a page.
     """
 
     /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone

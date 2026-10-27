@@ -1,6 +1,6 @@
 ---
 name: game
-description: Games, 2D or 3D, made either way - the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
+description: Games, 2D or 3D, made either way - the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
 ---
 
 # Games
@@ -12,13 +12,23 @@ and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityK
 The tools Lamp has for games:
 
 - **Web**: Lamp's game runtime, `Web/lamp-game.js`, with Phaser for 2D (through `Web/lamp-phaser.js`) or three.js for
-  3D. It's the same on every device that runs web, and a game of Lamp's game kind is made this way. Read lamp-game.js
-  first, all of it (and lamp-phaser.js for 2D): their comments are the whole interface.
+  3D, in a game `make_app_for` made with `kind` "game". It's a game's default make, 2D or 3D, wherever Lamp has a host
+  for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
+  comments are the whole interface. Below, "Web" means this runtime.
+- **A game played with phones on a Samsung or LG TV**: for now a TV app's page (`kind` "app", the phone-controllers
+  skill), since the runtime has no `Lamp.controllers` yet. It has no lamp-game.js: it follows the TV rules and lamp.js
+  instead. Its frame loop is its own `requestAnimationFrame`, moving everything by the time since the last frame;
+  players are `Lamp.controllers` (and the remote's keys, with `Lamp.navigation = false`); sound is Web Audio and saves
+  are `LampStore`, as the TV rules say. It's drawn in 2D on a canvas, or in 3D with the three.js Lamp writes in its
+  Web/three (the TV rules say how to load it, and the 3d-game skill how to keep it light). The rest of this skill
+  holds for it wherever it doesn't name the runtime.
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
-  in LampSupport.swift. It stays on Apple's devices: it can't go to Android, the Xbox, a TV's browser or the web later. For 3D, LampSceneView (the scene-3d skill) is for Mac-only apps; a native 3D game on iPhone,
-  iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit), without LampSceneView.
-- **Native Android**: Lamp has no game help in Kotlin yet. You can still write one (a SurfaceView or Canvas with its
-  own frame loop); say to the person that it's plainer than a web game, which has the runtime.
+  in LampSupport.swift: a game made natively, where the person asked for that, it needs what only Apple's apps have
+  (Game Center, a widget, a place inside an app of theirs) or the device has no host for a page (an Apple TV). It stays
+  on Apple's devices: it can't go to Android, the Xbox, a TV's browser or the web later. For 3D in Swift, LampSceneView (the scene-3d skill) is for a Mac app made natively; a native 3D game
+  on iPhone, iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit).
+- **Native Android**: Lamp has no game help in Kotlin yet: write the game's own frame loop on a SurfaceView or a
+  Canvas, and its controls, sound and saves with Android's own APIs.
 - **An integration's device** (Roku…): what its integration declares; read the device-integrations skill.
 - **Apple Watch**: Lamp has no game help there.
 
@@ -27,8 +37,8 @@ The tools Lamp has for games:
 Everything that moves is moved by the time since the last frame, never by a fixed step per frame: devices draw at
 different rates, and a slow frame must not slow the game.
 
-- Web: `game({ renderer, init, frame })` from lamp-game.js, moving by `f.dt`; in 2D, Phaser's scenes through
-  `phaser({ scenes })` from lamp-phaser.js, moving by `update`'s `delta`, on the same one loop. Never requestAnimationFrame, timers, the
+- Web (the runtime): `game({ renderer, init, frame })` from lamp-game.js, moving by `f.dt`; in 2D, Phaser's scenes
+  through `phaser({ scenes })` from lamp-phaser.js, moving by `update`'s `delta`, on the same one loop. Never requestAnimationFrame, timers, the
   clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime let Lamp's preview replay a
   play exactly.
 - SpriteKit: in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`; movement in
@@ -88,7 +98,7 @@ A frame has about 16 ms, and anything that runs during play takes from it, so a 
 - many copies of one thing are one draw (THREE.InstancedMesh, `LampScene.copies` in a Mac-only app).
 
 The request's device line names the slowest device the game is played on and its budget; the log says how frames kept
-to time. When frames are late, draw less. On a TV, draw much less: the 3d-game skill says how.
+to time. When frames are late, draw less.
 
 ## The look
 
@@ -104,8 +114,11 @@ single picture hides. Play it the way the person would before you finish: a game
 When the person wants an app to become a game ("actually, make it a game"), change its code in place: the same app,
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
 or replace it. Turning it into a game is a change to that app: `make_app_for` with its folder in `app` and `kind`
-"game" (made web or native, as suits it), keeping its folder and data, and its code changed into a game. A game beside
-the app is one more app, only when they say they want both and the game is of another kind than the app (a web game
-beside a native Mac app): `make_app_for` with `another` and `kind` "game", in a folder of its own, once they chose that
-when you asked. Two apps of one kind can't be in one wish yet (the `more-apps` skill). A game that becomes an app again
-is the same in reverse.
+"game" (made as the table's defaults say unless the person names a make: web wherever Lamp has a host for a page),
+keeping its folder and data, and its code changed into a
+game. A game played with phones on a Samsung or LG TV is the exception for now: it stays `kind` "app", on its TV
+app's page (above). A game beside
+the app is one more app, only when they say they want both and the game is of another kind than the app:
+`make_app_for` with `another` and `kind` "game", in a folder of its own, once they chose that when you asked. Two apps
+of one kind can't be in one wish yet (the `more-apps` skill), and a game is never made web only to get around that. A
+game that becomes an app again is the same in reverse.

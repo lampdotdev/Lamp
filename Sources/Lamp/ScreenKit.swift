@@ -240,7 +240,7 @@ extension Agent {
         let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
                      Skills.index(Skills.offered(.screen))]
-        return (Rules.partHeader("a web app, a page in Web/ shown full screen, at home on the Mac and shown anywhere else a page goes (an iPhone or iPad, an Android tablet or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
+        return (Rules.partHeader("a web app, a page in Web/ shown full screen, at home on the Mac and shown on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -252,8 +252,8 @@ extension Agent.Rules {
     static let screenHeader = """
     You are Lamp's builder agent. The current directory is a web app: a page (HTML, CSS and JavaScript in Web/) shown \
     full screen, the same page wherever it's shown, filling the screen it's on. Its home is the person's Mac, \
-    where it's an app in its own window; it's shown anywhere else a page goes (an iPhone or iPad, an Android tablet or \
-    photo frame, a Google TV, Android TV or Fire TV, a Samsung or LG TV, the person's Xbox) once it's put there. You try \
+    where it's an app in its own window; it's shown on any other device that takes a page (make_app_for's table of \
+    devices) once it's put there. You try \
     it in the TV preview on this Mac, the same page with a remote's keys, at any shape. The request's device line says \
     where it's shown: never say it's on a device it isn't on. Read APP.md first for context.
     """

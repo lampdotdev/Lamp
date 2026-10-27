@@ -1,72 +1,65 @@
 ---
 name: web-or-native
-description: Choosing how an app or game is made - as a web page Lamp's host shows on each device, or in the device's own code - and on which devices, when to ask the person and what to tell them. Read before the first make_app_for of a wish, and before changing how an app is made or adding a device.
+description: Choosing how an app or game is made - as a web page Lamp's host shows on each device, or in the device's own code - from the defaults the table of devices gives (a game web, with Phaser for 2D or three.js for 3D, wherever there's a host, an app native on one Mac, phone or tablet and web on a TV), and on which devices, when to ask the person and what to tell them. Read before the first make_app_for of a wish, and before changing how an app is made or adding a device.
 ---
 
 # Web or native
 
 Every app and game Lamp makes is made one of two ways:
 
-- **Web**: one page (HTML and JavaScript) that Lamp's host shows on each device. The same page runs on a Mac, an
-  iPhone or iPad, an Android phone or tablet, a Samsung or LG TV and an Xbox. Lamp has no host for a page on an
-  Apple TV, an Android TV, an Apple Watch or a Vision Pro.
-- **Native**: the device's own code. Swift for Apple's devices (one code covers a Mac, an iPhone or iPad, an Apple TV
-  and a Vision Pro), Kotlin for Android, and what an integration declares for its device.
+- **Web**: one page (HTML and JavaScript) that Lamp's host shows on each device, the same page everywhere it goes.
+- **Native**: the device's own code. Swift for Apple's devices (one code for all of them), Kotlin for Android, and
+  what an integration declares for its device.
 
-`make_app_for`'s description lists what each device can run and how a build gets onto it, and it refuses a make a
-device can't run, with the reason. Those are facts. Everything below is yours to weigh with the request in front of
-you: there's no default, and nothing here is a rule.
+`make_app_for`'s description has the table of devices: what each one runs, and how a build gets onto it. It refuses
+a make Lamp can't build on a device, with the reason, and the request's device line says what Lamp knows of the
+person's own devices. Those are the facts, and the only place they're kept; this skill doesn't repeat them.
 
-## What decides it: how the app gets to the people who use it
+## The defaults
 
-Native looks nicer and can do more (the device's own controls, widgets, the watch, Health, the camera, working in the
-background). Web is one page for many kinds of device, and the only make on a Samsung or LG TV and an Xbox.
+Each row of the table says which make a game and an app on that device get when the person names none:
 
-On a phone or tablet, web doesn't save installing: a page on an iPhone, an iPad or an Android device is an app of
-Lamp's around the page, and it gets there the same way as a native app:
+- **A game** is web, on Lamp's game runtime with Phaser for 2D or three.js for 3D (the 2d-game and 3d-game skills),
+  wherever Lamp has a host for a page: a Mac, an iPhone or iPad, an Android phone or tablet, a Samsung or LG TV, an
+  Android TV and an Xbox. Where there's none (a Roku, an Apple TV), it's native.
+- **An app** on one Mac, one iPhone or iPad, or one Android phone or tablet is native. An app on a TV or a console is
+  web wherever the device takes a page.
+- **One app asked for across several devices** is web where every one of them takes a page.
 
-- an iPhone or iPad runs it in the simulator on this Mac, or is paired with this Mac and gets its build one device at
-  a time;
-- an Android phone or tablet runs it in the emulator on this Mac, or needs USB debugging turned on, one device at a
-  time;
-- an Apple TV or a Vision Pro runs a native app in its simulator on this Mac only: Lamp can't put an app on a real one
-  yet;
-- a Samsung or LG TV, an Android TV and an Xbox get it from Lamp, which installs it on each one once it's set up.
+The defaults are where you start, not a limit:
 
-The one way phones join with nothing to install is as controllers or companions of a Samsung or LG TV app's page:
-that page hosts them, on the TV and in its preview on this Mac, and each phone opens a link (the phone-controllers
-skill). Nothing else hosts phones yet: an Apple TV and an Android TV can't run a page, and a page on an Xbox, a Mac or
-an iPad can't host phone controllers.
+- **A make the person names is theirs.** When they ask for a web app, or a native one, make it that way wherever Lamp
+  can build it; say in a sentence what that costs only when it matters.
+- **Nothing switches silently.** Devices found on the network aren't a request for one app across them: add a device,
+  or make an app web because of them, only once the person has said that's what they want, or answered so when you
+  asked.
+- **An app the wish has is never converted to follow a default.** The defaults are for a new app, and for a change
+  the person asks for.
+- **Separate apps that talk don't need the same make.** The wish's apps reach each other through `LampWish` on
+  whichever devices they're on, however each is made (the wish-links skill).
+- **Never choose a make to get around a limit of Lamp's**: two apps of one code in one wish, say (the more-apps
+  skill). Say what the limit is instead, and offer what can be done.
+- **Never refuse a make that works only because it isn't the default.** Only the table, and the refusal it gives,
+  says what can't be built.
 
-So think about whose devices it's for, how many there are, and which one matters most:
+## What to weigh
 
-- **Only this Mac**: native. Lamp builds it here and it's ready, and it does more.
-- **The person's own iPhone**: native. It's installed the same way as a page would be, and it does more.
-- **Several people's phones** (a family, a class, friends at a party): an app on each phone is installed one device
-  at a time, whichever the make. For a quiz or a game night, make it a Samsung or LG TV app's page the phones join as
-  controllers by a link: on that TV, or in the app's preview on this Mac when there's no such TV. With an Apple TV,
-  an Android TV or an Xbox, say plainly that phones can't join a game there yet, and offer the preview on this Mac or
-  the device's own controllers.
-- **A TV**: whichever the TV runs. An Apple TV runs only native, and for now only in its simulator on this Mac: say so.
-  A Samsung or LG TV runs only web, an Android TV only native.
-- **One main device and others to glance at**: make the main one the way it suits best, then reach the others from
-  the same code where it can (one Swift code for an iPhone app and its Apple TV app), or with a small web app beside
-  it (an LG TV showing what the iPhone app keeps).
+- **What the app needs from the device.** Native code has the device's own APIs: widgets, the watch, Health, the
+  camera and other hardware, work in the background. A page reaches some of the person's things only through Lamp's
+  app around it, where there is one (`LampNative`, the web-app skill). When an app the defaults make web needs one of
+  these, say so, and offer it native. A game made native for an Apple thing (Game Center, a widget, a game inside the
+  person's own Mac or iPhone app) is SpriteKit for 2D: say that it then stays on Apple's devices, where a game on the
+  runtime can go to Android, a TV, the Xbox or the web later without being written again.
+- **How it gets to the people who use it.** Read the table's way onto each device, for each make. On some devices a
+  page still comes inside an app of Lamp's that is installed the same way a native app is.
+- **Whose devices, and how many.** One person's own Mac or phone, a family's TV, every phone at a party: who has to
+  install or open what.
+- **What it's played or used with.** A remote, a controller, touch, phones in the room: the game skill and the
+  phone-controllers skill say what each takes.
 
-## Examples
-
-| Asked | A good choice, and why |
-|---|---|
-| A habit tracker for my Mac | Native: it's built here and ready, and does more |
-| A game for my Apple TV | Native: the Apple TV runs nothing else. Say it runs in the Apple TV simulator on this Mac, since Lamp can't put it on a real Apple TV yet |
-| A 3D racing game for my LG TV | Web: the only make it runs; keep the scene light (the 3d-game skill) |
-| A platformer for my Mac | A game, on Phaser (the 2d-game skill): it plays on the Mac now and can go to an iPhone, Android, a TV or the Xbox later without being written again |
-| A 2D game for my iPhone with Game Center scores | Native, SpriteKit: Game Center is Apple's. Say it stays on Apple's devices, where a game on Phaser could go anywhere |
-| A little game inside my Mac app | Native, SpriteKit in the same app: it's part of the app, not a game of its own |
-| A game the family plays on a Samsung or LG TV, phones as controllers | Web: the TV app's page hosts the phones, and each joins by a link, with nothing to install |
-| A quiz for my class's tablets | Web: a Samsung or LG TV app's page the tablets join by a link, on that TV or in the app's preview on this Mac when the room has no such TV. An app on each tablet is installed tablet by tablet, whichever the make |
-| An iPhone app to track X, that I can also see on the TV | Native iPhone app; an Apple TV app from the same Swift (in its simulator for now), or a small web app for a Samsung or LG TV |
-| A game for iPhone, nobody named | Ask whose phones in one short line, or pick and say which and why: your judgment |
+When the app needs several devices, it can be one app on all of them, or several of the wish's apps, each made for its
+device, that talk through `LampWish`. Adding one more app to a wish that has one is the person's to choose: the
+more-apps skill says how to ask.
 
 ## When to ask
 
@@ -80,11 +73,14 @@ their devices.
 Tell the person how the build reaches each device, as `make_app_for` answers it ("each phone is paired with this Mac",
 "each phone joins the TV's game by a link"), so a choice that doesn't suit them shows at once.
 
-## Online
+## Away from home
 
-Phones join a TV app's page over the home Wi‑Fi, with Lamp open on this Mac. That suits nearly everything people play
-together at home. Lamp can't put an app's page online yet, so a game played with friends in other homes can't be
-hosted by Lamp: say so plainly, and offer what works (playing together on the same Wi‑Fi).
+Each way of connecting has its own reach, said where it's described: phones joining a TV app's page do it on the same
+Wi‑Fi with Lamp open on this Mac (the phone-controllers skill); the wish's own apps find each other on the home
+network, and once Lamp has introduced them go on talking with Lamp closed (the wish-links skill, which also says what
+reaching each other away from home takes). Lamp runs no relay of its own for players in other homes: when that's what
+the person wants, say so plainly, and offer what works (playing on one Wi‑Fi, or another way of connecting, as the
+wish-links skill says).
 
 ## Changing it later
 

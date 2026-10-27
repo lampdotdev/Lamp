@@ -5732,7 +5732,12 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") }
+        /// On while Lamp has written its mark beside the apps, and on a Mac with no Lamp at all (the app was copied over,
+        /// or Lamp was removed): there the wand opens the chat's own way into Lamp (`RemixPanel`).
+        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") || !lampInstalled }
+        /// Whether the Lamp that installed this app is on this Mac at all. Here and not in `LampInstall`, which every
+        /// kind of app has and which reads only its own values: this asks macOS.
+        static var lampInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) != nil }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
@@ -6202,7 +6207,7 @@ enum Template {
         @MainActor static func openFromMenu() {
             if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
-                NSWorkspace.shared.open(LampInstall.link("edit"))
+                NSWorkspace.shared.open(LampMagic.lampInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
                 return
             }
             window.makeKeyAndOrderFront(nil)
@@ -7055,7 +7060,8 @@ enum Template {
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
-            NSWorkspace.shared.open(LampInstall.link("edit"))
+            // Lamp's window, or on a Mac without Lamp, its site.
+            NSWorkspace.shared.open(LampMagic.lampInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
         }
     }
 
@@ -16721,7 +16727,9 @@ enum Template {
                 return false
             }
             dropExpiredItems()
-            var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.held } }
+            // Only what this app set counts: a wish's own collections also hold what its other apps set, which this one
+            // can't make room for.
+            var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + (isOwn($1.entry) ? $1.held : 0) } }
             var sets: [String: Entry] = [:], changed: [(String, Any?)] = [], failed = false
             for (id, value) in given {
                 guard Self.isItemID(id) else {
@@ -16749,12 +16757,14 @@ enum Template {
                     continue
                 }
                 let need = id.utf8.count + max(32, size)
-                guard held - (had?.held ?? 0) + need <= Self.sharedLimit else {
-                    fputs("\(what): the item \"\(id)\" wasn't set: the app's shared collections would pass \(Self.sharedLimit) bytes (a deleted item counts 32 bytes for a month).\n", stderr)
+                let ownHad = had.map { isOwn($0.entry) ? $0.held : 0 } ?? 0
+                // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+                guard kept == nil || held - ownHad + need <= Self.sharedLimit else {
+                    fputs("\(what): the item \"\(id)\" wasn't set: this app's items in shared collections would pass \(Self.sharedLimit) bytes (a deleted item counts 32 bytes for a month).\n", stderr)
                     failed = true
                     continue
                 }
-                held += need - (had?.held ?? 0)
+                held += need - ownHad
                 let now = Int64(Date().timeIntervalSince1970 * 1000)
                 clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
                 let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: copy)
@@ -16786,6 +16796,9 @@ enum Template {
             for listener in collectionListeners[name] ?? [] { listener(changed, Self.app(of: peer)) }
             if name.hasPrefix("files:") { fetchFiles() }
         }
+
+        /// An item this app set last, on this copy or another, or before it knew its own name.
+        private func isOwn(_ entry: Entry) -> Bool { entry.peer.isEmpty || (!me.isEmpty && Self.app(of: entry.peer) == me) }
 
         /// Items set before this app knew its own name take it now, so two copies' settings never tie.
         private func nameUnnamedItems() {

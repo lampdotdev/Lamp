@@ -33,8 +33,8 @@ opening comment for the whole list. What it gives:
 A page can't read the person's mail, calendar, contacts, photos or where they are. Where Lamp's app is around the page
 (a Mac, an iPhone or iPad), that app can: register a call in Sources/Native.swift and ask for it from the page with
 `LampNative.call(name, args)`. Elsewhere `LampNative.available` is false and the calls reject, so the page shows
-example content then, never an error. That difference is a reason to choose native (the web-or-native skill) when the
-app lives on the person's own things.
+example content then, never an error. When an app the defaults make web (on a TV, or across several devices) lives on
+the person's own things, say what a page can't reach there, and offer it native (the web-or-native skill).
 
 ## A remote: focus and keys
 
@@ -53,7 +53,9 @@ On a phone or a Mac the same page is tapped or clicked, so a page that works wit
 design for the remote and for a TV across the room (what focus looks like, layouts it moves through, typing) is the
 tv-design skill's.
 
-## What each device's browser runs
+## The browser a page meets
+
+Which devices take a page is `make_app_for`'s table. Where one does, the page meets one of these engines:
 
 | Device | What shows the page | Worth knowing |
 |---|---|---|
@@ -62,8 +64,6 @@ tv-design skill's.
 | Samsung and LG TVs | The TV's own browser engine | Chromium 108 to 132 on recent models, older on older ones; WebGL 2 not on every Samsung |
 | Android TV, Google TV, Fire TV | Lamp's app around the page (Android's WebView), on the TV's home screen | As on Android phones |
 | Xbox | Lamp's web host (Edge WebView2) | Modern |
-
-An Apple TV, an Apple Watch and a Vision Pro have no host for a page: an app for one of them is native.
 
 A TV keeps the page's syntax to what its older browsers run, as the TV rules say when the app is for one. Designing
 what a TV shows, seen from across a room, is the tv-design skill's.

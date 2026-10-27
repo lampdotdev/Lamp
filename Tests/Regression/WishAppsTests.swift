@@ -136,6 +136,14 @@ final class WishWithoutItsFirstAppTests: XCTestCase {
         XCTAssertFalse(prompt.contains("LampController"))
     }
 
+    /// A TV app with other apps beside it is told how the wish's phone apps join it, the Android app's limit included;
+    /// one alone is told none of it.
+    func testATVAppBesideOthersIsToldHowPhoneAppsJoin() {
+        XCTAssertTrue(Agent.tvPrompt(part: "TV", alone: false).contains("an Android app sends the TV app messages through `LampWish` but has no `LampController`"))
+        XCTAssertTrue(Agent.tvPrompt().contains("has no `LampController`"), "a TV app at the wish's root may have apps beside it")
+        XCTAssertFalse(Agent.tvPrompt(part: "TV", alone: true).contains("LampController"))
+    }
+
     func testItIsStillTheWishWithItsAppInAFolder() throws {
         let wish = try replacedWish()
         XCTAssertFalse(wish.holdsApp)

@@ -713,7 +713,7 @@ extension Agent {
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
-        return (Rules.partHeader("a game drawn with three.js or Phaser in Web/, at home on the Mac and played anywhere else a page goes (an iPhone or iPad, an Android phone or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
+        return (Rules.partHeader("a game drawn with three.js or Phaser in Web/, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
