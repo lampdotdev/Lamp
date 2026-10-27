@@ -193,7 +193,7 @@ final class WishAppsKeptTests: XCTestCase {
         let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
         let read = try XCTUnwrap(Store.readWish(at: wish.dir))
         XCTAssertEqual(read.apps, [])
-        XCTAssertEqual(Parts.wanted(in: read, parts: []), [WishApp(kind: .mac)])
+        XCTAssertEqual(Parts.wanted(in: read, parts: []), [WishApp(kind: .mac, folder: ".")])
         XCTAssertEqual(Parts.waiting(in: read, parts: []), [])
     }
 
@@ -213,10 +213,10 @@ final class WishAppsKeptTests: XCTestCase {
     /// listed with the app in the wish's own folder, so the list names every app the wish has.
     func testAPartMadeForAWishListsTheRootAppToo() throws {
         let wish = try Template.scaffold(name: "Tally", platform: .tv, in: root)
-        XCTAssertEqual(Parts.listing(.mac, madeFor: wish, parts: []), [WishApp(kind: .tv), WishApp(kind: .mac)])
+        XCTAssertEqual(Parts.listing(.mac, folder: "Mac", madeFor: wish, parts: []), [WishApp(kind: .tv, folder: "."), WishApp(kind: .mac, folder: "Mac")])
         var waiting = wish
         waiting.apps = [WishApp(kind: .tv), WishApp(kind: .iphone, needs: "this Mac can't build the iPhone app yet.")]
-        XCTAssertEqual(Parts.listing(.iphone, madeFor: waiting, parts: []), [WishApp(kind: .tv), WishApp(kind: .iphone)])
+        XCTAssertEqual(Parts.listing(.iphone, folder: "iPhone", madeFor: waiting, parts: []), [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone, folder: "iPhone")])
     }
 
     /// A wish waiting for two apps (an iPhone app and an Android app, both toolchains missing) follows each setup on

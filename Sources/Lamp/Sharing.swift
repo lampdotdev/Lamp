@@ -592,9 +592,13 @@ enum Sharing {
     /// `.lamp`, which goes with the wish and isn't versioned, until the part is made and the files go in (`Store.addPart`).
     /// Kept by the part's family (`Parts.group`), since the folder the file had it in may not be the one it's made in
     /// here (an app for both exported from the Mac/ it was changed in place in is made in Apple/).
+    /// A part kept for a folder of its own (`slot`: the one kept for it on the wish's list, `WishApp.folder`) is kept
+    /// under its family and that folder, so two apps of one family waiting at once keep their files apart; one in its
+    /// kind's own folder, or none named, under its family alone, where a Lamp from before kept it.
     static let waitingFolder = ".lamp/waiting"
-    static func waitingFolder(in wish: URL, for kind: Platform) -> URL {
-        wish.appendingPathComponent(waitingFolder).appendingPathComponent(Parts.group(kind))
+    static func waitingFolder(in wish: URL, for kind: Platform, slot: String? = nil) -> URL {
+        let key = slot.map { Parts.isOwnFolder($0) || !Parts.isFolderName($0) ? Parts.group(kind) : Parts.group(kind) + "-" + $0.lowercased() } ?? Parts.group(kind)
+        return wish.appendingPathComponent(waitingFolder).appendingPathComponent(key)
     }
 
     /// What a kept part was made for, beside its files.
@@ -608,9 +612,9 @@ enum Sharing {
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
-    static func keep(_ part: Package.Part, in wish: URL) throws {
+    static func keep(_ part: Package.Part, in wish: URL, slot: String? = nil) throws {
         let fm = FileManager.default
-        let folder = waitingFolder(in: wish, for: part.package.platform)
+        let folder = waitingFolder(in: wish, for: part.package.platform, slot: slot)
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
@@ -621,8 +625,8 @@ enum Sharing {
 
     /// The part a wish kept for this kind's family, read as a shared app is: nil when none is kept, or what's there can't
     /// be read as an app of the kind it was kept as. The folder stays until `forgetKept`.
-    static func kept(in wish: URL, for kind: Platform) -> Package.Part? {
-        let kept = waitingFolder(in: wish, for: kind)
+    static func kept(in wish: URL, for kind: Platform, slot: String? = nil) -> Package.Part? {
+        let kept = waitingFolder(in: wish, for: kind, slot: slot)
         guard let data = try? Data(contentsOf: kept.appendingPathComponent("lamp-part.json")),
               let note = try? JSONDecoder().decode(Waiting.self, from: data),
               let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
@@ -635,15 +639,15 @@ enum Sharing {
     }
 
     /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
-    static func keptFolder(in wish: URL, for kind: Platform) -> String? {
-        guard let data = try? Data(contentsOf: waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")),
+    static func keptFolder(in wish: URL, for kind: Platform, slot: String? = nil) -> String? {
+        guard let data = try? Data(contentsOf: waitingFolder(in: wish, for: kind, slot: slot).appendingPathComponent("lamp-part.json")),
               let note = try? JSONDecoder().decode(Waiting.self, from: data), note.platform == kind,
               let folder = note.folder, Parts.folder(folder, canHold: kind) else { return nil }
         return folder
     }
 
-    static func forgetKept(in wish: URL, for kind: Platform) {
-        try? FileManager.default.removeItem(at: waitingFolder(in: wish, for: kind))
+    static func forgetKept(in wish: URL, for kind: Platform, slot: String? = nil) {
+        try? FileManager.default.removeItem(at: waitingFolder(in: wish, for: kind, slot: slot))
     }
 
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its

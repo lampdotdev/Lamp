@@ -43,11 +43,12 @@ struct AppTarget: Equatable {
 }
 
 /// One app of a wish as the plan sees it: made, with its id and folder, or waiting to be made (on the wish's list,
-/// stopped by this Mac's setup or not started yet), with what it is.
+/// stopped by this Mac's setup or not started yet), with what it is and the folder kept for it.
 struct WishMember: Equatable {
     enum State: Equatable {
         case made(id: String, folder: String?)
-        case waiting
+        /// `folder`: the one kept for it (`WishApp.folder`), nil in a list from before the list kept folders.
+        case waiting(folder: String?)
     }
 
     let state: State
@@ -57,14 +58,22 @@ struct WishMember: Equatable {
     var id: String? { if case .made(let id, _) = state { return id } else { return nil } }
     /// The app's own folder in the wish's, or nil for the app in the wish's own folder and one not made.
     var folder: String? { if case .made(_, let folder) = state { return folder } else { return nil } }
+    /// The folder it's in or will be made in: "." for the app in the wish's own folder, nil for one waiting in a list
+    /// from before the list kept folders.
+    var slot: String? {
+        switch state {
+        case .made(_, let folder): folder ?? "."
+        case .waiting(let folder): folder
+        }
+    }
 }
 
 /// What `make_app_for` or `remove_app` does to a wish, worked out before anything is touched, so what's done is what
 /// was planned and the answer says what was done.
 enum AppPlan: Equatable {
-    /// A new app of a code the wish has none of, beside its others.
+    /// A new app beside the wish's others, whatever they are: it never takes the place of one.
     case add(AppTarget)
-    /// The wish's app of this code, made or waiting, given what's asked: changed in place, its code and data kept.
+    /// The app `make_app_for` named, made or waiting, given what's asked: changed in place, its folder, id and data kept.
     case update(WishMember, to: AppTarget)
     /// A made app taken away, reversibly: its files stay in the wish's versions and its data stays.
     case remove(WishMember)
@@ -163,7 +172,7 @@ enum AppKinds {
         let target = asked.isEmpty ? self.target(kind: app.kind, opening: app.places ?? app.kind.target.places, family: nil, integration: app.integration,
                                                 companions: [], in: table)
             : AppTarget(kind: app.kind, devices: asked, integration: app.integration, places: app.places)
-        return WishMember(state: .waiting, target: target)
+        return WishMember(state: .waiting(folder: app.folder), target: target)
     }
 
     private static func target(of app: LampProject, in table: [Place]) -> AppTarget {
@@ -210,10 +219,24 @@ struct Refusal: Error, Equatable {
 /// `make_app_for` and `remove_app` as plans over a wish's apps (`WishMember`): typed in, checked against the table and
 /// the wish's apps, and handed to `Store` to carry out as planned.
 enum AppPlanner {
-    /// `make_app_for`: the app of the asked-for code changed, or a new one beside the others. Never a removal.
-    /// `table` is the table of devices, every row Lamp has unless said.
-    static func make(_ made: Place.Make, devices words: [String], in members: [WishMember],
+    /// `make_app_for`: the app `app` names changed, or without one a new app beside the others, whatever they are: two
+    /// apps of one code (two Mac apps, a Roku's app and an Xbox's) are two apps, each in its own folder. Never a
+    /// removal. `table` is the table of devices, every row Lamp has unless said.
+    static func make(_ made: Place.Make, devices words: [String], app selector: String? = nil, in members: [WishMember],
                      table: [Place] = Places.all) -> Result<AppPlan, Refusal> {
+        // Which app is to change is found before anything else is read, so a selector that names none changes nothing.
+        var chosen: WishMember?
+        if let selector = selector?.trimmed, !selector.isEmpty {
+            switch select(selector, in: members) {
+            case .one(let member): chosen = member
+            case .several(let found):
+                return .failure(Refusal("`app` \"\(selector)\" is more than one of the wish's apps (\(found.compactMap(\.slot).joined(separator: ", "))): give its folder."))
+            case .none:
+                let folders = members.compactMap(\.slot).map { "\"\($0)\"" }.joined(separator: ", ")
+                return .failure(Refusal("The wish has no app in \"\(selector)\"" + (folders.isEmpty ? "." : ": `app` is one of \(folders).")
+                                        + " Leave `app` out to add a new app."))
+            }
+        }
         var devices: [DeviceWord] = []
         for word in words {
             guard let device = DeviceWord(word, in: table) else {
@@ -223,19 +246,26 @@ enum AppPlanner {
             if !devices.contains(device) { devices.append(device) }
         }
         let target: AppTarget
-        switch AppKinds.target(made, on: devices, existing: members, in: table) {
+        switch AppKinds.target(made, on: devices, existing: chosen.map { [$0] } ?? [], in: table) {
         case .success(let found): target = found
         case .failure(let refusal): return .failure(refusal)
         }
-        // A device's own app is one of the wish's apps beside the others, one per wish for now: another device's is never
-        // made out of it (two integrations are two codes), and asked for while it's there, it waits for the old one to go.
-        if target.kind == .device, let other = members.first(where: { $0.target.kind == .device && $0.target.code != target.code }) {
-            return .failure(Refusal("A wish has one app for a device of its own for now, and this one has \(Parts.name(of: .device, integration: other.target.integration)). "
-                                    + "If the person wants this device's app instead, take that one away with remove_app, then ask again."))
-        }
-        let same = members.filter { $0.target.code == target.code }
-        if let member = same.first(where: \.isMade) ?? same.first { return .success(.update(member, to: target)) }
+        if let chosen { return .success(.update(chosen, to: target)) }
         return .success(.add(target))
+    }
+
+    /// The app `make_app_for`'s `app` names: its folder exactly, whatever the case ("Mac2"), or "." for the app in the
+    /// wish's own folder. Nothing else: no kind, device or code stands for an app here, so asking for one never changes
+    /// another. Folders are unique whatever the case (`Parts.newFolder`); two that aren't are asked about.
+    static func select(_ selector: String, in members: [WishMember]) -> Found {
+        let name = selector.trimmed.lowercased()
+        guard !name.isEmpty, !name.contains("/"), name == "." || !name.hasPrefix(".") else { return .none }
+        let found = members.filter { $0.slot?.lowercased() == name }
+        switch found.count {
+        case 0: return .none
+        case 1: return .one(found[0])
+        default: return .several(found)
+        }
     }
 
     /// What `remove_app`'s `app` names, among the wish's apps, made and waiting.
@@ -249,6 +279,7 @@ enum AppPlanner {
     static func find(_ named: String, in members: [WishMember], table: [Place] = Places.all) -> Found {
         let name = named.trimmed.lowercased()
         guard !name.isEmpty else { return .none }
+        if case .one(let member) = select(name, in: members.filter { $0.slot != "." }) { return .one(member) }
         let own = members.filter { member in
             member.folder?.lowercased() == name || Parts.word(for: member.target.kind) == name
                 || Parts.folder(for: member.target.kind).lowercased() == name || member.target.kind.rawValue == name
