@@ -101,9 +101,11 @@ tag itself, `0.3.1+6` six commits later. Without git or without the tags fetched
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-It builds with the Xcode named in `.github/xcode-version`, which `.github/workflows/mac-build.yml` builds every pull
-request with too, so code only a newer Xcode accepts fails on the pull request rather than at release. Raise that
-file when GitHub's `macos` runner image makes a newer Xcode its default, never to a preview.
+It builds with the Xcode named in `.github/xcode-version`, which `.github/workflows/mac-build.yml` builds and tests
+every pull request with too, so code only a newer Xcode accepts fails on the pull request rather than at release.
+Both run on GitHub's `xcode-27` runner image (macOS 27 with Xcode 27, a preview image for now): the Xcode the team
+builds with, and the one generated apps are compiled with on their Macs. Raise the file when that image gets a newer
+Xcode, and move both workflows together when GitHub makes a newer image.
 
 The signing secrets live in the repo's **`release` environment**, which only `v*` tags can use. A ruleset
 ("Protect release tags") lets only repo admins create, move or delete `v*` tags, so nobody else can

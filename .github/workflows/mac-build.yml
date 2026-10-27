@@ -1,6 +1,7 @@
 # Builds Lamp on every pull request with the Xcode the release is built with (.github/xcode-version), so code that
 # only a newer Xcode accepts is caught here rather than when a release is tagged, and runs the regression tests as
-# a second check. No signing and no release secrets.
+# a second check. No signing and no release secrets. The runner is GitHub's `xcode-27` image (macOS 27, Xcode 27),
+# chosen on purpose while it's a preview: it's the Xcode the team builds and generates apps with.
 name: Mac build
 
 on:
@@ -22,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +43,7 @@ jobs:
         run: swift build
 
   test:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
