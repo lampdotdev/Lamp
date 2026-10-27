@@ -170,7 +170,8 @@ final class MagicPanel {
     /// turn was going on. The chat comes up in Lamp's panel, on its own, without taking the keyboard, once no chat
     /// has come back beside a copy of the app.
     func showChatAfterQuit(_ project: LampProject) {
-        let id = project.id
+        // The chat is the wish's, whichever of its apps quit.
+        let id = Store.shared.wish(of: project).id
         Task {
             // A change that reopens the app leaves a moment with no copy running: only three seconds with none, and no
             // chat back beside one, is the app gone.
@@ -282,8 +283,9 @@ final class MagicPanel {
 
     /// The person chose to point at part of the app (the + menu by the message box): the app lays its outline
     /// over its window (`LampMagic.Picker`), and what's picked comes back as an attachment (`take`).
+    /// Given the wish, its app beside the chat (`Store.chatApp`); given one of its apps in a folder, that app.
     func point(in wish: LampProject, fromLamp: Bool) {
-        let project = Store.shared.chatApp(of: wish)
+        let project = wish.isPart ? wish : Store.shared.chatApp(of: wish)
         guard let app = Store.shared.macCopies(of: project).first else { return }
         follow(project.id)
         if fromLamp { pointingFromLamp.insert(project.id) } else { pointingFromLamp.remove(project.id) }
