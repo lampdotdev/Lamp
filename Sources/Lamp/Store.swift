@@ -10518,13 +10518,14 @@ final class Store: ObservableObject {
         }
         // A phone asking what it may keep is answered whatever the state of setup: a key just removed makes
         // setup incomplete, and that's exactly when the phone has to hear that its copy should go.
+        if route == "/ai/keys" { return keysForPhone(project) }
         // Just after launch Lamp is still finding the person's Claude Code and Codex (`lookForPersonsCopies` runs each
         // with --version), and until then neither can answer: an app's AI asked that early heard "needs an OpenRouter
-        // key" though Claude Code was signed in. It waits for the look instead.
+        // key" though Claude Code was signed in. It waits for the look instead. Not the phone's /ai/keys above: that's
+        // its four-second check that Lamp is there at all, and needs neither engine.
         if route.hasPrefix("/ai"), !EngineInstall.hasLooked {
             await EngineInstall.lookForPersonsCopies()
         }
-        if route == "/ai/keys" { return keysForPhone(project) }
         if route == "/ai/status" { return await aiStatus(for: project) }
         if route == "/app/secrets" { return appSecrets(request, for: project) }
         if route == "/app/share" { return await appShare(request, for: project) }
