@@ -71,9 +71,15 @@ enum DeviceApps {
     /// a new device's app never goes into another's folder, whether two integrations' names come to one folder or one's
     /// name changed since its app was made. Names are compared whatever their case, as the Mac's disks and a part's id
     /// (`Parts.id`) do.
+    /// A folder another device's app was taken away from stays that app's (`RemovedApp`): its id is its folder's, so an
+    /// app made there would take its id and what it saved, and Undo, which puts the wish's files back as they were,
+    /// would bring it back into the other's folder.
     static func freeFolder(_ wanted: String, for integration: String, in wish: URL) -> String {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: wish.path)) ?? []
+        let removed = RemovedApp.list(in: wish).filter { $0.platform == .device }
         func free(_ name: String) -> Bool {
+            if removed.contains(where: { $0.folder?.lowercased() == name.lowercased()
+                                         && $0.integration.map { split($0).integration } != split(integration).integration }) { return false }
             let same = names.filter { $0.lowercased() == name.lowercased() }
             guard !same.isEmpty else { return true }
             guard same == [name] else { return false }

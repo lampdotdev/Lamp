@@ -305,6 +305,35 @@ final class WishAppsKeptTests: XCTestCase {
         XCTAssertEqual(Parts.pick("roku", among: [both] + parts)?.integration, "roku")
     }
 
+    /// A Roku app taken away keeps its folder: another device's app whose name comes to the same folder is made in one of
+    /// its own, so it never takes the Roku app's id or what it saved, and Undo, which puts the wish's files back as they
+    /// were, brings the Roku app back into its own folder, beside the other, each with its own id. The Roku's own app,
+    /// asked for again, is made where it was.
+    func testADeviceAppTakenAwayKeepsItsFolderForUndo() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        func mark(_ folder: String, _ integration: String) throws {
+            let dir = wish.dir.appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try "\(integration)\n".write(to: dir.appendingPathComponent(DeviceApps.marker), atomically: true, encoding: .utf8)
+        }
+        try mark("Roku", "roku")
+        let roku = try XCTUnwrap(Parts.load(try XCTUnwrap(Store.readWish(at: wish.dir))).first)
+        RemovedApp.record(roku, in: wish.dir)
+        try FileManager.default.removeItem(at: roku.dir)
+
+        // Another integration whose name gives "Roku", in any case.
+        XCTAssertEqual(DeviceApps.freeFolder("Roku", for: "xbox-one", in: wish.dir), "Roku2")
+        XCTAssertEqual(DeviceApps.freeFolder("roku", for: "xbox-one", in: wish.dir), "roku2")
+        XCTAssertEqual(DeviceApps.freeFolder("Roku", for: "roku", in: wish.dir), "Roku", "the Roku's own app is made where it was")
+
+        try mark("Roku2", "xbox-one")
+        try mark("Roku", "roku")   // Undo
+        let parts = Parts.load(try XCTUnwrap(Store.readWish(at: wish.dir)))
+        XCTAssertEqual(parts.first { $0.integration == "roku" }?.id, roku.id)
+        XCTAssertEqual(parts.first { $0.integration == "roku" }?.instance, roku.instance)
+        XCTAssertEqual(Set(parts.map(\.id)).count, 2)
+    }
+
     /// A wish of a Roku app and an Xbox app alone has other apps: each is told it's one of several.
     func testARokuAppBesideAnXboxAppHasAnother() throws {
         var wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)

@@ -75,8 +75,9 @@ channel) is one of a wish's apps like any other, and a wish can have one for eac
 Xbox's side by side (family "device" says how they're built; each is its own app by its code, `Parts.key`). Each is in a
 folder named for its device (`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, Xbox/,
 which `Part.folderFor` gives a new one), never in another device's app's folder: when that name is taken by another
-integration's app, whatever its case, the new one gets the first free "Roku2", "Roku3"… (`DeviceApps.freeFolder`), and
-an existing app keeps its folder, id and data. It's found by its folder's marker whatever the folder is called (`Part.marked`, `DeviceApps.markedFolders`), so an
+integration's app, whatever its case, or was another integration's app's until it was taken away (`RemovedApp`, since
+its id is its folder's and Undo puts the wish's files back as they were), the new one gets the first free "Roku2",
+"Roku3"… (`DeviceApps.freeFolder`), and an existing app keeps its folder, id and data. It's found by its folder's marker whatever the folder is called (`Part.marked`, `DeviceApps.markedFolders`), so an
 integration renamed since never loses its app, read as that integration's from the marker (`Parts.load`), and kept on
 the wish's list with its integration (`WishApp.integration`, and in versions as "device:roku" in `Lamp-Apps`), so one
 that waits, or comes back with a restore, is made for the right device (`addPart`'s `integration`). The list's entries
