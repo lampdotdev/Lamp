@@ -15009,16 +15009,17 @@ enum Template {
                 if let device = directs[id].flatMap({ $0.ready ? $0.device : nil }) ?? relayPresent[id]?.device, !device.isEmpty { devices[id] = device }
             }
             // This app itself is listed only while another copy of it is open.
-            let list = roster.filter { $0.id != me || open.contains { Self.app(of: $0) == me } }.map { app in
-                let copies = open.filter { Self.app(of: $0) == app.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
+            // `listed`, not `app`: a closure parameter named like `app(of:)` in the same expression trips Swift before 6.4.
+            let list = roster.filter { $0.id != me || open.contains { Self.app(of: $0) == me } }.map { listed in
+                let copies = open.filter { Self.app(of: $0) == listed.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
                     .sorted { ($0.since, $0.id) < ($1.since, $1.id) }
                 let isOpen = !copies.isEmpty
                 if isOpen {
                     // Open, so made, whatever a list kept from before said.
-                    waiting.remove(app.id)
-                    appsOpen.insert(app.id)
-                } else if appsOpen.remove(app.id) != nil {
-                    lastSeen[app.id] = now
+                    waiting.remove(listed.id)
+                    appsOpen.insert(listed.id)
+                } else if appsOpen.remove(listed.id) != nil {
+                    lastSeen[listed.id] = now
                     keep()
                 }
                 // Out of date only when no copy speaks what this one does.
@@ -15026,12 +15027,12 @@ enum Template {
                 let wire = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
                 let since = copies.first?.since
                 let status = isOpen && wire != Self.wire
-                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: app.name, older: wire < Self.wire), lastSeen: since)
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: listed.name, older: wire < Self.wire), lastSeen: since)
                     : isOpen ? Status(state: .connected, reason: "", lastSeen: since)
-                    : Status(state: .notOpen, reason: Self.notOpen(name: app.name, kind: app.kind, lastSeen: lastSeen[app.id],
-                                                                   waiting: waiting.contains(app.id), now: now),
-                             lastSeen: lastSeen[app.id])
-                return Peer(id: app.id, copies: copies, kind: app.kind, name: app.name, device: copies.last?.device ?? "", status: status)
+                    : Status(state: .notOpen, reason: Self.notOpen(name: listed.name, kind: listed.kind, lastSeen: lastSeen[listed.id],
+                                                                   waiting: waiting.contains(listed.id), now: now),
+                             lastSeen: lastSeen[listed.id])
+                return Peer(id: listed.id, copies: copies, kind: listed.kind, name: listed.name, device: copies.last?.device ?? "", status: status)
             }
             if !copiesSeen, open.contains(where: { Self.app(of: $0) == me }) {
                 copiesSeen = true
@@ -17701,7 +17702,8 @@ enum Template {
         /// While it runs nothing starts another (`running`).
         @discardableResult private func fire() -> Task<Void, Never> {
             if let running { return running }
-            let task = Task { @MainActor [weak self] in
+            // Said in full: Swift before 6.4 takes the closure's type from this function's, and fails.
+            let task = Task<Void, Never> { @MainActor [weak self] in
                 guard let self else { return }
                 await work()
                 UserDefaults.standard.set(Date(), forKey: lastRunKey)
