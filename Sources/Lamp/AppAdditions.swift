@@ -42,16 +42,20 @@ enum AppAdditions {
         try? JSONEncoder().encode(kept).write(to: file(wish), options: .atomic)
     }
 
-    /// What a choice to add is for: the app's code (`AppKinds.code`), so one chosen for a Mac app adds no Android app.
-    static func key(_ target: AppTarget) -> String { target.code }
+    /// What a choice to add is for: the app the card named, its kind and the devices it's for, so one chosen for a Mac
+    /// app adds neither an Android app nor an app for the Mac and iPhone.
+    static func key(_ target: AppTarget) -> String {
+        ([target.kind.rawValue + (target.integration.map { ":" + $0 } ?? "")] + target.rows.sorted()).joined(separator: " ")
+    }
 
     /// The card: one question, two answers, only the person's to give. `new` is the app asked for ("the Mac app"),
-    /// `existing` the wish's apps as the agent is told of them.
-    static func card(new: String, existing: [String]) -> Talk.Ask {
+    /// `existing` the wish's apps as the agent is told of them, `devices` what the new one is to be on ("Mac, iPhone").
+    static func card(new: String, devices: String? = nil, existing: [String]) -> Talk.Ask {
         let one = existing.count == 1
         return Talk.Ask(layout: .steps, questions: [
             Talk.Question(question: "Add another app to this wish?",
-                          options: [Talk.Option(title: add, detail: "Make \(new) as well. " + (one ? "The one it has stays." : "The ones it has stay."),
+                          options: [Talk.Option(title: add, detail: "Make \(new)" + (devices.map { " for \($0)" } ?? "") + " as well. "
+                                                + (one ? "The one it has stays." : "The ones it has stay."),
                                                 symbol: "plus.square.on.square"),
                                     Talk.Option(title: one ? change : changeOne, detail: "No new app: " + (one ? "change the one it has." : "change one it has."),
                                                 symbol: "arrow.triangle.2.circlepath")],

@@ -127,7 +127,11 @@ final class AppAdditionsTests: XCTestCase {
         XCTAssertEqual(status, 200, text)
         XCTAssertTrue(text.hasPrefix("Nothing was added yet"), text)
         XCTAssertEqual(folders(wish), [])
-        XCTAssertEqual(AppAdditions.kept(wish).granted, AppKinds.code(of: .mac, integration: nil), "the Mac choice is still there for the Mac app")
+        XCTAssertNotNil(AppAdditions.kept(wish).granted, "the Mac choice is still there for the Mac app")
+        // Nor an app for the Mac and the iPhone: the card was for a Mac app.
+        let (_, both) = await store.agentKind(["made": "native", "devices": ["mac", "iphone"], "another": true], for: wish)
+        XCTAssertTrue((both["text"] as? String ?? "").contains("Nothing was added yet") || (both["text"] as? String) == Talk.alreadyAsked, "\(both)")
+        XCTAssertEqual(folders(wish), [])
     }
 
     /// What isn't a plain choice is refused before anything is written: a blank, unknown or malformed `app`, `app` with
@@ -141,6 +145,24 @@ final class AppAdditionsTests: XCTestCase {
         }
         XCTAssertEqual(folders(wish), [])
         XCTAssertEqual(store.logs[wish.id]?.contains { $0.ask != nil } ?? false, false)
+    }
+
+    /// An app still to be made from a list an earlier Lamp kept, with no folder of its own, can be changed by the folder
+    /// it will be made in, which the refusal names; changing it gives it that folder on the list.
+    func testAnOlderWaitingAppCanBeNamed() async throws {
+        let (store, made) = try macWish()
+        var wish = made
+        wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .android, needs: "Android Studio")]
+        try Template.saveMeta(wish)
+        let fresh = Store(testingAt: root)
+        let current = try XCTUnwrap(fresh.current(wish))
+        let (refused, said) = await fresh.agentKind(["made": "native", "devices": ["android"]], for: current)
+        XCTAssertEqual(refused, 400)
+        XCTAssertTrue(said["error"].map { "\($0)".contains("\"Android\"") } == true, "\(said)")
+        let (status, answer) = await fresh.agentKind(["made": "native", "devices": ["android"], "app": "Android"], for: current)
+        XCTAssertEqual(status, 200, "\(answer)")
+        XCTAssertEqual(try XCTUnwrap(fresh.current(wish)).apps.map(\.folder), [".", "Android"])
+        _ = store
     }
 
     /// The planner alone: a wish with no app gets its first, and an app still to be made counts as one the wish has.

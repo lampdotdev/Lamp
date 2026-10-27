@@ -5755,8 +5755,14 @@ final class Store: ObservableObject {
     /// The wish's apps as `make_app_for` and `remove_app` plan over them: each made one, the one in the wish's own folder
     /// included, and each it's still to have.
     private func members(of wish: LampProject) -> [WishMember] {
+        // An app still to be made from a list an earlier Lamp kept has no folder of its own: it's given the one it will be
+        // made in (`Parts.legacySlot`), so `app` can name it like any other.
         apps(of: wish).filter(\.scaffolded).map { AppKinds.member(of: $0) }
-            + Parts.waiting(in: wish, parts: parts(of: wish)).map { AppKinds.member(waiting: $0) }
+            + Parts.waiting(in: wish, parts: parts(of: wish)).map { app in
+                var app = app
+                if app.folder == nil { app.folder = Parts.legacySlot(for: app, in: wish) }
+                return AppKinds.member(waiting: app)
+            }
     }
 
     /// A member of a wish in the agent's words: what it is and where it is.
@@ -5851,7 +5857,8 @@ final class Store: ObservableObject {
     private func askToAdd(_ target: AppTarget, beside members: [WishMember], in wish: LampProject, for project: LampProject) -> (Int, [String: Any]) {
         let turn = turns[project.id]
         if turn?.asked == true || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
-        let ask = AppAdditions.card(new: Parts.name(of: target.waiting), existing: members.map(describe))
+        let devices = Places.all.filter { target.rows.contains($0.id) }.map(\.name).joined(separator: ", ")
+        let ask = AppAdditions.card(new: Parts.name(of: target.waiting), devices: target.rows.count > 1 ? devices : nil, existing: members.map(describe))
         let line = chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project)
         AppAdditions.asking(card: line.id, key: AppAdditions.key(target), for: wish)
         logs[project.id, default: []].append(line)
@@ -5873,8 +5880,8 @@ final class Store: ObservableObject {
         let kind = target.kind
         // An app on a list from before folders were kept, whose shared files an earlier Lamp kept under its family alone,
         // gets the folder those files had where it's free, and the files are moved to it, so they still go in.
-        let legacy = claimsKept ? Sharing.keptFolder(in: wish.dir, for: kind) : nil
-        let folder = kept ?? Parts.newFolder(legacy ?? Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish)
+        let folder = kept ?? (claimsKept ? Parts.legacySlot(for: target.waiting, in: current(wish) ?? wish)
+            : Parts.newFolder(Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish))
         if claimsKept { Sharing.claimKept(in: wish.dir, for: kind, slot: folder) }
         var waiting = target.waiting
         waiting.folder = folder
@@ -5970,10 +5977,11 @@ final class Store: ObservableObject {
         case .success(.cancel(let member)):
             let name = Parts.name(of: member.target.kind, integration: member.target.integration)
             // Only its own entry, by the folder kept for it: another app of its code waiting too stays on the list.
+            // An entry an earlier Lamp kept with no folder is the one of its code.
             setApps(wish, wish.apps.filter { entry in
-                if let folder = member.slot { return entry.folder?.lowercased() != folder.lowercased() }
-                return entry.folder != nil || !(Parts.group(entry.kind) == Parts.group(member.target.kind)
-                                                && (member.target.kind != .device || entry.integration == member.target.integration))
+                if let folder = entry.folder { return folder.lowercased() != member.slot?.lowercased() }
+                return !(Parts.group(entry.kind) == Parts.group(member.target.kind)
+                         && (member.target.kind != .device || entry.integration == member.target.integration))
             })
             log(wish, .status, "\(wish.name) won't have \(name).")
             return (200, ["text": "Lamp took \(name) off the wish's list: it won't be made."])

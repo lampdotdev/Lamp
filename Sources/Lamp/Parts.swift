@@ -180,6 +180,12 @@ enum Parts {
         return (2...).lazy.map { base + String($0) }.first { !taken.contains($0.lowercased()) }!
     }
 
+    /// The folder an app still to be made from a list kept before folders were (`WishApp.folder` nil) is made in, and
+    /// named by meanwhile: the one its shared files had, kept by an earlier Lamp, else its kind's, where free.
+    static func legacySlot(for app: WishApp, in wish: LampProject) -> String {
+        newFolder(Sharing.keptFolder(in: wish.dir, for: app.kind) ?? folder(for: app.kind, integration: app.integration), in: wish)
+    }
+
     /// Whether this folder is one Lamp's kinds have always made apps in (Mac/, iPhone/, a device's Roku/): what a Lamp
     /// from before finds, and what an app's installed name doesn't need (`LampProject.installedURL`).
     static func isOwnFolder(_ folder: String) -> Bool { Set(Targets.all.compactMap(\.part).flatMap(\.folders)).contains(folder) }
