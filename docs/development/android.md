@@ -71,8 +71,9 @@ TV (`androidx.tv:tv-material`, in Lamp's catalogue), and rules for the remote an
 app's icon before every build, the tile alone until there is one (`writeAndroidTVOwnedFiles`, `DeviceSupport.iconPNG`).
 The naming call reads a device that's a TV (it has the `android.software.leanback` feature: `Device.from(adb:)` gives
 it the "tv" feature) as "android-tv". It opens where Android TV does (`Destination.androidTV`), in Lamp's TV emulator (`Emulator.Kind.tv`, "Lamp TV", a 1080p
-TV made from the Android TV system image the first time one is wanted: `Emulator.prepareTV`), which takes Lamp's
-emulator ports from the phone (closed first) and gives them back the same way: `Destination.emulator` says which. A
+TV made from the Android TV system image the first time one is wanted: `Emulator.prepareTV`), which runs beside the
+phone on ports of its own (`Edition.androidPorts`, `Emulator.Kind.serial`), so a screen open in both stays open in
+each; `Destination.emulator` says which one an app opens in, and Stop closes it there even when Lamp didn't open it. A
 game or a screen given Android TV opens there too, in Lamp's Android app around its page ("Pages and their hosts" in
 the devices guide), and Try On lists the TV emulator and the person's TVs apart from the phone and the phones. `use_app` presses the
 remote's keys (select, menu and play beside the arrows, back and home). A TV has no cable to the Mac, so Try On's

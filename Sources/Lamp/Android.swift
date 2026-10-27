@@ -797,11 +797,17 @@ enum Adb {
 /// The Android phone on this Mac's screen: one emulator Lamp makes from the system image it downloaded, started
 /// by Lamp as itself, which adb then lists like a device of the person's.
 enum Emulator {
-    /// Which of Lamp's emulators: the phone every Android app opens in, or the TV an Android TV app opens in. One runs at
-    /// a time, on Lamp's ports.
-    enum Kind: Equatable {
+    /// Which of Lamp's emulators: the phone every Android app opens in, or the TV an Android TV app opens in. Each has
+    /// ports of its own (`Edition.androidPorts`), so both can run at once: a screen open on the phone and the TV stays
+    /// open in each.
+    enum Kind: Equatable, CaseIterable {
         case phone, tv
         var avd: String { (self == .tv ? AndroidTools.tvAVDName : AndroidTools.avdName).replacingOccurrences(of: " ", with: "_") }
+        var console: Int { self == .tv ? Edition.androidPorts.tvConsole : Edition.androidPorts.console }
+        var bridge: Int { console + 1 }
+        var control: Int { self == .tv ? Edition.androidPorts.tvControl : Edition.androidPorts.control }
+        /// The serial adb gives it, by the console port it was started on.
+        var serial: String { "emulator-\(console)" }
         var image: String { self == .tv ? AndroidTools.tvSystemImage : AndroidTools.systemImage }
         var profile: String { self == .tv ? AndroidTools.tvProfile : AndroidTools.avdProfile }
     }
@@ -833,17 +839,18 @@ enum Emulator {
         try await create(.tv)
     }
 
-    /// The serial adb gives Lamp's emulator, by the console port it was started on.
-    static var serial: String { "emulator-\(Edition.androidPorts.console)" }
+    /// Which of Lamp's emulators has this serial, or nil for a device of the person's.
+    static func kind(of serial: String) -> Kind? { Kind.allCases.first { $0.serial == serial } }
 
-    /// Lamp's running emulator's serial, or nil when it isn't running. Another emulator adb lists isn't Lamp's to use.
-    static func running() async -> String? {
-        let own = ownProcesses()
-        guard own.contains(where: \.onLampsPorts) else { return nil }
+    /// The serial of Lamp's emulator of that kind when it's running, else nil. Another emulator adb lists isn't Lamp's
+    /// to use.
+    static func running(_ kind: Kind = .phone) async -> String? {
+        let serial = kind.serial
+        guard ownProcesses().contains(where: { $0.kind == kind && $0.onLampsPorts }) else { return nil }
         func listed() async -> Bool { (await Adb.devices()).contains { $0.udid == serial && $0.adbState == "device" } }
         if await listed() { return serial }
         // Started under an earlier server of Lamp's (one that ended as Lamp quit): this one is told where it is.
-        guard register() else { return nil }
+        guard register(kind) else { return nil }
         try? await Task.sleep(for: .milliseconds(500))
         return await listed() ? serial : nil
     }
@@ -851,10 +858,10 @@ enum Emulator {
     /// The emulators this Lamp started. Every Lamp's runs the same tools and the same emulator's name, so they're told
     /// apart by the folder of emulators each was started with (`ANDROID_AVD_HOME`, Lamp's own), read from the
     /// process's environment, as `ps -E` does.
-    private static func ownProcesses() -> [(pid: pid_t, onLampsPorts: Bool, avd: String)] {
+    /// Each is the kind its emulator's name says, on that kind's ports or (one an earlier Lamp started) elsewhere.
+    private static func ownProcesses() -> [(pid: pid_t, onLampsPorts: Bool, kind: Kind?)] {
         let tools = AndroidTools.sdkFolder.appendingPathComponent("emulator").path + "/"
         let home = "ANDROID_AVD_HOME=" + AndroidTools.avdHome.path
-        let ports = "\(Edition.androidPorts.console),\(Edition.androidPorts.bridge)"
         var pids = [pid_t](repeating: 0, count: 4096)
         let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
         return pids.prefix(max(0, count)).compactMap { pid in
@@ -862,9 +869,12 @@ enum Emulator {
             // (its crash handler, its network simulator), which are never given the emulator's name.
             guard pid > 0, let (path, arguments, environment) = commandLine(of: pid), path.hasPrefix(tools),
                   arguments.contains("-avd"), environment.contains(home) else { return nil }
-            let onLampsPorts = arguments.firstIndex(of: "-ports").map { arguments.index(after: $0) < arguments.endIndex && arguments[arguments.index(after: $0)] == ports } ?? false
-            let avd = arguments.firstIndex(of: "-avd").flatMap { arguments.index(after: $0) < arguments.endIndex ? arguments[arguments.index(after: $0)] : nil } ?? ""
-            return (pid, onLampsPorts, avd)
+            func after(_ flag: String) -> String? {
+                arguments.firstIndex(of: flag).flatMap { arguments.index(after: $0) < arguments.endIndex ? arguments[arguments.index(after: $0)] : nil }
+            }
+            let kind = Kind.allCases.first { $0.avd == after("-avd") }
+            let onLampsPorts = kind.map { after("-ports") == "\($0.console),\($0.bridge)" } ?? false
+            return (pid, onLampsPorts, kind)
         }
     }
 
@@ -888,10 +898,10 @@ enum Emulator {
         return (path, Array(strings[1...argc]), Array(strings.dropFirst(argc + 1)))
     }
 
-    /// Tells Lamp's adb server about the emulator on Lamp's ports, in the message an emulator sends it as it boots
+    /// Tells Lamp's adb server about its emulator of that kind on its ports, in the message an emulator sends it as it boots
     /// (adb's `host:emulator:<port>`, its length first in hex). The server connects to it there, if it's running.
     /// False when the server couldn't be reached.
-    private static func register() -> Bool {
+    private static func register(_ kind: Kind) -> Bool {
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard socket >= 0 else { return false }
         defer { close(socket) }
@@ -903,30 +913,25 @@ enum Emulator {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
         guard connected == 0 else { return false }
-        let request = "host:emulator:\(Edition.androidPorts.bridge)"
+        let request = "host:emulator:\(kind.bridge)"
         let message = Array((String(format: "%04x", request.utf8.count) + request).utf8)
         return write(socket, message, message.count) == message.count
     }
 
-    /// Starts Lamp's emulator when it isn't running, waits for Android to boot, and gives back its serial. The
-    /// emulator is a window of its own on the Mac, which `show` says whether to bring forward.
+    /// Starts Lamp's emulator of that kind when it isn't running, waits for Android to boot, and gives back its serial.
+    /// The emulator is a window of its own on the Mac, which `show` says whether to bring forward. The other kind, if
+    /// it's running, is left as it is.
     static func start(show: Bool, kind: Kind = .phone) async throws -> String {
-        // One an earlier Lamp started, on adb's usual ports, holds the emulator Lamp made, so another can't start on
-        // Lamp's. Lamp doesn't end it: it doesn't close for a signal while it saves its state, and one started while
-        // the other still held the emulator's files crashed. The person closes its window, as they would any.
-        if ownProcesses().contains(where: { !$0.onLampsPorts }) {
-            await bringForward()
-            throw AndroidTools.Failure(message: "The Android emulator is still open from before Lamp was updated. Close its window, then try again.")
+        // One an earlier Lamp started on other ports (adb's usual, or the phone's for the TV) holds the emulator Lamp
+        // made, so another can't start on this kind's. Lamp doesn't end it: it doesn't close for a signal while it saves
+        // its state, and one started while the other still held the emulator's files crashed. The person closes its
+        // window, as they would any.
+        if let stale = ownProcesses().first(where: { !$0.onLampsPorts && ($0.kind == kind || $0.kind == nil) }) {
+            NSRunningApplication(processIdentifier: stale.pid)?.activate()
+            throw AndroidTools.Failure(message: "The Android \(kind == .tv ? "TV " : "")emulator is still open from before Lamp was updated. Close its window, then try again.")
         }
-        // The other of Lamp's emulators holds Lamp's ports: it's closed, as the person would close its window, so this
-        // one can start there. An app open in it was this Lamp's, and opens again when it's next tried there.
-        if let other = ownProcesses().first(where: { $0.onLampsPorts && $0.avd != kind.avd }) {
-            if await running() != nil { _ = await Adb.run(["emu", "kill"], on: serial, timeout: 20) }
-            for _ in 0..<30 where kill(other.pid, 0) == 0 { try await Task.sleep(for: .seconds(1)) }
-            guard kill(other.pid, 0) != 0 else { throw AndroidTools.Failure(message: "The other Android emulator didn't close. Close its window, then try again.") }
-        }
-        if let serial = await running() {
-            if show { await bringForward() }
+        if let serial = await running(kind) {
+            if show { await bringForward(kind) }
             return serial
         }
         let process = Process()
@@ -934,8 +939,7 @@ enum Emulator {
         // On Lamp's own ports (`Edition.androidPorts`), where only Lamp's adb server looks for it and the agent's
         // commands can't reach it. After a crash the emulator would otherwise open with a dialog asking to send
         // Google a report, and start nothing until it's answered.
-        let ports = Edition.androidPorts
-        process.arguments = ["-avd", kind.avd, "-ports", "\(ports.console),\(ports.bridge)", "-grpc", "\(ports.control)",
+        process.arguments = ["-avd", kind.avd, "-ports", "\(kind.console),\(kind.bridge)", "-grpc", "\(kind.control)",
                              "-crash-report-mode", "never", "-no-boot-anim", "-netdelay", "none", "-netspeed", "full"]
         process.environment = ProcessInfo.processInfo.environment.merging(AndroidTools.environment) { $1 }
         process.standardOutput = FileHandle.nullDevice
@@ -946,10 +950,10 @@ enum Emulator {
         for _ in 0..<120 {
             try await Task.sleep(for: .seconds(1))
             guard process.isRunning else { throw AndroidTools.Failure(message: "The emulator quit while starting.") }
-            if let serial = await running() {
+            if let serial = await running(kind) {
                 let booted = await Adb.run(["shell", "getprop", "sys.boot_completed"], on: serial, timeout: 10).output.trimmed
                 if booted == "1" {
-                    if !show { await putBehind() }
+                    if !show { await putBehind(kind) }
                     return serial
                 }
             }
@@ -957,16 +961,16 @@ enum Emulator {
         throw AndroidTools.Failure(message: "The emulator didn't finish starting.")
     }
 
-    /// The window of Lamp's own emulator, not another Lamp's or the person's.
-    private static func app() -> NSRunningApplication? {
-        ownProcesses().lazy.compactMap { NSRunningApplication(processIdentifier: $0.pid) }.first
+    /// The window of Lamp's own emulator of that kind, not another Lamp's or the person's.
+    private static func app(_ kind: Kind) -> NSRunningApplication? {
+        ownProcesses().lazy.filter { $0.kind == kind }.compactMap { NSRunningApplication(processIdentifier: $0.pid) }.first
     }
-    static func bringForward() async { app()?.activate() }
+    static func bringForward(_ kind: Kind) async { app(kind)?.activate() }
     /// The process whose window shows the device, for the chat beside it (`ChatPanel`).
-    static func windowOwner() -> pid_t? { app()?.processIdentifier }
-    static func putBehind() async { app()?.hide() }
+    static func windowOwner(_ kind: Kind) -> pid_t? { app(kind)?.processIdentifier }
+    static func putBehind(_ kind: Kind) async { app(kind)?.hide() }
     /// Its window back on screen where it was, without taking the keyboard from whatever the person is in.
-    static func unhide() async { app()?.unhide() }
+    static func unhide(_ kind: Kind) async { app(kind)?.unhide() }
     static var isRunning: Bool { !ownProcesses().isEmpty }
 
     /// The window Lamp's emulator draws the device's screen in, for Lamp's fingertip to go where each tap lands. The
@@ -991,16 +995,16 @@ enum Emulator {
 
     /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimised, or hidden and not
     /// back within a moment of `unhide`).
-    static func glass(size: CGSize) async -> Glass? {
+    static func glass(_ kind: Kind, size: CGSize) async -> Glass? {
         for _ in 0..<10 {
-            if let found = onScreen(size: size) { return found }
+            if let found = onScreen(kind, size: size) { return found }
             try? await Task.sleep(for: .milliseconds(100))
         }
         return nil
     }
 
-    private static func onScreen(size: CGSize) -> Glass? {
-        let pids = Set(ownProcesses().map(\.pid))
+    private static func onScreen(_ kind: Kind, size: CGSize) -> Glass? {
+        let pids = Set(ownProcesses().filter { $0.kind == kind }.map(\.pid))
         guard !pids.isEmpty else { return nil }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let largest = windows.compactMap { info -> (CGWindowID, pid_t, Double)? in

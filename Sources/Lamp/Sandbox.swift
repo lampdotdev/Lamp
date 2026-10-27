@@ -236,7 +236,7 @@ enum Sandbox {
             // since the emulator's control interface listens on the network too. Nor may a command listen there in
             // their place, for Lamp to take it for its own server or emulator.
             if let ports = Edition.androidPorts(folder: name) {
-                let numbers = [ports.server, ports.console, ports.bridge, ports.control]
+                let numbers = ports.all
                 lines.append("(deny network-outbound " + numbers.map { "(remote tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
                 lines.append("(deny network-bind " + numbers.map { "(local tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
             }

@@ -5024,7 +5024,7 @@ final class Store: ObservableObject {
         }
         if project.onAndroid {
             if await isAndroidRunning(project) {
-                await Emulator.bringForward()
+                if let kind = emulatorKind(of: project) { await Emulator.bringForward(kind) }
                 return
             }
             if FileManager.default.fileExists(atPath: project.builtURL.path), !Runtime.sourcesChanged(project), !Template.androidWishOutdated(project) {
@@ -8000,8 +8000,9 @@ final class Store: ObservableObject {
     /// The Android apps open now, by project.
     private var androidApps: [String: AndroidRun] = [:]
 
-    /// The app is open in Lamp's emulator (not on the person's own Android device), for its chat to go beside it.
-    func isOpenInEmulator(_ project: LampProject) -> Bool { androidApps[project.id]?.serial.hasPrefix("emulator-") == true }
+    /// Which of Lamp's emulators the app is open in, or nil when it's on the person's own Android device or not open,
+    /// for its chat to go beside it.
+    func emulatorKind(of project: LampProject) -> Emulator.Kind? { androidApps[project.id].flatMap { Emulator.kind(of: $0.serial) } }
     /// Which project each Android device's screen belongs to: the last launched there. A look or `use_app` by
     /// another project whose app is still alive in the background is refused the screen, as the simulator's
     /// leases do it.
@@ -8041,15 +8042,14 @@ final class Store: ObservableObject {
                     return error.localizedDescription
                 }
             }
-            serial = Emulator.serial
+            serial = kind.serial
         }
         guard stillOwns() else { return "The app was deleted or stopped before it opened." }
         let previous = androidWork[serial]
         let mine = Task<String?, Never> { [self] in
             await previous?.value
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
-            // Lamp's phone and TV emulators share its ports and serial: one is started (the other closed) only in this
-            // queue, so an install or launch under way in the other is never cut short, nor made in the wrong one.
+            // Each of Lamp's emulators is started only in its own queue, so a launch never races its start.
             if project.device == nil {
                 do {
                     note(kind == .tv ? "Starting the Android TV emulator…" : "Starting the Android emulator…", for: project)
@@ -8130,7 +8130,7 @@ final class Store: ObservableObject {
                     }
                 }
             }
-            if inFront, project.device == nil { await Emulator.bringForward() }
+            if inFront, let kind = Emulator.kind(of: serial) { await Emulator.bringForward(kind) }
             let opened = Date()
             // The verdict asks the device once more as the window ends, since the watch's reading may be half a second old.
             _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, confirm: {
@@ -8217,9 +8217,9 @@ final class Store: ObservableObject {
         // keyboard. A device of the person's has nothing of it on the Mac's screen to show.
         let scale = Adb.scale(density: density)
         var shown: Emulator.Glass?
-        if open.serial == Emulator.serial, let size = await Adb.displaySize(on: open.serial) {
-            await Emulator.unhide()
-            shown = await Emulator.glass(size: CGSize(width: size.width / scale, height: size.height / scale))
+        if let kind = Emulator.kind(of: open.serial), let size = await Adb.displaySize(on: open.serial) {
+            await Emulator.unhide(kind)
+            shown = await Emulator.glass(kind, size: CGSize(width: size.width / scale, height: size.height / scale))
         }
         let glass = shown
         // Driving the emulator needs no permission, so none is asked for just to hear Esc: without it the pill offers
@@ -9889,10 +9889,16 @@ final class Store: ObservableObject {
             return true
         }
         if project.onAndroid {
+            let package = Template.androidPackage(for: project)
             if let running = androidApps[project.id] {
-                await Adb.stop(Template.androidPackage(for: project), on: running.serial)
+                await Adb.stop(package, on: running.serial)
                 running.end()
                 if androidLeases[running.serial] == project.id { androidLeases[running.serial] = nil }
+            } else {
+                // Open there without Lamp watching it (opened on the device, or by a Lamp that has since restarted):
+                // Stop still closes it where Try On points.
+                let serial = project.device ?? project.destination.emulator.serial
+                if await Adb.pid(of: package, on: serial) != nil { await Adb.stop(package, on: serial) }
             }
             androidApps[project.id] = nil
             refreshOpenApps()
@@ -11194,7 +11200,7 @@ final class Store: ObservableObject {
               !turn.keptOpen else { return }
         if project.isPart { turn.look.presentedParts.insert(project.id) } else { turn.look.presented = true }
         if project.onAndroid {
-            if project.device == nil { await Emulator.bringForward() }
+            if project.device == nil { await Emulator.bringForward(project.destination.emulator) }
         } else if project.onIOS {
             if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
         } else if !project.isPart {
