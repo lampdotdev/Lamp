@@ -149,6 +149,12 @@ enum AppKinds {
             return .success(AppTarget(kind: nativeKind(code, opening: opening), devices: devices, integration: integration))
         case .web:
             if let integration { return .success(AppTarget(kind: .device, devices: devices, integration: integration)) }
+            // A page among other devices reaches an integration's only where Lamp packages it for that integration's host:
+            // another integration's device, though it runs web apps of its own, isn't one of the page's places yet.
+            if let other = rows.first(where: { $0.destination == .device && !GameKit.pageIntegrations.contains($0.id) }) {
+                return .failure(Refusal("Lamp can't put a web app made for other devices on \(other.name) yet: its own web app is asked for "
+                    + "with \(other.name) alone. Give the other devices without it, and call again for \(other.name)'s app."))
+            }
             let fits = pageKinds.filter { $0 != .device && reached.isSubset(of: Set($0.target.places)) }
             let kept = existing.map(\.target.kind).first(where: fits.contains)
             guard let kind = kept ?? fits.filter({ $0 != .screen }).min(by: { $0.target.places.count < $1.target.places.count }) else { // a screen is only ever kept

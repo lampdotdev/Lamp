@@ -23,6 +23,9 @@ enum GameKit {
     /// The Xbox's integration, and the kind of its apps a game is when it's on one (`LampProject.integration`).
     static let xbox = "xbox-one"
     static let xboxKind = "xbox-one:game"
+    /// The integrations a page made for several devices (a game, a screen) goes onto as their web app
+    /// (`integration(for:)`): the only one Lamp packages such a page for so far is the Xbox's.
+    static let pageIntegrations: Set<String> = [xbox]
 
     struct Failure: LocalizedError {
         let message: String
@@ -59,14 +62,6 @@ enum GameKit {
         // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
         // given apart, as its places: "mac" beside "game" is a Mac app.
         devices == ["game"]
-    }
-
-    /// The places a list of devices gives a kind that takes places one at a time (a game, a screen): always the Mac, its
-    /// home, and each other one it names that the kind can be.
-    static func places(for devices: Set<String>, of kind: Platform = .game) -> [Destination] {
-        let named = Set(devices.compactMap { Places.pageWords[$0] })
-        // The Mac is a game's and a screen's home, whatever else is listed.
-        return kind.target.places.filter { $0 == .mac || named.contains($0) }
     }
 
     /// The integration a game reaches its Xbox through, when the Xbox is one of its places: worked out from its places,

@@ -300,8 +300,10 @@ A three.js game and a screen are both pages, and a page goes wherever Lamp has a
 fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
 and Fire TV (`GameAndroid`, in the page's `Lamp/Android`); the TV's own browser on a Samsung or LG (`TVs`); and the
 integration's own host on the Xbox (WebView2, `WebHost`). A row of the table of devices names its host in its `web`;
-the kinds' places are `Places.pagePlaces`, the destinations of every row with one, and the words they're given by are
-`Places.pageWords`, so a host added to a row is a place for every page at once, with no list per kind to keep. The
+the kinds' places are `Places.pagePlaces`, the destinations of every row with one, named by the rows' own words, so a
+host added to a row is a place for every page at once, with no list per kind to keep. Several integrations' rows share
+`.device`; a page made for several devices goes onto one only where Lamp packages pages for its host
+(`GameKit.pageIntegrations`, the Xbox's), and another integration's web app is asked for with its device alone. The
 Android host is one APK for every Android place: its manifest has the phone's launcher and the TV's (the leanback
 launcher, a banner Lamp draws from the icon, no touch screen required), Android TV is its own `Destination`
 (`.androidTV`, opened in Lamp's TV emulator: `Destination.emulator`), and the remote reaches the page as a TV's does: the
@@ -310,10 +312,12 @@ keys are sent as the key codes Web/lamp.js reads on a TV, with Back on the first
 (`lampAndroid.exit`). The page's LampAI is answered by the Android app as the Mac's app answers it: Web/lamp.js
 finds `lampGatewayHost` (an AndroidX WebKit message listener for the page's own origin in its main frame,
 `LampPageGateway.kt`), and the app sends LampAI's routes to Lamp with the token Lamp wrote into its storage at install
-(`Adb.tellApp`), so the page never holds it. On a Samsung or LG, `lamp-game.js` reads the remote's numbered keys as the keyboard's. A device
-with no web engine Lamp reaches (the Apple TV, a Roku) has no host: a page asked to go there is refused with the row's
-reason, that it needs a native version (`AppKinds.target`, `Places.refusal`), and Try On lists it under the places to
-add as "Needs a Native Version" (`Places.noPage`); `make_app_for`'s table says the same (`Places.forAgent`).
+(`Adb.tellApp`), so the page never holds it. On a Samsung or LG, `lamp-game.js` reads the remote's numbered keys as the keyboard's. A row
+with no web host (the Apple Watch, the Apple TV, Vision Pro, a Roku) is refused a page with its own reason
+(`AppKinds.target`, `Places.refusal`), and Try On lists it under the places, whether or not one is left to add (`Places.noPage`: every built-in row
+with no host, an integration's once the person has its device) as "Needs a Native Version", or "Native Only for Now"
+where the gap is Lamp's own (`noHostYet`: Vision Pro shows pages, Lamp has no host there yet); `make_app_for`'s table
+says the same (`Places.forAgent`).
 
 ## Games
 
