@@ -105,7 +105,7 @@ either way up and a phone, and reflows for each.
   `album` (null off, or its id), `example` (this screen chose the example family over the welcome; not shared).
 
 Examples are made afresh on each device at each launch, relative to today, until the family is set up; they're never
-shared. What the family changes is the same on every copy of the screen (the Mac, the kitchen iPad, the TV, the
+shared. What the family changes is the same on every copy of the screen (the Mac, the kitchen tablet, the TV, the
 frame) through Lamp's shared collections, merged item by item (`Web/js/sync.js`, `LampStore.shared` in lamp.js):
 `people`, `chores`, `groceries`, `events`, `ticks` (one per chore per day), `stars`, `settings` (one item per
 setting), `favs`, and what a copy that can read them publishes for the others: `calendar` (the chosen calendars'

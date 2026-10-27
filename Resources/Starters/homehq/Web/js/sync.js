@@ -1,4 +1,4 @@
-// One Home HQ on every screen: the copies of this screen (the Mac, the kitchen iPad, the TV, the photo frame) keep the
+// One Home HQ on every screen: the copies of this screen (the Mac, the kitchen tablet, the TV, the photo frame) keep the
 // family's own data the same through Lamp's shared collections (LampStore.shared in Web/lamp.js), merged item by item,
 // so two devices changing different things never lose either. What's here is only the family's own: the examples are
 // made on each device and never shared, so a copy opened for the first time can't put them over real data.

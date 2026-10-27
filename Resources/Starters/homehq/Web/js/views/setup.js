@@ -61,7 +61,7 @@
     return '<div class="setup-welcome">' +
       '<div class="label">Home HQ</div>' +
       '<h2 class="setup-title serif">Your family’s day, on every screen.</h2>' +
-      '<p class="sheet-p">The calendar, chores and stars, the shopping list and your photos, the same on the TV, the kitchen iPad and the Mac.</p>' +
+      '<p class="sheet-p">The calendar, chores and stars, the shopping list and your photos, the same on the TV, the kitchen tablet and the Mac.</p>' +
       '<div class="sheet-actions sheet-actions--start">' +
       '<button class="btn btn--solid" data-start>Set up my family</button>' +
       '<button class="btn btn--ghost" data-example>Show me an example</button></div>' +
