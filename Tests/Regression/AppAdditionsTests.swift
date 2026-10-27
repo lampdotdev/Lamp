@@ -205,7 +205,7 @@ final class AppAdditionsTests: XCTestCase {
         try FileManager.default.createDirectory(at: family, withIntermediateDirectories: true)
         try #"{"platform":"iphone","folder":"iPhone"}"#.write(to: family.appendingPathComponent("lamp-part.json"), atomically: true, encoding: .utf8)
         let store = Store(testingAt: root)
-        let given = try XCTUnwrap(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))))
+        guard case .ready(let given) = store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))) else { return XCTFail() }
         XCTAssertEqual(given.apps.map(\.folder), [".", "iPhone2"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: family.path))
         XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone2"), "iPhone")
@@ -227,7 +227,7 @@ final class AppAdditionsTests: XCTestCase {
         // Stopped after the list too: the files are where they were, found from the slot all the same.
         XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone7"), "iPhone")
         let store = Store(testingAt: root)
-        let given = try XCTUnwrap(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))))
+        guard case .ready(let given) = store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))) else { return XCTFail() }
         XCTAssertEqual(given.apps.map(\.folder), [".", "iPhone7"])
         XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone7"), "iPhone")
         XCTAssertFalse(FileManager.default.fileExists(atPath: family.path))
@@ -244,11 +244,18 @@ final class AppAdditionsTests: XCTestCase {
         try #"{"platform":"iphone","folder":"iPhone"}"#.write(to: family.appendingPathComponent("lamp-part.json"), atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: family.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: family.path) }
-        wish.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone, needs: "Xcode")]
+        wish.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone)]
         try Template.saveMeta(wish)
         let store = Store(testingAt: root)
-        let given = try XCTUnwrap(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))))
+        XCTAssertEqual(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))), .failed)
+        // Nor does anything else act on the wish's apps meanwhile: Lamp's own retry makes nothing, and make_app_for refuses.
+        await store.makeWaitingParts(of: try XCTUnwrap(store.current(wish)))
+        XCTAssertEqual(Parts.folders(in: wish.dir), [])
+        let (status, _) = await store.agentKind(["made": "native", "devices": ["iphone"], "app": "iPhone"], for: try XCTUnwrap(store.current(wish)))
+        XCTAssertEqual(status, 500)
+        let given = try XCTUnwrap(store.current(wish))
         XCTAssertEqual(given.apps.map(\.folder), [".", nil])
+        XCTAssertEqual(given.apps.map(\.kind), [.tv, .iphone])
         XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps.map(\.folder), [".", nil])
         XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone), "iPhone")
     }

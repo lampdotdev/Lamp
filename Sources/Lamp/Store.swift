@@ -3343,9 +3343,9 @@ final class Store: ObservableObject {
     /// goes with the requests until the agent has had it (`Parts.madeNote`); one that still can't be made keeps waiting,
     /// as there.
     func makeWaitingParts(of wish: LampProject) async {
-        guard let wish = givingWaitingAppsFolders(wish), !wish.isPart else { return }
+        guard case .ready(let wish) = givingWaitingAppsFolders(wish) else { return }
         for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
-            let said = await add(AppKinds.member(waiting: app).target, to: wish, folder: app.folder, claimsKept: app.folder == nil)
+            let said = await add(AppKinds.member(waiting: app).target, to: wish, folder: app.folder)
             if let part = parts(of: current(wish) ?? wish).first(where: { Parts.lists(app, $0) }) {
                 Parts.rememberMade(said, about: part, in: wish)
             }
@@ -3371,17 +3371,22 @@ final class Store: ObservableObject {
         }
     }
 
-    /// The setup one of a wish's apps was waiting for is done (`IPhoneSetupLine`): what stopped it is cleared, so the
-    /// next turn makes it, and the request that asks for it is sent.
     /// The wish as it is, each app still to be made from a list an earlier Lamp kept (no folder of its own) given the
     /// folder it will be made in, on the list itself (`Parts.legacySlot`), with the shared files an earlier Lamp kept for
     /// its family moved to that folder's place (`Sharing.claimKept`). Done once, before anything is decided about the
     /// wish's apps, so every later step (`app` naming it, a change of its kind, a cancel, a retry) goes by that folder.
-    @discardableResult
-    func givingWaitingAppsFolders(_ wish: LampProject) -> LampProject? {
-        guard var wish = current(wish), !wish.isPart else { return current(wish) }
+    /// `failed` when that couldn't be written safely: nothing moved and nothing changed, and nothing may act on the wish's
+    /// apps until it can, since the next step would make such an app without its files.
+    enum WaitingFolders: Equatable {
+        case ready(LampProject)
+        case notFound
+        case failed
+    }
+
+    func givingWaitingAppsFolders(_ wish: LampProject) -> WaitingFolders {
+        guard var wish = current(wish), !wish.isPart else { return .notFound }
         let waiting = Parts.waiting(in: wish, parts: parts(of: wish))
-        guard waiting.contains(where: { $0.folder == nil }) else { return wish }
+        guard waiting.contains(where: { $0.folder == nil }) else { return .ready(wish) }
         var apps = wish.apps
         var claimed: [(kind: Platform, folder: String)] = []
         for index in apps.indices where apps[index].folder == nil && waiting.contains(apps[index]) {
@@ -3396,18 +3401,23 @@ final class Store: ObservableObject {
             case .marked: claimed.append((apps[index].kind, folder))
             case .nothingKept: break
             // Its files couldn't be noted for the slot: the list isn't changed, so they're still found as they were.
-            case .failed: return wish
+            case .failed: return .failed
             }
             apps[index].folder = folder
         }
         var listed = wish
         listed.apps = apps
-        guard (try? Template.saveMeta(listed)) != nil else { return wish }
+        guard (try? Template.saveMeta(listed)) != nil else { return .failed }
         wish = setApps(wish, apps)
         for claim in claimed { Sharing.claimKept(in: wish.dir, for: claim.kind, slot: claim.folder) }
-        return wish
+        return .ready(wish)
     }
 
+    /// Refused while an app still to be made couldn't be given its folder (`givingWaitingAppsFolders`).
+    private static let waitingFoldersFailed = "Lamp couldn't note where an app still to be made goes, so nothing changed. Tell the person in a sentence that Lamp couldn't update the wish's apps just now."
+
+    /// The setup one of a wish's apps was waiting for is done (`IPhoneSetupLine`): what stopped it is cleared, so the
+    /// next turn makes it, and the request that asks for it is sent.
     /// The setup is this Mac's for the kind, so every app of the wish it held back (two iPhone apps, say) is tried again.
     func retryWaitingApp(_ kind: Platform, of wish: LampProject) {
         guard let wish = current(wish), let app = wish.apps.first(where: { Parts.group($0.kind) == Parts.group(kind) }) else { return }
@@ -5805,7 +5815,12 @@ final class Store: ObservableObject {
     /// code changed in place, its code and data kept, or a new app beside the wish's others. It never takes an app away:
     /// that's `remove_app`'s. What this Mac can't build yet waits on the wish's list with its setup.
     func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
-        guard let wish = givingWaitingAppsFolders(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
+        let wish: LampProject
+        switch givingWaitingAppsFolders(project) {
+        case .ready(let found): wish = found
+        case .notFound: return (404, ["error": "Lamp can't find the wish."])
+        case .failed: return (500, ["error": Self.waitingFoldersFailed])
+        }
         guard let made = (arguments["made"] as? String).flatMap({ Place.Make(rawValue: $0.trimmed.lowercased()) }),
               let devices = arguments["devices"] as? [String], !devices.isEmpty else {
             return (400, ["error": "make_app_for takes `devices`, every device the app is to be on from now on, and `made`, \"web\" or \"native\"."])
@@ -5903,15 +5918,10 @@ final class Store: ObservableObject {
     /// A new app of the wish, in a folder of its own, made as the plan says. Its folder is found and kept for it first
     /// (`folder`, else `Parts.newFolder`), so an app this Mac can't build yet is the same app, with the same name among
     /// the wish's apps, whenever it's made, and another asked for meanwhile gets a folder of its own.
-    /// `claimsKept`: it's an app from a list from before folders were kept, so files an earlier Lamp kept for its family
-    /// alone are its.
-    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil, claimsKept: Bool = false) async -> [String] {
+    /// An app on a list from before folders were kept has its folder by now (`givingWaitingAppsFolders`).
+    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil) async -> [String] {
         let kind = target.kind
-        // An app on a list from before folders were kept, whose shared files an earlier Lamp kept under its family alone,
-        // gets the folder those files had where it's free, and the files are moved to it, so they still go in.
-        let folder = kept ?? (claimsKept ? Parts.legacySlot(for: target.waiting, in: current(wish) ?? wish)
-            : Parts.newFolder(Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish))
-        if claimsKept { Sharing.claimKept(in: wish.dir, for: kind, slot: folder) }
+        let folder = kept ?? Parts.newFolder(Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish)
         var waiting = target.waiting
         waiting.folder = folder
         let (part, problem, setup) = await addPart(kind, to: wish, family: target.family, folder: folder, places: target.places,
@@ -5998,7 +6008,12 @@ final class Store: ObservableObject {
     /// (`takeAway`): its files stay in the wish's versions, so Undo or a restore brings it back, and its data stays. One
     /// still to be made is taken off the wish's list.
     func agentRemove(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
-        guard let wish = givingWaitingAppsFolders(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
+        let wish: LampProject
+        switch givingWaitingAppsFolders(project) {
+        case .ready(let found): wish = found
+        case .notFound: return (404, ["error": "Lamp can't find the wish."])
+        case .failed: return (500, ["error": Self.waitingFoldersFailed])
+        }
         let members = members(of: wish)
         switch AppPlanner.remove(arguments["app"] as? String ?? "", in: members, describe: describe) {
         case .failure(let refusal):
