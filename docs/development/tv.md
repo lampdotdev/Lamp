@@ -128,18 +128,35 @@ that, and such a page can't reach the relay, which speaks plain ws.
 
 ## Do It for Me
 
-A setup step Lamp can walk the person through is named in the device table: `Place.setupSkills` gives, by the system
-a TV reports ("webOS"), the skill that does it, so the TV row, which covers Samsung's too, offers Do It for Me only
-for the systems it names. The skill carries its steps as data, a `lamp-setup` block of JSON in its SKILL.md
-(`SetupSteps.parse`), and `GuidedSetup` runs them: `connect`, `request`, `wait` (asked again every few seconds until
-the answer holds a value), `confirm` (the person says they did it), `rejoin` (the device restarts, by the person's hand or by itself, and the
-steps go on once Lamp has seen it stop answering and answer again; the person can skip a restart that isn't needed)
-and `passphrase` (the setup window's own step,
-which finishes only once the key is fetched, unlocked and SSH answers). No step is a maker's code: the skill names
-the connection (`SetupConnections`), and each connection is a protocol its maker publishes. LG's is the TV's
-second-screen socket as the Connect SDK speaks it (`WebOSSocket`): `wss://` on port 3001, a manifest asking only for
-the permissions the steps use, the TV's certificate kept with the client key it hands back and the key offered only
-to a TV showing that certificate again.
+A setup step Lamp can walk the person through is a skill that says so itself: its frontmatter names the row of the
+table of devices (`setup-for`: "tv", or an integration's id), the system the device reports (`setup-system`:
+"webOS"; left out, any) and the setup step it does (`setup-step`: "developer-mode", a `TVSetup.Step` or an integration
+step's id). `SetupGuides.find` picks it for the step the device is at: one for the device's own system wins over one
+for any, two alike are both left out, and the one chosen is checked against that setup before anything is sent (the
+step must be the setup's, and HTTP reaches only an integration's devices). The skill carries its steps as data, a
+`lamp-setup` block of JSON in its SKILL.md (`SetupSteps.parse`), and `GuidedSetup` runs them, the same in the TV
+window and an integration's setup window (`SetupGuideView`): `connect`, `request` (skipped when its `unless` already
+holds; a request of more than one change must have one, since Try Again goes on from the step that failed), `wait`
+(asked again every few seconds until `until` holds), `confirm` (the person says they did it, and nothing is said
+done), `rejoin` (the device restarts, by the person's hand or by itself; Lamp looks before it asks, says the device is
+back only once it has seen it stop answering and answer again, and goes on claiming nothing when `unless` holds or the
+person skips a restart that isn't needed) and `handoff` (the last: what the person does in the setup's own step).
+
+The skill names its connection (`SetupConnections`). `http` needs no Swift: its requests are a device integration's
+actions and its checks an integration step's conditions (`IntegrationRunner`, with every rule they have there: only
+`http`, `probe` and `wait`, held to `IntegrationCheck`'s checks), and `reach` says what the device answering means.
+A socket protocol is written once in Swift (`SocketSetupConnection`). LG's is the TV's second-screen socket as the
+Connect SDK speaks it (`WebOSSocket`): `wss://` on port 3001, a manifest asking only for the permissions the steps
+use, the TV's certificate kept with the client key it hands back and the key offered only to a TV showing that
+certificate again. A connection tells three failures apart: the device answering otherwise (a check that doesn't
+hold), not answering (`unreachable`, the only one a restart is read from) and answering but not to Lamp (`rejected`:
+its certificate changed or it turned the sign-in away), which stops the steps.
+
+The guide never completes one of the setup's own steps. From its start until its steps end it alone talks to the device
+(`holdsDevice`: an integration's watch of its step is stopped); at the end it hands the device back (`onFinish`) and the
+setup checks its own step again, keeps what passed and shows the step left, here the passphrase, which finishes only
+once the key is fetched, unlocked and SSH answers. Do It Myself gives the device back too; a failure keeps the guide
+on screen for Try Again.
 
 Lamp says only what it saw: a TV that let it in, an app in the TV's list, a TV that went away and came back. A sign-in
 or a switch is the person's, never read off a dropped connection or a timer. Each failure says what to do: the TV said

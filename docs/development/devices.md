@@ -57,7 +57,9 @@ Setup is one window for every such device (`DeviceSetupWindow`, `DeviceSetupPage
 you accept" from `Integration.Acceptance` in Lamp's words, `IntegrationWords.accepts`, so no integration can play a
 risk down, the mark, one button and the check's line). A device has one `DeviceSetupModel`, which the window and the
 chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens the window) share. A step that needs
-hands on the device (`wait`) is checked again every few seconds while it's shown. `IntegrationRunner` runs steps and
+hands on the device (`wait`) is checked again every few seconds while it's shown. A step can also have Do It for Me, from a skill that
+says it does that step for the integration (`setup-for` its id), with no Swift for that device: "Do It for Me" in the
+TV guide. `IntegrationRunner` runs steps and
 sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
 is shown for the moment, never kept. A device whose certificate isn't the one kept (reset, or its developer mode turned
 on again) is refused until the person reconnects it: the step's check or the install that met it puts a reconnect card
