@@ -16,8 +16,8 @@ The tools Lamp has for games:
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
   in LampSupport.swift. For 3D, LampSceneView (the scene-3d skill) is for Mac-only apps; a native 3D game on iPhone,
   iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit), without LampSceneView.
-- **Native Android**: Lamp has no game help in Kotlin yet. You can still write one (a SurfaceView or Canvas with its
-  own frame loop); say to the person that it's plainer than a web game, which has the runtime.
+- **Native Android**: Lamp has no game help in Kotlin yet: write the game's own frame loop on a SurfaceView or a
+  Canvas, and its controls, sound and saves with Android's own APIs.
 - **An integration's device** (Roku…): what its integration declares; read the device-integrations skill.
 - **Apple Watch**: Lamp has no game help there.
 
