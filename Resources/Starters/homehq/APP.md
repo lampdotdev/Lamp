@@ -111,10 +111,12 @@ either way up and a phone, and reflows for each.
 
 Examples are made afresh on each device at each launch, relative to today, until the family is set up; they're never
 shared. What the family changes is the same on every copy of the screen (the Mac, the kitchen tablet, the TV, the
-frame) through Lamp's shared collections, merged item by item (`Web/js/sync.js`, `LampStore.shared` in lamp.js):
+frame) through the wish's own shared collections, merged item by item (`Web/js/sync.js`,
+`LampStore.shared(name, { wish: true })` in lamp.js), so another app of the wish (an iPhone app beside the screen, a
+Mac app) reads and changes the same family, chores, list and calendar by asking for the same names with `wish: true`:
 `people`, `chores`, `groceries`, `events`, `ticks` (one per chore per day), `stars`, `settings` (one item per
 setting), `favs`, and what a copy that can read them publishes for the others: `calendar` (the chosen calendars'
-events) and `photos` (the album, its pictures in `LampStore.sharedFiles('photos')`). A change on any copy reaches
+events) and `photos` (the album, its pictures in `LampStore.sharedFiles('photos', { wish: true })`). A change on any copy reaches
 the others at once while they're on the same Wi‑Fi, and when they next meet otherwise. The views change `DATA` and
 call `App.emit('data')`: that's what saves and shares a change, so every change must call it. An example changed is
 kept as the family's; one taken away is kept, marked `gone: true`, so it stays away. Each device also keeps its own
