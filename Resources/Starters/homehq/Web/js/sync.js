@@ -185,7 +185,8 @@
     list.forEach(function (m) {
       if (byId[m.id] && byId[m.id].src) return;
       pictures.url(m.id).then(function (url) {
-        if (!url) return;
+        // Fetched after the album was turned off, or after this picture left it: not shown.
+        if (!url || D.settings.album == null || !S.photos.get(m.id)) return;
         var p = { id: m.id, o: m.o, date: m.date, place: '', tag: m.date || m.id, src: url };
         D.photos = D.photos.filter(function (x) { return x.id !== m.id; }).concat([p]);
         App.emit('data');

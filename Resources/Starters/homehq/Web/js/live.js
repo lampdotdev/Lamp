@@ -74,7 +74,10 @@
     if (chosen && !App.readsCalendars()) return;   // another copy reads them
     D.events = D.events.filter(function (e) { return !e.cal; });
     if (!chosen || !native()) { App.emit('data'); return; }
+    var asked = JSON.stringify(chosen);
     LampNative.call('events', { calendars: chosen, days: 45 }).then(function (list) {
+      // An answer to a question since changed (calendars turned off or others chosen) is dropped.
+      if (!App.readsCalendars() || JSON.stringify(D.settings.calendars) !== asked) return;
       D.events = D.events.filter(function (e) { return !e.cal; }).concat(list.map(function (e) {
         return { id: 'k' + e.id, cal: true, title: e.title, start: new Date(e.start), end: new Date(e.end), allDay: !!e.allDay,
                  loc: e.loc || undefined, notes: e.notes || undefined, people: personFor(e.calendar) };
@@ -94,7 +97,7 @@
       return;
     }
     LampNative.call('photos', { album: album, limit: 24 }).then(function (list) {
-      if (!list.length) return;
+      if (!list.length || !App.readsAlbum() || D.settings.album !== album) return;
       D.photos = list.map(function (p) { return { id: p.id, src: p.src, o: p.o, date: p.date || '', place: '', fav: !!p.fav, tag: p.date || p.id }; });
       App.emit('data');
     }, function () {});
