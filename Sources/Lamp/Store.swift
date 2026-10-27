@@ -1555,6 +1555,7 @@ final class Store: ObservableObject {
             importApp(from: url)
             return
         }
+        if let exact = Wish.exact(from: url) { return take(exact: exact) }
         if let wish = Wish.from(link: url) { return take(wish: wish) }
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -1569,6 +1570,34 @@ final class Store: ObservableObject {
     /// A wish the site's link brought (`Wish`). During the welcome it goes to the first-app box; after it, into
     /// the message box of a new app, written in a word at a time as the site writes. It is never sent from
     /// here: any web page can open such a link, so the person reads it and presses Send.
+    /// The request a link brought with the exact wish it names (`Wish.Exact`), for that wish's box once it's here.
+    private var importDraft: String?
+
+    /// The exact wish a link names: its shared file is fetched (no bigger than any shared file may be), then goes the
+    /// way a file opened by hand does, review included, and the request the link brought waits for its box.
+    func take(exact: Wish.Exact) {
+        NSApp.activate()
+        Task {
+            let folder = Sharing.workFolder.appendingPathComponent("lamp-fetched-\(UUID().uuidString)")
+            do {
+                var request = URLRequest(url: exact.file)
+                request.timeoutInterval = 60
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= Sharing.maxArchiveBytes else {
+                    throw Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
+                }
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let file = folder.appendingPathComponent("Shared Wish.lampapp")
+                try data.write(to: file)
+                importDraft = exact.text
+                importApp(from: file)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
     func take(wish: String) {
         NSApp.activate()
         guard Onboarding.isDone || welcomeFinished else { arrivedWish = wish; return }
@@ -2998,6 +3027,7 @@ final class Store: ObservableObject {
 
     func cancelImport() {
         importRequest = nil
+        importDraft = nil
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
         pendingImport = nil
     }
@@ -3151,11 +3181,11 @@ final class Store: ObservableObject {
 
         reload()
         showChat(project.id)
-        // A request that came with the wish's link (an app's remix panel, `RemixLink`): the site copies it with Lamp's
-        // mark as the exact wish is taken, so it's waiting in the box once the wish is here, and taken off the clipboard.
-        if case .wish(let text) = Wish.look() {
+        // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
+        // box, ready to send once the wish is built.
+        if let text = importDraft {
+            importDraft = nil
             updateDraft(Draft(text: text), for: project)
-            NSPasteboard.general.clearContents()
         }
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {

@@ -69,3 +69,14 @@ export function withAsk(wish, ask) {
   if (!words) return tidy(request);
   return tidy(`${words}\n\nThen: ${request}`);
 }
+
+/**
+ * The link that opens Lamp, on a Mac that has it, on the exact shared wish (its file's address) with a request in the
+ * box: what a shared wish's page offers when a request came with its link. Null without a file, or without a request.
+ */
+export function exactWishLink(file, ask) {
+  const request = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
+  if (!file || !request) return null;
+  const params = new URLSearchParams({ file: String(file), text: request });
+  return `lamp://wish?${params}`;
+}

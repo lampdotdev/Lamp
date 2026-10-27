@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { wishHTML, wishLink, copyWish, askFrom, withAsk, WISH_MARK, WISH_LIMIT, ASK_LIMIT } from "../lib/wish.js";
+import { wishHTML, wishLink, copyWish, askFrom, withAsk, exactWishLink, WISH_MARK, WISH_LIMIT, ASK_LIMIT } from "../lib/wish.js";
 
 const wish = "A Mac app that sorts my files & asks <first>.\nNothing moves until I say \"yes\".";
 
@@ -58,4 +58,14 @@ test("a request from an app's remix panel is read off the link and put after the
 test("the site and the panel agree on how much a request carries", () => {
   const swift = readFileSync(new URL("../../Sources/LampSidebarKit/RemixPanel.swift", import.meta.url), "utf8");
   assert.ok(swift.includes(`public static let askLimit = ${ASK_LIMIT}`));
+});
+
+test("the exact wish's link names its file and carries the request", () => {
+  const link = exactWishLink("https://files.example/w/abc.lampapp", " Add a weekly view ");
+  assert.ok(link.startsWith("lamp://wish?"));
+  const params = new URL(link).searchParams;
+  assert.equal(params.get("file"), "https://files.example/w/abc.lampapp");
+  assert.equal(params.get("text"), "Add a weekly view");
+  assert.equal(exactWishLink("", "Add a weekly view"), null);
+  assert.equal(exactWishLink("https://files.example/w/abc.lampapp", "  "), null);
 });
