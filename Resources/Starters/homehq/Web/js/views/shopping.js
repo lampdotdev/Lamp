@@ -26,9 +26,11 @@
     }).then(function (list) {
       var v = list && list[0];
       if (!v || v.error || !v.choice || v.choice === 'Other' || (v.confidence != null && v.confidence < 0.5)) return;
-      // Still on the list, still uncategorized: the family may have moved it meanwhile.
-      if (D.groceries.indexOf(g) < 0 || g.cat !== 'Other') return;
-      g.cat = v.choice;
+      // The item as the list holds it now, by its id (saving it rebuilds the list from what's shared), still on the
+      // list and still uncategorized: the family may have moved or taken it meanwhile.
+      var now = D.groceries.filter(function (x) { return x.id === g.id; })[0];
+      if (!now || now.cat !== 'Other') return;
+      now.cat = v.choice;
       App.emit('data');
       if (V.el && App.current === 'shopping') paintList();
     }, function () {});
