@@ -87,6 +87,27 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(ShareCheck.licence(nil), .none)
     }
 
+    /// Share Link with the wish itself ticked says why the wish can't go and what to ask Lamp, not only that it can't.
+    @MainActor func testShareLinkSaysWhyTheWishCantGo() throws {
+        let saved = Sharing.knownSecrets
+        defer { Sharing.knownSecrets = saved }
+        Sharing.knownSecrets = { _ in ["sk-or-v1-made-up-key-for-the-test-0123456789"] }
+        let project = try app("remix")
+        func shown() -> String? {
+            do { _ = try exported(project); return nil } catch { return WishLinkCards.problem(error) }
+        }
+
+        try Credits.arrive(Credits(upstream: [Credits.Source(name: "Engine", license: "GPL-3.0-or-later", licenseFile: "LICENSE-engine")]), in: project)
+        XCTAssertEqual(shown(), "Remix can't be shared. The licence of Engine is missing from it. Ask Lamp to put LICENSE-engine back.")
+
+        try Data("GPL".utf8).write(to: project.dir.appendingPathComponent("LICENSE-engine"))
+        try Data("let key = \"sk-or-v1-made-up-key-for-the-test-0123456789\"\n".utf8).write(to: project.dir.appendingPathComponent("Sources/Key.swift"))
+        XCTAssertEqual(shown(), "Remix can't be shared: it holds a key or a password. It's in Sources/Key.swift. Ask Lamp to take it out and keep it out of the code.")
+
+        // A failure with nothing more to say reads as it did.
+        XCTAssertEqual(WishLinkCards.problem(URLError(.notConnectedToInternet)), URLError(.notConnectedToInternet).localizedDescription)
+    }
+
     func testPicturesMadeWithAIAreMarked() throws {
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 4, pixelsHigh: 4, bitsPerSample: 8, samplesPerPixel: 4,
                                    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
