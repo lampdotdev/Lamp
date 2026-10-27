@@ -158,7 +158,7 @@ enum Skills {
         if offered.contains("share-extension"), Template.hasShare(project) { found.append(("share-extension", "it has a share extension in Share/")) }
         if offered.contains("scripting"), appSwift(of: project, matches: #"\bLampScript\b"#) { found.append(("scripting", "its code uses LampScript")) }
         if offered.contains("game"), let why = gameUse(project) { found.append(("game", why)) }
-        if offered.contains("3d-game"), pageCode(of: project, matches: #"from\s*['"]three['"/]"#) { found.append(("3d-game", "its page draws with three.js")) }
+        if offered.contains("3d-game"), pageCode(of: project, matches: threeImport) { found.append(("3d-game", "its page draws with three.js")) }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
         return found
     }
@@ -201,6 +201,10 @@ enum Skills {
         return uses ? "its TV page uses phones as controllers or a second screen" : nil
     }
 
+    /// A page's own code bringing in three.js: by the import map's name (`three`, `three/addons/…`) or by the path of
+    /// Lamp's copy beside it (`./three/three.module.js`), in a static `import … from` or a dynamic `import(…)`.
+    static let threeImport = #"(\bfrom|\bimport\s*\()\s*['"](\./)?three(['"/]|\.module\.js)"#
+
     /// What shows an app is a game: a page on Lamp's game runtime, or Swift on SpriteKit.
     static func gameUse(_ project: LampProject) -> String? {
         if pageCode(of: project, matches: #"lamp-game\.js"#) { return "its page runs on Lamp's game runtime" }
@@ -214,7 +218,7 @@ enum Skills {
         guard let files = FileManager.default.enumerator(at: project.dir.appendingPathComponent(TVTemplate.webFolder), includingPropertiesForKeys: nil) else { return false }
         for case let file as URL in files {
             if file.lastPathComponent == "three" { files.skipDescendants(); continue }
-            guard ["js", "html"].contains(file.pathExtension), !["lamp.js", "lamp-game.js"].contains(file.lastPathComponent) else { continue }
+            guard ["js", "mjs", "html"].contains(file.pathExtension), !["lamp.js", "lamp-game.js"].contains(file.lastPathComponent) else { continue }
             if (try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: .regularExpression) != nil { return true }
         }
         return false

@@ -1,25 +1,33 @@
 ---
 name: 3d-game
-description: 3D games and scenes in a web page with three.js, on any device that runs web, TVs included - the renderer, models, light and materials, and keeping a scene light enough for a TV, checked on the device. Read before writing or changing 3D in a web page.
+description: 3D games and scenes in a web page with three.js, on any device that runs web, TVs included - the renderer, models, light and materials, and what costs the most. Read before writing or changing 3D in a web page.
 ---
 
 # 3D in a web page
 
-three.js runs wherever web runs with WebGL 2: a Mac, an iPhone or iPad, an Android phone or tablet, a Samsung or LG TV
-and an Xbox. Any of them can show a 3D game. What differs is speed: a Mac draws far more than a phone, and a TV's chip
-is often slower than a phone's. Nothing here limits what you make; it says what costs the most, so you can choose what
-the game is worth on the devices it's played on.
+three.js runs in a page wherever the device takes a page (`make_app_for`'s table) and its browser gives WebGL 2: a
+host for the page isn't enough on its own, so check WebGL 2 first (below). What differs then is speed: a Mac draws far
+more than a phone, and a TV's chip is often slower than a phone's. Nothing here limits what you make; it says what
+costs the most, so you can choose what the game is worth on the devices it's played on.
 
-For 3D in Swift in a Mac-only app (RealityKit through LampSceneView), open the scene-3d skill instead; native 3D on
-iPhone, iPad or Apple TV is written with that device's own frameworks. The game skill holds what every game needs
+Lamp ships three.js in two pages: a game's page on its runtime (`make_app_for` with `kind` "game"), and a Samsung or LG
+TV app's page, which is what a game played with phones is for now (the phone-controllers skill). The TV app's page has
+no game runtime: the TV rules say how it loads three.js, and it makes its own renderer and frame loop.
+
+A 3D game is made this way by default, on every device Lamp has a host for a page on, the Mac included. 3D in Swift,
+in a Mac app made natively (because the person asked for native, or the app was made so), is the scene-3d skill's
+(RealityKit through LampSceneView); native 3D on iPhone, iPad or Apple TV is written with that device's own
+frameworks. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
 ## The renderer
 
 The page loads three.js from `Web/three` through the import map in index.html (`three` and `three/addons/`, the
-WebGL build and its addons such as GLTFLoader; nothing is loaded from the network). A game makes one
+WebGL build and its addons such as GLTFLoader; nothing is loaded from the network). A game on the runtime makes one
 `THREE.WebGLRenderer({ antialias: true })` and hands it to `game()` in lamp-game.js, which sizes the canvas to
-1920x1080, fits it to the screen and runs your `frame`. Read lamp-game.js's comments first.
+1920x1080, fits it to the screen and runs your `frame`. Read lamp-game.js's comments first. A TV app's page makes the
+same renderer, sizes it to 1920x1080 at a pixel ratio of 1 (the page is laid out at that size and scaled), and draws
+from its own `requestAnimationFrame`, moving by the time since the last frame.
 
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
@@ -45,19 +53,7 @@ many draw calls (each distinct mesh and material), large textures, and many tria
 
 ## On a TV
 
-A TV's browser with WebGL 2 runs three.js, but often slowly: a scene that's smooth on a Mac can draw a few frames a
-second on a TV. Once the renderer runs there, a light scene keeps the game playable:
-
-- few lights and no live shadows (a dark blob under things reads as a shadow);
-- no post-processing;
-- few draw calls: merge what doesn't move, instance what repeats;
-- textures 1024 px at most, and few of them;
-- a simple sky (a gradient or a color) rather than an environment map.
-
-These are suggestions, not limits: a scene that runs well on the person's TV is right, however much it draws. The way
-to know is to try it on the device: the log says every ten seconds how its frames kept to time ("frames … ms on
-average, slowest … ms"). When frames are late, draw less there, and keep what runs well elsewhere as it is: never make
-the game plainer on every device for one slow one unless the person wants the same look everywhere.
+Some platforms might not be powerful enough to run three.js.
 
 ## Checking it
 

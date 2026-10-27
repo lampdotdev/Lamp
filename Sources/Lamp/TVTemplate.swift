@@ -21,8 +21,29 @@ enum TVTemplate {
         FileManager.default.fileExists(atPath: dir.appendingPathComponent(supportFile).path) && !DeviceApps.isScaffolded(dir)
     }
 
+    /// Where three.js goes in a TV app's page, as a game's page has it: Lamp's, written before every build, so a game
+    /// played with phones on the TV can draw in 3D as a game on Lamp's runtime does.
+    static let threeFolder = "\(webFolder)/three"
+
+    /// Lamp's own files in a TV app's folder, by their path there: its script, and three.js.
+    static func isLamps(_ relative: String) -> Bool {
+        relative == supportFile || relative.hasPrefix(threeFolder + "/")
+    }
+
+    /// three.js as a TV app's page is given it: Lamp's copy (`DeviceSupport.threeFiles`). Tests stand in their own, since
+    /// a test run has none of Lamp's resources.
+    static var threeSource: (LampProject) -> [(name: String, contents: String)] = { DeviceSupport.threeFiles(for: $0, page: webFolder) }
+
+    /// lamp.js, and for a TV app three.js too. A web app or a screen made before writes lamp.js through here as well
+    /// (`ScreenKit.write`), but three.js isn't Lamp's in those (`DeviceSupport.paths`): a copy of their own at Web/three
+    /// stays theirs, and none is added to a page that never asked for one.
     static func writeOwnedFiles(for project: LampProject) throws {
         try Template.write(lampJS(for: project), to: supportFile, for: project)
+        guard !ScreenKit.isScreen(project) else { return }
+        // `put`, as a game's are: only where they differ, and never into the app's versions (`DeviceSupport.paths`).
+        for file in threeSource(project) {
+            try Template.put(file.contents, at: project.dir.appendingPathComponent("\(threeFolder)/\(file.name)"), for: project)
+        }
     }
 
     static func fill(_ project: LampProject) throws {
@@ -3287,11 +3308,11 @@ extension Agent {
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`), as `prompt(platform:…)` takes it.
     static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil, alone: Bool = false) -> String {
         let rules = part == nil
-            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound,
+            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.tvPhoneApps, Rules.webAI, Rules.webSound,
                Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
-            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound, Rules.tvLogs, Rules.tvTry,
-               alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
+            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, alone ? "" : Rules.tvPhoneApps, Rules.webAI, Rules.webSound, Rules.tvLogs,
+               Rules.tvTry, alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
         let header = part.map { Rules.partHeader("a TV app (HTML, CSS and JavaScript in Web/, the same files for Samsung and LG TVs, with no build step)", folder: $0) }
             ?? Rules.tvHeader
         return (header + "\n\nRules:\n" + rules.joined())
@@ -3318,10 +3339,21 @@ extension Agent.Rules {
     """
 
     static let tvFrameworks = """
-    - Write code that runs first time on the TVs' browsers, which are about as old as Chrome 79: plain JavaScript and \
-    CSS, no optional chaining (?.) or ?? or other syntax newer than 2019, no modules or top-level await, no build step, \
-    no npm and no frameworks loaded from the internet. CSS grid and flexbox, CSS variables and transitions are fine. \
-    The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
+    - Write code that runs first time on the TVs' browsers, the oldest of which are about as old as Chrome 79: plain \
+    JavaScript and CSS, no optional chaining (?.) or ?? or other syntax newer than 2019, no top-level await, no build \
+    step, no npm and no frameworks loaded from the internet. CSS grid and flexbox, CSS variables and transitions are \
+    fine. The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
+    """
+
+    /// three.js in a TV app's page: Lamp writes it there (`TVTemplate.writeOwnedFiles`), which no screen or web app has.
+    static let tvThree = """
+    - 3D, a game's included, is three.js, which Lamp writes in Web/three before every build (never edit it, never load \
+    it from the network): in index.html, after lamp.js, put the import map <script type="importmap">{ "imports": { \
+    "three": "./three/three.module.js", "three/addons/": "./three/addons/" } }</script>, then the 3D code in a \
+    <script type="module"> (or a module file of your own beside it), with import * as THREE from 'three' and addons \
+    from 'three/addons/…'. Make the renderer yourself, sized 1920×1080 at a pixel ratio of 1, and drive it with \
+    requestAnimationFrame, moving everything by the time since the last frame. three.js needs WebGL 2, and modules and \
+    import maps a newer TV browser than the oldest. Some platforms might not be powerful enough to run three.js.
     """
 
     /// What the page's host lays it out at, a fact of the TV app's and a screen's; how to design for a TV is the
@@ -3358,8 +3390,15 @@ extension Agent.Rules {
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
     what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
     the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. Apps of the wish's own on the iPhone or Android (`make_app_for`) suit what a page does poorly, such as the \
+    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
     phone's hardware or data the phone keeps.
+    """
+
+    /// How the wish's own phone apps join the TV app: said only where it may have them beside it, so the one app of a
+    /// wish is told nothing of other apps' building blocks.
+    static let tvPhoneApps = """
+    - An iPhone app of the wish's own joins the TV app's game as a player too; an Android app sends the TV app \
+    messages through `LampWish` but has no `LampController`, so game controls on an Android phone are a page.
     """
 
     /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone

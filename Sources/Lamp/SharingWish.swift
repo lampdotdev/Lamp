@@ -1,8 +1,8 @@
 import Foundation
 
 /// A TV app's files in a shared file (`Sharing`): what's under Web/ and Phone/, the agent's HTML, CSS and JavaScript as
-/// code and the pictures, sounds and fonts beside them as data. Never Lamp's own script in Web/, which the Mac that
-/// opens the file writes itself, never a hidden file or a link, and nothing from anywhere else in the app's folder.
+/// code and the pictures, sounds and fonts beside them as data. Never Lamp's own script or three.js in Web/, which the
+/// Mac that opens the file writes itself, never a hidden file or a link, and nothing from anywhere else in the app's folder.
 enum TVFiles {
     /// Files read as code: what the review is shown, and what must be plain text.
     static let codeExtensions: Set<String> = ["html", "htm", "css", "js", "mjs", "json", "svg", "txt", "md", "xml", "csv"]
@@ -18,7 +18,7 @@ enum TVFiles {
                 if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
                 let values = try? url.resourceValues(forKeys: keys)
                 guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
-                if Sharing.relativePath(of: url, in: root) == TVTemplate.supportFile { continue }
+                if TVTemplate.isLamps(Sharing.relativePath(of: url, in: root)) { continue }
                 if codeExtensions.contains(url.pathExtension.lowercased()) { code.append(url) } else { data.append(url) }
             }
         }
@@ -33,7 +33,7 @@ enum TVFiles {
         for file in package.sources + package.webData {
             let relative = package.path(of: file)
             guard !relative.contains(".."), folders.contains(where: { relative.hasPrefix($0 + "/") }),
-                  relative != TVTemplate.supportFile else { continue }
+                  !TVTemplate.isLamps(relative) else { continue }
             let target = project.dir.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)

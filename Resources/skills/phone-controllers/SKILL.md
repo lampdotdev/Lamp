@@ -1,6 +1,6 @@
 ---
 name: phone-controllers
-description: What to weigh when phones are to be controllers or a second screen for a game or app - whose phones, what the game's device can take, web or native on the phones, and what Lamp can't do yet. Read whenever someone wants to play or steer something with their phone.
+description: What to weigh when phones are to be controllers or a second screen for a game or app - whose phones, which of Lamp's pages host them today, a page or an app on the phones, and what Lamp can't do yet. Read whenever someone wants to play or steer something with their phone.
 ---
 
 # Phones as controllers: what to consider
@@ -8,42 +8,63 @@ description: What to weigh when phones are to be controllers or a second screen 
 "A game I can control with my phone" can be made several ways. Before building, think through these, and ask the
 person only what you can't tell from the request (one short line, about people and devices).
 
+`make_app_for`'s table says what each device runs; it doesn't yet say which apps can take phones, because that
+depends on how an app is made and run, not on the device alone. What follows is that account.
+
 ## Whose phones?
 
 - **Several people's** (family, friends, a class): each phone has to join with nothing to install. That's a page for
   phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it.
-- **Only the person's own phone**: an app of the wish's own on their iPhone or Android phone can be the controller
-  too, and does what a page does poorly (the phone's hardware, haptics, data the phone keeps). It joins as a player the
-  way a phone's page does (`LampController` over `LampWish`). The cost is installing it: an iPhone paired with this
-  Mac, an Android phone with USB debugging. A page still works for their phone too.
+- **Only the person's own phone**: on an iPhone, an app of the wish's own, made natively, is the controller: it has
+  the phone's own feel, hardware and haptics, and keeps its data, and joins as a player with `LampController` over
+  `LampWish`. Installing it goes the way the table says for that phone. An Android app has no `LampController`, so it
+  can't join a game as a player: for game controls on an Android phone, native is out of reach and a page is the
+  answer. A native Android app still suits plain messages to the TV app through `LampWish` (a few commands, a
+  photo sent). A page works for an iPhone too, when they ask for one.
 
-## What does the game's device take?
+## What hosts phones today
 
-The phones connect to the game's own page, over the home Wi‑Fi, through a relay Lamp runs on this Mac:
+Phones join in two separate ways.
 
-- **A TV app's page with lamp.js's `Lamp.controllers`** hosts phones: on the TV, and in the TV preview on this Mac.
-  This is what works today, because Lamp hands out the phone page and runs the relay only for a TV app.
-- **A page shown on a Mac, an iPad or an Xbox** can't host phones yet: the page there reaches only Lamp's AI, not the
-  relay, and Lamp serves phone pages only to TV apps. Hosting phones there needs both opened to those apps. Say so,
-  and offer the game as a TV app (its preview on this Mac hosts phones too) or played with a controller.
-- **A page on Lamp's game runtime** (lamp-game.js) has no `Lamp.controllers` yet: its players use a controller, the
-  keyboard or touch. A game played with phones today is a page with lamp.js's controllers, drawn without the runtime.
-- **A native Apple TV game can't host phones yet**: the host's side of phones exists only in lamp.js. Say so, and
-  offer what works: the game made as a page on a TV that runs web, or the Apple TV played with game controllers or
-  the Siri Remote.
-- **A native Mac or iPhone game** doesn't host phones either; the same choices apply.
+A phone's browser, joined by a QR code, needs the TV app's phone page (`Phone/index.html` in the TV app's own folder,
+beside its `Web/`: the phone-pages skill says where) and a TV app's page, on a Samsung or LG TV, that uses lamp.js's
+`Lamp.controllers`: Lamp serves the phone page and runs the relay only while that app is open on such a TV or in its
+TV preview on this Mac.
 
-## Web or native on the phones?
+An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
+over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the wish's talks to
+the others through `LampWish` (messages, shared values, files) on whichever devices they're on (the wish-links skill).
 
-Unless the phones are only the person's own and the app needs what only native does, a page: nothing to install, and
-any phone on the Wi‑Fi joins. The web-or-native skill has the rest of that choice.
+Nothing else hosts the phone page yet, whatever device it's on:
+
+- a page on Lamp's game runtime (lamp-game.js), which is what `make_app_for` with `kind` "game" makes, has no
+  `Lamp.controllers`, even when the game is on a Samsung or LG TV: its players use a controller, the keyboard or touch;
+- a page shown by Lamp's other hosts, and a native app, have no host's side of phones.
+
+So a game played with phones as its controllers is, for now, `make_app_for` with `kind` "app", `made` "web" and
+`devices` "tv": that's the TV app's page, which has `Lamp.controllers`, and the game is drawn in it without the
+runtime, in 2D or with three.js (the TV rules say how). It's still a game to the person; only Lamp's routing calls it an app until the game
+runtime takes phones.
+
+These are limits of how Lamp hosts phones now, not of the devices. Say so plainly when the person asks for phones
+there, and offer what works: the TV app's page (its preview on this Mac hosts phones too, with no TV), or the game
+played with a controller, the remote or touch.
+
+## A page or an app on the phones?
+
+For the person's own iPhone, an app of the wish's on it, made natively. For game controls on an Android phone, a page,
+since a native Android app can't join as a player.
+For several people's phones joining one TV app, a page: nothing to install, and any phone on the Wi‑Fi joins (that's
+one app shared across devices, the case where web-or-native chooses web). The web-or-native skill has the rest of that
+choice.
 
 ## Away from home
 
-The phones and the game must be on the same Wi‑Fi, with Lamp open on this Mac. Lamp can't put a game online, so
-friends in other homes can't join: say so if that's what they want.
+Phones reach the TV app's page on the same Wi‑Fi, with Lamp open on this Mac, which runs the relay. Friends in other
+homes can't join through it: say so if that's what they want. Apps of the wish's that talk through `LampWish` work
+by its own rules (the wish-links skill).
 
 ## Building it
 
-Once you've chosen, open the phone-pages skill: the page in Phone/, `LampController` on the phone and
+Once you've chosen, open the phone-pages skill: the TV app's page in its own Phone/, `LampController` on the phone and
 `Lamp.controllers` on the screen, files, tilt and second screens.

@@ -16,7 +16,7 @@ extension Target {
                            tryOnHelp: { _ in "Where it opens: the TV preview on this Mac, or one of your TVs" },
                            place: { _ in .elsewhere("TV", symbol: "tv") }),
         guidance: Guidance(prompt: { _ in Agent.tvPrompt() },
-                           changeRules: { _ in Agent.Rules.tvEdit + Agent.Rules.tvFrameworks + Agent.Rules.tvDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
+                           changeRules: { _ in Agent.Rules.tvEdit + Agent.Rules.tvFrameworks + Agent.Rules.tvThree + Agent.Rules.tvDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
                            skills: { [] },
                            // It reaches AI only through this Mac, over the same Wi‑Fi; the preview is on the Mac. Its link to
                            // the wish's other apps goes straight to them on the same network, with Lamp closed too.
