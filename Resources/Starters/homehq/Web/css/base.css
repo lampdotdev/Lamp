@@ -72,7 +72,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 .rail-item.is-active { background: var(--ink); color: var(--paper); }
 .rail-item:active { background: var(--paper-2); }
 .rail-item.is-active:active { background: var(--ink-2); }
-.rail-clock { margin-top: auto; padding: .625rem 0; text-align: center; line-height: 1; position: relative; overflow: hidden; }
+.rail-settings { margin-top: auto; }
+.rail-clock { padding: .625rem 0; text-align: center; line-height: 1; position: relative; overflow: hidden; }
 .rail-clock.is-holding { background: var(--paper-2); }
 .rail-clock b { display: block; font-size: 1.5rem; font-weight: 800; font-stretch: 62%; font-variant-numeric: tabular-nums; }
 .rail-clock span { font-size: .75rem; font-weight: 700; letter-spacing: .1em; color: var(--mute); }
@@ -330,3 +331,8 @@ button:focus, a:focus { outline: none; }
 .setup-chores .chip span { font-size: 1.375rem; }
 html.narrow .setup-title { font-size: 2.75rem; }
 
+
+/* Nothing of the family's yet: what goes here, and where to add it. */
+.h-empty { font-size: 1.375rem; color: var(--ink-2); margin-top: .5rem; }
+.t-none { padding: 3rem 2.5rem; display: flex; flex-direction: column; align-items: flex-start; gap: .75rem; }
+.t-none h1 { font-size: 3.5rem; line-height: 1; }

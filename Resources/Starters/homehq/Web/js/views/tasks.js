@@ -49,6 +49,14 @@
   }
 
   function render() {
+    // No chores yet: what this page is for, and the way to start.
+    if (!D.chores.length) {
+      V.el.innerHTML = '<div class="tasks t-none"><div class="label">Chores</div><h1 class="serif">No chores yet</h1>' +
+        '<p class="sheet-p">Morning, after school and evening routines, with stars for whoever earns them.</p>' +
+        '<button class="btn btn--solid" data-edit-chores>' + App.icon('plus', 22) + 'Add chores</button></div>';
+      V.el.querySelector('[data-edit-chores]').addEventListener('click', App.editChores);
+      return;
+    }
     var r = routine(), auto = App.currentRoutine();
     var inR = D.chores.filter(function (c) { return c.r === r.id; });
     var done = inR.filter(function (c) { return c.done; }).length;

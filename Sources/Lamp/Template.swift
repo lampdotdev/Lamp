@@ -8932,6 +8932,24 @@ enum Template {
             }
             let wanted = [kAXRoleAttribute, kAXSubroleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXPlaceholderValueAttribute, kAXValueAttribute,
                           kAXPositionAttribute, kAXSizeAttribute, kAXSelectedAttribute, kAXEnabledAttribute, kAXChildrenAttribute]
+            // A web view's insides aren't read: each read of them waits on the main thread, where this runs, until it
+            // times out, so a page froze the app for seconds. Its frame, as the accessibility API counts, tells it apart.
+            // A page is looked at its own way (a screen's or a game's preview); the outline is of the app around it.
+            var webViews: [CGRect] = []
+            if let web = NSClassFromString("WKWebView") {
+                func collect(_ view: NSView) {
+                    if view.isKind(of: web) {
+                        let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
+                        webViews.append(CGRect(x: rect.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - rect.maxY, width: rect.width, height: rect.height))
+                    } else {
+                        view.subviews.forEach(collect)
+                    }
+                }
+                if let content = window.contentView { collect(content) }
+            }
+            func isWebView(_ rect: CGRect) -> Bool {
+                webViews.contains { abs($0.minX - rect.minX) < 2 && abs($0.minY - rect.minY) < 2 && abs($0.width - rect.width) < 2 && abs($0.height - rect.height) < 2 }
+            }
             func visit(_ element: AXUIElement, depth: Int, under: Set<String>) {
                 guard depth < 60, found.count < 400 else { return }
                 let read = axAttributes(element, wanted)
@@ -8964,6 +8982,7 @@ enum Template {
                         if control { under = captions.union([label]) }
                     }
                 }
+                if isWebView(rect) { return }
                 for child in read[10] as? [AXUIElement] ?? [] { visit(child, depth: depth + 1, under: under) }
             }
             visit(root, depth: 0, under: [])
