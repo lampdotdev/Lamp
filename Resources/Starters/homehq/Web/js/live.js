@@ -35,7 +35,8 @@
 
   App.loadWeather = function () {
     var p = D.settings.place;
-    if (!p) return;
+    // No place (any more): the example day, not the last place's weather.
+    if (!p) { if (!D.weather.example) App.exampleWeather(); return; }
     var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + p.lat + '&longitude=' + p.lon +
       '&hourly=temperature_2m,precipitation_probability,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min' +
       '&timezone=auto&forecast_days=1';
@@ -82,7 +83,7 @@
       App.emit('data');
       return;
     }
-    LampNative.call('photos', { album: album, limit: 30 }).then(function (list) {
+    LampNative.call('photos', { album: album, limit: 24 }).then(function (list) {
       if (!list.length) return;
       D.photos = list.map(function (p) { return { id: p.id, src: p.src, o: p.o, date: p.date || '', place: '', fav: !!p.fav, tag: p.date || p.id }; });
       App.emit('data');

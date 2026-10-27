@@ -264,14 +264,13 @@ window.DATA = (function () {
     return { id: e.id, title: e.title, people: e.people, allDay: !!e.allDay, start: +e.start, end: +e.end, loc: e.loc || '', notes: e.notes || '' };
   }
 
-  // Everything the family changed, saved whole (it's small): only ever add fields here, never rename one, since
-  // what's saved is read back by every later version.
-  D.save = function () {
-    var s = store();
-    if (!s) return;
+  // Everything the family changed, as parts: saved whole on this device (`save`), and each part shared with the screen's
+  // other copies, on the TV, the iPad, the frame (js/sync.js). Only ever add parts or fields here, never rename one,
+  // since what's saved is read back by every later version.
+  D.snapshot = function () {
     var done = {};
     D.chores.forEach(function (c) { if (c.done) done[c.id] = c.doneBy || true; });
-    s.save({
+    return {
       cleared: D.cleared,
       events: D.events.filter(function (e) { return !e.ex && !e.cal; }).map(own),
       groceries: D.groceries,
@@ -280,10 +279,14 @@ window.DATA = (function () {
       people: D.edited.people ? D.people : null,
       chores: D.cleared || D.edited.chores ? D.chores.map(function (c) { return { id: c.id, r: c.r, who: c.who, title: c.title, emoji: c.emoji, stars: c.stars }; }) : null,
       done: { day: dayKey(base), ids: done },
-      stars: D.stars, week: D.week,
+      stars: { stars: D.stars, week: D.week },
       favs: D.photos.filter(function (p) { return p.fav; }).map(function (p) { return p.id || p.seed; }),
       settings: D.settings
-    }, KEY);
+    };
+  };
+  D.save = function () {
+    var s = store();
+    if (s) s.save(D.snapshot(), KEY);
   };
 
   // Takes the examples away: events, chores, the shopping list's and the photos. The family stays, for the agent to
@@ -302,44 +305,56 @@ window.DATA = (function () {
     return !D.cleared;
   };
 
-  (function load() {
-    var s = store(), saved = s ? s.load(KEY, null) : null;
-    if (!saved) return;
-    if (saved.settings) D.settings = Object.assign(D.settings, saved.settings);
-    if (saved.people && saved.people.length) {
-      D.people = saved.people; D.edited.people = true;
-      D.ALL = D.people.map(function (p) { return p.id; });
-      D.people.forEach(function (p) { if (p.age && D.stars[p.id] == null) D.stars[p.id] = 0; });
+  // Puts back what a snapshot holds, any of its parts: what this device saved, or a part another copy shared.
+  D.restore = function (p) {
+    if (p.settings) D.settings = Object.assign(D.settings, p.settings);
+    if (p.people && p.people.length) {
+      D.people = p.people; D.edited.people = true;
+      D.ALL = D.people.map(function (x) { return x.id; });
     }
-    if (saved.chores && !saved.cleared) { D.chores = saved.chores; D.edited.chores = true; }
-    if (saved.cleared) {
+    if (p.cleared && !D.cleared) {
       D.cleared = true;
-      D.events = []; D.photos = [];
-      D.chores = saved.chores || [];
-      Object.keys(D.stars).forEach(function (k) { D.stars[k] = 0; });
-      Object.keys(D.week).forEach(function (k) { D.week[k] = [0, 0, 0, 0, 0, 0, 0]; });
+      D.events = D.events.filter(function (e) { return !e.ex; });
+      D.photos = D.photos.filter(function (x) { return !x.ex; });
+      if (!p.chores) D.chores = D.chores.filter(function (c) { return !c.ex; });
+      if (!p.groceries) D.groceries = D.groceries.filter(function (g) { return !g.ex; });
     }
-    (saved.events || []).forEach(function (e) {
-      D.events.push(Object.assign({}, e, { start: new Date(e.start), end: new Date(e.end) }));
-    });
-    if (saved.groceries) D.groceries = saved.groceries;
-    if (saved.stars) D.stars = saved.stars;
-    if (saved.week) D.week = saved.week;
+    if (p.chores) {
+      var was = {};
+      D.chores.forEach(function (c) { was[c.id] = c; });
+      D.chores = p.chores.map(function (c) { var old = was[c.id]; return Object.assign({}, c, { done: old ? old.done : false, doneBy: old && old.doneBy }); });
+      D.edited.chores = true;
+    }
+    if (p.events) {
+      D.events = D.events.filter(function (e) { return e.ex || e.cal; }).concat(p.events.map(function (e) {
+        return Object.assign({}, e, { start: new Date(e.start), end: new Date(e.end) });
+      }));
+    }
+    if (p.groceries) D.groceries = p.groceries;
+    if (p.stars) {
+      // Saved before the two went together: { stars } and { week } apart.
+      D.stars = p.stars.stars || p.stars;
+      if (p.stars.week) D.week = p.stars.week;
+    }
+    if (p.week) D.week = p.week;
     // Everyone who earns stars has a week to show, a kid added in the editor too.
+    D.people.forEach(function (x) { if (x.age && D.stars[x.id] == null) D.stars[x.id] = 0; });
     Object.keys(D.stars).forEach(function (k) { if (!D.week[k]) D.week[k] = [0, 0, 0, 0, 0, 0, 0]; });
     // Chores ticked off today stay ticked; a new day starts them all again.
-    if (saved.done && saved.done.day === dayKey(base)) {
+    if (p.done) {
+      var today = p.done.day === dayKey(base);
       D.chores.forEach(function (c) {
-        var by = saved.done.ids[c.id];
+        var by = today ? p.done.ids[c.id] : null;
         c.done = !!by;
         c.doneBy = typeof by === 'string' ? by : undefined;
       });
-    } else if (saved.done) {
-      D.chores.forEach(function (c) { c.done = false; c.doneBy = undefined; });
     }
-    (saved.favs || []).forEach(function (id) {
-      D.photos.forEach(function (p) { if ((p.id || p.seed) === id) p.fav = true; });
-    });
+    if (p.favs) D.photos.forEach(function (x) { x.fav = p.favs.indexOf(x.id || x.seed) > -1; });
+  };
+
+  (function load() {
+    var s = store(), saved = s ? s.load(KEY, null) : null;
+    if (saved) D.restore(saved);
   })();
 
   return D;

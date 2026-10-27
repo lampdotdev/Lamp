@@ -28,10 +28,10 @@ enum Native {
         }
 
         // Pictures from one album (Favorites unless named), newest first, each a JPEG small enough for a screen across
-        // the room, with the date and whether it's tall.
+        // the room and to send on to the screen's other copies (js/sync.js), with the date and whether it's tall.
         LampNative.on("photos") { args in
             guard try await LampPhotos.authorize() else { throw Refused() }
-            let limit = min(args["limit"] as? Int ?? 30, 60)
+            let limit = min(args["limit"] as? Int ?? 24, 40)
             let album = try await LampPhotos.albums().first { $0.id == args["album"] as? String }
             let found = if let album { try await LampPhotos.photos(in: album, limit: limit * 2) } else { try await LampPhotos.favorites(limit: limit * 2) }
             let photos = found.filter { !$0.isVideo }.prefix(limit)
@@ -39,8 +39,8 @@ enum Native {
             day.dateFormat = "yyyy-MM-dd"
             var out: [[String: String]] = []
             for photo in photos {
-                guard let image = await LampPhotos.image(photo, size: 1600), let cg = image.lampCGImage,
-                      let jpeg = LampImage.lampJPEG(cg, quality: 0.8) else { continue }
+                guard let image = await LampPhotos.image(photo, size: 1280), let cg = image.lampCGImage,
+                      let jpeg = LampImage.lampJPEG(cg, quality: 0.72) else { continue }
                 out.append(["id": photo.id, "src": "data:image/jpeg;base64," + jpeg.base64EncodedString(),
                             "o": photo.height > photo.width ? "p" : "l", "date": photo.date.map(day.string(from:)) ?? "",
                             "fav": photo.isFavorite ? "1" : ""])
