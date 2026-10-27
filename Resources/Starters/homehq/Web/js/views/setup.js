@@ -73,7 +73,7 @@
     return head('Who’s at home?', 'Everyone gets a color. Stars are for whoever earns them for chores, pets included.') +
       '<div class="ed-list">' + F.people.map(function (p, i) {
         return '<div class="ed-row" data-i="' + i + '">' +
-          '<button class="ed-swatch" data-color aria-label="Colour" style="' + App.pstyle(p) + '">' + App.avatar(Object.assign({}, p, { name: p.name || '?' }), 44) + '</button>' +
+          '<button class="ed-swatch" data-color aria-label="Color" style="' + App.pstyle(p) + '">' + App.avatar(Object.assign({}, p, { name: p.name || '?' }), 44) + '</button>' +
           '<input class="ed-name" data-name value="' + App.esc(p.name) + '" placeholder="' + (p.pet ? 'Pet’s name' : i ? 'Name' : 'Your name') + '" maxlength="24">' +
           '<button class="chip' + (p.stars ? ' is-on' : '') + '" data-stars>' + App.icon('star', 18, p.stars ? 'i--fill' : '') + 'Stars</button>' +
           (F.people.length > 1 ? '<button class="icon-btn" data-remove aria-label="Remove">' + App.icon('x', 22) + '</button>' : '') +

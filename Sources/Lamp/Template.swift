@@ -12384,7 +12384,7 @@ enum Template {
           }
           poll();
           // The page's own colors, so Lamp's strip above it is drawn in them and the two read as one.
-          // Only a solid background goes: a gradient or a see-through one gives its first solid colour, or nothing, and
+          // Only a solid background goes: a gradient or a see-through one gives its first solid color, or nothing, and
           // with no background the strip keeps all of its own colors, so its words are never drawn on the wrong one.
           function solid(value) {
             const m = /rgba?\\(([^)]*)\\)/.exec(value || '');
