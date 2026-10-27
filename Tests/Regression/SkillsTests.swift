@@ -41,7 +41,7 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
-                                           "scripting", "game", "icloud-sync", "wish-links", "device-control", "web-or-native",
+                                           "scripting", "game", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
                                            "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
                                            "roku-developer-mode", "more-apps"])
         for (name, skill) in shipped {
@@ -61,7 +61,7 @@ final class SkillsTests: XCTestCase {
         // How an app is made and on which devices, games, 3D in a page, web apps, phones as controllers, and whether a
         // request is for one more app or a change to the one the wish has are offered to every kind, first, whatever the
         // app is now.
-        let everywhere = ["web-or-native", "game", "3d-game", "web-app", "phone-controllers", "more-apps"]
+        let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "web-app", "phone-controllers", "more-apps"]
         XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
         XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
         XCTAssertEqual(Skills.offered(.device), everywhere)
@@ -241,20 +241,25 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Skills.forNewDevices(["mac", "iphone"]), "")
     }
 
-    /// A page on Lamp's game runtime, a page drawing with three.js and Swift on SpriteKit each show the game skills
-    /// apply; Lamp's own runtime, lamp.js and three.js in Web/ don't count.
+    /// A page on Lamp's game runtime, a page drawing with three.js or Phaser and Swift on SpriteKit each show the game
+    /// skills apply; Lamp's own runtime, lamp.js, three.js and Phaser in Web/ don't count.
     func testAGamesCodeShowsTheGameSkillsApply() throws {
         let web = folder.appendingPathComponent("Web")
         try FileManager.default.createDirectory(at: web.appendingPathComponent("three/addons"), withIntermediateDirectories: true)
-        try "import * as THREE from 'three';".write(to: web.appendingPathComponent("lamp-game.js"), atomically: true, encoding: .utf8)
+        try "import * as THREE from 'three'; // or phaser() from lamp-phaser.js".write(to: web.appendingPathComponent("lamp-game.js"), atomically: true, encoding: .utf8)
         try "import { x } from 'three'; // lamp-game.js".write(to: web.appendingPathComponent("three/addons/loader.js"), atomically: true, encoding: .utf8)
         try "/* lamp-game.js */".write(to: web.appendingPathComponent("lamp.js"), atomically: true, encoding: .utf8)
-        XCTAssertTrue(Skills.applying(to: app(.game)).filter { ["game", "3d-game"].contains($0.name) }.isEmpty, "Lamp's own files don't count")
+        try "import * as Phaser from 'phaser'; import { game } from './lamp-game.js';".write(to: web.appendingPathComponent("lamp-phaser.js"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.isEmpty, "Lamp's own files don't count")
+        XCTAssertFalse(DeviceSupport.usesPhaser(app(.game), page: "Web"), "Phaser goes into a page only once its own files use it")
 
         try "import * as THREE from 'three';\nimport { game } from './lamp-game.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
         let found = Skills.applying(to: app(.game)).filter { ["game", "3d-game"].contains($0.name) }
         XCTAssertEqual(found.map(\.name), ["game", "3d-game"])
         XCTAssertEqual(found.first?.because, "its page runs on Lamp's game runtime")
+        try "import * as Phaser from 'phaser';\nimport { phaser } from './lamp-phaser.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.map(\.name), ["game", "2d-game"])
+        XCTAssertTrue(DeviceSupport.usesPhaser(app(.game), page: "Web"))
 
         try FileManager.default.removeItem(at: web)
         try source("Scene.swift", "import SpriteKit\n")
@@ -268,7 +273,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {

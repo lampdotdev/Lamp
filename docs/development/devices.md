@@ -322,8 +322,9 @@ says the same (`Places.forAgent`).
 ## Games
 
 A game is a kind of wish of its own (`Platform.game`, Targets/GameTarget.swift, `GameKit`), never a device's: the naming
-call gives "game" for a 3D game or one played with a controller or on an Xbox (a 2D game played with the mouse or by
-tapping stays a Mac or iPhone app), with the devices it's played on beside the Mac in its `places`. Its home is the Mac, and the places it's
+call gives "game" for a game played in real time, 2D or 3D, or one played with a controller or on an Xbox (a game played
+by clicking or tapping through turns stays a Mac or iPhone app, and so does one the person wants only on Apple's devices
+with Game Center, a widget or inside an app of theirs: SpriteKit, the `2d-game` skill), with the devices it's played on beside the Mac in its `places`. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
 `LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator or
 the person's own, whose Xcode project carries `Web/`), a Samsung or LG TV (`.tv`, staged and installed as a TV app's page
@@ -347,13 +348,26 @@ integration's description says Xbox One on every console, so its `device-portal`
 hasn't reached Device Portal is budgeted as an Xbox One. Places on the project are general: games and screens take them,
 and an app kind that takes places one at a time (an Apple TV or a TV beside a SwiftUI app) is a `startsAt` away.
 
-A game is drawn with three.js (`GameKit.Engine.web`, written in its `.lamp-game` mark): the model writes it best and every
-place has a web view, and on the Xbox a game installed as a game gets enough of the console. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
+A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`, written in its `.lamp-game` mark): the
+model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
+console. Which of the two is the agent's choice as it writes the game, from what the person asked for (`Rules.gameWebKit`,
+the `2d-game` skill): the kind and the scaffold are the same, and the placeholder card is three.js's either way. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
 drawn at 3/4 and then 1/2 of 1920x1080 while frames come slower than 45 a second, a step undone when it didn't make them
-faster) and three.js in `Web/three` beside it. What the player holds is `input()` (a controller and
+faster) and three.js in `Web/three` beside it. A 2D game is Phaser 3's scenes run through `Web/lamp-phaser.js`
+(`phaser({ scenes, pixelArt, physics })`, Lamp's like lamp-game.js and written into every game so the agent can read it
+first), with Phaser itself in `Web/phaser` only while the page's own files import it (`DeviceSupport.usesPhaser`; pinned
+and checked by `scripts/update-phaser.sh`). The runtime stays the one frame loop: Phaser's loop is put to sleep once it has
+booted and each of the runtime's frames calls `Game.step` with the runtime's time, rather than the runtime's pads being
+read inside Phaser's own loop, so the preview's fixed 1/60 s frames, its clock and its seed (Phaser's `RND` is seeded from
+`random()`) hold for Phaser as for three.js, with no second clock to agree with. Phaser's keyboard, gamepad and sound are
+off (the pad is the runtime's, `pad()`, and sound its `sound`), its pointer input stays, and it fits its canvas inside the
+1920x1080 stage the runtime fits to the screen (Phaser's FIT, so clicks land where they're drawn). A Phaser game is
+always `sharp`: Phaser draws at the game's size, so the runtime's smaller drawing doesn't apply. In the preview a scene
+that starts loading is waited for before the next frame (the frame function's promise, which `runPreview` awaits), and
+the stats count WebGL draws and their triangles. What the player holds is `input()` (a controller and
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
 device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
 keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick
@@ -372,7 +386,8 @@ its declared step makes, `Web/lamp.js` written then), installed as a game. The a
 `WebGamePreview`: a copy of the page (`GameKit.stageWeb`, under the sandbox) in a web view nobody sees, given the same
 script as the C++ kit's preview (`window.lampPreview`), which `lamp-game.js` plays itself at exactly 1/60 s a frame with its
 clock and random numbers fixed, pausing at each `shot` while Lamp pictures the whole page, HTML over the canvas
-included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`).
+included; the same script gives the same pixels. Its stats count draws and triangles (three.js's `renderer.info`, or the
+WebGL calls lamp-phaser.js counts).
 
 A game made before three.js games is C++ on Lamp's kit (a device app of "xbox-one:game" then). It reads as a game whose
 engine is `native` and whose one place is the Xbox (`GameKit.migrated`, in `Store.readWish`; its folder's old

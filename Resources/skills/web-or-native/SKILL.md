@@ -60,6 +60,9 @@ So think about whose devices it's for, how many there are, and which one matters
 | A habit tracker for my Mac | Native: it's built here and ready, and does more |
 | A game for my Apple TV | Native: the Apple TV runs nothing else. Say it runs in the Apple TV simulator on this Mac, since Lamp can't put it on a real Apple TV yet |
 | A 3D racing game for my LG TV | Web: the only make it runs; keep the scene light (the 3d-game skill) |
+| A platformer for my Mac | A game, on Phaser (the 2d-game skill): it plays on the Mac now and can go to an iPhone, Android, a TV or the Xbox later without being written again |
+| A 2D game for my iPhone with Game Center scores | Native, SpriteKit: Game Center is Apple's. Say it stays on Apple's devices, where a game on Phaser could go anywhere |
+| A little game inside my Mac app | Native, SpriteKit in the same app: it's part of the app, not a game of its own |
 | A game the family plays on a Samsung or LG TV, phones as controllers | Web: the TV app's page hosts the phones, and each joins by a link, with nothing to install |
 | A quiz for my class's tablets | Web: a Samsung or LG TV app's page the tablets join by a link, on that TV or in the app's preview on this Mac when the room has no such TV. An app on each tablet is installed tablet by tablet, whichever the make |
 | An iPhone app to track X, that I can also see on the TV | Native iPhone app; an Apple TV app from the same Swift (in its simulator for now), or a small web app for a Samsung or LG TV |

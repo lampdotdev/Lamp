@@ -5,7 +5,9 @@ One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the r
 ### 3D scenes and games
 
 Every prompt offers the `game` skill, for games of every kind and either make (Lamp's game runtime in a page,
-SpriteKit in Swift, an integration's own), and the `3d-game` skill, for three.js in a page on any device that runs
+SpriteKit in Swift, an integration's own), the `2d-game` skill, for 2D: Phaser in a page of the game kind, played
+wherever a page goes, or SpriteKit in a Mac or iPhone app, which stays on Apple's devices, and when to choose which;
+and the `3d-game` skill, for three.js in a page on any device that runs
 web. 3D in Swift is the `scene-3d` skill
 (RealityKit, Mac apps, offered only on a Mac with macOS 15, where RealityView begins), with the `maps` skill beside it
 for a real place built from OpenStreetMap data. A Mac app whose own code

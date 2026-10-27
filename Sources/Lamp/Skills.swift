@@ -97,9 +97,9 @@ enum Skills {
     }
 
     /// The skills every prompt offers, whatever the app is now: how an app is made (web or native) and on which
-    /// devices, games of every kind, 3D in a page, web apps, and phones as controllers are the agent's to choose for
+    /// devices, games of every kind, 2D games and 3D in a page, web apps, and phones as controllers are the agent's to choose for
     /// any request, so their guidance can't wait for the app to be of a kind that has them.
-    static let everywhere = ["web-or-native", "game", "3d-game", "web-app", "phone-controllers", "more-apps"]
+    static let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "web-app", "phone-controllers", "more-apps"]
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
@@ -159,6 +159,7 @@ enum Skills {
         if offered.contains("scripting"), appSwift(of: project, matches: #"\bLampScript\b"#) { found.append(("scripting", "its code uses LampScript")) }
         if offered.contains("game"), let why = gameUse(project) { found.append(("game", why)) }
         if offered.contains("3d-game"), pageCode(of: project, matches: #"from\s*['"]three['"/]"#) { found.append(("3d-game", "its page draws with three.js")) }
+        if offered.contains("2d-game"), let why = twoDimensionalUse(project) { found.append(("2d-game", why)) }
         if offered.contains("icloud-sync"), appSwift(of: project, matches: #"\bLampSync\b"#) { found.append(("icloud-sync", "its code uses LampSync")) }
         return found
     }
@@ -203,18 +204,25 @@ enum Skills {
 
     /// What shows an app is a game: a page on Lamp's game runtime, or Swift on SpriteKit.
     static func gameUse(_ project: LampProject) -> String? {
-        if pageCode(of: project, matches: #"lamp-game\.js"#) { return "its page runs on Lamp's game runtime" }
+        if pageCode(of: project, matches: #"lamp-(game|phaser)\.js"#) { return "its page runs on Lamp's game runtime" }
+        if appSwift(of: project, matches: #"\bimport SpriteKit\b"#) { return "it's a SpriteKit game" }
+        return nil
+    }
+
+    /// What shows a game is 2D: a page drawn with Phaser, or Swift on SpriteKit.
+    static func twoDimensionalUse(_ project: LampProject) -> String? {
+        if pageCode(of: project, matches: DeviceSupport.phaserUse) { return "its page draws with Phaser" }
         if appSwift(of: project, matches: #"\bimport SpriteKit\b"#) { return "it's a SpriteKit game" }
         return nil
     }
 
     /// Whether the app's own page code, in Web/, matches a pattern: Lamp's own files there (lamp.js, the game runtime,
-    /// three.js) name anything, so they don't count.
+    /// three.js, Phaser) name anything, so they don't count.
     static func pageCode(of project: LampProject, matches pattern: String) -> Bool {
         guard let files = FileManager.default.enumerator(at: project.dir.appendingPathComponent(TVTemplate.webFolder), includingPropertiesForKeys: nil) else { return false }
         for case let file as URL in files {
-            if file.lastPathComponent == "three" { files.skipDescendants(); continue }
-            guard ["js", "html"].contains(file.pathExtension), !["lamp.js", "lamp-game.js"].contains(file.lastPathComponent) else { continue }
+            if file.lastPathComponent == "three" || file.lastPathComponent == "phaser" { files.skipDescendants(); continue }
+            guard ["js", "html"].contains(file.pathExtension), !DeviceSupport.lampsPageFiles.contains(file.lastPathComponent) else { continue }
             if (try? String(contentsOf: file, encoding: .utf8))?.range(of: pattern, options: .regularExpression) != nil { return true }
         }
         return false

@@ -89,13 +89,43 @@ enum DeviceSupport {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
         for case let url as URL in walk {
-            if url.lastPathComponent == "three" { walk.skipDescendants(); continue }
+            if url.lastPathComponent == "three" || url.lastPathComponent == "phaser" { walk.skipDescendants(); continue }
             guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
                   let text = AppFile.text(url, in: project) else { continue }
             if text.contains("three/webgpu") || text.contains("three/tsl") { return true }
         }
         return false
     }
+
+    /// Phaser, the 2D library a 2D game draws with (MIT, `WebLibraries/phaser`, put there by scripts/update-phaser.sh):
+    /// its ES module build and license, by name in the folder. Empty in a build without it.
+    static let phaserFiles: [(name: String, contents: Data)] = {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/phaser"),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
+        return names.filter { !$0.hasPrefix(".") }.sorted().compactMap { name in
+            (try? Data(contentsOf: folder.appendingPathComponent(name))).map { (name, $0) }
+        }
+    }()
+
+    /// Whether a page's own files (not Lamp's runtime, three.js or Phaser) draw with Phaser: they import it, or Lamp's
+    /// runtime for it. Phaser is written into the page only then, since it's as big as three.js.
+    static func usesPhaser(_ project: LampProject, page: String) -> Bool {
+        let folder = project.dir.appendingPathComponent(page)
+        guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        for case let url as URL in walk {
+            if url.lastPathComponent == "three" || url.lastPathComponent == "phaser" { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if text.range(of: phaserUse, options: .regularExpression) != nil { return true }
+        }
+        return false
+    }
+
+    /// Lamp's own files beside a game's page, which name everything they serve and so never show what the game uses.
+    static let lampsPageFiles: Set<String> = ["lamp.js", "lamp-game.js", "lamp-phaser.js", "lamp-controllers.js", "lamp-device.js"]
+
+    /// What in a page's code shows it draws with Phaser.
+    static let phaserUse = #"from\s*['"]phaser['"]|import\(\s*['"]phaser['"]|lamp-phaser\.js"#
 
     static let threeFiles: [(name: String, contents: String)] = {
         guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/three"),

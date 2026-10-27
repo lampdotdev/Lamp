@@ -72,7 +72,7 @@ A capability given to one engine must be given to all of them that can take it, 
   it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
   it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, its page runs on the game runtime or draws with three.js, it imports SpriteKit, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
+  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, its page runs on the game runtime or draws with three.js or Phaser, it imports SpriteKit, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an

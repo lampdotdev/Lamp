@@ -11,7 +11,8 @@ is often slower than a phone's. Nothing here limits what you make; it says what 
 the game is worth on the devices it's played on.
 
 For 3D in Swift in a Mac-only app (RealityKit through LampSceneView), open the scene-3d skill instead; native 3D on
-iPhone, iPad or Apple TV is written with that device's own frameworks. The game skill holds what every game needs
+iPhone, iPad or Apple TV is written with that device's own frameworks. A game whose play is flat is better made in 2D
+with Phaser (the 2d-game skill), which also runs where a TV's browser has no WebGL 2. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
 ## The renderer
@@ -24,7 +25,7 @@ WebGL build and its addons such as GLTFLoader; nothing is loaded from the networ
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
 `canvas.getContext('webgl2')` returns a context, and read the log with `look_at_app` and `on_device`). Most browsers
-have it; not every Samsung TV does. Where it's missing, make the game another way (2D on a canvas, or native on that
+have it; not every Samsung TV does. Where it's missing, make the game another way (2D with Phaser, which draws with WebGL 1 or a plain canvas, or native on that
 device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials

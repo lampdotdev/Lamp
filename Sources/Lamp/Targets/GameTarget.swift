@@ -1,7 +1,7 @@
 import Foundation
 
 extension Platform {
-    /// A game: a page drawn with three.js (or, made before those, C++ on Lamp's game kit), one code wherever it's played
+    /// A game: a page drawn with three.js, or with Phaser for 2D (or, made before those, C++ on Lamp's game kit), one code wherever it's played
     /// (`GameKit`). Its home is the Mac; every other place a page goes (`Places.pagePlaces`) is one it's given as well
     /// (`LampProject.places`), never another kind.
     static let game = Platform(kind: "game")
@@ -19,7 +19,8 @@ extension Target {
                                               + "anything played with a controller or on their Xbox), whatever device it names, with where else it's played in \"places\": "
                                               + "\"iphone\" for an iPhone or iPad, \"android\" for an Android phone, \"android-tv\" for a Google TV, Android TV or Fire TV, "
                                               + "\"tv\" for a Samsung or LG TV, \"xbox-one\" for their Xbox. "
-                                              + "A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app",
+                                              + "A game played by clicking or tapping through turns (a quiz, a puzzle, a board, card or word game) is an app, "
+                                              + "and so is one they want only on their Mac or iPhone with what only Apple's apps have (Game Center, a widget, inside an app of theirs)",
                                           claims: GameKit.claims, owns: { $0 == GameKit.xboxKind || $0 == "xbox" }, alone: true),
                            tryOnHelp: { _ in "Where it plays: this Mac, an iPhone or iPad, an Android phone, tablet or TV, a Samsung or LG TV, or your Xbox" },
                            place: { _ in .window }),
@@ -58,6 +59,6 @@ extension Target {
 
 extension Language {
     static let game = Language(name: "game", code: "the game's page in Web/", leftover: "the game's files in Web/") {
-        "Write the app again as a game drawn with three.js in Web/ against Lamp's game runtime (the scaffold is there), reading \($0) for what it does, then delete \($1) with delete_file. "
+        "Write the app again as a game in Web/ against Lamp's game runtime (the scaffold is there), drawn with three.js, or with Phaser for a 2D game, reading \($0) for what it does, then delete \($1) with delete_file. "
     }
 }
