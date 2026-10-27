@@ -294,7 +294,7 @@ answer says where the person turns it on rather than that nothing answered. A ru
 
 ## Pages and their hosts
 
-A three.js game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
+A web game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
 `Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (Lamp's common host for a page, `LampPage.swift`:
 `LampPageFiles` serves `Web/` at the app's own address and `LampPageView` shows it, at the window's size or zoomed from a
 fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
@@ -350,8 +350,10 @@ and an app kind that takes places one at a time (an Apple TV or a TV beside a Sw
 
 A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`, written in its `.lamp-game` mark): the
 model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
-console. Which of the two is the agent's choice as it writes the game, from what the person asked for (`Rules.gameWebKit`,
-the `2d-game` skill): the kind and the scaffold are the same, and the placeholder card is three.js's either way. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
+console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
+has it choose 2D or 3D and read the `game` skill with the `2d-game` or `3d-game` skill, which are the only guidance that
+names the library and its recipe (entry point, renderer, frame callback, where setup goes). The kind and the scaffold are
+the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
@@ -415,7 +417,7 @@ and stays the Xbox's, as does a wish whose Xbox app is one of several. Its page 
 so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used in
 the page preview it had as the Xbox's web app, as a screen is, and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
 
-On the Mac and on iOS a three.js game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
+On the Mac and on iOS a web game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
 is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and
 the chat beside it. A change to a game never goes into the open app (`LiveReload.eligible`, `Target.hostedByLamp`): it
@@ -503,7 +505,7 @@ Lamp's Android app around the page, as a game's is, kept awake and not a game to
 integration's web app. A screen made before screens filled any shape says `width=1920` in its viewport meta
 (`ScreenKit.isFixed`): the app around it is then given a 1920x1080 canvas it zooms whole, and the rule tells the agent
 to change its viewport first when it's to go somewhere tall. On the person's own iPhone or iPad the phone's Xcode
-project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a three.js
+project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a web
 game.
 
 Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`,
@@ -522,7 +524,7 @@ one, game or app, web or native, in its prompt (`Skills.forDevices`) and in `mak
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
 `hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team. A game's or a screen's Mac copy is installed in Games/ or Screens/ of the apps folder (`Target.installFolder`), apart from a Mac app of its wish, which has the wish's name.
 
-**What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
+**What a page can reach.** A web game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
 app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's common host, shared by
 `LampWebGame.swift` and `LampWebApp.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI

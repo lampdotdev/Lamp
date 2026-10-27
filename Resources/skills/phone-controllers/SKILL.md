@@ -43,7 +43,7 @@ Nothing else hosts the phone page yet, whatever device it's on:
 
 So a game played with phones as its controllers is, for now, `make_app_for` with `kind` "app", `made` "web" and
 `devices` "tv": that's the TV app's page, which has `Lamp.controllers`, and the game is drawn in it without the
-runtime, in 2D or with three.js (the TV rules say how). It's still a game to the person; only Lamp's routing calls it an app until the game
+runtime, in 2D or 3D (the game and 3d-game skills say how). It's still a game to the person; only Lamp's routing calls it an app until the game
 runtime takes phones.
 
 These are limits of how Lamp hosts phones now, not of the devices. Say so plainly when the person asks for phones

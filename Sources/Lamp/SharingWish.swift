@@ -1,7 +1,7 @@
 import Foundation
 
 /// A TV app's files in a shared file (`Sharing`): what's under Web/ and Phone/, the agent's HTML, CSS and JavaScript as
-/// code and the pictures, sounds and fonts beside them as data. Never Lamp's own script or three.js in Web/, which the
+/// code and the pictures, sounds and fonts beside them as data. Never Lamp's own script or the 3D library in Web/, which the
 /// Mac that opens the file writes itself, never a hidden file or a link, and nothing from anywhere else in the app's folder.
 enum TVFiles {
     /// Files read as code: what the review is shown, and what must be plain text.
@@ -104,7 +104,7 @@ extension Sharing {
     }
 }
 
-/// A three.js game's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as code
+/// A web game's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as code
 /// and its models, pictures and sounds as data, and the Swift that answers the page's calls of the device
 /// (Sources/Native.swift) as code too. Never Lamp's runtime beside the page (lamp-game.js, lamp-phaser.js, lamp-controllers.js,
 /// lamp.js, three/, phaser/) or the app around it, which the Mac that opens the file writes itself (`GameKit.write`), never a hidden file
@@ -138,7 +138,7 @@ enum GameFiles {
     }
 
     /// Puts a shared game's page in place of the game's, and its Native.swift when the file has one, then Lamp's own
-    /// files around them, which make the folder a three.js game.
+    /// files around them, which make the folder a web game.
     static func install(_ package: Sharing.Package, into project: LampProject) throws {
         let fm = FileManager.default
         // The file's page and Native.swift take the place of the game's; a file without a Native.swift leaves the game
