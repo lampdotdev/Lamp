@@ -1,6 +1,6 @@
 ---
 name: web-or-native
-description: Choosing how an app or game is made - as a web page Lamp's host shows on each device, or in the device's own code - from the defaults the table of devices gives (a game web with three.js wherever there's a host, an app native on one Mac, phone or tablet and web on a TV), and on which devices, when to ask the person and what to tell them. Read before the first make_app_for of a wish, and before changing how an app is made or adding a device.
+description: Choosing how an app or game is made - as a web page Lamp's host shows on each device, or in the device's own code - from the defaults the table of devices gives (a game web, with Phaser for 2D or three.js for 3D, wherever there's a host, an app native on one Mac, phone or tablet and web on a TV), and on which devices, when to ask the person and what to tell them. Read before the first make_app_for of a wish, and before changing how an app is made or adding a device.
 ---
 
 # Web or native
@@ -19,8 +19,9 @@ person's own devices. Those are the facts, and the only place they're kept; this
 
 Each row of the table says which make a game and an app on that device get when the person names none:
 
-- **A game** is web, with three.js, wherever Lamp has a host for a page: a Mac, an iPhone or iPad, an Android phone or
-  tablet, a Samsung or LG TV, an Android TV and an Xbox. Where there's none (a Roku, an Apple TV), it's native.
+- **A game** is web, on Lamp's game runtime with Phaser for 2D or three.js for 3D (the 2d-game and 3d-game skills),
+  wherever Lamp has a host for a page: a Mac, an iPhone or iPad, an Android phone or tablet, a Samsung or LG TV, an
+  Android TV and an Xbox. Where there's none (a Roku, an Apple TV), it's native.
 - **An app** on one Mac, one iPhone or iPad, or one Android phone or tablet is native. An app on a TV or a console is
   web wherever the device takes a page.
 - **One app asked for across several devices** is web where every one of them takes a page.
@@ -46,7 +47,9 @@ The defaults are where you start, not a limit:
 - **What the app needs from the device.** Native code has the device's own APIs: widgets, the watch, Health, the
   camera and other hardware, work in the background. A page reaches some of the person's things only through Lamp's
   app around it, where there is one (`LampNative`, the web-app skill). When an app the defaults make web needs one of
-  these, say so, and offer it native.
+  these, say so, and offer it native. A game made native for an Apple thing (Game Center, a widget, a game inside the
+  person's own Mac or iPhone app) is SpriteKit for 2D: say that it then stays on Apple's devices, where a game on the
+  runtime can go to Android, a TV, the Xbox or the web later without being written again.
 - **How it gets to the people who use it.** Read the table's way onto each device, for each make. On some devices a
   page still comes inside an app of Lamp's that is installed the same way a native app is.
 - **Whose devices, and how many.** One person's own Mac or phone, a family's TV, every phone at a party: who has to

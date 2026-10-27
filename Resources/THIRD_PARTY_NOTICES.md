@@ -114,3 +114,11 @@ licence in full): sokol (https://github.com/floooh/sokol, zlib licence, Copyrigh
 HandmadeMath (https://github.com/HandmadeMath/HandmadeMath, public domain), cgltf (https://github.com/jkuhlmann/cgltf,
 MIT, Copyright (c) 2018-2021 Johannes Kuhlmann) and stb_image (https://github.com/nothings/stb, MIT or public domain,
 Copyright (c) 2017 Sean Barrett).
+
+## Libraries for games' pages
+
+Lamp writes these into the pages of the games it makes, each with its license beside it
+(Resources/WebLibraries/<name>/NOTICE.md says which release and how it was checked): three.js
+(https://github.com/mrdoob/three.js, MIT, Copyright © 2010-2026 three.js authors), for 3D, and Phaser
+(https://github.com/phaserjs/phaser, MIT, Copyright (c) 2024 Richard Davey, Phaser Studio Inc.), for 2D, only into a
+game that draws with it.

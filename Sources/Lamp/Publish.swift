@@ -254,7 +254,7 @@ enum Publish {
         if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
         if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
         text += "\n\n"
-        text += "`lamp-game.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
+        text += "`lamp-game.js`, `lamp-phaser.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js`, `three/` and `phaser/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`), and so is Phaser (`phaser/LICENSE.md`).\n"
         return text
     }
 
