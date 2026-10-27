@@ -786,6 +786,8 @@ enum Gallery {
         wishLink("New link, nothing to take again", retake: false),
         wishLink("Sharing", stage: .sending),
         wishLink("Couldn't share", stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment.")),
+        wishLink("Wish itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
+                 stage: .failed("Disk Map can't be shared. The licence of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
         wishLink("Shared and copied", link: true, copied: true),
         wishLink("Shared, changed since", link: true, changed: true),
         wishLink("Beside the app", link: true, copied: true, width: nil),

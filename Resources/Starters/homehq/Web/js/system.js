@@ -88,14 +88,12 @@
     if (!native()) return '';
     var chosen = D.settings.calendars;
     // Turned on at another screen: this one shows what that one reads.
-    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-on', 'Read them here'), btn('data-cal-off', 'Stop showing them')]));
-    var body = chosen ? '' : grid([btn('data-cal-on', 'Show my calendars')]);
-    if (chosen && S.calendars) {
-      body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !chosen.length || chosen.indexOf(c) > -1); }));
-      body += grid([btn('data-cal-off', 'Stop showing them')]);
-    } else if (chosen) {
-      body += grid([btn('data-cal-off', 'Stop showing them')]);
-    }
+    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
+    // The family's one calendar: an event goes to whoever its title names, else to everyone (js/live.js).
+    var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? chosen[0] : 'All calendars') + '</p>' : '';
+    if (S.calendars) body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !!chosen && chosen.length === 1 && chosen[0] === c); }));
+    else body += grid([btn('data-cal-on', chosen ? 'Change calendar' : 'Show our calendar')]);
+    if (chosen) body += grid([btn('data-cal-off', 'Stop showing it')]);
     return sec('Calendars', body);
   }
 
@@ -114,7 +112,7 @@
       '<div class="demo-head"><div><div class="label label--light">Home HQ</div><h2 class="serif">Settings</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
       weatherSec() + calendarsSec() + photosSec() +
       sec('Your family', grid([btn('data-family', 'Family'), btn('data-chores', 'Chores')])) +
-      (D.hasExamples() ? sec('Examples', grid([btn('data-clear', 'Clear examples')])) : '') +
+      (D.isSetUp() ? '' : sec('Example family', grid([btn('data-setup', 'Set up my family')]))) +
       sec('Screen', grid([btn('data-mode="ambient"', 'Photo frame'), btn('data-mode="night"', 'Night clock')])) +
       '<p class="demo-note">Based on <a href="' + UPSTREAM + '" target="_blank" rel="noopener">photo-frame-dashboard</a> by <a href="https://wesbos.com" target="_blank" rel="noopener">Wes Bos</a> (MIT)</p>' +
       '</div>';
@@ -130,7 +128,7 @@
   };
   function closeSettings() {
     $('#demo').classList.remove('is-open');
-    S.finding = false; S.places = null; S.albums = null;
+    S.finding = false; S.places = null; S.albums = null; S.calendars = null;
     if (window.Lamp) { Lamp.scope = null; Lamp.focus('.rail-clock'); }
   }
   App.closeSettings = closeSettings;
@@ -157,17 +155,15 @@
       return App.openSettings();
     }
     if (b.hasAttribute('data-place-clear')) { D.settings.place = null; App.exampleWeather(); App.emit('data'); return App.openSettings(); }
+    // This screen reads the family's calendar from now on (the one that did may be gone), and shares it with the others.
+    if (b.hasAttribute('data-cal-here')) { D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); return App.openSettings(); }
     if (b.hasAttribute('data-cal-on')) {
-      LampNative.call('calendars', {}).then(function (names) {
-        S.calendars = names; D.settings.calendars = []; D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); App.openSettings();
-      }, function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
+      LampNative.call('calendars', {}).then(function (names) { S.calendars = names; App.openSettings(); },
+        function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
       return;
     }
     if (d.cal != null) {
-      var all = S.calendars, chosen = D.settings.calendars.length ? D.settings.calendars.slice() : all.slice();
-      var i = chosen.indexOf(d.cal);
-      if (i > -1) chosen.splice(i, 1); else chosen.push(d.cal);
-      D.settings.calendars = chosen.length === all.length ? [] : chosen;
+      D.settings.calendars = [d.cal]; D.settings.calendarsBy = App.me(); S.calendars = null;
       App.emit('data'); App.loadCalendars();
       return App.openSettings();
     }
@@ -181,12 +177,7 @@
     if (b.hasAttribute('data-album-off')) { D.settings.album = null; App.loadPhotos(); App.emit('data'); return App.openSettings(); }
     if (b.hasAttribute('data-family')) { closeSettings(); return App.editFamily(); }
     if (b.hasAttribute('data-chores')) { closeSettings(); return App.editChores(); }
-    if (b.hasAttribute('data-clear')) {
-      D.clearExamples();
-      App.loadCalendars(); App.loadPhotos();
-      App.emit('data'); App.rerender();
-      return App.openSettings();
-    }
+    if (b.hasAttribute('data-setup')) { closeSettings(); return App.setup('family'); }
     if (d.mode) { closeSettings(); App.setMode(d.mode); }
   }
 

@@ -253,7 +253,8 @@ window.DATA = (function () {
     stores: stores, catOrder: catOrder, groceries: groceries, catalog: catalog, usuals: usuals,
     weather: weather, photos: photos,
     // The settings sheet's choices: the weather's place, the family's own calendars and photos.
-    settings: { place: null, calendars: null, calendarsBy: null, album: null, albumBy: null },
+    // `example`: this screen was asked to show the example family rather than the welcome.
+    settings: { place: null, calendars: null, calendarsBy: null, album: null, albumBy: null, example: false },
     cleared: false,
     edited: { people: false, chores: false },
     _gid: function () { return 'u' + Date.now().toString(36) + (++gid); },
@@ -309,13 +310,19 @@ window.DATA = (function () {
   D.hasExamples = function () {
     return !D.cleared;
   };
+  // Everyone, as an event for the whole family has them: the people, not the pets.
+  D.humanIds = function () { return D.people.filter(function (p) { return !p.pet; }).map(function (p) { return p.id; }); };
+  // Set up: the first-run setup (js/views/setup.js) was finished, here or on another copy, which took the examples away.
+  // Until then the examples show (renamed or not in the editor), behind the welcome unless the person chose to look at
+  // them.
+  D.isSetUp = function () { return D.cleared; };
 
   // Puts back what a snapshot holds, any of its parts: what this device saved, or a part another copy shared.
   D.restore = function (p) {
     if (p.settings) D.settings = Object.assign(D.settings, p.settings);
     if (p.people && p.people.length) {
       D.people = p.people; D.edited.people = true;
-      D.ALL = D.people.map(function (x) { return x.id; });
+      D.ALL = D.humanIds();
     }
     if (p.cleared && !D.cleared) {
       D.cleared = true;

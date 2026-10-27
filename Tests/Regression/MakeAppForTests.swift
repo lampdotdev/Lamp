@@ -145,8 +145,8 @@ final class MakeAppForTests: XCTestCase {
         XCTAssertEqual(kind(try make(.web, ["iphone", "android"], in: [])), .game)
         XCTAssertEqual(kind(try make(.native, ["android-tv"], in: [])), .androidTV)
         XCTAssertEqual(kind(try make(.web, ["xbox-one"], in: [])), .device)
+        XCTAssertEqual(kind(try make(.web, ["tv", "android"], in: [])), .game)   // a game goes everywhere a web engine is
         XCTAssertTrue(refused(.web, ["apple-tv"])?.contains("tvOS has no web view") == true)
-        XCTAssertNotNil(refused(.web, ["tv", "android"]))
         XCTAssertNotNil(refused(.native, ["mac", "android"]))
         XCTAssertNotNil(refused(.native, ["tv"]))
         XCTAssertNotNil(refused(.web, ["toaster"]))
