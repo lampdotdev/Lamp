@@ -22,11 +22,17 @@ depends on how an app is made and run, not on the device alone. What follows is 
 
 ## What hosts phones today
 
-Lamp's phone page (Phone/, joined by a QR code) and the relay it goes through are there for one path only: a TV app's
-page, on a Samsung or LG TV, that uses lamp.js's `Lamp.controllers`. It hosts phones while the app is open on such a
-TV or in its TV preview on this Mac, and once it has a phone page (or another of the wish's apps to join it).
+Phones join in two separate ways.
 
-Nothing else hosts that phone page yet, whatever device it's on:
+A phone's browser, joined by a QR code, needs the app's phone page (`Phone/index.html`) and a TV app's page, on a
+Samsung or LG TV, that uses lamp.js's `Lamp.controllers`: Lamp serves the phone page and runs the relay only while that
+app is open on such a TV or in its TV preview on this Mac.
+
+An app of the wish's own on a phone needs no browser page: it joins the TV app's game as a player with
+`LampController` over `LampWish`, and the wish's apps talk to each other through `LampWish` on whichever devices
+they're on (the wish-links skill).
+
+Nothing else hosts the phone page yet, whatever device it's on:
 
 - a page on Lamp's game runtime (lamp-game.js) has no `Lamp.controllers`, even when the game is on a Samsung or LG TV:
   its players use a controller, the keyboard or touch. A game played with phones today is a TV app's page with
@@ -36,10 +42,6 @@ Nothing else hosts that phone page yet, whatever device it's on:
 These are limits of how Lamp hosts phones now, not of the devices. Say so plainly when the person asks for phones
 there, and offer what works: the TV app's page (its preview on this Mac hosts phones too, with no TV), or the game
 played with a controller, the remote or touch.
-
-This is about Lamp's phone page. The wish's own apps talk to each other through `LampWish` on whichever devices
-they're on (the wish-links skill), and an app of the wish's on a phone joins the TV app's game as a player with
-`LampController`.
 
 ## A page or an app on the phones?
 
