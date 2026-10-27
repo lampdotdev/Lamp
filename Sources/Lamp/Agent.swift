@@ -426,7 +426,7 @@ enum Agent {
         let each = parts.count == 1
             ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true, integration: Parts.listedIntegration(of: $0)) }.joined()
                 + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
-            : Parts.rule(for: wish, parts: parts)
+            : Parts.rule(for: wish, parts: parts) + Skills.index(Skills.everywhere)
         return header + "\n\nRules:\n" + rules + each
     }
 
@@ -456,7 +456,7 @@ enum Agent {
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Rules.game2D, Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.ai]
         rules += (wishRules ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs, Rules.universalTry]
@@ -481,7 +481,7 @@ enum Agent {
         if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.share, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac), Rules.game2D, Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
+        rules += [Rules.store, Rules.kinds(mac: mac), Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated, Rules.ai]
             + (part == nil ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -787,11 +787,6 @@ enum Agent {
         wishlist of sauces, a new screen) keeps the look. Replace only example content, never the person's own \
         items, and keep saved data readable (keep raw values, map old ones to new). It changes much of what they \
         see, so work in passes.
-
-        """
-
-        static let game2D = """
-        - 2D games: SpriteKit. Open the games-2d skill before writing or changing one, and follow it.
 
         """
 

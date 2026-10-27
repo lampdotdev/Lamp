@@ -1,61 +1,49 @@
 ---
 name: phone-controllers
-description: A TV app's page for phones on the same Wi-Fi - phones as controllers (buttons, sticks, a wheel, a buzzer), a second screen joined by a QR code, or sending the TV a file (a photo, a game, a song). Read before writing Phone/ or using Lamp.controllers or Lamp.phonePage.
+description: What to weigh when phones are to be controllers or a second screen for a game or app - whose phones, what the game's device can take, web or native on the phones, and what Lamp can't do yet. Read whenever someone wants to play or steer something with their phone.
 ---
 
-# Phones as controllers and second screens
+# Phones as controllers: what to consider
 
-The phone's page goes in `Phone/` at the app's root: `index.html` and the files beside it, loaded with relative paths. It runs in the phone's own modern browser, so it isn't held to the TV's 2019 syntax. Lamp serves it while the app runs (in the TV preview, or set to open on a TV), and the phones' input and files go to the TV page over the home Wi-Fi, through a relay Lamp runs on the Mac. Never start a server, a login item or anything else that keeps running for it, and never publish the page another way. Nothing secret goes in `Phone/`: anyone on the Wi-Fi with its address can load it.
+"A game I can control with my phone" can be made several ways. Before building, think through these, and ask the
+person only what you can't tell from the request (one short line, about people and devices).
 
-## Controllers
+## Whose phones?
 
-On the phone, the page loads `lamp-controller.js`, which Lamp serves beside it (don't write one): `<script src="lamp-controller.js"></script>`.
+- **Several people's** (family, friends, a class): each phone has to join with nothing to install. That's a page for
+  phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it.
+- **Only the person's own phone**: an app of the wish's own on their iPhone or Android phone can be the controller
+  too, and does what a page does poorly (the phone's hardware, haptics, data the phone keeps). It joins as a player the
+  way a phone's page does (`LampController` over `LampWish`). The cost is installing it: an iPhone paired with this
+  Mac, an Android phone with USB debugging. A page still works for their phone too.
 
-```js
-var pad = LampController.connect({
-  onPlayer: function (n) { },      // this phone's player number (1, 2, ...)
-  onMessage: function (data) { },  // what the TV app sent this phone, or every phone
-  onState: function (state) { }    // 'connecting', 'connected', 'waiting' (the TV app isn't there), 'ended', 'full'
-});
-pad.button('a', true); pad.button('a', false);  // a button held, then let go
-pad.axis('stick', x, y);                         // a stick or slider, each from -1 to 1
-pad.send({ ready: true });                       // JSON to the TV app, 16 KB at most
-```
+## What does the game's device take?
 
-Make each control big enough for a thumb, show the player's number and the state (say plainly when the TV app isn't there or the game has ended), and send a button's press and its release, so the TV can tell held from tapped. The number comes from the TV app once it's there (`onPlayer`), so show the state until then.
+The phones connect to the game's own page, over the home Wi‑Fi, through a relay Lamp runs on this Mac:
 
-On the TV, in `Web/`, `Lamp.controllers` (lamp.js's comment) runs the game: `Lamp.controllers.start()`, then `onLink(fn(url))` for the address phones open, to show as a QR code (it changes every few minutes, and `fn` is called again each time), `onJoin`/`onLeave(fn(player))`, `onButton(fn(player, name, down))`, `onAxis(fn(player, name, x, y))`, `onMessage(fn(player, data))`, `onError(fn(message))`, `send(player, data)` (player 0 for every phone; 16 KB of JSON at most), `isHeld(player, name)`, `players()` and `stop()`. A phone that leaves or drops has every button it held let go before `onLeave`, and movement that arrives late is dropped, so the game never acts on a stale stick.
+- **A TV app's page with lamp.js's `Lamp.controllers`** hosts phones: on the TV, and in the TV preview on this Mac.
+  This is what works today, because Lamp hands out the phone page and runs the relay only for a TV app.
+- **A page shown on a Mac, an iPad or an Xbox** can't host phones yet: the page there reaches only Lamp's AI, not the
+  relay, and Lamp serves phone pages only to TV apps. Hosting phones there needs both opened to those apps. Say so,
+  and offer the game as a TV app (its preview on this Mac hosts phones too) or played with a controller.
+- **A page on Lamp's game runtime** (lamp-game.js) has no `Lamp.controllers` yet: its players use a controller, the
+  keyboard or touch. A game played with phones today is a page with lamp.js's controllers, drawn without the runtime.
+- **A native Apple TV game can't host phones yet**: the host's side of phones exists only in lamp.js. Say so, and
+  offer what works: the game made as a page on a TV that runs web, or the Apple TV played with game controllers or
+  the Siri Remote.
+- **A native Mac or iPhone game** doesn't host phones either; the same choices apply.
 
-## Files
+## Web or native on the phones?
 
-One message, as the JSON that goes out, is at most 16 KB (`LampController.messageLimit`, `Lamp.controllers.messageLimit`), either way. A bigger one isn't sent: `send` returns false, and the TV app's log (and its `onError`) says so with its size. `send` also returns false while the other side isn't there.
+Unless the phones are only the person's own and the app needs what only native does, a page: nothing to install, and
+any phone on the Wi‑Fi joins. The web-or-native skill has the rest of that choice.
 
-Anything bigger (a photo, a game for the TV to play, a song, a document) is a file, sent in pieces with its own progress, so buttons pressed meanwhile still arrive at once. Never cut it into messages yourself, as text or base64.
+## Away from home
 
-```js
-// On the phone: a File from <input type="file">, a Blob, an ArrayBuffer, bytes or text, up to 64 MB.
-var sending = pad.sendFile(input.files[0]);          // or pad.sendFile(bytes, { name: 'level.json', type: 'application/json' })
-sending.onProgress(function (sent, size) { });     // show it
-sending.done.then(function () { }, function (error) { /* error.message: say it */ });
-sending.cancel();
+The phones and the game must be on the same Wi‑Fi, with Lamp open on this Mac. Lamp can't put a game online, so
+friends in other homes can't join: say so if that's what they want.
 
-// On the TV, in Web/:
-Lamp.controllers.onFile(function (player, file) {  // file.name, file.type, file.size
-  file.onProgress(function (received, size) { });
-  file.done.then(function (arrayBuffer) { }, function (error) { });
-});
-```
+## Building it
 
-The TV sends a phone a file the same way, with `Lamp.controllers.sendFile(player, data, { name, type })`, which the phone hears in `onFile` (passed to `LampController.connect`). A file whose player leaves, or whose link drops, ends with an error: say so and let the person send it again. Keep a TV's memory in mind: read what arrived and let it go rather than keeping many large files.
-
-## Tilt
-
-The page is plain http, and phones give their motion sensors only to https pages. So make buttons and sticks the controls. Offer tilt only where `LampController.canTilt()` says so, from a tap (a Start button), since the browser asks the person first: `LampController.tilt(pad).then(...).catch(...)` then sends the phone's tilt as axis `'tilt'` (x: left -1 to right 1, y: away -1 to toward 1). Where it can't, the game must still be playable with the buttons.
-
-## The wish's own apps
-
-A phone's page is not one of the wish's apps. When the wish has an iPhone, Mac or Android app beside the TV app, those apps and the TV page see each other and talk through `LampWish` (`Lamp.wish` in lamp.js, `LampWish` in LampSupport): who is open now, and messages between them. `Lamp.controllers` and `LampController` are for steering the TV (buttons, sticks, files to the TV); for anything else between the wish's apps, use `LampWish`, whose comment in lamp.js and LampSupport says how.
-
-## A second screen
-
-For a page that shows something beside the TV rather than steering it (a hand of cards, a scoreboard, a buzzer that needs no game), the TV page draws a QR code of `Lamp.phonePage(hash)`, the page's address with `#hash` after it, inside `Lamp.onPhonePage(fn)`: it's called at once when there's an address and again whenever it moves, so redraw the code there. It's null when the app has no `Phone/index.html`. What the phone and the TV say to each other still goes through `Lamp.controllers` and `LampController` (`send` and `onMessage`, `sendFile` and `onFile`); nothing else carries messages between them.
+Once you've chosen, open the phone-pages skill: the page in Phone/, `LampController` on the phone and
+`Lamp.controllers` on the screen, files, tilt and second screens.

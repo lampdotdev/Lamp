@@ -565,7 +565,8 @@ extension Agent {
         let integration = DeviceApps.integration(for: project)
         let name = integration?.name ?? "the device"
         let rules = [Rules.deviceEdit, Rules.ask, Rules.shell, Rules.deviceKind(integration), Rules.deviceBlocks(project), Rules.icon, Rules.about,
-                     Rules.deviceAttachments, Rules.deviceTry(project), Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+                     Rules.deviceAttachments, Rules.deviceTry(project), Rules.appMd, Rules.audience, Skills.index(Skills.offered(.device)),
+                     Rules.begin, Rules.finish]
         let previews = DeviceApps.previewFolder(for: project) != nil
         return (Rules.deviceHeader(integration, previews: previews) + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: name)
