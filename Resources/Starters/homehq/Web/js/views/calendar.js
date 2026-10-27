@@ -53,8 +53,9 @@
     return '<button class="' + cls + '" data-ev="' + e.id + '" style="' + App.pstyle(p) + ';' + style + '">' + travel +
       '<span class="ev-title">' + App.esc(e.title) + '</span>' +
       '<span class="ev-meta">' + App.fmt.range(e.start, e.end) + (e.travel ? ' · <b>' + App.icon('car', 16) + 'Leave ' + App.fmt.time(App.leaveBy(e), false) + '</b>' : '') + '</span>' +
-      (others.length && !App.isFamily(e) ? '<span class="ev-with">' + App.dots(others, 14) + '</span>' : '') +
-      (App.isFamily(e) ? '<span class="ev-with">' + App.dots(D.ALL, 14) + '</span>' : '') +
+      // Who a calendar event is for isn't known (the family's shared calendar doesn't say): no dots for it.
+      (others.length && !App.isFamily(e) && !e.cal ? '<span class="ev-with">' + App.dots(others, 14) + '</span>' : '') +
+      (App.isFamily(e) && !e.cal ? '<span class="ev-with">' + App.dots(D.ALL, 14) + '</span>' : '') +
       '</button>';
   }
 
@@ -266,9 +267,9 @@
       '<div class="evs-body">' +
       (e.travel ? '<div class="evs-row evs-leave">' + App.icon('car', 28) + '<div><b>Leave by ' + App.fmt.time(App.leaveBy(e)) + '</b><span>' + e.travel + ' min drive in current traffic</span></div></div>' : '') +
       (e.loc ? '<div class="evs-row">' + App.icon('pin', 28) + '<div><b>' + App.esc(e.loc) + '</b><span>Tap to send directions to phone</span></div></div>' : '') +
-      '<div class="evs-row">' + App.icon('person', 28) + '<div class="evs-people">' + (fam ? App.humans() : e.people.map(App.person)).map(function (x) {
+      (e.cal ? '' : '<div class="evs-row">' + App.icon('person', 28) + '<div class="evs-people">' + (fam ? App.humans() : e.people.map(App.person)).map(function (x) {
         return '<span class="chip" style="' + App.pstyle(x) + '">' + App.avatar(x, 32) + x.name + '</span>';
-      }).join('') + '</div></div>' +
+      }).join('') + '</div></div>') +
       (e.notes ? '<div class="evs-notes serif">“' + App.esc(e.notes) + '”</div>' : '') +
       '</div></div>', { cls: 'sheet--event' });
   };

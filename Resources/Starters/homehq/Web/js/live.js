@@ -68,12 +68,25 @@
   // (another Mac, the iPad, the TV) show what it publishes (js/sync.js) and never read their own, so turning them on
   // once never has every device asking for the person's calendars or photos.
   App.me = function () { return window.Lamp && Lamp.wish && Lamp.wish.copy ? (Lamp.wish.copy() || 'here') : 'here'; };
+  // Inside the app around the page, which copy this is arrives a moment after the page opens: until then it can't
+  // tell whether it's the one that reads the calendar and album. Asked then, `fn` waits for it (once).
+  function whenKnown(fn) {
+    if (!(window.Lamp && Lamp.wish && Lamp.wish.copy && Lamp.wish.onState) || Lamp.wish.copy()) return false;
+    var waiting = true;
+    function check() { if (waiting && Lamp.wish.copy()) { waiting = false; fn(); } }
+    // It comes with the app's first word on its link, which is said as a state, a list of the wish's apps or both.
+    Lamp.wish.onState(check);
+    if (Lamp.wish.onApps) Lamp.wish.onApps(check);
+    [1000, 3000, 8000].forEach(function (ms) { setTimeout(check, ms); });
+    return true;
+  }
   function native() { return !!(window.LampNative && LampNative.available); }
   App.readsCalendars = function () { return native() && !!D.settings.calendars && D.settings.calendarsBy === App.me(); };
   App.readsAlbum = function () { return native() && D.settings.album != null && D.settings.albumBy === App.me(); };
 
   App.loadCalendars = function () {
     var chosen = D.settings.calendars;
+    if (chosen && D.settings.calendarsBy && whenKnown(App.loadCalendars)) return;
     if (chosen && !App.readsCalendars()) return;   // another copy reads them
     D.events = D.events.filter(function (e) { return !e.cal; });
     if (!chosen || !native()) { App.emit('data'); return; }
@@ -93,6 +106,7 @@
   var examples = D.photos.slice();
   App.loadPhotos = function () {
     var album = D.settings.album;
+    if (album != null && D.settings.albumBy && whenKnown(App.loadPhotos)) return;
     if (album != null && !App.readsAlbum()) return;   // another copy reads it
     if (album == null || !native()) {
       D.photos = D.cleared ? [] : examples.filter(function (p) { return !D.cleared || !p.ex; });

@@ -74,7 +74,7 @@
       '  <div class="label label--on">Next up' + (whoText ? ' · ' + App.esc(whoText) : '') + '</div>' +
       '  <div class="h-hero-title serif">' + App.esc(e.title) + '</div>' +
       '  <div class="h-hero-meta">' + App.fmt.range(e.start, e.end) + (e.loc ? ' · ' + App.esc(e.loc) : '') + '</div>' +
-      '  <div class="h-hero-foot">' + (e.people.length > 1 ? App.dots(e.people, 22) : '') + leavePill + '</div>' +
+      '  <div class="h-hero-foot">' + (e.people.length > 1 && !e.cal ? App.dots(e.people, 22) : '') + leavePill + '</div>' +
       '</div>' + big + '</button>';
   }
 
