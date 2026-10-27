@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + remixEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -897,6 +897,30 @@ enum Gallery {
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+    }
+
+    /// What the chat beside an app shows on a Mac without Lamp, at the chat's narrowest and widest.
+    private static let remixEntries: [Entry] = [
+        remix("With a share link", link: true),
+        remix("Without a share link"),
+        remix("Lamp's own suggestions", link: true, suggestions: RemixOffer.fallback),
+        remix("Wide", link: true, width: 480),
+    ]
+
+    private static func remix(_ name: String, link: Bool = false,
+                              suggestions: [RemixIdea] = [RemixIdea(text: "Add a helicopter tour of Central Park", symbol: "airplane"),
+                                                          RemixIdea(text: "Let me race a friend on the same phone", symbol: "flag.checkered"),
+                                                          RemixIdea(text: "Show the time of day as it is in New York", symbol: "clock")],
+                              width: CGFloat? = nil) -> Entry {
+        Entry(group: "Remix", name: name) {
+            let offer = RemixOffer(name: "New York", about: "Explore Manhattan on foot, by car, by bike or by helicopter.", suggestions: suggestions,
+                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil)
+            return AnyView(RemixPanel(offer: offer) { _ in }
+                .frame(width: width ?? 320)
+                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .fixedSize(horizontal: false, vertical: true))
         }
     }

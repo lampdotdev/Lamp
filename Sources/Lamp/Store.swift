@@ -1557,6 +1557,7 @@ final class Store: ObservableObject {
             importApp(from: url)
             return
         }
+        if let exact = Wish.exact(from: url) { return take(exact: exact) }
         if let wish = Wish.from(link: url) { return take(wish: wish) }
         guard url.scheme == Edition.urlScheme,
               let slug = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -1571,6 +1572,59 @@ final class Store: ObservableObject {
     /// A wish the site's link brought (`Wish`). During the welcome it goes to the first-app box; after it, into
     /// the message box of a new app, written in a word at a time as the site writes. It is never sent from
     /// here: any web page can open such a link, so the person reads it and presses Send.
+    /// Where a shared file a link named is kept once fetched, with the request that came with it beside it
+    /// (`fetchedRequest`), so the request stays with that file through the review, a wait for setup (`WaitingImport`
+    /// copies it with the file), or a restart.
+    private static let fetchedPrefix = "lamp-fetched-"
+    private static let requestFile = WaitingImport.requestFile
+
+    /// The request kept beside a fetched file, for the wish made from it: only in a folder Lamp made for the file
+    /// (one it fetched, or one it kept for setup), never beside a file opened from anywhere else. Nil for the rest.
+    nonisolated static func fetchedRequest(beside file: URL) -> String? {
+        let folder = file.deletingLastPathComponent()
+        guard folder.lastPathComponent.hasPrefix(fetchedPrefix) || folder.deletingLastPathComponent().lastPathComponent == "Waiting" else { return nil }
+        return Wish.tidy(try? String(contentsOf: folder.appendingPathComponent(requestFile), encoding: .utf8))
+    }
+
+    /// The exact wish a link names: its shared file is fetched, no bigger than any shared file may be (refused early
+    /// by its declared length, and cut off as it comes), then goes the way a file opened by hand does, review
+    /// included, with the request the link brought beside it for its box.
+    func take(exact: Wish.Exact) {
+        NSApp.activate()
+        Task {
+            let folder = Sharing.workFolder.appendingPathComponent(Self.fetchedPrefix + UUID().uuidString)
+            do {
+                var request = URLRequest(url: exact.file)
+                request.timeoutInterval = 60
+                let data = try await Self.fetch(request, upTo: Sharing.maxArchiveBytes)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let file = folder.appendingPathComponent("Shared Wish.lampapp")
+                try data.write(to: file)
+                if let text = exact.text { try text.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
+                importApp(from: file)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
+    /// A response of at most `limit` bytes: one that says it's bigger is refused before a byte is read, and one that
+    /// turns out bigger is dropped as soon as it passes the limit, so nothing larger is ever held.
+    nonisolated static func fetch(_ request: URLRequest, upTo limit: Int) async throws -> Data {
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let refusal = Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw refusal }
+        guard response.expectedContentLength <= Int64(limit) else { throw Sharing.ImportError("This file is too large to be a Lamp app (over 64 MB).") }
+        var data = Data()
+        data.reserveCapacity(Int(max(0, min(response.expectedContentLength, Int64(limit)))))
+        for try await byte in bytes {
+            data.append(byte)
+            guard data.count <= limit else { throw Sharing.ImportError("This file is too large to be a Lamp app (over 64 MB).") }
+        }
+        return data
+    }
+
     func take(wish: String) {
         NSApp.activate()
         guard Onboarding.isDone || welcomeFinished else { arrivedWish = wish; return }
@@ -2928,6 +2982,8 @@ final class Store: ObservableObject {
     struct PendingImport: Identifiable {
         let id = UUID()
         let package: Sharing.Package
+        /// The request a link brought with this file (`take(exact:)`), for the wish's box; nil for a file opened by hand.
+        var request: String? = nil
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
@@ -2995,7 +3051,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package, existing: existingCopy(of: package))
+            let pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package))
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -3027,7 +3083,7 @@ final class Store: ObservableObject {
         guard let pending = pendingImport else { return }
         importRequest = nil
         pendingImport = nil
-        finishImport(pending.package)
+        finishImport(pending.package, request: pending.request)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -3046,6 +3102,9 @@ final class Store: ObservableObject {
         importRequest = nil
         pendingImport = nil
         showChat(project.id)
+        // A request that came with the wish's link goes into the app it updates, as into a new one (`finishImport`):
+        // in the box, ready to send, whether or not the file has anything new.
+        if let request = pending.request { updateDraft(Draft(text: request), for: project) }
         Task {
             defer { finish(project) }
             let package = pending.package
@@ -3152,7 +3211,7 @@ final class Store: ObservableObject {
     private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
     private static let updateChangedIcon = " Only its icon may have changed."
 
-    private func finishImport(_ package: Sharing.Package) {
+    private func finishImport(_ package: Sharing.Package, request: String? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -3172,6 +3231,9 @@ final class Store: ObservableObject {
 
         reload()
         showChat(project.id)
+        // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
+        // box, ready to send once the wish is built.
+        if let request { updateDraft(Draft(text: request), for: project) }
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
             defer { try? FileManager.default.removeItem(at: package.folder) }
@@ -4112,6 +4174,7 @@ final class Store: ObservableObject {
                 // Not of a copy the person kept open: it's the version before this one.
                 if crashes[project.id] == nil, !owner.keptOpen { keepPicture(of: project, version: head) }
                 titleVersions(project, limit: 1)
+                Task { await RemixSuggestions.refresh(project) }
             }
             versionsRevision += 1
         }
@@ -9234,6 +9297,7 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID })
                 ?? projects.first(where: { $0.hasMac && app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
               !busy.contains(project.id), reloadWatches[project.id] == nil else { return }
+        if refreshWhenQuit.remove(project.id) != nil, let current = current(project) { refreshInstalled(current) }
         let since = app.launchDate ?? Date().addingTimeInterval(-5)
         Task { [weak self] in
             // macOS writes the report after the process is gone, sometimes ten seconds or more later (the time
@@ -9360,6 +9424,37 @@ final class Store: ObservableObject {
     /// the installed copy. The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
         try await swapIn(try await stageSigned(project), for: project)
+    }
+
+    /// Apps whose installed copy is to be made again from the build on disk once they quit (`refreshInstalled`).
+    private var refreshWhenQuit: Set<String> = []
+
+    /// What the installed copy carries about itself changed (its suggestions, its Share Link: what `Sidebar.install`
+    /// writes into the chat beside it, for a Mac without Lamp): the copy is made again from the build on disk, signed
+    /// as before, now if the app isn't open, else at its next quit. Nothing is built, and only a build that is the app
+    /// the person has goes in: never one set aside after a crash, one still watched for its crash, one a live change
+    /// left half made, or one waiting to go in with its data (`installIcon` does those). The app is owned meanwhile,
+    /// as for any install, so no request or Play takes it while the copy is staged, and the copy goes in only if the
+    /// app is still closed by then.
+    func refreshInstalled(_ project: LampProject) {
+        guard project.holdsApp, Sidebar.applies(to: project), !project.onIOS, !busy.contains(project.id),
+              FileManager.default.fileExists(atPath: project.builtURL.path), FileManager.default.fileExists(atPath: project.installedURL.path),
+              setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil, !liveBuildFailed.contains(project.id),
+              !Runtime.holdsBuild(project) else { return }
+        guard !isRunning(project) else { refreshWhenQuit.insert(project.id); return }
+        guard begin(project) != nil else { refreshWhenQuit.insert(project.id); return }
+        Task {
+            defer { finish(project) }
+            do {
+                let staged = try await stageSigned(project)
+                guard let current = current(project), !isRunning(current), setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil else {
+                    staged.discard()
+                    refreshWhenQuit.insert(project.id)
+                    return
+                }
+                try await swapIn(staged, for: current)
+            } catch {}
+        }
     }
 
     /// Everything `deploy` does before the swap: a copy of the build in the apps folder, finished and signed there.

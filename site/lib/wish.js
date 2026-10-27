@@ -48,3 +48,35 @@ export async function copyWish(text, { clipboard = globalThis.navigator?.clipboa
     return "none";
   }
 }
+
+/** The most a request from an app's remix panel carries; the panel cuts there too (`RemixLink.askLimit`). */
+export const ASK_LIMIT = 1000;
+
+/**
+ * A request brought by a link from an app's remix panel (`?ask=…`): what the person typed beside an app on a Mac
+ * without Lamp, or on a published page. Null when the link brings none.
+ */
+export function askFrom(search) {
+  const ask = new URLSearchParams(search ?? "").get("ask");
+  const words = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
+  return words || null;
+}
+
+/** The wish's words with the request after them, as one wish for Lamp, within what Lamp takes. */
+export function withAsk(wish, ask) {
+  const words = tidy(wish), request = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
+  if (!request) return words;
+  if (!words) return tidy(request);
+  return tidy(`${words}\n\nThen: ${request}`);
+}
+
+/**
+ * The link that opens Lamp, on a Mac that has it, on the exact shared wish (its file's address) with a request in the
+ * box: what a shared wish's page offers when a request came with its link. Null without a file, or without a request.
+ */
+export function exactWishLink(file, ask) {
+  const request = String(ask ?? "").trim().slice(0, ASK_LIMIT).trim();
+  if (!file || !request) return null;
+  const params = new URLSearchParams({ file: String(file), text: request });
+  return `lamp://wish?${params}`;
+}

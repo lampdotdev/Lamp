@@ -14,6 +14,11 @@ open class ChatLink: ObservableObject {
     @Published public var connected = false
     /// Lamp hasn't answered for a while: it isn't open.
     @Published public var lampAway = false
+    /// Lamp isn't on this Mac at all (the app was built from its code, or Lamp was removed): the chat offers a way
+    /// into Lamp (`RemixPanel`) instead of waiting for it. True in Lamp's own window, which has no need of the panel.
+    @Published public var lampInstalled = true
+    /// What that panel offers: the app's name and line and three things to change, from the app's own bundle.
+    @Published public var remix: RemixOffer?
     /// The box's words as last typed here, with the draft version they were typed over. Lamp doesn't send back words
     /// typed here, so a box drawn again (a panel was open in the chat's place) takes them from here, not from Lamp.
     public var typed: (version: Int, text: String)?
@@ -30,6 +35,8 @@ open class ChatLink: ObservableObject {
     open func startMove() {}
     /// Lamp isn't open: start it.
     open func openLamp() {}
+    /// Continue with Lamp, on a Mac without it: the request goes to lamp.dev, or the wish's own page.
+    open func continueWithLamp(_ ask: String) {}
 }
 
 /// The chat as everyone sees it: its bar, the chat or a panel in its place, and the message box. Drawn the same
@@ -47,6 +54,8 @@ public struct ChatScreen: View {
             }
             if let state = link.state, link.connected {
                 Chat(state: state)
+            } else if link.lampAway, !link.lampInstalled, let offer = link.remix {
+                ScrollView { RemixPanel(offer: offer) { link.continueWithLamp($0) } }
             } else {
                 VStack(spacing: 12) {
                     if link.lampAway {

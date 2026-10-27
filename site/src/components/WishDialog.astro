@@ -73,7 +73,7 @@ const { place } = Astro.props;
 </dialog>
 
 <script>
-  import { copyWish, wishLink } from "../../lib/wish.js";
+  import { askFrom, copyWish, exactWishLink, withAsk, wishLink } from "../../lib/wish.js";
   import { track } from "../lib/analytics";
 
   const dialog = document.querySelector<HTMLDialogElement>("[data-wish]")!;
@@ -104,6 +104,9 @@ const { place } = Astro.props;
   let current: Idea | null = null;
   // Where the wish came from, for the site's analytics: this page's ideas, or a wish someone shared as a link.
   let from = place;
+  // A request brought by a link from an app's remix panel (the chat beside an app on a Mac without Lamp, or a published
+  // page's Remix…), as `ask`: it goes after the shared wish's words, and with the exact wish's link.
+  const asked = askFrom(location.search);
   const open = (idea: Idea, shown: string, opened: string) => {
     current = idea;
     from = opened;
@@ -129,9 +132,12 @@ const { place } = Astro.props;
     // The exact wish, as a file Lamp opens, on a Mac (where Lamp runs) and only when the sharer sent it.
     fileLink.hidden = !current.file || openLink.hidden;
     if (current.file) {
-      fileLink.href = current.file;
       const size = current.fileSize ? ` (${Math.max(1, Math.round(current.fileSize / 1_000_000))} MB)` : "";
-      fileLink.textContent = `Or get this exact one, to open in Lamp${size}`;
+      // A request that came with the link goes with the exact wish: Lamp opens on the link, fetches the file itself,
+      // reviews it as any shared file, and has the request in the box (`Wish.Exact` in Lamp).
+      const direct = asked ? exactWishLink(current.file, asked) : null;
+      fileLink.href = direct ?? current.file;
+      fileLink.textContent = direct ? `Or open this exact one in Lamp, with your request${size}` : `Or get this exact one, to open in Lamp${size}`;
     }
     go.textContent = "Download Lamp";
     if (requirement) requirement.hidden = true;
@@ -151,9 +157,12 @@ const { place } = Astro.props;
 
   // A wish shared as a link (lamp.dev/w/<id>) is this page with that wish's card open on it: the server puts it in
   // the page as #shared-wish (lib/shared-wish-page.js). Lamp opens with it from the card's own link, as for any idea.
+  // With no shared wish, the request is the wish itself.
   const shared = document.getElementById("shared-wish")?.textContent;
-  if (shared) {
-    open(JSON.parse(shared) as Idea, "", "shared");
+  if (shared || asked) {
+    const idea: Idea = shared ? (JSON.parse(shared) as Idea) : { name: "Your wish", about: "From an app made with Lamp", wish: "", picture: "", icon: "" };
+    if (asked) idea.wish = withAsk(idea.wish, asked);
+    open(idea, "", shared ? "shared" : "remix");
     // Opened while the page is still loading, the box is sized again once it has its width.
     requestAnimationFrame(fit);
     addEventListener("load", fit, { once: true });
