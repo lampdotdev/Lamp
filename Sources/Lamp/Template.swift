@@ -15023,12 +15023,13 @@ enum Template {
                     lastSeen[listed.id] = now
                     keep()
                 }
-                // Out of date only when no copy speaks what this one does.
+                // Out of date only when no copy speaks what this one does. `spoken`, not `wire`: a local named like the
+                // `wire(of:)` the line before calls reads as a circular reference to Swift before 6.4.
                 let wires = copies.map { wire(of: $0.id) }
-                let wire = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
+                let spoken = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
                 let since = copies.first?.since
-                let status = isOpen && wire != Self.wire
-                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: listed.name, older: wire < Self.wire), lastSeen: since)
+                let status = isOpen && spoken != Self.wire
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: listed.name, older: spoken < Self.wire), lastSeen: since)
                     : isOpen ? Status(state: .connected, reason: "", lastSeen: since)
                     : Status(state: .notOpen, reason: Self.notOpen(name: listed.name, kind: listed.kind, lastSeen: lastSeen[listed.id],
                                                                    waiting: waiting.contains(listed.id), now: now),
@@ -17703,16 +17704,22 @@ enum Template {
         /// While it runs nothing starts another (`running`).
         @discardableResult private func fire() -> Task<Void, Never> {
             if let running { return running }
-            // Said in full: Swift before 6.4 takes the closure's type from this function's, and fails.
+            // The task's closure only calls `run`: a body that touched `running` itself read, to Swift before 6.4, as
+            // a closure of the task's own optional type, and failed.
             let task = Task<Void, Never> { @MainActor [weak self] in
                 guard let self else { return }
-                await work()
-                UserDefaults.standard.set(Date(), forKey: lastRunKey)
-                running = nil
-                arm()
+                await self.run()
             }
             running = task
             return task
+        }
+
+        /// One run: the work, the time it finished, and the next one armed.
+        private func run() async {
+            await work()
+            UserDefaults.standard.set(Date(), forKey: lastRunKey)
+            running = nil
+            arm()
         }
 
         /// Coming back to the front catches up; going to the back asks iOS for time when the next one is due.
