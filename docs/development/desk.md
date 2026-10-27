@@ -70,7 +70,8 @@ with its tile's symbol (`- drop: Add a water counter`). The three show how far a
 it: one changes how it looks (Hot Shelf as a realistic kitchen cabinet), one what it does (ingredients on every tag),
 and one what it's about (Hot Shelf as a beer tracker), in that order. Each is something the app doesn't do already,
 that the agent can make in one request with no key or account, its look drawn in code rather than pictures. They
-are Mac apps (or a game, when starter.md says `kind: game`, made as any wish of that kind is) that need no key or account, use the AI the person builds with when they use any, and come with
+are Mac apps (or a game or a screen, when starter.md says `kind: game` or `kind: screen`, made as any wish of that kind
+is) that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
@@ -81,6 +82,14 @@ names Slop New York at the commit the starter is on, with its licence file, and 
 a starter built on someone else's work ships one, and bringing in a newer upstream updates its commit in the same
 change. Every starter's copy starts its wish's chain with the starter itself (`Starters.copy`, "Credit" in the wishes
 guide).
+A starter may be a screen: Home HQ is Wes Bos's photo-frame-dashboard (MIT) as a screen, its page in `Web/` as plain
+scripts with no build step, at home on the Mac, and its changes put it where a screen goes (an iPad, a TV, an Android
+photo frame). Its `Sources/Native.swift` reads the person's calendars and photos only once they turn them on in the
+page's settings, so nothing asks for access as the starter opens; elsewhere the page keeps its examples. Its credits.json
+names the upstream repository at its commit and the two fonts it ships, each with its licence file. A game's or a
+screen's starter has no App.swift: `StartersTests` looks for its `Web/index.html`, and check-starters.sh type-checks its
+Native.swift against Lamp's LampPage.swift. `StartersBuildTests` can't build one (the screen and game kits are in
+Lamp's bundle): build it in a Lamp Dev instance.
 A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.

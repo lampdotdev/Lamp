@@ -320,7 +320,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
                 lastSimulator[app.id] = udid
                 return found
             }
-            if store.isOpenInEmulator(app), let found = emulatorWindow() { return found }
+            if let kind = store.emulatorKind(of: app), let found = emulatorWindow(kind) { return found }
         }
         return nil
     }
@@ -359,9 +359,9 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         return largestWindow(of: pid).map { .other(key: "sim:\(udid)", frame: $0) }
     }
 
-    private static func emulatorWindow() -> Beside? {
-        guard let pid = Emulator.windowOwner() else { return nil }
-        return largestWindow(of: pid).map { .other(key: "emulator", frame: $0) }
+    private static func emulatorWindow(_ kind: Emulator.Kind) -> Beside? {
+        guard let pid = Emulator.windowOwner(kind) else { return nil }
+        return largestWindow(of: pid).map { .other(key: kind == .tv ? "emulator-tv" : "emulator", frame: $0) }
     }
 
     /// A process's largest ordinary window on screen, in AppKit's coordinates.

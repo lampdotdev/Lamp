@@ -405,6 +405,12 @@ struct IntegrationRunner {
         var errorDescription: String? { message }
     }
 
+    /// The device turned the sign-in away: waiting or going on won't mend it, the person has to type it again.
+    struct Rejected: LocalizedError {
+        var message = "The device rejected the sign-in. Check the user name and password, then try again."
+        var errorDescription: String? { message }
+    }
+
     /// What a sequence gave back: a picture from a look, a stream that's running.
     struct Outcome {
         var picture: Data?
@@ -558,18 +564,19 @@ struct IntegrationRunner {
                         changed.restores.append(Restore(request: request, was: was, values: values))
                     }
                 }
-                var answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
+                var answer = try await transfer(request, values: values, files: files)
                 // A device still working on what it was sent says so with 204 until it's done.
                 if let poll = request.poll {
                     let until = Date().addingTimeInterval(TimeInterval(min(max(poll, 2), 600)))
                     while answer.status == 204, Date() < until {
                         try await Task.sleep(for: .seconds(2))
-                        answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
+                        answer = try await transfer(request, values: values, files: files)
                     }
                     // Still working when the time is up is no answer: the step didn't finish.
                     if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
                 }
                 cookies.merge(answer.cookies) { $1 }
+                if request.auth != nil, answer.status == 401 { throw Rejected() }
                 if answer.ok { await learnRoot(request, answer) }
                 guard answer.ok else {
                     let said = DeviceApps.plain(answer.text)
@@ -623,6 +630,14 @@ struct IntegrationRunner {
         return outcome
     }
 
+    /// One request of a sequence. Without a package it goes through `send`, as a check's do, so tests can answer for a
+    /// made-up device.
+    private func transfer(_ request: Request, values: [String: String], files: [String: URL]) async throws -> DeviceHTTP.Answer {
+        let pins = DeviceTLS.Pins(deviceID: device.id)
+        if files.isEmpty { return try await send(request, try address, values, pins) }
+        return try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: pins)
+    }
+
     private func probed(_ probe: String) async throws -> Bool {
         let parts = probe.split(separator: ":", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return false }
@@ -638,42 +653,62 @@ struct IntegrationRunner {
     /// waiting won't mend (the device's certificate changed, or it rejected the sign-in), which the card shows as a
     /// failure rather than waiting.
     func check(_ step: Integration.Step) async -> (passed: Bool, why: String?, read: String?, failed: Bool) {
+        switch await evaluate(step.check) {
+        case .holds(let read): (true, nil, read, false)
+        case .waiting(let why), .away(let why): (false, why, nil, false)
+        case .rejected(let why): (false, why, nil, true)
+        }
+    }
+
+    /// What a check found, told apart the way a restart needs it told (`GuidedSetup`): the device answering otherwise,
+    /// the device not answering at all, and the device answering but not to Lamp.
+    enum Verdict: Equatable {
+        /// Every condition held, with the first value read.
+        case holds(String?)
+        /// The device answered, or the person hasn't typed what's needed yet, and a condition doesn't hold.
+        case waiting(String)
+        /// The device didn't answer.
+        case away(String)
+        /// The device answered, but its certificate isn't the one kept or it turned the sign-in away.
+        case rejected(String)
+    }
+
+    func evaluate(_ conditions: [Integration.Condition]) async -> Verdict {
         await prepare()
         let values = values()
+        let waiting = "Waiting for \(device.name)…"
         var read: String?
-        for condition in step.check {
+        for condition in conditions {
             if let key = condition.field {
-                guard values["field:" + key]?.isEmpty == false else { return (false, "Waiting for what you type.", nil, false) }
+                guard values["field:" + key]?.isEmpty == false else { return .waiting("Waiting for what you type.") }
             } else if condition.signedIn == true {
-                guard values["signIn"] != nil else { return (false, "Waiting for you to sign in.", nil, false) }
+                guard values["signIn"] != nil else { return .waiting("Waiting for you to sign in.") }
             } else if let port = condition.tcp {
-                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return (false, "Waiting for \(device.name)…", nil, false) }
+                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return .away(waiting) }
             } else if let request = condition.http {
-                let answer: DeviceHTTP.Answer?
+                let answer: DeviceHTTP.Answer
                 do {
                     answer = try await send(request, try address, values, DeviceTLS.Pins(deviceID: device.id))
-                    if let answer, answer.ok { await learnRoot(request, answer) }
+                    if answer.ok { await learnRoot(request, answer) }
                 } catch let refusal as DeviceTLS.Refusal {
-                    return (false, refusal.localizedDescription, nil, true)
+                    return .rejected(refusal.localizedDescription)
                 } catch {
-                    answer = nil
+                    return .away(waiting)
                 }
                 // A device that turns the password away keeps doing so however long Lamp waits: the person has to
                 // type it again, so the card says so and stops checking.
-                if request.auth != nil, answer?.status == 401 {
-                    return (false, "The device rejected the sign-in. Check the user name and password, then try again.", nil, true)
-                }
-                guard let answer, answer.ok else { return (false, "Waiting for \(device.name)…", nil, false) }
+                if request.auth != nil, answer.status == 401 { return .rejected(Rejected().message) }
+                guard answer.ok else { return .waiting(waiting) }
                 if condition.json != nil || condition.xml != nil {
                     let value = DeviceHTTP.value(json: condition.json, xml: condition.xml, in: answer)
-                    guard let value else { return (false, "\(device.name) doesn't say yet.", nil, false) }
-                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return (false, "Waiting for \(device.name)…", nil, false) }
-                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return (false, "Waiting for \(device.name)…", nil, false) }
+                    guard let value else { return .waiting("\(device.name) doesn't say yet.") }
+                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return .waiting(waiting) }
+                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return .waiting(waiting) }
                     read = read ?? value
                 }
             }
         }
-        return (true, nil, read, false)
+        return .holds(read)
     }
 
     /// A step passed on this device: it's kept, with the step and what the step read.

@@ -25,6 +25,20 @@ Android's devices, in the TV emulator: `onAndroid` holds for Android TV too, and
 emulator) gets all of that from its file and a line in `Targets.all`. A new place to open is a new
 `Destination` and its paths in `Store`.
 
+An app of several places (an app for both, a game, a screen) has a build for each, and what each was built from is kept
+apart (`Runtime.markBuilt` writes this Mac's and the simulator's in their copies' folders, every other place's as
+`built-<place>`), so building for one never makes another look current. `Runtime.behind(_:at:)` asks it of one place, and
+`LampProject.at(_:)` is the app as it would be there, for building or opening it without moving Try On. Opening a place
+whose build is older than the code builds it first (`Store.open`). After anything that changed a wish (a request, Undo,
+a restore, an update for this Lamp: every hold's end, `Store.finish`), `Store.updatePlaces`, once the wish has been left
+alone for a moment (so a run of requests builds each place once), builds each other place that had a build and is behind, and puts it where Lamp reaches it without opening anything: this Mac, a booted simulator,
+Lamp's running emulator, or the copy open there, which takes it as a request's change would (a page's Mac copy waits
+for Reload). The chat's status lines of that work are taken away again; what it couldn't reach is said in one line, and
+is tried again every couple of minutes, a few times, and otherwise at the next change or when opened there. A copy open
+on Android counts only on its own place: the phone's and the TV's share a package and Lamp's emulators a serial. A TV or an Xbox is never reached this way: putting an app
+on one opens it over whatever it shows. A request sent meanwhile ends the work, which starts again after it. Try On says
+beside a place that's behind that it's updated when opened (`placesBehind`).
+
 
 ## The table of devices
 

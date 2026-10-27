@@ -33,17 +33,20 @@ struct TryOnMenu: Equatable {
         guard project.holdsApp else { return nil }
         guard project.platform.addsPlaces else { return choices(for: project, store: store) }
         let places = project.openPlaces, verb = project.platform == .screen ? "Show" : "Play"
+        // A place whose copy is older than the code says so, and that opening it there brings it up to date.
+        let behind = store.placesBehind[project.id] ?? []
+        func older(_ place: Destination, _ title: String) -> String { behind.contains(place) ? title + Self.olderNote : title }
         var sections: [Section] = []
         func step(_ device: Device) -> String { device.setup() == .ready && !device.isAway ? "" : " (\(device.status))" }
         func stopped(_ device: Device) -> String { PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "" }
         if places.contains(.mac) {
-            sections.append(Section(title: nil, items: [Item(id: "mac", title: "My Mac", symbol: "laptopcomputer", checked: project.destination == .mac)]))
+            sections.append(Section(title: nil, items: [Item(id: "mac", title: older(.mac, "My Mac"), symbol: "laptopcomputer", checked: project.destination == .mac)]))
         }
         if places.contains(.ios) {
             let simulator = project.onIOS && project.device == nil
             // Lamp's pick of the family, unless one simulator was chosen by name.
             let byFamily = simulator && project.simulator == nil
-            sections.append(Section(title: "Simulator", items: [
+            sections.append(Section(title: older(.ios, "Simulator"), items: [
                 Item(id: "family:iphone", title: "iPhone", symbol: "iphone", checked: byFamily && project.family == .iphone),
                 Item(id: "family:ipad", title: "iPad", symbol: "ipad", checked: byFamily && project.family == .ipad),
             ]))
@@ -74,7 +77,7 @@ struct TryOnMenu: Equatable {
                 Item(id: (tv ? "androidtv:" : "android:") + device.udid, title: "\(device.name)\(step(device))", symbol: tv ? "tv" : "smartphone",
                      checked: here && project.device == device.udid)
             }
-            sections.append(Section(title: tv ? "Android TV" : "Android", items: items))
+            sections.append(Section(title: older(place, tv ? "Android TV" : "Android"), items: items))
         }
         if places.contains(where: \.isAndroid) {
             let tv = !places.contains(.android)
@@ -85,7 +88,7 @@ struct TryOnMenu: Equatable {
             items += store.devices.filter { $0.kind.isTV }.map { tv in
                 Item(id: "tv:\(tv.udid)", title: "\(tv.name)\(step(tv))", symbol: "tv", checked: project.onTV && project.device == tv.udid)
             }
-            sections.append(Section(title: "TVs", items: items))
+            sections.append(Section(title: older(.tv, "TVs"), items: items))
         }
         if places.contains(.device) {
             let name = DeviceApps.integration(for: project)?.name ?? "Xbox"
@@ -94,7 +97,7 @@ struct TryOnMenu: Equatable {
                 Item(id: "device:\(device.id)", title: "\(device.name)\(step(device))", symbol: device.kind.symbol,
                      checked: project.onDevice && project.device == device.id)
             }
-            sections.append(Section(title: "Your \(name)s", items: items.isEmpty
+            sections.append(Section(title: older(.device, "Your \(name)s"), items: items.isEmpty
                 ? [Item(id: "look", title: "No \(name) found. Look Again", symbol: Device.Kind.other.symbol, checked: project.onDevice)] : items))
         }
         var missing = Store.placesToAdd(project).map { place in
@@ -115,6 +118,9 @@ struct TryOnMenu: Equatable {
 }
 
 extension TryOnMenu {
+    /// Said beside a place whose copy is older than the code (`Store.placesBehind`).
+    static let olderNote = " (older version, updated when opened)"
+
     @MainActor private static func step(_ device: Device) -> String { device.setup() == .ready && !device.isAway ? "" : " (\(device.status))" }
 
     /// Every list's last section: all the devices, and looking again; and when macOS refused the last look on the
@@ -174,7 +180,8 @@ extension TryOnMenu {
         } else {
             if project.platform.choosesPlace, project.hasMac {
                 // An app for both: this Mac is a place to open it too, beside the simulators and phones.
-                sections.append(Section(title: nil, items: [Item(id: "mac", title: "My Mac", symbol: "laptopcomputer", checked: project.destination == .mac)]))
+                let older = store.placesBehind[project.id]?.contains(.mac) == true
+                sections.append(Section(title: nil, items: [Item(id: "mac", title: "My Mac" + (older ? olderNote : ""), symbol: "laptopcomputer", checked: project.destination == .mac)]))
             }
             let simulator = project.onIOS && project.device == nil
             let byFamily = simulator && project.simulator == nil
@@ -185,7 +192,7 @@ extension TryOnMenu {
                 families += [Item(id: "family:appletv", title: "Apple TV", symbol: "appletv", checked: byFamily && project.family == .appletv),
                              Item(id: "family:vision", title: "Apple Vision Pro", symbol: "visionpro", checked: byFamily && project.family == .vision)]
             }
-            sections.append(Section(title: "Simulator", items: families))
+            sections.append(Section(title: "Simulator" + (store.placesBehind[project.id]?.contains(.ios) == true ? olderNote : ""), items: families))
             let models = store.simulators.filter { Store.opens(project, on: $0.family) }.map { choice in
                 Item(id: "simulator:\(choice.udid)", title: choice.label, symbol: choice.family.symbol, checked: simulator && project.simulator == choice.udid)
             }

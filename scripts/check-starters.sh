@@ -53,8 +53,10 @@ for starter in $starters; do
   name="${starter:t}"
   library=("$work/LampSupport.swift") macos=14.0
   sources=("$starter"/Sources/**/*.swift(N))
-  # A game's starter has no Swift of its own (Lamp writes the app around its page): nothing to check.
+  # A game's starter may have no Swift of its own (Lamp writes the app around its page): nothing to check.
   if (( ! $#sources )); then print -- "○ $name: no Swift to check"; continue; fi
+  # A game's or a screen's Swift (Native.swift) answers its page through LampNative, in Lamp's LampPage.swift.
+  [ -f "$starter/Web/index.html" ] && library+=("$here/Resources/GameKit/apple/LampPage.swift")
   if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' $sources; then
     library+=("$work/LampScene.swift") macos=15.0
   fi

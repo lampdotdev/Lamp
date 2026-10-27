@@ -443,6 +443,7 @@ enum GameKit {
       <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationLandscapeRight</string><string>UIInterfaceOrientationLandscapeLeft</string></array>
       <key>GCSupportsControllerUserInteraction</key><true/>
       <key>GCSupportedGameControllers</key><array><dict><key>ProfileName</key><string>ExtendedGamepad</string></dict></array>
+    {{USAGE}}
       <key>DTPlatformName</key><string>iphonesimulator</string>
       <key>CFBundleSupportedPlatforms</key><array><string>iPhoneSimulator</string></array>
     </dict></plist>
@@ -469,6 +470,7 @@ enum GameKit {
       <key>LSMinimumSystemVersion</key><string>14.0</string>
       <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
       <key>GCSupportsGameMode</key><true/>
+    {{MAC_USAGE}}
       <key>NSPrincipalClass</key><string>NSApplication</string>
       <key>NSHighResolutionCapable</key><true/>
     </dict></plist>

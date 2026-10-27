@@ -57,7 +57,9 @@ Setup is one window for every such device (`DeviceSetupWindow`, `DeviceSetupPage
 you accept" from `Integration.Acceptance` in Lamp's words, `IntegrationWords.accepts`, so no integration can play a
 risk down, the mark, one button and the check's line). A device has one `DeviceSetupModel`, which the window and the
 chat's card (`.deviceStep`, `DeviceStepLine`; in the sidebar a line that opens the window) share. A step that needs
-hands on the device (`wait`) is checked again every few seconds while it's shown. `IntegrationRunner` runs steps and
+hands on the device (`wait`) is checked again every few seconds while it's shown. A step can also have Do It for Me, from a skill that
+says it does that step for the integration (`setup-for` its id), with no Swift for that device: "Do It for Me" in the
+TV guide. `IntegrationRunner` runs steps and
 sequences and keeps a device (`Integrations.Kept`, in Lamp's folder) only once a step has passed on it: a device found
 is shown for the moment, never kept. A device whose certificate isn't the one kept (reset, or its developer mode turned
 on again) is refused until the person reconnects it: the step's check or the install that met it puts a reconnect card
@@ -98,7 +100,9 @@ Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere
 while it's still this wish's: `lastOnDevice` notes which app each device took last). Its
 mobile-control step reads `ecp-setting-mode` from device-info, which Roku's ECP page doesn't list but Rokus report, and
 asks only for Enabled, never Permissive. Its developer-mode step's button presses the remote's secret keys over ECP (`run`), which that
-setting allows; the licence and the password stay the person's, on the Roku.
+setting allows; the licence and the password stay the person's, on the Roku. Its Do It for Me is the `roku-developer-mode` skill, all data: the same keys
+(pressed only while `developer-enabled` isn't true, and never again after a failure part way), then the person's
+installer, licence and password while Lamp waits for the Roku's restart, then what the step itself checks.
 
 **Lamp's building blocks on devices** (`DeviceSupport`, DeviceSupport.swift): TVs and declared app kinds get `LampAI`,
 `LampStore` and `LampAssets` as Mac, iPhone and Android apps do, under the same names and with the same advice in their
@@ -436,20 +440,33 @@ such build).
 ## Screens
 
 A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is a web app as Lamp once made them: the TV
-app's page in `Web/`, with the same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, taking places as a game does
-(`addsPlaces`, the Mac always first, then any place a page goes). No new app is made one: it has no device words, and
-`AppKinds.target` only keeps a wish's own screen. What's kept is everything a screen already made relies on: its folder
-and mark (`.lamp-screen`, refining the TV's recipe), its identity and install in Screens/, and its page's address,
-lamp-screen://app/, where what it saved is. On the Mac, the iPhone and the iPad it's Lamp's common app around a page
-(`LampWebApp.swift` filled in by `GameKit.webApp` with the screen's address and its 1920x1080 canvas, written as
-`Sources/LampScreen.swift`); on Android and Android TV it's Lamp's Android app around the page, as a game's is, kept
-awake and not a game to the system (`GameAndroid.screenActivity`, `screenManifest`); on a Samsung or LG TV it goes as a
-TV app does, and on the Xbox as the integration's web app. On the person's own iPhone or iPad the phone's Xcode project
-carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a three.js game.
-Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`, `openDevicePreview`),
-the same page at the same size, so a change is seen without a build of the Mac app; pointed at a TV it's staged and
-looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the request's
-device line says where it's shown (`Rules.screenPlaces`).
+app's page in `Web/`, with the same `Web/lamp.js` (`TVTemplate`), taking places as a game does (`addsPlaces`, the Mac
+always first, then any place a page goes). No new app is made one by the agent: it has no device words, and
+`AppKinds.target` only keeps a wish's own screen; a starter may still be one (Home HQ). What's kept is everything a
+screen already made relies on: its folder and mark (`.lamp-screen`, refining the TV's recipe), its identity and install
+in Screens/, and its page's address, lamp-screen://app/, where what it saved is.
+
+**The page fills whatever it's shown on**, as a web page fills a browser: a TV, a Mac window of any size, a photo
+frame, an iPad either way up, a phone. It's laid out as a responsive page (`Rules.screenDesign`: grid and flexbox, sizes
+from the screen, media queries for its shape; the scaffold, `ScreenKit.indexHTML` and `styleCSS`, sizes everything from
+`--u`, a hundredth of the screen's shorter side), and every place hands it the real viewport. On the Mac, the iPhone and
+the iPad it's Lamp's common app around a page (`LampWebApp.swift` filled in by `GameKit.webApp` with the screen's
+address, written as `Sources/LampScreen.swift`), whose web view takes the window's size; on Android and Android TV it's
+Lamp's Android app around the page, as a game's is, kept awake and not a game to the system
+(`GameAndroid.screenActivity`, `screenManifest`); on a Samsung or LG TV it goes as a TV app does, and on the Xbox as the
+integration's web app. A screen made before screens filled any shape says `width=1920` in its viewport meta
+(`ScreenKit.isFixed`): the app around it is then given a 1920x1080 canvas it zooms whole, and the rule tells the agent
+to change its viewport first when it's to go somewhere tall. On the person's own iPhone or iPad the phone's Xcode
+project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a three.js
+game.
+
+Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`,
+`openDevicePreview`), so a change is seen without a build of the Mac app, and at any shape: `look_at_app`'s `shape` (a
+width and height in CSS pixels, "390x844") turns the preview's window to it and lays the page out at that size
+(`TVPreview.reshape`), the picture drawn with its long side 960 pixels and `use_app`'s points measured in it
+(`TVPreview.scale`); the preview keeps that shape for later looks, and starts at a TV's 1920x1080. Pointed at a TV it's
+staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the
+request's device line says where it's shown (`Rules.screenPlaces`).
 
 Designing for a TV seen from across the room is the `tv-design` skill, offered by the rows of the table that are TVs
 (`Place.skills`, an integration's `skills` in its JSON: the Apple TV, Android TV, Samsung and LG, the Roku) to any app on
