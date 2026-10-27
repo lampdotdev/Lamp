@@ -132,6 +132,8 @@
 
   // ------------------------------------------------------------ finishing
   function finish() {
+    // Never a family of no one: back to who's at home.
+    if (!humans().length) { F.step = 'family'; return false; }
     var people = named().map(function (p) {
       var x = { id: p.id, name: p.name.trim(), color: p.color, rgb: p.rgb, ink: p.ink };
       if (p.pet) { x.pet = true; x.emoji = p.emoji; }
@@ -169,10 +171,15 @@
       albums: null, album: D.settings.album, chores: {}
     };
     F.people.push(newPerson(false));
+    var scope = window.Lamp ? Lamp.scope : null;
     App.sheet('<div class="setup-body">' + html() + '</div>', {
       cls: 'sheet--wide',
       // Closed before it's done: the example family stays, until Settings starts it again.
-      onClose: function () { if (F) { D.settings.example = true; F = null; App.emit('data'); } },
+      onClose: function () {
+        if (F) { D.settings.example = true; F = null; App.emit('data'); }
+        // The remote's arrows back on the screen below, however the setup ended.
+        if (window.Lamp) { Lamp.scope = scope; if (Lamp.focusFirst) setTimeout(Lamp.focusFirst, 0); }
+      },
       onMount: function (s) {
         function again(focus) {
           s.querySelector('.setup-body').innerHTML = html();
@@ -182,7 +189,7 @@
         }
         function go(dir) {
           var list = steps(), i = list.indexOf(F.step) + dir;
-          if (i >= list.length) return finish();
+          if (i >= list.length) { if (finish() === false) again('[data-name]'); return; }
           F.step = list[Math.max(0, i)];
           again(F.step === 'family' ? '[data-name]' : F.step === 'place' ? '[data-place-q]' : null);
         }
@@ -202,7 +209,7 @@
         s.addEventListener('keydown', function (e) {
           if (e.keyCode !== 13) return;
           if (e.target.hasAttribute('data-place-q')) { e.preventDefault(); findPlace(); }
-          if (e.target.hasAttribute('data-name')) { e.preventDefault(); go(1); }
+          if (e.target.hasAttribute('data-name')) { e.preventDefault(); if (humans().length) go(1); }
         });
         s.addEventListener('click', function (e) {
           // The setup's own: the views below answer some of the same buttons (an "add") page-wide.

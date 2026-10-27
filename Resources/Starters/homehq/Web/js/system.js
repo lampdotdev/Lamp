@@ -88,7 +88,7 @@
     if (!native()) return '';
     var chosen = D.settings.calendars;
     // Turned on at another screen: this one shows what that one reads.
-    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-on', 'Read them here'), btn('data-cal-off', 'Stop showing them')]));
+    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
     // The family's one calendar: an event goes to whoever its title names, else to everyone (js/live.js).
     var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? chosen[0] : 'All calendars') + '</p>' : '';
     if (S.calendars) body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !!chosen && chosen.length === 1 && chosen[0] === c); }));
@@ -155,6 +155,8 @@
       return App.openSettings();
     }
     if (b.hasAttribute('data-place-clear')) { D.settings.place = null; App.exampleWeather(); App.emit('data'); return App.openSettings(); }
+    // This screen reads the family's calendar from now on (the one that did may be gone), and shares it with the others.
+    if (b.hasAttribute('data-cal-here')) { D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); return App.openSettings(); }
     if (b.hasAttribute('data-cal-on')) {
       LampNative.call('calendars', {}).then(function (names) { S.calendars = names; App.openSettings(); },
         function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });

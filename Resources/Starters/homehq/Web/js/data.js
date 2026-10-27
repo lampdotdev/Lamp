@@ -312,9 +312,10 @@ window.DATA = (function () {
   };
   // Everyone, as an event for the whole family has them: the people, not the pets.
   D.humanIds = function () { return D.people.filter(function (p) { return !p.pet; }).map(function (p) { return p.id; }); };
-  // Set up: the family is the family's own, made in the first-run setup (js/views/setup.js) or the editor, here or on
-  // another copy. Until then the examples show, behind the welcome unless the person chose to look at them.
-  D.isSetUp = function () { return D.cleared || D.edited.people; };
+  // Set up: the first-run setup (js/views/setup.js) was finished, here or on another copy, which took the examples away.
+  // Until then the examples show (renamed or not in the editor), behind the welcome unless the person chose to look at
+  // them.
+  D.isSetUp = function () { return D.cleared; };
 
   // Puts back what a snapshot holds, any of its parts: what this device saved, or a part another copy shared.
   D.restore = function (p) {
