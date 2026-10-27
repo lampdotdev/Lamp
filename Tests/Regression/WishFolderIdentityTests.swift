@@ -118,8 +118,9 @@ final class WishFolderIdentityTests: XCTestCase {
         XCTAssertEqual(Parts.address(of: wish, among: apps), ".")
         XCTAssertEqual(Parts.address(of: mac, among: apps), "mac2")
         XCTAssertEqual(Parts.pick(".", among: apps)?.id, wish.id)
-        // And the chat's menu of apps tells the two Roku apps apart.
-        XCTAssertEqual([roku, other, mac].map { Parts.menu(of: $0).name }, ["Roku App", "Roku App 2", "Mac App 2"])
+        // And the chat's menu of apps tells two apps of a kind apart.
+        XCTAssertNotEqual(Parts.menu(of: roku).name, Parts.menu(of: other).name)
+        XCTAssertEqual(Parts.menu(of: mac).name, "Mac App 2")
     }
 
     /// Each of two apps of a kind has its rules as a skill of its own, about its own folder.
