@@ -32,10 +32,10 @@ enum NetworkDevices {
                 + "the person names is missing, look for it yourself before asking them about it."
             : "Lamp looked just now: an SSDP search, its TV kits and device integrations, every Bonjour service, and a sweep of "
                 + (swept.map { "this Mac's subnet, \($0.words)" } ?? "this Mac's subnet")
-                + " that filled the Mac's neighbour table, with each hardware address's maker from the IEEE's registry. "
+                + " that filled the Mac's neighbor table, with each hardware address's maker from the IEEE's registry. "
                 + "When the person asks what something is, or asks Lamp to learn one, work out what each host is from these facts "
                 + "and say how sure you are: the gateway is the router; the hardware's maker says what it usually makes; a "
-                + "private (randomised) hardware address is a phone, tablet or computer, and nothing tells those apart, so count "
+                + "private (randomized) hardware address is a phone, tablet or computer, and nothing tells those apart, so count "
                 + "them rather than guess whose is whose. The names here come from the person's network and are often people's: "
                 + "use them only in what you say to the person, never in an app's code or files, an integration, or anything sent elsewhere."
         func lines(_ devices: [Device]) -> String {

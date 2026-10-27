@@ -28,7 +28,7 @@ enum Gallery {
     // MARK: Chat
 
     /// Whole chats, drawn by the chat's own `Transcript`: every kind of line one after another, so a line set in
-    /// or sized unlike the rest shows against its neighbours.
+    /// or sized unlike the rest shows against its neighbors.
     private static let chatEntries: [Entry] = [
         chat("A finished chat", finishedChat),
         // The first request and what the agent said; its steps so far are in the line under them, which opens to them.
@@ -787,7 +787,7 @@ enum Gallery {
         wishLink("Sharing", stage: .sending),
         wishLink("Couldn't share", stage: .failed("Lamp couldn't reach lamp.dev. Try again in a moment.")),
         wishLink("Wish itself can't go", values: .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: true, includeFile: true),
-                 stage: .failed("Disk Map can't be shared. The licence of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
+                 stage: .failed("Disk Map can't be shared. The license of Engine is missing from it. Ask Lamp to put LICENSE-engine back."), canIncludeFile: true),
         wishLink("Shared and copied", link: true, copied: true),
         wishLink("Shared, changed since", link: true, changed: true),
         wishLink("Beside the app", link: true, copied: true, width: nil),
@@ -830,9 +830,9 @@ enum Gallery {
         publish("Checking", stage: .preparing),
         publish("Needs GitHub's tool", stage: .needsGitHub(.install)),
         publish("Needs a sign-in", stage: .needsGitHub(.signIn)),
-        publish("No licence", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no licence. It can still be used on this Mac.")),
+        publish("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
         publish("Ready", stage: .ready),
-        publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same licence.",
+        publish("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license.",
                                                              "2 pictures made with AI, marked as such."]),
         publish("Publishing", stage: .publishing("Waiting for GitHub to put it up…")),
         publish("Couldn't publish", stage: .failed("GitHub didn't take the page: the connection was lost.")),

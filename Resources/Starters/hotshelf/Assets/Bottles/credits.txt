@@ -1,5 +1,5 @@
 Example bottle photos: Open Food Facts contributors (https://world.openfoodfacts.org), CC BY-SA 3.0.
-Cut out from the originals; the cut-outs are shared under the same licence.
+Cut out from the originals; the cut-outs are shared under the same license.
 
 marie-sharp-s-fiery-hot.png  https://world.openfoodfacts.org/product/0025315248756  (https://images.openfoodfacts.org/images/products/002/531/524/8756/front_en.3.full.jpg)
 queen-majesty-scotch-bonnet-ginger.png  https://world.openfoodfacts.org/product/0865125000003  (https://images.openfoodfacts.org/images/products/086/512/500/0003/front_en.3.full.jpg)

@@ -12,6 +12,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want it in, row Milk detail=2 litres, Weekly: a row and a model each rename a property):", Log.take())
+    print("after1 (want it in, row Milk detail=2 liters, Weekly: a row and a model each rename a property):", Log.take())
     _ = window
 }}}

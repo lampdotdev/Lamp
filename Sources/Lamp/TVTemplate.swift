@@ -1138,7 +1138,7 @@ extension TVTemplate {
          * Lamp.wish.messageLimit             16384: the most bytes one message takes as JSON; anything bigger goes with sendFile
          * Lamp.wish.valueLimit, valuesLimit  8192 and 65536: the most bytes one value, and all of them, take as JSON
          * Lamp.wish.statusView('iphone')     a ready-made element of all that, kept up to date (the same one each time): a line for each other app
-         *                                     ("TV app connected"), or that app's alone; it takes the page's font and colour
+         *                                     ("TV app connected"), or that app's alone; it takes the page's font and color
          * Lamp.wish.stop()
          *
          * More states may come: compare with the names above and treat any other as not connected. An open app built by
@@ -3314,7 +3314,7 @@ extension Agent.Rules {
     - The remote: lamp.js moves focus with the arrows between buttons, links, fields and anything marked `data-focus`, \
     and OK clicks what has focus, so most apps need no key code of their own; give the first thing to focus with \
     `Lamp.focus(...)` when a screen opens. Back goes back a screen with `Lamp.onBack(fn)` (return true when handled); \
-    unhandled on the first screen, it leaves the app. Other keys (play, pause, the colour keys, numbers) come by name \
+    unhandled on the first screen, it leaves the app. Other keys (play, pause, the color keys, numbers) come by name \
     through `Lamp.onKey(fn)`. A game turns the arrows over to itself with `Lamp.navigation = false`. Read lamp.js's \
     opening comment for the rest.
     """

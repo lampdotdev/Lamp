@@ -920,7 +920,7 @@ extension SwiftSource {
             } else if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: text, range: range) {
                 protocolName = String(text[Range(m.range(at: 3), in: text)!])
             } else if node.opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl")
-                        // A closure that's a property's starting value comes labelled (`original_init=closure_expr`), and what
+                        // A closure that's a property's starting value comes labeled (`original_init=closure_expr`), and what
                         // it declares (a string interpolation's `$interpolation`) is its own, never the type's.
                         || node.name.hasSuffix("=closure_expr") {
                 function = scopeName(text)

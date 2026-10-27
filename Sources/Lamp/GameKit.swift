@@ -838,7 +838,7 @@ extension Agent.Rules {
     static let gameWebAssets = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
     or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there. Prefer shapes \
-    and colours made in code to files: a game of simple shapes, well lit and well coloured, looks better than one of \
+    and colors made in code to files: a game of simple shapes, well lit and well colored, looks better than one of \
     mismatched models.
     """
 
@@ -955,8 +955,8 @@ extension Agent.Rules {
     static let gameAssets = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
     or data file the game uses is copied into Assets/, which goes into the app, and read with \
-    `lamp_asset("models/ship.glb")`. Prefer shapes and colours made in code to files: a game of simple shapes, well \
-    lit and well coloured, looks better than one of mismatched models.
+    `lamp_asset("models/ship.glb")`. Prefer shapes and colors made in code to files: a game of simple shapes, well \
+    lit and well colored, looks better than one of mismatched models.
     """
 
     static let gameTry = """

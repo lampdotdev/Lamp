@@ -15,7 +15,7 @@ struct ControllerLayout: Equatable {
     /// What's printed on each part of the pad, by `BUTTON`'s names (and LT, RT, STICK_L, STICK_R); a part left out is
     /// called what the base layout calls it.
     let names: [String: String]
-    /// The colours of the face buttons' letters or shapes.
+    /// The colors of the face buttons' letters or shapes.
     var faces: [String: String] = [:]
     /// The glyphs drawn on Menu and View, where the buttons carry symbols rather than words.
     var menuGlyphs: [String: String] = [:]

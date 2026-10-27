@@ -250,7 +250,7 @@ extension Agent.Rules {
     change the layout with its shape ((orientation: portrait), (max-aspect-ratio: …), (max-width: …)): side by side \
     when it's wide, stacked when it's tall, fewer columns when it's narrow. On a TV and a landscape screen the page \
     never scrolls as a whole (lists scroll inside their own box), with a margin of about 5% a TV may cut off; on a tall \
-    narrow screen a stacked column may scroll. Text easy to read from a few metres, headings much larger, high \
+    narrow screen a stacked column may scroll. Text easy to read from a few meters, headings much larger, high \
     contrast. Everything is reached with a remote's arrows and OK as well as by touch and the mouse: what has focus \
     must be unmistakable, focus moves the way the layout looks, targets are large, and nothing needs hover. Before you \
     finish, look at it in several shapes with `look_at_app`'s `shape`: "1920x1080" (a TV), "1280x800" (a photo frame), \

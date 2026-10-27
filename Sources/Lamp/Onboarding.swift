@@ -536,7 +536,7 @@ private struct BuilderCard: View {
             Analytics.capture(.welcomeSignedIn, ["agent": Analytics.agent(which), "success": result == true])
             signingIn = nil
             NSApp.activate()
-            // Cancelled: back to Sign In…, with nothing to apologise for.
+            // Cancelled: back to Sign In…, with nothing to apologize for.
             signedIn[which] = await EngineSignIn.isSignedIn(which) ?? (result == true)
             if result == false { problem = "Signing in didn't finish. Try again." }
             await store.recheckSetup()

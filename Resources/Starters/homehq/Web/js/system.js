@@ -88,10 +88,12 @@
     if (!native()) return '';
     var chosen = D.settings.calendars;
     // Turned on at another screen: this one shows what that one reads.
-    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
-    // The family's one calendar: an event goes to whoever its title names, else to everyone (js/live.js).
-    var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? chosen[0] : 'All calendars') + '</p>' : '';
-    if (S.calendars) body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !!chosen && chosen.length === 1 && chosen[0] === c); }));
+    if (chosen && !App.readsCalendars() && !S.calendars) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
+    // The family's one shared calendar: its events are everyone's (js/live.js).
+    var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? D.settings.calendarName || chosen[0] : 'All calendars') + '</p>' : '';
+    if (S.calendars) body += grid(S.calendars.map(function (c) {
+      return btn('data-cal="' + App.esc(c.id) + '"', App.calendarLabel(S.calendars, c), !!chosen && chosen.length === 1 && chosen[0] === c.id);
+    }));
     else body += grid([btn('data-cal-on', chosen ? 'Change calendar' : 'Show our calendar')]);
     if (chosen) body += grid([btn('data-cal-off', 'Stop showing it')]);
     return sec('Calendars', body);
@@ -112,7 +114,7 @@
       '<div class="demo-head"><div><div class="label label--light">Home HQ</div><h2 class="serif">Settings</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
       weatherSec() + calendarsSec() + photosSec() +
       sec('Your family', grid([btn('data-family', 'Family'), btn('data-chores', 'Chores')])) +
-      (D.isSetUp() ? '' : sec('Example family', grid([btn('data-setup', 'Set up my family')]))) +
+      (D.isSetUp() && D.edited.people ? '' : sec(D.isSetUp() ? 'Your family' : 'Example family', grid([btn('data-setup', 'Set up my family')]))) +
       sec('Screen', grid([btn('data-mode="ambient"', 'Photo frame'), btn('data-mode="night"', 'Night clock')])) +
       '<p class="demo-note">Based on <a href="' + UPSTREAM + '" target="_blank" rel="noopener">photo-frame-dashboard</a> by <a href="https://wesbos.com" target="_blank" rel="noopener">Wes Bos</a> (MIT)</p>' +
       '</div>';
@@ -156,14 +158,21 @@
     }
     if (b.hasAttribute('data-place-clear')) { D.settings.place = null; App.exampleWeather(); App.emit('data'); return App.openSettings(); }
     // This screen reads the family's calendar from now on (the one that did may be gone), and shares it with the others.
-    if (b.hasAttribute('data-cal-here')) { D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); return App.openSettings(); }
+    // This screen reads the family's calendar from now on (the one that did may be gone): chosen from its own list, since
+    // a calendar's id is the device's own.
+    if (b.hasAttribute('data-cal-here')) {
+      LampNative.call('calendars', {}).then(function (list) { S.calendars = list; App.openSettings(); },
+        function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
+      return;
+    }
     if (b.hasAttribute('data-cal-on')) {
       LampNative.call('calendars', {}).then(function (names) { S.calendars = names; App.openSettings(); },
         function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
       return;
     }
     if (d.cal != null) {
-      D.settings.calendars = [d.cal]; D.settings.calendarsBy = App.me(); S.calendars = null;
+      var picked = S.calendars.filter(function (c) { return c.id === d.cal; })[0];
+      D.settings.calendars = [d.cal]; D.settings.calendarName = picked ? picked.title : d.cal; D.settings.calendarsBy = App.me(); S.calendars = null;
       App.emit('data'); App.loadCalendars();
       return App.openSettings();
     }
@@ -185,6 +194,7 @@
     $('#demo').addEventListener('click', settingsClick);
     $('#demo').addEventListener('keydown', function (e) { if (e.target.hasAttribute('data-place-q') && e.keyCode === 13) { e.preventDefault(); findPlace(); } });
     $('#railClock').addEventListener('click', App.openSettings);
+    $('#railSettings').addEventListener('click', App.openSettings);
     if (window.Lamp && Lamp.onBack) Lamp.onBack(function () {
       if ($('#demo').classList.contains('is-open')) { closeSettings(); return true; }
       if ($('#sheetLayer').classList.contains('is-open')) { App.closeSheet(); return true; }

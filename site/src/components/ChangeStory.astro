@@ -2,7 +2,7 @@
 // The homepage's "Change it while you're using it": one app changed four times from its chat, as a story that loops.
 // It isn't a recording: the steps come quicker than they would, and the chat shows only what was asked and what
 // came of it. A recipes app becomes a plan for the week (a big change), gains a shopping list (something it does),
-// then gets a cosier look and bigger photos (two tweaks). Each change goes in the way it does in Lamp: coloured light
+// then gets a cosier look and bigger photos (two tweaks). Each change goes in the way it does in Lamp: colored light
 // rises from the bottom of the window while it's made, then a band of white sweeps up with the new version behind it.
 // Last, Lamp uses the app rather than changing it: its pointer swaps one dinner and adds another, as it does when it
 // tries an app, with the window lit and nothing rebuilt.
@@ -54,7 +54,7 @@ const shopping = [
 const chat = [
   { ask: "Turn my recipes into a plan for the week.", done: "Done: a dinner for each weeknight." },
   { ask: "Add a shopping list for the week.", done: "Added. It fills itself from the plan." },
-  { ask: "Make it feel cosier.", done: "Warmer colours and a softer type." },
+  { ask: "Make it feel cosier.", done: "Warmer colors and a softer type." },
   { ask: "Bigger photos, please.", done: "Done." },
   { ask: "Swap the curry for the risotto, and add pizza on Saturday.", done: "Done: risotto on Wednesday, pizza on Saturday.", uses: true },
 ] as { ask: string; done: string; uses?: boolean }[];
@@ -168,7 +168,7 @@ const serif = "font-[ui-serif,'New_York',Georgia,serif]";
         </div>
       ))
     }
-    <!-- While a change is made: light in Lamp's colours rising from the bottom edge. -->
+    <!-- While a change is made: light in Lamp's colors rising from the bottom edge. -->
     <div data-glow class="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] opacity-0 transition-opacity duration-700 [background:radial-gradient(60%_90%_at_20%_100%,rgba(64,128,255,0.55),transparent_70%),radial-gradient(50%_80%_at_50%_100%,rgba(255,97,173,0.5),transparent_70%),radial-gradient(60%_90%_at_80%_100%,rgba(255,153,56,0.55),transparent_70%)] blur-[3cqw]"></div>
     <!-- While Lamp uses the app: the window lit, a pill saying so, and Lamp's pointer with what it's doing. -->
     <div data-handover class="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 shadow-[inset_0_0_0_0.35cqw_rgba(207,98,12,0.9),inset_0_0_3cqw_rgba(255,153,56,0.45)] transition-opacity duration-500">

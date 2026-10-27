@@ -183,14 +183,49 @@ extension LogLine {
             default: break
             }
         }
+        let retrying = refusedAskRetries(in: lines)
         // A result card saved by an earlier Lamp isn't shown: the agent's last message says what it did. A turn's summary
         // stays, for how long it worked (`ChatItem.items`), and isn't drawn as a line of its own. A tool call is a step
         // in the words the live line said while it ran (`steps(said:)`).
         return said(lines.map(\.withOutcome).filter {
-            !hidden.contains($0.id)
+            !hidden.contains($0.id) && !retrying.contains($0.id)
                 && ($0.kind == .agent ? !afterAsk.contains($0.id)
                     : $0.kind == .summary || $0.kind == .tool || !$0.isDetail && $0.kind != .result)
         })
+    }
+
+    /// What the agent says to itself between questions Lamp turned back (`Talk.ask(from:)`: too many words, too few
+    /// options) and the card it asks with instead. The person never saw the questions turned back, so a remark
+    /// about fixing them ("Counting “Yes,” too, shortening.") would be about nothing on screen. Hidden from the
+    /// refusal on, so it never shows for a moment while the card is on its way, through any number of tries; only
+    /// once a card lands. When something else comes first (other work, the person, the end of the turn) the agent
+    /// gave up on asking, and what it said meanwhile is its answer: it shows. Agent Details and the saved chat keep it.
+    static func refusedAskRetries(in lines: [LogLine]) -> Set<UUID> {
+        var retries: Set<UUID> = []
+        var held: [UUID]? = nil   // the agent's lines since the first refusal, while it's still trying to ask
+        for line in lines {
+            switch line.kind {
+            case .tool where ToolCall(line.text).name == "ask":
+                if line.failed == true, held == nil { held = [] }
+            case .agent:
+                held?.append(line.id)
+            case .ask:
+                if let held { retries.formUnion(held) }
+                held = nil
+            case .user, .summary, .status, .progress, .error, .tool:
+                held = nil
+            default: break
+            }
+        }
+        // Still trying when the chat ends: the turn is going, and its card may be next.
+        if let held { retries.formUnion(held) }
+        return retries
+    }
+
+    /// A refused `ask` or `progress` call is no step: the person never saw the questions or the line it was
+    /// turned back for, and what it was retried as is on screen.
+    private static func refusedTalk(_ line: LogLine, _ call: ToolCall) -> Bool {
+        line.failed == true && (call.name == "ask" || call.action == .progress)
     }
 
     /// The line as the chat shows it: a command that failed says so after the name the agent gave it, so its row
@@ -225,7 +260,7 @@ extension LogLine {
                 continue
             }
             let call = ToolCall(line.text)
-            guard call.action != .run else { continue }
+            guard call.action != .run, !refusedTalk(line, call) else { continue }
             // The agent's own words for the step when it gave some, else what the live line said.
             let said = line.said ?? TurnProgress.activity(for: call)
             guard !said.isEmpty else { continue }

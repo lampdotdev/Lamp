@@ -30,6 +30,10 @@
   // Where each person's day is, from the calendar: what they're at now, else when they're next busy.
   function presence() {
     var now = App.now();
+    // With the family's own calendar every event is everyone's, so no one's day is told apart: just the family.
+    if (D.settings.calendars) return App.humans().map(function (p) {
+      return '<div class="h-who is-home" style="' + App.pstyle(p) + '">' + App.avatar(p, 36) + '<span><b>' + p.name + '</b></span></div>';
+    }).join('');
     return App.humans().map(function (p) {
       var list = App.timedOn(now, p.id).filter(function (e) { return e.end > now; });
       var cur = list.filter(function (e) { return e.start <= now; })[0], next = list.filter(function (e) { return e.start > now; })[0];
@@ -55,7 +59,7 @@
     var mins = (e.start - now) / 60000;
     var leave = (App.leaveBy(e) - now) / 60000;
     var who = e.people.map(function (id) { return App.person(id).name; });
-    var whoText = App.isFamily(e) ? 'Everyone' : who.join(' + ');
+    var whoText = App.isFamily(e) ? (D.settings.calendars ? '' : 'Everyone') : who.join(' + ');
     var big = mins < 100
       ? '<div class="h-hero-count num">' + Math.round(mins) + '<small>min</small></div>'
       : '<div class="h-hero-count num">' + App.fmt.time(e.start, false) + '<small>' + App.fmt.ampm(e.start) + '</small></div>';
@@ -67,15 +71,32 @@
     }
     return '<button class="h-hero" style="' + App.pstyle(p) + '" data-ev="' + e.id + '">' +
       '<div class="h-hero-main">' +
-      '  <div class="label label--on">Next up · ' + App.esc(whoText) + '</div>' +
+      '  <div class="label label--on">Next up' + (whoText ? ' · ' + App.esc(whoText) : '') + '</div>' +
       '  <div class="h-hero-title serif">' + App.esc(e.title) + '</div>' +
       '  <div class="h-hero-meta">' + App.fmt.range(e.start, e.end) + (e.loc ? ' · ' + App.esc(e.loc) : '') + '</div>' +
-      '  <div class="h-hero-foot">' + (e.people.length > 1 ? App.dots(e.people, 22) : '') + leavePill + '</div>' +
+      '  <div class="h-hero-foot">' + (e.people.length > 1 && !e.cal ? App.dots(e.people, 22) : '') + leavePill + '</div>' +
       '</div>' + big + '</button>';
   }
 
+  // The rest of today: a lane a person, or with the family's own calendar one list for everyone.
   function lanes() {
     var now = App.now();
+    if (D.settings.calendars) {
+      var rest = App.timedOn(now).filter(function (e) { return e.end > now; }), head = 'Rest of today';
+      // Today's done: tomorrow, rather than saying "nothing" twice.
+      if (!rest.length) { rest = App.timedOn(App.addDays(now, 1)); head = 'Tomorrow'; }
+      var shown = rest.slice(0, 6), more = rest.length - shown.length;
+      return '<div class="h-lane h-lane--all" style="' + App.pstyle(D.family) + '">' +
+        '<div class="h-lane-head"><b>' + head + '</b></div>' +
+        (rest.length ? '<div class="h-agenda">' + shown.map(function (e) {
+          var cur = e.start <= now;
+          return '<button class="h-ev' + (cur ? ' is-now' : '') + '" data-ev="' + e.id + '">' +
+            '<span class="h-ev-t">' + (cur ? 'Now' : App.fmt.time(e.start, false)) + '</span>' +
+            '<span class="h-ev-n">' + App.esc(e.title) + '</span></button>';
+        }).join('') + '</div>' : '<div class="h-free serif"><i>Nothing</i> on the calendar</div>') +
+        (more > 0 ? '<button class="h-more" data-go="calendar">+' + more + ' more</button>' : '') +
+        '</div>';
+    }
     return App.humans().map(function (p) {
       var list = App.timedOn(now, p.id).filter(function (e) { return e.end > now; });
       var shown = list.slice(0, 3), more = list.length - shown.length;
@@ -102,6 +123,7 @@
 
   function chores() {
     var r = App.currentRoutine();
+    if (!D.chores.length) return '<div class="label">Chores</div><p class="h-empty serif"><i>No chores yet.</i> Add some on the Chores page.</p>';
     var who = D.people.map(function (p) { return p.id; }).concat(['any']);
     return '<div class="label">Chores · ' + r.name + '</div><div class="h-rings">' + who.map(function (id) {
       var list = D.chores.filter(function (c) { return c.r === r.id && c.who === id; });
@@ -139,7 +161,7 @@
     el.querySelector('.h-weather').innerHTML = weather();
     el.querySelector('.h-presence').innerHTML = presence();
     el.querySelector('.h-hero-slot').innerHTML = hero();
-    el.querySelector('.h-lanes').style.setProperty('--lanes', App.humans().length);
+    el.querySelector('.h-lanes').style.setProperty('--lanes', D.settings.calendars ? 1 : App.humans().length);
     el.querySelector('.h-lanes').innerHTML = lanes();
     el.querySelector('.h-chores').innerHTML = chores();
     el.querySelector('.h-shop').innerHTML = shopping();

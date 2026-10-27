@@ -5,7 +5,7 @@ description: Designing for a TV seen from across the room - type that reads at a
 
 # Designing for a TV
 
-A TV is watched from a sofa three metres away, by people who aren't holding a mouse and may not be looking closely.
+A TV is watched from a sofa three meters away, by people who aren't holding a mouse and may not be looking closely.
 Whatever the app is (a game, a family calendar, a photo album, a scoreboard, a remote for something) and however it's
 made, what the TV shows has to read at that distance and be driven with a few keys. Everything here is how to design
 for that; the person's own direction wins over any of it. How a page or an app gets its keys, focus and size is the
@@ -19,7 +19,7 @@ this skill is about what to do with them.
   paragraphs to read.
 - High contrast. A dark background is the default on a TV: it's kinder in a dim room and hides how a TV blooms bright
   areas. Avoid pure white fills and thin light text on a light ground; avoid fine lines, small icons and detail that
-  depends on colour alone.
+  depends on color alone.
 - Keep everything that matters inside a margin of about 5% on every side: many TVs cut off their edges. Backgrounds and
   pictures may run to the edge.
 - Less on the screen than on a desktop: a TV shows a few big things, not a dense layout. Where there's a lot, show the
@@ -38,7 +38,7 @@ photos, a number that updates in place).
 There's no pointer. The person moves focus with the arrows and presses OK, so:
 
 - What has focus is unmistakable from across the room: a thick outline, or a scale and a glow, never just a slight
-  change of colour. Exactly one thing has focus, and something always does when anything can be chosen; when a screen
+  change of color. Exactly one thing has focus, and something always does when anything can be chosen; when a screen
   opens, put focus on what the person most likely wants.
 - Lay things out on a clear grid or in rows, so pressing an arrow moves focus where the eye expects. Avoid scattered
   layouts where "down" is ambiguous.

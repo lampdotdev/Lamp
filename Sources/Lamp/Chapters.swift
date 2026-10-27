@@ -3,7 +3,7 @@ import LampSidebarKit
 
 /// A new app's first build in the chat: the parts of the agent's plan (its `plan` tool) are the chat's chapters, each a
 /// heading with its tick and how long it took, with what the agent said during it and its steps, folded, under it. The
-/// parts still to come wait greyed below. Once the app is made each part folds to one line of its own in the chat (its tick, title and time), with the agent's answer under them.
+/// parts still to come wait grayed below. Once the app is made each part folds to one line of its own in the chat (its tick, title and time), with the agent's answer under them.
 /// It took the place of a card above the chat, whose checklist and steps took over the window and left the agent's
 /// own words and its question lost below it.
 ///

@@ -1,10 +1,10 @@
-Kind: game, a newspaper crossword printed on newsprint over a grey map of the place it's about (paper and ink, one
+Kind: game, a newspaper crossword printed on newsprint over a gray map of the place it's about (paper and ink, one
 yellow for the cursor, Apple's serif for the masthead).
 
 # Local Crossings
 
 A new crossword every day, made from the map of where the person is: its answers are the streets, parks, the
-neighbourhood and the cafés and restaurants around them ("Late ___ Cafe, café on Langdon St", "___ Street, the main
+neighborhood and the cafés and restaurants around them ("Late ___ Cafe, café on Langdon St", "___ Street, the main
 drag around here"). The grid is freeform: words cross where they share a letter and the squares between are empty,
 so the map shows through. The masthead names the place ("The Park Slope Crossword") and counts the person's own
 editions (No. 12 is their twelfth). Typing fills the word the cursor is in; arrows move, Tab and Return go to the
@@ -22,7 +22,7 @@ count of perfect days. The flame in the masthead shows the streak and opens Hist
   "place".
 - `Survey.gather` asks Apple's map (MapKit, no key) for places of interest around the spot (food and drink at five
   points 600 m apart, parks and culture within 1.5 km) and reverse-geocodes the same points for street and
-  neighbourhood names. It takes about half a second. The result is a `Neighborhood`, saved as "neighborhood" and
+  neighborhood names. It takes about half a second. The result is a `Neighborhood`, saved as "neighborhood" and
   used again while the person is within 1.5 km and it's under three weeks old. Apple limits how often the map can be
   asked, so it's never asked more than once a day.
 - `Answers.candidates` turns it into candidate answers with clues made only from what the map said, each with a
@@ -46,9 +46,9 @@ count of perfect days. The flame in the masthead shows the streak and opens Hist
   Puzzle menu (Check Puzzle ⇧⌘K, Reveal Square ⇧⌘H, Reveal Word ⌥⇧⌘H, Change Place…, History ⌘Y, Clear Examples).
 - `Sources/PuzzleBoard.swift`: the page (map, newsprint wash, masthead), the board (clue bar, grid, clues or the
   done card), the page asking for location (`NeedsLocation`), `PlaceSheet` and the keys.
-- `Sources/MapBackdrop.swift`: the grey map behind the paper, a MapKit snapshot about 3.2 km across, muted, no
+- `Sources/MapBackdrop.swift`: the gray map behind the paper, a MapKit snapshot about 3.2 km across, muted, no
   points of interest, made once per place, size and appearance.
-- `Sources/Look.swift`: `Paper`, the colours (page, ink, faded, square, sun, haze, leaf, wrong; light and dark) and
+- `Sources/Look.swift`: `Paper`, the colors (page, ink, faded, square, sun, haze, leaf, wrong; light and dark) and
   type, and `Rule`.
 - `Sources/Crossword/`: `Neighborhood.swift` (the place and `Survey`), `Answers.swift`, `Layout.swift` (with
   `Crossword`, `Cell` and `SeededRandom`), `Polish.swift`, `Edition.swift` (`Edition`, `Delivery`),

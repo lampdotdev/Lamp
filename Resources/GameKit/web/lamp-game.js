@@ -449,7 +449,7 @@ export function label(what, on = current) {
     return (variant && variant.names[name]) || ((LAYOUTS[on.family] || {}).names || {})[name] || BASE.names[name];
 }
 
-// A badge for a button, stick or trigger as the player's input draws it (an Xbox controller's coloured round letters,
+// A badge for a button, stick or trigger as the player's input draws it (an Xbox controller's colored round letters,
 // a PlayStation controller's shapes, a key's keycap), sized to the text around it: a <span> to put in a prompt or
 // a help screen, or null where `label` is.
 export function glyph(what, on = current) {
@@ -507,7 +507,7 @@ let time = 0, number = 0;
 const pads = [0, 1, 2, 3].map(() => ({ connected: false, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0, down: 0, pressed: 0, released: 0 }));
 let renderer = null, frameFunction = null, scripted = null, before = [0, 0, 0, 0], seenControllers = -1;
 
-// Whether a controller is being played with now: a button down or a stick off its centre.
+// Whether a controller is being played with now: a button down or a stick off its center.
 const inUse = g => g.buttons.some(b => b && b.pressed) || g.axes.some(a => Math.abs(a) > 0.3);
 
 function readPads() {
@@ -615,7 +615,7 @@ function fit() {
 // the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
 // the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
-// The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialised before game() is called).
+// The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called).
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
 export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false }) {
     renderer = given;

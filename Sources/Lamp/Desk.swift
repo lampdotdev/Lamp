@@ -1480,7 +1480,7 @@ struct WishDrag: NSViewRepresentable {
             guard inset <= (depth > 4 ? depth : icons + 24) else { return false }
             // Along the edge the Dock is only as long as what it holds: past its ends is the desktop. Where Lamp may
             // ask the Dock (Accessibility, which trying iPhone apps asks for) it says where its icons are, hidden or
-            // not; else it's centred, as long as an estimate from what it holds.
+            // not; else it's centered, as long as an estimate from what it holds.
             let bottom = side(of: dock) == "bottom"
             let along = bottom ? point.x : point.y
             if let span = span(bottom: bottom) {

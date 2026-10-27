@@ -127,7 +127,7 @@ keep what the person was looking at in `@SceneStorage`, so it comes back as they
 runtime folder (`LampMagic.leavePlace`), and the new copy opens its first window in the same place (`putBack`). Lamp
 puts no picture of the window in its place meanwhile: a copy that opens no window (a menu bar app) left one standing
 until it timed out.
-While Lamp builds a change for a Mac app that's open, smoke in many colours curls up from the bottom of the app's
+While Lamp builds a change for a Mac app that's open, smoke in many colors curls up from the bottom of the app's
 windows, with a faint glow round their edges, and as the change goes in a level band of white whooshes up across them (`AppTransition`, drawn by
 `LampTransition` in LampSupport.swift). It starts in `Store.build`,
 lands in `reloadInPlace` (or, after a reopen, once the new copy's window is on screen, `landWhenShown`), and fades after `install` otherwise (held for Reload,
@@ -210,14 +210,14 @@ with a key Lamp hands the extension, which passes it on only once the page prove
 signature over a nonce and the port); the app answers only its own name, only that key, never a request another
 site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. The page
 looks as if Apple made it, not like a web page and not like a copy of the window's own theme: `/lamp.css` is
-Apple's system look for a narrow Mac list pane, light and dark (grouped grey ground, rounded groups, inset
+Apple's system look for a narrow Mac list pane, light and dark (grouped gray ground, rounded groups, inset
 separators, SF, parts that rearrange at large text), and an app stands out only through one tint, chosen among
-Apple's system colours with `data-tint` (each shade measured to read, `SidebarTintTests`), and its own content.
+Apple's system colors with `data-tint` (each shade measured to read, `SidebarTintTests`), and its own content.
 How a page is built (layout, pictures, every state from reading to a failed save, what to check) is the
 `chrome-sidebar` skill, which the builder opens before writing the page. The app serves its own pictures
 (`/assets/`, or hands one it keeps with an item to the page as a `data:` URL) and SF Symbols (`/symbols/`, drawn by
-the app, used as masks), and the extension draws its strip above the page in the page's colours (`look`, plain
-colours only). Apps built before pages still publish a
+the app, used as masks), and the extension draws its strip above the page in the page's colors (`look`, plain
+colors only). Apps built before pages still publish a
 surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
 `browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
 builder decides from the wish (`Agent.Rules.browserCompanion`, which leaves the rest to the `chrome-sidebar` skill) and tries the sidebar with `look_at_app` and
@@ -229,7 +229,7 @@ and hands it the page beside it, so every engine tries it the same way; it's the
 Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
 page prepared never shows on another; keep that when changing either side. The builder may also give an app a
 right-click item (`menu` in browser.json) for what its sidebar does with a page, whatever that is (save it, explain,
-summarise or translate it, answer something about it): it opens that app's sidebar, and shows only on pages a fit
+summarize or translate it, answer something about it): it opens that app's sidebar, and shows only on pages a fit
 names by address, the one thing Chrome can check before its menu opens.
 **The one exception to "once per click in it"**: choosing an app's right-click item counts as the person's click in
 that app's page. The sidebar tells that page once (`lamp.onMenu`) and lets it read once without a click in it, only

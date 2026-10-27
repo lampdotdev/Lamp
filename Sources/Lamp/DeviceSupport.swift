@@ -17,7 +17,7 @@ import AppKit
 /// device's address, within half an hour. It keeps it in its own storage on the device from then on.
 enum DeviceSupport {
     /// The libraries a declared app kind may ask for, and what each one is put in: a file, or a folder of files.
-    /// `three` is three.js, the 3D library (MIT, in Lamp's bundle with its licence, `WebLibraries/three`, put there by
+    /// `three` is three.js, the 3D library (MIT, in Lamp's bundle with its license, `WebLibraries/three`, put there by
     /// scripts/update-three.sh): its WebGL build and the light addons as a folder, which a web app's page loads from its
     /// own folder through an import map, since these apps load nothing from the network.
     enum Library: String, CaseIterable {
@@ -154,7 +154,7 @@ enum DeviceSupport {
         return (parts[0], parts[1])
     }
 
-    /// The app's icon centred on a dark tile at a size, or the tile alone: what a device shows for the app, from the
+    /// The app's icon centered on a dark tile at a size, or the tile alone: what a device shows for the app, from the
     /// icon Lamp made for it (`Icons.squareURL`), so every kind of app has the same one.
     static func iconPNG(_ icon: NSImage?, width: Int, height: Int) -> Data {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,

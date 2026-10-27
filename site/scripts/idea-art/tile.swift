@@ -1,7 +1,7 @@
 // Puts generated icon art on Lamp's icon tile, the way Icons.drawnTile does: the object cut out (Vision, when the
 // art isn't already see-through), on a soft gradient rounded square with a highlight, a shadow and a light rim.
 // Usage: tile <art.png> <top hex> <bottom hex> <light 0|1> <out.png> <size> [object]
-// With "object" it writes the object alone instead, centred on a transparent square, for the page's categories.
+// With "object" it writes the object alone instead, centered on a transparent square, for the page's categories.
 import AppKit
 import Vision
 import CoreImage

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The shelf's whole mood in one place: its words, colours, type, light and how its shelves are named. Everything
+/// The shelf's whole mood in one place: its words, colors, type, light and how its shelves are named. Everything
 /// on the shelf screen is drawn from `Look.current`, so making the shelf about something else starts here, by
 /// writing a new mood rather than nudging this one: `hotShelf` is loud, bold and hard-lit; `cellar` below is the
 /// same shelf made quiet and elegant. APP.md says how to choose.
@@ -25,9 +25,9 @@ struct Look {
     var askSymbol: String
     var askButtonSymbol: String
 
-    // MARK: Colour
+    // MARK: Color
 
-    /// The set is one colour: the wall, and the shelves made of the same stuff or of something of their own.
+    /// The set is one color: the wall, and the shelves made of the same stuff or of something of their own.
     var wall: Color
     var shelfTop: Color
     var shelfBack: Color
@@ -50,7 +50,7 @@ struct Look {
     var reach: Double
     /// The shaft of light falling across the wall: 0 for none.
     var beam: Double
-    /// The light's colour: white for a studio, warm for a candle or a lamp.
+    /// The light's color: white for a studio, warm for a candle or a lamp.
     var glow: (red: Double, green: Double, blue: Double) = (1, 1, 1)
     /// The wall's grain: 0 for smooth paint, 1 for a board you can feel.
     var grain: Double = 1

@@ -100,7 +100,11 @@
   };
 
   // ------------------------------------------------------------ calendar helpers
-  App.events = function () { return D.events.slice(); };
+  // The example events go as soon as the family's own calendar is shown: theirs, not a made-up family's, is the day.
+  App.events = function () {
+    var own = !!D.settings.calendars;
+    return D.events.filter(function (e) { return !(own && e.ex); });
+  };
   App.isFamily = function (e) { return e.people.length >= App.humans().length; };
   App.evColor = function (e) { return App.isFamily(e) ? D.family : App.person(e.people[0]); };
   App.timedOn = function (day, pid) {

@@ -66,7 +66,7 @@ extension ChatLook {
         let text: String
         let button: String
         let disabled: Bool
-        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent colour.
+        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent color.
         let prominent: Bool
         let action: () -> Void
 

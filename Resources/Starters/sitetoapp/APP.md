@@ -47,7 +47,7 @@ grid of the person's sites; each opens in a window with no title bar, and each c
 - `Sources/AppMaker.swift`: making, revealing and checking for a site's Dock app.
 - `Sources/BrowserHistory.swift`: the most visited sites in Chrome, Arc, Brave, Edge, Vivaldi, Chromium and (when the
   app may read it) Safari over the last 60 days, read from a copy of each history file.
-- `Sources/Theme.swift`, `Buttons.swift`: the sky, colours and button styles.
+- `Sources/Theme.swift`, `Buttons.swift`: the sky, colors and button styles.
 
 ## Data
 
@@ -58,7 +58,7 @@ suggestions are the example content.
 ## Easy to change
 
 - The sites offered to start with: `SiteSuggestion.all`; the ones never offered: `SiteSuggestion.hasDesktopApp`.
-- The catalog's colours and sky: `Theme` and `SkyBackdrop`; its buttons: `GlowButtonStyle` in Buttons.swift.
+- The catalog's colors and sky: `Theme` and `SkyBackdrop`; its buttons: `GlowButtonStyle` in Buttons.swift.
 - How a site's window looks while the mouse moves: `WindowChrome`.
 - What a page may do (open windows, use the camera, download): the delegates in WebView.swift and `WebModel`.
 - What a Dock app is given: the Info.plist keys in `AppMaker.build`.

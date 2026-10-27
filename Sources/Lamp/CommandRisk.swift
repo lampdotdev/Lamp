@@ -85,7 +85,7 @@ enum CommandRisk {
     }
 
     /// What the questions about the command itself are put over: the command and where the app is, and not
-    /// the request. Shown the request, the model let it colour what the command does: an edit inside the
+    /// the request. Shown the request, the model let it color what the command does: an edit inside the
     /// app's folder was scored as an install for the whole Mac when the same request also asked for one.
     /// A request can also be written to talk a command down, and now has nothing to say about its risk.
     static func state(command: String, folder: String) -> [String: Any] {
@@ -278,7 +278,7 @@ enum CommandRisk {
     }
 
     /// Whether a command that was about to get the card runs instead: the in-app model calls it low or medium
-    /// risk and no check flagged it. The colours are drawn where approval is worth asking for: low and medium
+    /// risk and no check flagged it. The colors are drawn where approval is worth asking for: low and medium
     /// are work on the app itself (its files, what it fetches into its folder, its builds and tests), high is
     /// whatever reaches beyond it. A flagged command always asks: the model reads the command as plain text,
     /// and the checks are what a command can't talk round.
@@ -296,7 +296,7 @@ extension Store.CommandExplanation {
                                  why: reason?.why ?? "")
     }
 
-    /// The card for a command a check flagged is never green or yellow, which are the colours that run: when
+    /// The card for a command a check flagged is never green or yellow, which are the colors that run: when
     /// the text model calls it low or medium risk, the card gives the check's own reason instead, which is why
     /// Lamp is asking.
     func raised(for reason: CommandRisk.Reason?) -> Store.CommandExplanation {

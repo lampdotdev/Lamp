@@ -70,10 +70,10 @@
   }
 
   function familyHTML() {
-    return head('Who’s at home?', 'Everyone gets a colour. Stars are for whoever earns them for chores, pets included.') +
+    return head('Who’s at home?', 'Everyone gets a color. Stars are for whoever earns them for chores, pets included.') +
       '<div class="ed-list">' + F.people.map(function (p, i) {
         return '<div class="ed-row" data-i="' + i + '">' +
-          '<button class="ed-swatch" data-color aria-label="Colour" style="' + App.pstyle(p) + '">' + App.avatar(Object.assign({}, p, { name: p.name || '?' }), 44) + '</button>' +
+          '<button class="ed-swatch" data-color aria-label="Color" style="' + App.pstyle(p) + '">' + App.avatar(Object.assign({}, p, { name: p.name || '?' }), 44) + '</button>' +
           '<input class="ed-name" data-name value="' + App.esc(p.name) + '" placeholder="' + (p.pet ? 'Pet’s name' : i ? 'Name' : 'Your name') + '" maxlength="24">' +
           '<button class="chip' + (p.stars ? ' is-on' : '') + '" data-stars>' + App.icon('star', 18, p.stars ? 'i--fill' : '') + 'Stars</button>' +
           (F.people.length > 1 ? '<button class="icon-btn" data-remove aria-label="Remove">' + App.icon('x', 22) + '</button>' : '') +
@@ -100,9 +100,9 @@
     if (!F.calendars) body = '<div class="chips"><button class="btn" data-cals>' + App.icon('calendar', 22) + 'Choose our calendar</button></div>';
     else if (!F.calendars.length) body = '<p class="ed-note">No calendars on this device.</p>';
     else body = '<div class="chips setup-results">' + F.calendars.map(function (c) {
-      return '<button class="chip' + (F.calendar === c ? ' is-on' : '') + '" data-cal="' + App.esc(c) + '">' + App.esc(c) + '</button>';
-    }).join('') + '</div>';
-    return head('Your family calendar', 'The one you all share. An event is for whoever its title names, like “Maya soccer”; the rest are for everyone.') +
+      return '<button class="chip' + (F.calendar && F.calendar.id === c.id ? ' is-on' : '') + '" data-cal="' + App.esc(c.id) + '">' + App.esc(App.calendarLabel(F.calendars, c)) + '</button>';
+    }).join('') + (F.listed ? '' : '<button class="chip chip--ghost" data-cals>Choose another</button>') + '</div>';
+    return head('Your family calendar', 'The one you all share. Its events show for the whole family.') +
       body + actions('Next', { skip: !F.calendar });
   }
 
@@ -151,7 +151,13 @@
     D.chores = chores;
     D.edited.people = true; D.edited.chores = true;
     if (F.place) D.settings.place = { name: F.place.name, lat: F.place.lat, lon: F.place.lon };
-    if (F.calendar) { D.settings.calendars = [F.calendar]; D.settings.calendarsBy = App.me(); }
+    // A calendar chosen from this device's own list is read here from now on. The one already chosen, left as it was,
+    // stays with the device that reads it (its id may be that device's alone); deselected, the calendar is off.
+    if (F.calendar && (F.listed || F.calendar.id !== F.prefilled)) {
+      D.settings.calendars = [F.calendar.id]; D.settings.calendarName = F.calendar.title; D.settings.calendarsBy = App.me();
+    } else if (!F.calendar && F.prefilled) {
+      D.settings.calendars = null;
+    }
     if (F.album != null) { D.settings.album = F.album; D.settings.albumBy = App.me(); }
     D.settings.example = false;
     F = null;
@@ -170,7 +176,21 @@
       calendars: null, calendar: null,
       albums: null, album: D.settings.album, chores: {}
     };
-    F.people.push(newPerson(false));
+    // The family already made in the editor (the example's people renamed, say) is where the setup starts; otherwise
+    // one empty row for the person setting it up. So is a calendar or album already chosen in Settings.
+    if (D.edited.people) {
+      F.people = D.people.map(function (p) {
+        var x = { id: p.id, name: p.name, color: p.color, rgb: p.rgb, ink: p.ink, stars: D.stars[p.id] != null, pet: !!p.pet };
+        if (p.pet) x.emoji = p.emoji;
+        return x;
+      });
+    }
+    if (!F.people.length) F.people.push(newPerson(false));
+    if (D.settings.calendars && D.settings.calendars.length === 1) {
+      F.calendar = { id: D.settings.calendars[0], title: D.settings.calendarName || D.settings.calendars[0], source: '' };
+      F.calendars = [F.calendar];
+      F.prefilled = F.calendar.id;
+    }
     var scope = window.Lamp ? Lamp.scope : null;
     App.sheet('<div class="setup-body">' + html() + '</div>', {
       cls: 'sheet--wide',
@@ -236,15 +256,21 @@
           if (b.hasAttribute('data-place-find')) return findPlace();
           if (d.place != null) { F.place = F.places[+d.place]; return again(); }
           if (b.hasAttribute('data-cals')) {
-            LampNative.call('calendars', {}).then(function (names) {
-              F.calendars = names;
-              // The one called Family, if there is one.
-              F.calendar = names.filter(function (c) { return /family/i.test(c); })[0] || null;
+            LampNative.call('calendars', {}).then(function (list) {
+              F.calendars = list; F.listed = true;
+              // The one called Family, if there's just one.
+              var family = list.filter(function (c) { return /family/i.test(c.title); });
+              var kept = F.calendar && list.filter(function (c) { return c.id === F.calendar.id; })[0];
+              F.calendar = kept || (family.length === 1 ? family[0] : null);
               again();
             }, function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
             return;
           }
-          if (d.cal != null) { F.calendar = F.calendar === d.cal ? null : d.cal; return again(); }
+          if (d.cal != null) {
+            var picked = F.calendars.filter(function (c) { return c.id === d.cal; })[0];
+            F.calendar = F.calendar && picked && F.calendar.id === picked.id ? null : picked;
+            return again();
+          }
           if (b.hasAttribute('data-albums')) {
             LampNative.call('albums', {}).then(function (list) { F.albums = list; again(); },
               function () { App.toast('Photos aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'photo' }); });
@@ -262,7 +288,17 @@
   App.on('ready', function () {
     if (!D.isSetUp() && !D.settings.example) App.setup('welcome');
   });
+  // The examples are only a first look: the moment something is the family's own, they go, here and on every copy.
+  function examplesGo() {
+    if (D.cleared || !D.ownsSomething()) return false;
+    D.clearExamples();
+    App.loadPhotos();
+    App.rerender();
+    return true;
+  }
+  App.on('ready', function () { if (examplesGo()) App.emit('data'); });
   App.on('data', function () {
+    if (!F) examplesGo();
     if (F && F.step === 'welcome' && D.isSetUp()) { F = null; App.closeSheet(); }
   });
 })();

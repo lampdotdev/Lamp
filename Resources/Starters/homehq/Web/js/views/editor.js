@@ -28,7 +28,7 @@
       '<div class="ed-list">' + D.people.map(function (p) {
         var kid = D.stars[p.id] != null;
         return '<div class="ed-row" data-pid="' + p.id + '">' +
-          '<button class="ed-swatch" data-color aria-label="Colour" style="' + App.pstyle(p) + '">' + App.avatar(p, 44) + '</button>' +
+          '<button class="ed-swatch" data-color aria-label="Color" style="' + App.pstyle(p) + '">' + App.avatar(p, 44) + '</button>' +
           '<input class="ed-name" data-name value="' + App.esc(p.name) + '" placeholder="Name" maxlength="24">' +
           '<button class="chip' + (kid ? ' is-on' : '') + '" data-kid>' + App.icon('star', 18, kid ? 'i--fill' : '') + 'Stars</button>' +
           '<button class="chip' + (p.pet ? ' is-on' : '') + '" data-pet>' + (p.pet ? p.emoji || '🐾' : '🐾') + 'Pet</button>' +
@@ -36,7 +36,7 @@
           '</div>';
       }).join('') + '</div>' +
       (D.people.length < 8 ? '<button class="btn btn--ghost ed-add" data-add>' + App.icon('plus', 22) + 'Add someone</button>' : '') +
-      '<p class="ed-note">A colour each; Stars for someone who earns them for chores. A pet has no day of its own in the calendar; tap its picture for another.</p>' +
+      '<p class="ed-note">A color each; Stars for someone who earns them for chores. A pet has no day of its own in the calendar; tap its picture for another.</p>' +
       '</div>';
   }
 

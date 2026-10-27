@@ -40,7 +40,7 @@ struct Neighborhood: Codable, Equatable {
             .distance(from: CLLocation(latitude: latitude, longitude: longitude))
     }
 
-    /// Still good for a spot: close enough to be the same neighbourhood, and gathered in the last few weeks.
+    /// Still good for a spot: close enough to be the same neighborhood, and gathered in the last few weeks.
     func covers(_ latitude: Double, _ longitude: Double) -> Bool {
         distance(to: latitude, longitude) < 1_500 && Date().timeIntervalSince(gathered) < 21 * 86_400
     }
@@ -64,7 +64,7 @@ enum Survey {
 
     static func gather(latitude: Double, longitude: Double) async throws -> Neighborhood {
         let center = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        // Five spots, the centre and four 600 m away, so places come from the whole neighbourhood and not one block.
+        // Five spots, the center and four 600 m away, so places come from the whole neighborhood and not one block.
         let points = [center] + [(600.0, 0.0), (-600, 0), (0, 600), (0, -600)].map { offset(center, north: $0.0, east: $0.1) }
 
         async let found: [Neighborhood.Spot] = withTaskGroup(of: [Neighborhood.Spot].self) { group in

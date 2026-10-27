@@ -91,7 +91,7 @@ to time. When frames are late, draw less. On a TV, draw much less: the 3d-game s
 ## The look
 
 Sprites, characters and backgrounds are art from `make_art`, all in one style, on a transparent background where they
-move. Shapes and colours made in code, well lit, look better than mismatched models. Score, pause and menus are plain
+move. Shapes and colors made in code, well lit, look better than mismatched models. Score, pause and menus are plain
 and large, over the game (SwiftUI over a SpriteView; HTML over the canvas in a page).
 
 After changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches flicker a

@@ -61,7 +61,7 @@ A capability given to one engine must be given to all of them that can take it, 
   Result cards saved by an earlier Lamp still read and aren't shown (`LogLine.visible`). A new app's first build is drawn as the
   chat's chapters (`Chapters`, `BuildChapters`), not as a card over it: each part of the agent's plan is a heading with
   its tick and how long it took, with what the agent said during it and its steps, folded, under it; the part going
-  on has its steps so far and the live line, as any turn has; the parts still to come wait greyed below, with Lamp's
+  on has its steps so far and the live line, as any turn has; the parts still to come wait grayed below, with Lamp's
   own last one, building and opening it; and a question card comes where it was asked, in its part. A part's steps are
   its own: a stretch of steps ends where the build moves to the next part, as where something is said, and is titled
   then like any fold (`StepTitles.closed(in:)`), so a part's last steps read what they did, not how many they were. Once the app is made each part folds to one line of its own in the chat (its tick, title and time) that opens to
@@ -98,7 +98,7 @@ A capability given to one engine must be given to all of them that can take it, 
   until the answer, and an agent that goes on to another step after `ask` is ended by Lamp, the way a
   runaway one is (`Store.endIfOver`), whichever engine it is. Once the card is answered the chat
   follows its end again (`ChatFollow.followThroughSettling`). Only the card that waits is drawn as a card: answered, it folds to a line with what was chosen, and a notes receipt is a line too, so one thing in the chat asks for attention at a time. A new piece is a tool there, its view, and a line in `talkRules`. The agent still
-  doesn't ask about layout, colours or names (`Agent.Rules.ask`).
+  doesn't ask about layout, colors or names (`Agent.Rules.ask`).
 
 ## The chat's one screen
 

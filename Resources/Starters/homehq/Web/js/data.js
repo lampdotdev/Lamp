@@ -1,6 +1,6 @@
 // The family's data. The example content (marked `ex`) is made afresh at each launch relative to "today", so it
 // always looks current, until Clear Examples in the settings sheet takes it away for good. What the family adds or
-// changes (their own events, the shopping list, chores ticked off today, stars, favourites, settings) is saved with
+// changes (their own events, the shopping list, chores ticked off today, stars, favorites, settings) is saved with
 // LampStore (Web/lamp.js) under "homehq" by `save()`, which app.js calls whenever the data changes.
 window.DATA = (function () {
   var base = new Date();
@@ -21,7 +21,7 @@ window.DATA = (function () {
     return Object.assign({ id: 'e' + (++n), allDay: true, start: at(d, '00:00'), end: at(d + days, '00:00'), title: title, people: people, ex: true }, extra || {});
   }
 
-  // The family, one colour each. Kids (with an age) earn stars for chores.
+  // The family, one color each. Kids (with an age) earn stars for chores.
   var people = [
     { id: 'alex', name: 'Alex', color: '#2D5BFF', rgb: '45 91 255', ink: '#FFFFFF' },
     { id: 'jordan', name: 'Jordan', color: '#E4007C', rgb: '228 0 124', ink: '#FFFFFF' },
@@ -58,7 +58,7 @@ window.DATA = (function () {
     ev(1, '16:00', '18:00', 'Playdate with Leo', ['otto'], { travel: 8, loc: "Leo's house" }),
     ev(1, '19:00', '21:00', 'Book club', ['jordan'], { travel: 10, loc: "Priya's" }),
 
-    ev(2, '09:00', '14:00', 'Science Centre trip', ['otto'], { loc: 'Ontario Science Centre' }),
+    ev(2, '09:00', '14:00', 'Science Center trip', ['otto'], { loc: 'Ontario Science Center' }),
     ev(2, '13:00', '13:45', 'Haircuts', ['maya', 'otto'], { travel: 10, loc: 'Snip Snip Kids' }),
     ev(2, '16:30', '18:00', 'Soccer practice', ['maya'], { travel: 20, loc: 'Lakeshore Fields' }),
     ev(2, '18:00', '19:30', 'Pizza night', ALL),
@@ -254,7 +254,7 @@ window.DATA = (function () {
     weather: weather, photos: photos,
     // The settings sheet's choices: the weather's place, the family's own calendars and photos.
     // `example`: this screen was asked to show the example family rather than the welcome.
-    settings: { place: null, calendars: null, calendarsBy: null, album: null, albumBy: null, example: false },
+    settings: { place: null, calendars: null, calendarName: null, calendarsBy: null, album: null, albumBy: null, example: false },
     cleared: false,
     edited: { people: false, chores: false },
     _gid: function () { return 'u' + Date.now().toString(36) + (++gid); },
@@ -300,8 +300,12 @@ window.DATA = (function () {
   D.clearExamples = function () {
     D.cleared = true;
     D.events = D.events.filter(function (e) { return !e.ex; });
-    D.chores = D.chores.filter(function (c) { return !c.ex; });
-    D.groceries = D.groceries.filter(function (g) { return !g.ex; });
+    // A chore list the family changed is theirs, examples and all; a shopping item they changed is theirs too.
+    D.chores = D.edited.chores ? D.chores.map(function (c) { delete c.ex; return c; }) : D.chores.filter(function (c) { return !c.ex; });
+    var made = {};
+    examples.groceries.forEach(function (g) { made[g.id] = JSON.stringify([g.name, g.qty, g.note, g.store, g.cat]); });
+    D.groceries = D.groceries.filter(function (g) { return !g.ex || made[g.id] !== JSON.stringify([g.name, g.qty, g.note, g.store, g.cat]); })
+      .map(function (g) { delete g.ex; return g; });
     D.photos = D.photos.filter(function (p) { return !p.ex; });
     Object.keys(D.stars).forEach(function (k) { D.stars[k] = 0; });
     Object.keys(D.week).forEach(function (k) { D.week[k] = [0, 0, 0, 0, 0, 0, 0]; });
@@ -316,6 +320,13 @@ window.DATA = (function () {
   // Until then the examples show (renamed or not in the editor), behind the welcome unless the person chose to look at
   // them.
   D.isSetUp = function () { return D.cleared; };
+  // Something of the family's own: their people or chores changed, their calendar, place or album, an event or a
+  // shopping item they added. The examples go then, for good (js/views/setup.js), with no setup to finish first.
+  D.ownsSomething = function () {
+    var s = D.settings;
+    return D.edited.people || D.edited.chores || !!s.calendars || !!s.place || s.album != null ||
+      D.events.some(function (e) { return !e.ex && !e.cal; }) || D.groceries.some(function (g) { return !g.ex; });
+  };
 
   // Puts back what a snapshot holds, any of its parts: what this device saved, or a part another copy shared.
   D.restore = function (p) {

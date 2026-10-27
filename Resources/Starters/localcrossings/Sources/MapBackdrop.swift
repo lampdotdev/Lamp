@@ -1,7 +1,7 @@
 import SwiftUI
 import MapKit
 
-/// The map of the place the paper was made for, about three kilometres across, in grey, behind everything: so
+/// The map of the place the paper was made for, about three kilometers across, in gray, behind everything: so
 /// the first look says this puzzle is about here. It's a still picture of Apple's map, made once for each
 /// place, size and appearance and kept on disk, so after the first time it's there as the window opens.
 struct MapBackdrop: View {

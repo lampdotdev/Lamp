@@ -1,5 +1,5 @@
 Kind: companion, in the menu bar.
-Look: system colours and SF Symbols, a flame for a game worth watching and a basketball when none is; orange is kept
+Look: system colors and SF Symbols, a flame for a game worth watching and a basketball when none is; orange is kept
 for the Watch buttons, the flame and the tension bars. Dense scoreboard rows: team, channel and streaming-service logos (fetched on demand), rounded
 monospaced scores and times, small league tags, uppercase section labels, hover highlights instead of row lines, and a
 win-chance bar in the teams' own colors on good-game cards.

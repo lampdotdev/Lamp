@@ -130,3 +130,8 @@
 .narrow .h-hero-title { font-size: 3rem; }
 .narrow .h-hero-count { font-size: 5.5rem; flex-direction: row; align-items: baseline; justify-content: flex-start; gap: .5rem; }
 .narrow .h-rings { flex-wrap: wrap; gap: .75rem; justify-content: flex-start; }
+
+/* The rest of today for everyone, with the family's own calendar: one list, in two columns where there's room. */
+.h-agenda { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .375rem .75rem; }
+html.narrow .h-agenda { grid-template-columns: minmax(0, 1fr); }
+.h-lane--all { grid-column: 1 / -1; }

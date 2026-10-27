@@ -38,10 +38,10 @@ honks when hit), people on the sidewalks who jump out of the way of a car, and t
     times a second (`game({ renderer, frame, touch: false, keyboard: false })`: the city reads its own keys and draws its
     own touch controls; a controller comes as the first pad). Lamp draws it at 1920x1080 and fits that to the window.
   - The place: `nyc-geodata.js` (the real geography, generated data: don't edit by hand), `city-config.js` (streets,
-    avenues, parks, shores in metres), `city-grid.js` and `buildings.js` (blocks and buildings), `landmarks.js`,
+    avenues, parks, shores in meters), `city-grid.js` and `buildings.js` (blocks and buildings), `landmarks.js`,
     `boroughs.js`, `road-network.js`, `road-paint.js`, `street-details.js` (lamps, signs, hydrants) and `trees.js`.
   - Looks: `tsl-materials.js` (every material, in TSL), `lighting.js` (`TIME_PRESETS`: sun, sky, fog for each time
-    of day), `post-processing.js` (glow and colour grading), `vehicle-lights.js`.
+    of day), `post-processing.js` (glow and color grading), `vehicle-lights.js`.
   - Things that move: `controllers.js` (the four ways to move, their physics and keys), `traffic.js` (cars and buses),
     `vehicle-physics.js` (how vehicles hit and push each other), `pedestrian-system.js` (the people around the player,
     how they cross and dodge), `pedestrians.js` (their bodies and gait) and `pedestrian-routes.js`, `actor-models.js` (cars,
@@ -66,7 +66,7 @@ Everything ships with the game and nothing is fetched while it runs. No key or a
   (https://github.com/mrdoob/slop-newyork/tree/main/tools, not in this app) from NYC Open Data (street centrelines,
   borough boundaries, parks) and OpenStreetMap (Central Park, piers, landmark outlines). It's in the game's world frame:
   1 unit = 1 m, x along the street grid's east, z grid south, the origin at the centreline of 5th Ave & 42nd St, the
-  axes turned 29.02° from true north (`GEO.frame`). Latitude 40.75318, longitude -73.98185 is the plane's centre.
+  axes turned 29.02° from true north (`GEO.frame`). Latitude 40.75318, longitude -73.98185 is the plane's center.
 - `Web/data/elevation.bin.gz`: the ground's heights over Manhattan, 8 m apart, from the open Terrain Tiles on AWS
   (bare earth from USGS 3DEP; credit "Terrain Tiles: Mapzen, USGS"), made by `Assets/Tools/build-elevation.mjs`
   (`node Assets/Tools/build-elevation.mjs`, Node 22, fetches about 100 tiles). It samples only inside Manhattan's
@@ -77,12 +77,12 @@ Everything ships with the game and nothing is fetched while it runs. No key or a
 The city is New York's in many places, so another place is a big change, not a setting:
 
 1. The map: make a `*-geodata.js` of the new place in the same shape as `nyc-geodata.js` (its `GEO` keys: streets,
-   avenues, roads, blocks, parks, the land's outline, piers, landmark points), in a frame of its own (a centre
+   avenues, roads, blocks, parks, the land's outline, piers, landmark points), in a frame of its own (a center
    latitude and longitude, and a bearing that lines the main street grid up with x and z). Mr.doob's
    `tools/build-geodata.mjs` and its `geo-*.mjs` show how; outside New York, OpenStreetMap through the Overpass API
    stands in for NYC Open Data.
 2. What's New York's by name: `city-config.js` (the avenue and street names, `LANDMARK_SITES`, `TELEPORT_LOCATIONS`,
-   Central Park's and the islands' outlines), `landmarks.js` (the Empire State Building and the others, modelled by
+   Central Park's and the islands' outlines), `landmarks.js` (the Empire State Building and the others, modeled by
    hand), `boroughs.js` (the land around Manhattan and its bridges), and the names in `nyc-map.js` and the HUD.
 3. The ground: in `Assets/Tools/build-elevation.mjs`, set `LAT0`/`LON0` and the bearing to the new frame, `OUTLINES`
    to the new land, and `KNOWN` to a few landmarks the new data places (it checks the frame against them), then run
@@ -92,7 +92,7 @@ The city is New York's in many places, so another place is a big change, not a s
 
 ## Easy to change
 
-- Time of day and the sky's colours: `TIME_PRESETS` in `lighting.js`.
+- Time of day and the sky's colors: `TIME_PRESETS` in `lighting.js`.
 - How a building, the roads or the park look: `tsl-materials.js`, `buildings.js`.
 - The vehicles: `actor-models.js`; how they drive, fly and how fast: `controllers.js`.
 - How busy the streets are: the counts in `traffic.js` and `pedestrian-system.js`.

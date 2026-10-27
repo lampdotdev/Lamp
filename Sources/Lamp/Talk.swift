@@ -43,8 +43,16 @@ enum Talk {
         var text: String { switch self { case .message(let text): text } }
     }
 
+    /// Said after every refusal of `ask`. Between a refusal and its retry the agent tends to say something about
+    /// the fix ("Shortening the answers."), which reads as a non sequitur to someone who never saw the card.
+    static let askNotShown = "These questions were not shown. Correct the arguments and call ask again without sending an intervening message."
+
     /// The agent's `ask` arguments, checked. What's wrong goes back to the agent in words it can act on.
     static func ask(from arguments: [String: Any], hasSymbol: (String) -> Bool = Talk.hasSymbol) -> Swift.Result<Ask, Trouble> {
+        checkedAsk(arguments, hasSymbol: hasSymbol).mapError { .message($0.text + " " + askNotShown) }
+    }
+
+    private static func checkedAsk(_ arguments: [String: Any], hasSymbol: (String) -> Bool) -> Swift.Result<Ask, Trouble> {
         let layout = (arguments["layout"] as? String).flatMap(Layout.init(rawValue:))
         let given = arguments["questions"] as? [[String: Any]] ?? []
         guard !given.isEmpty else { return .failure(.message("`questions` needs at least one question.")) }

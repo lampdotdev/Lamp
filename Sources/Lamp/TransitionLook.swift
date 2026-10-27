@@ -11,13 +11,13 @@ enum LampTransition {
     /// The effect's layers, filling the window they're laid over and cut to its rounding. Core Animation runs
     /// them out of the app's process, so they keep moving while the app is busy taking the change in.
     ///
-    /// While the change is built, smoke in many colours curls up from the bottom edge, thick there and thinning as
+    /// While the change is built, smoke in many colors curls up from the bottom edge, thick there and thinning as
     /// it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
     /// of most of the window. When the change goes in the smoke surges for a moment, then a level band of white,
     /// the window's width, whooshes from the bottom to the top with a soft gray shadow just ahead of it, covering the
     /// moment the new code draws and leaving the window clear behind it.
     @MainActor final class Look: NSView {
-        /// The colours the smoke mixes: blue, violet, pink, orange and teal.
+        /// The colors the smoke mixes: blue, violet, pink, orange and teal.
         static let hues: [NSColor] = [
             NSColor(red: 0.25, green: 0.5, blue: 1, alpha: 1),
             NSColor(red: 0.6, green: 0.38, blue: 1, alpha: 1),
@@ -77,7 +77,7 @@ enum LampTransition {
 
         private func arrange() {
             // Only blur, no line: each band of the glow is drawn just outside the window, where the window's own
-            // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colours.
+            // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colors.
             glowLayer.frame = bounds
             glowLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
             for (blur, strength) in [(CGFloat(54), Float(0.8)), (24, 1)] {
@@ -101,7 +101,7 @@ enum LampTransition {
                 glowLayer.addSublayer(edge)
             }
 
-            // Smoke rising from below the bottom edge, a stream of puffs for each colour. How far it rises goes with
+            // Smoke rising from below the bottom edge, a stream of puffs for each color. How far it rises goes with
             // the window's height (speed times life, and the puffs growing), so it reaches about a third of the way
             // up at any size.
             wisps.frame = bounds
@@ -126,7 +126,7 @@ enum LampTransition {
             }
 
             // The band: the window's width and level, white through its body, fading out below where it's been, and
-            // a narrow gray shadow just above its top edge, ahead of it. Its colours run from the bottom of the layer up.
+            // a narrow gray shadow just above its top edge, ahead of it. Its colors run from the bottom of the layer up.
             let height = max(bounds.height * 0.4, 120), shadow: CGFloat = 24
             band.frame = CGRect(x: 0, y: -height - shadow, width: bounds.width, height: height + shadow)
             band.startPoint = CGPoint(x: 0.5, y: 0)
