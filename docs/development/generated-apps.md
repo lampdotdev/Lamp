@@ -257,6 +257,19 @@ that ends it. A build that waits for an app for both
 goes in only while Try On points at this Mac. Don't add a time limit after which an app is ended anyway: that
 is what lost people's work.
 
+A wish goes on GitHub as a repository on the person's own account (`GitHubRepo`, its card `GitHubRepoCards` and
+`RepoCard`, from the chat's Share menu): the shared file's contents (`Sharing.export`, so the same checks and the same
+credits chain) unpacked, Lamp's own files for each of the wish's apps beside them (`GitHubRepo.ownedPaths`: the files
+the builder can't delete, laid out as the shared file lays the apps out, `Sharing.layout`), the shared file itself, a
+README whose remix link is the wish's Share Link when it has one, and an MIT license by choice, never offered when
+something the wish is based on is share-alike. The README promises `./build.sh` only for a kind whose script builds
+with Apple's tools and nothing of Lamp's (`Recipe.buildsAlone`: the Mac app's; an app for the Mac and the iPhone is
+built by Xcode from a project Lamp keeps, so its README says Lamp builds it). One commit per Put on GitHub, on top of
+what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
+own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
+in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to), as a
+published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them.
+
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
 window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked), so no app code is needed and an

@@ -159,7 +159,8 @@ final class SidebarServer {
         listener = Listener(server: self)
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
-            .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange)
+            .merge(with: GitHubRepoCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.
@@ -355,6 +356,7 @@ final class SidebarServer {
         state.sharing = sharing.removeValue(forKey: project.id)
         if let card = WishLinkCards.shared.card(for: project), card.inSidebar { state.wishLink = wishLink(card, of: project) }
         if let card = PublishCards.shared.card(for: project) { state.publish = PublishCards.shared.wire(card, of: project) }
+        if let card = GitHubRepoCards.shared.card(for: project) { state.repo = GitHubRepoCards.shared.wire(card, of: project) }
         return state
     }
 
@@ -1183,6 +1185,19 @@ final class SidebarServer {
             case .copy: cards.copy(project)
             case .close: cards.close(project)
             case .makeLink: cards.makeLink(project)
+            }
+        case .repo(let command):
+            let cards = GitHubRepoCards.shared
+            switch command {
+            case .open: cards.open(project)
+            case .put: cards.put(project)
+            case .fix: cards.fix(project)
+            case .openRepo: cards.openRepo(project)
+            case .copy: cards.copy(project)
+            case .close: cards.close(project)
+            case .makeLink: cards.makeLink(project)
+            case .setPrivate(let value): cards.setPrivate(project, value)
+            case .setLicense(let value): cards.setLicense(project, value)
             }
         case .infoAction(let action):
             AppInfoView.perform(action, for: project) { tab in

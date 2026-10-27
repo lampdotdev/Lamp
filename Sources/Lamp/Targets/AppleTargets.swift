@@ -26,7 +26,7 @@ extension Target {
             try Template.write(Template.withScene(Template.buildSh(widget: widget, share: share, widgetOnly: Template.isWidgetOnly(project)), for: project),
                                to: "build.sh", for: project, executable: true)
             try Template.write(Template.withScene(Template.packageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
-        },
+        }.buildingAlone(),
         part: .swift(.mac, folder: "Mac", word: "mac", menu: ("Mac App", "laptopcomputer")) {
             Agent.prompt(platform: .mac, device: "Mac", sidebar: false, part: $0, alone: $1)
         },
