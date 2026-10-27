@@ -126,12 +126,13 @@ final class WishWithoutItsFirstAppTests: XCTestCase {
     }
 
     /// A wish whose one app is in a folder of its own gets no code for reaching other apps, so its prompt says nothing
-    /// of them either: it had the TV app's rules for talking to the wish's phones and Macs.
+    /// of them either: it had the TV app's rules for talking to the wish's phones and Macs. The `wish-links` skill is
+    /// still offered, for the app's own copies on other devices.
     func testTheOnlyAppIsToldNothingOfOtherApps() throws {
         let wish = try replacedWish()
         let prompt = Agent.wishPrompt(for: wish, parts: Parts.load(wish))
         XCTAssertTrue(prompt.contains("the part of the wish in TV/"))
-        XCTAssertFalse(prompt.contains("wish-links"), "the rules for reaching the wish's other apps")
+        XCTAssertFalse(prompt.contains("The apps of this wish can share data"), "the rules for reaching the wish's other apps")
         XCTAssertFalse(prompt.contains("LampController"))
     }
 
