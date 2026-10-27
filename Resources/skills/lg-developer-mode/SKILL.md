@@ -16,7 +16,8 @@ What happens on the TV, in order:
 2. On some TVs the app shows no Sign In until the TV has been fully restarted (unplugged, not just turned off with
    the remote, which only puts it to sleep). Until then its switches can be turned on but nothing works.
 3. The person signs in with their LG developer account and turns Dev Mode Status on; the TV restarts.
-4. In Developer Mode again, the person turns Key Server on and types the passphrase it shows into Lamp.
+4. In Developer Mode again, the person turns Key Server on and types the passphrase it shows into Lamp. The key
+   server answers only while Developer Mode is open on the screen, so it stays open until Lamp has connected.
 
 A TV that was set up before may show Developer Mode already signed in, with Dev Mode Status on: then only Key Server
 and the passphrase are left.
@@ -131,7 +132,7 @@ Lamp in; asks on the TV the first time), `request` (send one request; `failed` i
     },
     {
       "do": "passphrase",
-      "ask": "In Developer Mode, turn Key Server on. Type the passphrase it shows below exactly as shown, then click Connect."
+      "ask": "In Developer Mode, turn Key Server on and keep Developer Mode open on the TV. Type the passphrase it shows below exactly as shown, then click Connect."
     }
   ]
 }
