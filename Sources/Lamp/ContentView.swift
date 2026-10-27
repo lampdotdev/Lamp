@@ -247,7 +247,8 @@ struct AppMenu: View {
             .disabled(busy)
         Button("Quit") { Task { await store.quitWish(project) } }
             .disabled(!store.isWishOpen(project))
-        if project.holdsApp, project.platform.target.places != [.mac] {
+        // A wish whose apps are all in folders has only the way to one more app here (`TryOnMenu`).
+        if TryOnMenu.make(for: project, store: store) != nil {
             // Which simulator the app opens in (it's built for both), or which of the person's own phones.
             Menu("Try On") { TryOnChoices(project: project) }
                 .disabled(busy)

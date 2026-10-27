@@ -111,6 +111,54 @@ enum GameKit {
     static func isMade(_ dir: URL) -> Bool {
         FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path)
             || DeviceApps.integrationID(in: dir).map { DeviceApps.appKind($0)?.lamp == kind } == true
+            || isXboxWebGame(dir)
+    }
+
+    /// Whether a folder holds a game made as the Xbox's web app before games were a kind of their own: the web app's
+    /// marker, a page in Web/, and the agent's own line that it's a game (capabilities.json's `game`, or icon.json's,
+    /// which it wrote for every game before capabilities.json asked). Not three.js alone: it draws scenes that aren't
+    /// games, and a game may draw without it. An Xbox app of menus and pages has none of these and stays the Xbox's.
+    static func isXboxWebGame(_ dir: URL) -> Bool {
+        guard DeviceApps.integrationID(in: dir) == xbox,
+              FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(webFolder)/index.html").path) else { return false }
+        if Template.Capabilities.load(dir.appendingPathComponent(Template.Capabilities.file)).game == true { return true }
+        struct Icon: Decodable { let game: Bool? }
+        let icon = AppFile.read(dir.appendingPathComponent("icon.json"), inFolder: dir).flatMap { try? JSONDecoder().decode(Icon.self, from: $0) }
+        return icon?.game == true
+    }
+
+    /// Whether a game made as the Xbox's web app (`isXboxWebGame`) still runs its own loop and input rather than Lamp's
+    /// game runtime: none of its page's own files load lamp-game.js. The preview's scripted plays need `game()`, so such a
+    /// page is looked at and used in the page preview it had as the Xbox's web app, until it's moved onto the runtime.
+    static func ownsLoop(_ project: LampProject) -> Bool {
+        guard isGame(project), engine(project) == .web, isXboxWebGame(project.dir) else { return false }
+        let page = project.dir.appendingPathComponent(webFolder)
+        guard let walk = FileManager.default.enumerator(at: page, includingPropertiesForKeys: [.isRegularFileKey]) else { return true }
+        let lamps: Set<String> = ["lamp-game.js", "lamp.js", "lamp-controllers.js", "lamp-device.js"]
+        for case let url as URL in walk {
+            if url.hasDirectoryPath, url.lastPathComponent.hasPrefix("three") { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lamps.contains(url.lastPathComponent),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if text.contains("lamp-game.js") { return false }
+        }
+        return true
+    }
+
+    /// A meta.json from before games were a kind of their own, of a game made as the Xbox's web app (`isXboxWebGame`):
+    /// a three.js game now, at home on the Mac, with the Xbox one of its places and its console still the one chosen
+    /// there, so it goes on as a game and is updated. Only meta.json changes: the code, its versions, chat and icon are
+    /// as they were, and the folder reads as a game in every version of it (`isMade`), so a restore keeps it one.
+    static func migratedWebGame(_ project: LampProject) -> LampProject? {
+        // A wish with other apps in folders is left as it is: its Xbox app is one of several, the person's to change.
+        guard project.platform == .device, project.integration == xbox, project.partFolders.isEmpty, isXboxWebGame(project.dir) else { return nil }
+        var game = project
+        game.platform = .game
+        game.engine = Engine.web.rawValue
+        game.places = [.mac, .device]
+        game.chosen = .mac
+        game.integration = integration(for: game)
+        game.apps = game.apps.map { $0.kind == .device && ($0.integration == nil || $0.integration == xbox) ? WishApp(kind: .game) : $0 }
+        return game
     }
 
     /// A meta.json from before games were a kind of their own: a device app of the Xbox's game kind. It's a game now,
@@ -683,11 +731,12 @@ extension Agent {
     /// device line (`DeviceNote`, `Rules.gamePlaces`), since Claude Code and Codex keep the prompt a conversation began
     /// with, and a place may be given at any time.
     static func gamePrompt(for project: LampProject) -> String {
-        let web = GameKit.engine(project) == .web
-        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, web ? Rules.gameWebKit : Rules.gameKit,
-                     web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
-                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Skills.index(Skills.offered(.game)),
-                     Rules.begin, Rules.finish]
+        let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project)
+        // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
+        let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound]
+        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
+                     web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
+                     Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -708,6 +757,24 @@ extension Agent {
 }
 
 extension Agent.Rules {
+    static let gameOwnLoop = """
+    - This game's page was made for the Xbox before Lamp had a game runtime: it runs its own loop and reads the controller \
+    and keyboard itself. Keep it that way and change what's asked within it. Moving it onto `game()` from Web/lamp-game.js \
+    (read all of it first) rewrites its loop, its input and its sound: do that only when the person asks for something \
+    that needs it, and once it's done its looks are the preview's scripted plays.
+
+    """
+
+    static let gameOwnLoopTry = """
+    - `look_at_app` opens the page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, and \
+    shows you a picture of it with its screen as text and what its console printed; it's the preview, not the person's \
+    Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys there: the arrows, enter, \
+    back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try it by \
+    playing it. `look_at_app` with `on_device` opens it where Try On points (its window on this Mac, or the Xbox) and \
+    shows that screen and its log.
+
+    """
+
     /// How a game's or a screen's places are given while the wish has other apps too: its own word with them, and the
     /// other apps the person keeps, named apart where they're for a device it's also on.
     static func placesAmongApps(_ word: String, verb: String) -> String {

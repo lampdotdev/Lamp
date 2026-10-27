@@ -381,6 +381,16 @@ writes `.lamp-game`), and is built and played as it was: for the Xbox, and in th
 given another place (`setPlaces`, `Store.placesToAdd`), and no new game is made in C++ (the naming call has no word for
 it, and `make_app_for` takes no C++ kind).
 
+A game made as the Xbox's web app before games were a kind of their own (a device app of "xbox-one" whose folder has a page
+in Web/ and the agent's own line that it's a game: capabilities.json's or icon.json's `game`, never three.js alone) is a
+three.js game now (`GameKit.migratedWebGame`, in `Store.readWish`, once, with a line in its chat): at home on the Mac,
+where Try On points, with the Xbox one of its places and its console still the one chosen there, so it's installed there
+as a game and updated as before. Only meta.json changes, and its folder reads as a game in every version
+(`GameKit.isXboxWebGame`, in `isMade`), so a restore keeps it one. An Xbox app of menus and pages says nothing of a game
+and stays the Xbox's, as does a wish whose Xbox app is one of several. Its page runs its own loop, not Lamp's game runtime,
+so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used in
+the page preview it had as the Xbox's web app, as a screen is, and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
+
 On the Mac and on iOS a three.js game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
 is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and

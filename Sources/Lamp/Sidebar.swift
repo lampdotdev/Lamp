@@ -379,7 +379,10 @@ final class SidebarServer {
     /// on its own after them.
     private func tryOn(for project: LampProject, busy: Bool) -> SidebarTryOn? {
         let store = Store.shared
-        var sections = TryOnMenu.make(for: project, store: store)?.sections ?? []
+        let menu = TryOnMenu.make(for: project, store: store)
+        // The way to one more app goes last, after the wish's apps' own menus.
+        let another = menu?.sections.filter { $0.items.contains { $0.id == TryOnMenu.another.id } } ?? []
+        var sections = menu?.sections.filter { $0.items.allSatisfy { $0.id != TryOnMenu.another.id } } ?? []
         // Each of the wish's other apps in a menu of its own: used or quit alone, and given a place, as the wish is.
         for part in store.parts(of: project) {
             let (name, symbol) = Parts.menu(of: part)
@@ -391,8 +394,9 @@ final class SidebarServer {
             }
             sections.append(TryOnMenu.Section(title: name, items: items, submenu: true))
         }
+        sections += another
         guard !sections.isEmpty else { return nil }
-        let symbol = TryOnMenu.make(for: project, store: store)?.symbol
+        let symbol = menu?.symbol
             ?? store.parts(of: project).first.flatMap { TryOnMenu.make(for: $0, store: store)?.symbol } ?? "laptopcomputer"
         return SidebarTryOn(sections: sections.map { section in
             SidebarTryOn.Section(title: section.title, items: section.items.map {
