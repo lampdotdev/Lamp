@@ -3,6 +3,9 @@ import CoreMedia
 import Foundation
 import Speech
 
+// SpeechAnalyzer's names exist only in Xcode 26's SDK: an older toolchain builds the app without this transcriber
+// (the compiler says which), and `Transcription.start` goes straight to the classic one.
+#if compiler(>=6.2)
 /// SpeechAnalyzer with SpeechTranscriber (macOS 26 and later): on-device transcription made for long
 /// audio such as meetings and lectures. Each result it gives is a phrase with its time in the recording,
 /// which becomes one line of the transcript.
@@ -96,3 +99,4 @@ final class AnalyzerTranscriber: Transcriber, @unchecked Sendable {
         await results.value
     }
 }
+#endif

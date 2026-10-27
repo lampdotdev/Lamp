@@ -10,7 +10,8 @@ struct AddPriorityIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let added = await MainActor.run { TodayModel.shared.addPriority(priority) }
-        return .result(dialog: added ? "Added “\(priority)” to today." : "Today’s list is already full.")
+        // Spelled out: before Xcode 26's SDK a dialog takes only a literal, not words put together.
+        return .result(dialog: IntentDialog(stringLiteral: added ? "Added “\(priority)” to today." : "Today’s list is already full."))
     }
 }
 
