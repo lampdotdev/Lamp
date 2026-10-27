@@ -32,4 +32,25 @@ final class PlacesBuiltApartTests: XCTestCase {
         XCTAssertTrue(Runtime.behind(screen, at: .mac))
         XCTAssertEqual(Runtime.builtFingerprint(android), Runtime.fingerprint(android))
     }
+
+    /// Android's phone and TV places build one APK: one built before each place had its own record gives both a record
+    /// that matches no code, before a build writes the first, so neither is taken for never built.
+    func testAnAPKFromBeforeRecordsMakesBothAndroidPlacesBehind() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("android-places-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Web"), withIntermediateDirectories: true)
+        var screen = LampProject(id: "android-places", name: "Board", exe: "Board", dir: dir)
+        screen.platform = .screen
+        screen.places = [.mac, .android, .androidTV]
+        let apk = GameAndroid.apk(screen)
+        try FileManager.default.createDirectory(at: apk.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: apk)
+        Runtime.recordAndroidBuiltBefore(screen)
+        let phone = screen.at(.android)
+        Runtime.markBuilt(phone, from: Runtime.fingerprint(phone))
+        Runtime.recordAndroidBuiltBefore(screen)
+        XCTAssertFalse(Runtime.behind(screen, at: .android))
+        XCTAssertTrue(Runtime.behind(screen, at: .androidTV))
+        XCTAssertNotNil(Runtime.builtFingerprint(screen.at(.androidTV)))
+    }
 }

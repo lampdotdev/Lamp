@@ -6532,13 +6532,7 @@ final class Store: ObservableObject {
         // A build from before each place had its own record has only its built copy to show for it, which says which place
         // it was for only where no other place shares it: Android's phone and TV places build one APK.
         let androids = app.openPlaces.filter(\.isAndroid).count
-        // Which of the two that APK was built for can't be told, so both are given a record that matches no code, once,
-        // before either has one of its own: each is then behind, and kept current like any place built before.
-        let android = app.openPlaces.filter(\.isAndroid).map(app.at)
-        if androids > 1, android.allSatisfy({ Runtime.builtFingerprint($0) == nil }),
-           let first = android.first, FileManager.default.fileExists(atPath: first.builtURL.path) {
-            for there in android { Runtime.markBuilt(there, from: "built before places had records of their own") }
-        }
+        Runtime.recordAndroidBuiltBefore(app)
         return app.openPlaces.filter { place in
             let there = app.at(place)
             let copy = !(place.isAndroid && androids > 1) && FileManager.default.fileExists(atPath: there.builtURL.path)
@@ -7003,6 +6997,8 @@ final class Store: ObservableObject {
         // Stop pressed, or the app deleted, while they were written: there's no build yet for Stop to end.
         guard exists(project) else { return "The app was deleted." }
         if let owner, owner.stopped || turns[project.id] !== owner { return "Stopped." }
+        // An APK from before each place had its own record is accounted for before this build writes the first of them.
+        Runtime.recordAndroidBuiltBefore(project)
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         // A TV app has nothing to compile: its files are copied where the preview and the packages read them.

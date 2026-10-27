@@ -427,6 +427,16 @@ enum Runtime {
         return built != fingerprint(project)
     }
 
+    /// An APK built before each place had its own record, for an app on both Android places: which of the two it was built
+    /// for can't be told, so both are given a record that matches no code, once, before either has one of its own (a
+    /// build calls this before it writes its record). Each is then behind, and kept current like any place built before.
+    static func recordAndroidBuiltBefore(_ project: LampProject) {
+        let android = project.openPlaces.filter(\.isAndroid).map(project.at)
+        guard project.platform.choosesPlace, android.count > 1, android.allSatisfy({ builtFingerprint($0) == nil }),
+              FileManager.default.fileExists(atPath: android[0].builtURL.path) else { return }
+        for there in android { markBuilt(there, from: "built before places had records of their own") }
+    }
+
     /// Whether the build for one of the app's places is older than its code, or there's none: a place Try On doesn't
     /// point at keeps the build it was last given until it's built again (`Store.updatePlaces`, or opening it there).
     static func behind(_ project: LampProject, at place: Destination) -> Bool { sourcesChanged(project.at(place)) }
