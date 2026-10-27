@@ -69,6 +69,21 @@ final class PlacesTests: XCTestCase {
         }
     }
 
+    /// A page goes wherever one of Lamp's web hosts is, whatever kind of page it is, Android TV among them, and a device
+    /// with none is refused with why: it needs a native version.
+    func testAPageGoesWhereverAHostIs() throws {
+        XCTAssertEqual(Places.pagePlaces, [.mac, .ios, .android, .androidTV, .tv, .device])
+        XCTAssertEqual(Platform.game.target.places, Places.pagePlaces)
+        XCTAssertEqual(Platform.screen.target.places, Places.pagePlaces)
+        XCTAssertEqual(Places.named("android-tv")?.web?.host, Places.named("android")?.web?.host, "one Android host for phones and TVs")
+        let devices = ["mac", "android-tv", "android", "ipad"].compactMap { DeviceWord($0, in: Places.builtIn) }
+        guard case .success(let page) = AppKinds.target(.web, on: devices, in: Places.builtIn) else { return XCTFail("a page on Android TV") }
+        XCTAssertTrue(page.kind.addsPlaces && page.places?.contains(.androidTV) == true)
+        let appleTV = ["mac", "apple-tv"].compactMap { DeviceWord($0, in: Places.builtIn) }
+        guard case .failure(let refusal) = AppKinds.target(.web, on: appleTV, in: Places.builtIn) else { return XCTFail("a page on an Apple TV") }
+        XCTAssertTrue(refusal.reason.contains("needs a native version"), refusal.reason)
+    }
+
     func testAnIntegrationsRowIsWhatItSupports() throws {
         let xbox = try XCTUnwrap(Places.row(for: try shipped("xbox-one").integration))
         XCTAssertTrue(xbox.runs(.web))

@@ -119,7 +119,7 @@ enum DeviceSupport {
 
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        if ScreenKit.isScreen(project) { return ScreenKit.paths }
+        if ScreenKit.isScreen(project) { return ScreenKit.paths(for: project) }
         if project.hasTV { return [TVTemplate.supportFile] }
         // A game's are its kit's, and on the Xbox a three.js game's are the web app's as well.
         if GameKit.isGame(project) { return GameKit.paths(for: project) + (GameKit.engine(project) == .web ? declaredPaths(for: project) : []) }
@@ -384,6 +384,22 @@ enum DeviceSupport {
       // Reaching Lamp
 
       var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
+      // In Lamp's app around the page on Android the app answers the same way, with its own token (LampPageGateway.kt).
+      var gate = window.lampGatewayHost;
+      if (!bridge && gate && typeof gate.postMessage === 'function') {
+        var asked = {}, askId = 0;
+        gate.onmessage = function (e) {
+          var m;
+          try { m = JSON.parse(e.data); } catch (x) { return; }
+          var waiting = m && asked[m.id];
+          if (!waiting) return;
+          delete asked[m.id];
+          waiting({ status: m.status, body: m.body });
+        };
+        bridge = { postMessage: function (m) {
+          return new Promise(function (resolve) { var id = ++askId; asked[id] = resolve; gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout })); });
+        } };
+      }
       var preferred = null;
 
       function routes() {
@@ -478,7 +494,7 @@ enum DeviceSupport {
         var done;
         if (bridge) {
           // The TV preview on the Mac answers for Lamp itself.
-          done = bridge.postMessage({ path: path, body: JSON.stringify(body) }).then(function (r) {
+          done = bridge.postMessage({ path: path, body: JSON.stringify(body), timeout: timeout }).then(function (r) {
             var reply = {};
             try { reply = JSON.parse(r.body) || {}; } catch (e) {}
             return { status: r.status, reply: reply };

@@ -79,8 +79,6 @@ struct Target {
     var otherSystems = false
     /// Its Mac half is built by Xcode for the person's Apple team, so it can't be built without one.
     var macSignedForTeam = false
-    /// Which of Lamp's Android emulators it opens in, where it opens on Android: a phone, or a TV.
-    var androidEmulator: Emulator.Kind = .phone
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {

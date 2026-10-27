@@ -153,11 +153,11 @@ enum AppName {
         private var rows: [Place] { devices.compactMap { Places.named($0) } }
 
         /// The wish names a phone or tablet, Apple's or Android's: what makes Lamp look for the person's phones.
-        var forPhone: Bool { rows.contains { $0.destination == .ios || $0.destination == .android } }
+        var forPhone: Bool { rows.contains { $0.destination == .ios || $0.destination.isAndroid } }
 
         /// The wish names a TV or another device Lamp reaches over the network (one Lamp can't make apps for yet too):
         /// what makes Lamp look on the network for it.
-        var forDevice: Bool { forOtherDevice || rows.contains { $0.destination == .tv || $0.destination == .device } }
+        var forDevice: Bool { forOtherDevice || rows.contains { $0.destination == .tv || $0.destination == .androidTV || $0.destination == .device } }
     }
 
     static func suggest(for brief: String, devices: [Device] = []) async -> Suggestion? {

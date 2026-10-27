@@ -244,6 +244,8 @@ enum TVTemplate {
             try {
               if (platform === 'tizen') tizen.application.getCurrentApplication().exit();
               else if (platform === 'webos') { if (window.webOS && webOS.platformBack) webOS.platformBack(); else window.close(); }
+              // Lamp's app around the page on Android, a phone's or a TV's.
+              else if (window.lampAndroid) lampAndroid.exit();
             } catch (e) {}
           }
           var store = window.LampStore;

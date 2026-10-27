@@ -53,11 +53,6 @@ enum GameKit {
 
     // MARK: Where it's played
 
-    /// The words a game's or a screen's places are given by, in the naming call's `places` and in its entry of
-    /// `make_app_for`'s `apps`, and the place each is.
-    static let placeWords: [String: Destination?] = ["game": nil, "screen": nil, "mac": .mac, "iphone": .ios, "ipad": .ios,
-                                                     "android": .android, "tv": .tv, xbox: .device, xboxKind: .device, "xbox": .device]
-
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
@@ -69,7 +64,7 @@ enum GameKit {
     /// The places a list of devices gives a kind that takes places one at a time (a game, a screen): always the Mac, its
     /// home, and each other one it names that the kind can be.
     static func places(for devices: Set<String>, of kind: Platform = .game) -> [Destination] {
-        let named = Set(devices.compactMap { placeWords[$0] ?? nil })
+        let named = Set(devices.compactMap { Places.pageWords[$0] })
         // The Mac is a game's and a screen's home, whatever else is listed.
         return kind.target.places.filter { $0 == .mac || named.contains($0) }
     }
@@ -87,7 +82,8 @@ enum GameKit {
         switch place {
         case .ios: "iPhone and iPad"
         case .android: "Android"
-        case .tv: "TV"
+        case .androidTV: "Android TV"
+        case .tv: "Samsung or LG TV"
         case .device: "Xbox"
         default: "Mac"
         }
@@ -108,7 +104,10 @@ enum GameKit {
 
     /// The places as the person hears them: "your Mac, your iPhone or iPad and your Xbox".
     static func spoken(_ places: [Destination]) -> String {
-        let names = places.map { $0 == .ios ? "your iPhone or iPad" : $0 == .android ? "your Android phone or tablet" : "your " + placeName($0) }
+        let names = places.map {
+            $0 == .ios ? "your iPhone or iPad" : $0 == .android ? "your Android phone or tablet" : $0 == .androidTV ? "your Google TV, Android TV or Fire TV"
+                : $0 == .tv ? "your Samsung or LG TV" : "your " + placeName($0)
+        }
         return names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
     }
 
@@ -272,7 +271,7 @@ enum GameKit {
                 }
             }
             // On Android too: Lamp's Android app around the page.
-            if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
+            if project.hasAndroid { try GameAndroid.write(for: project) }
             try Template.write(webBuildSh, to: "build.sh", for: project, executable: true)
             try Template.write(webPackageSwift, to: "Package.swift", for: project)
             try Template.write("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n", to: marker, for: project)
@@ -694,7 +693,7 @@ extension Agent {
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
-        return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on an iPhone or iPad, an Android phone and an Xbox too once it's put there", folder: folder)
+        return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played anywhere else a page goes (an iPhone or iPad, an Android phone or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -735,8 +734,8 @@ extension Agent.Rules {
 
     static let gameHeader = """
     You are Lamp's builder agent. The current directory is a game, which Lamp builds on this Mac. Its home is the Mac, where it's an app the person plays in its own window with the keyboard \
-    or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone or \
-    tablet and on the person's Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
+    or a controller; it's played on an iPhone or iPad (touch controls Lamp draws, or a controller), an Android phone, \
+    tablet or TV, a Samsung or LG TV (a TV's remote: its arrows and OK) and on the person's Xbox too once it's put there. It's the same code everywhere: the kit gives each place its screen, controls and \
     sound. You try it in a preview on this Mac, the same code drawn out of sight. The request's device line says where \
     it's played and what that allows: never say it's on a device it isn't on. Read APP.md first for context.
     """
@@ -747,17 +746,18 @@ extension Agent.Rules {
             : gameEdit + gameKit + gameSound + gameBudget + gameTry
     }
 
-    static let gameWebEdit = """
+    static var gameWebEdit: String { """
     - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
     Web/lamp-game.js, Web/lamp-controllers.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/ but for \
     Sources/Native.swift, build.sh, Package.swift and Lamp/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
-    simulator or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. Where else \
-    it's played is the person's to ask for: when they want it on their iPhone, iPad, Android phone or Xbox, call \
-    make_app_for with `devices` every device it's to be played on ("mac", "iphone", "android", "xbox-one"…) and `made` \
-    "web"; it stays the same game, and the wish's other apps stay as they are.
-    """
+    simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
+    and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it somewhere else, call \
+    make_app_for with `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", \
+    "xbox-one"…: a page goes wherever the table of devices gives a web host) and `made` "web"; it stays the same game, \
+    and the wish's other apps stay as they are.
+    """ }
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the
     /// app's own Swift, and LampAI through the app (LampPage.swift).
@@ -769,7 +769,7 @@ extension Agent.Rules {
     LampLocation…; read their doc comments there), and ask for it from the page with \
     `LampNative.call("unanswered", { limit: 30 })`, a Promise of the JSON it returned. Return only what the page \
     shows. AI in the page is LampAI from Web/lamp.js (read it), which reaches Lamp through the app. Both answer only in \
-    the app on the Mac, iPhone and iPad (LampAI on the Xbox too): elsewhere, and in Lamp's preview, \
+    the app on the Mac, iPhone and iPad (LampAI on Android and the Xbox too): elsewhere, and in Lamp's preview, \
     `LampNative.available` is false and the calls reject, so the page shows example content then, never an error. \
     Make these calls once as it opens or from a menu, never every frame; `look_at_app` with `on_device` shows the \
     real thing.
@@ -917,6 +917,14 @@ extension Agent.Rules {
                     + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one THREE.InstancedMesh), MeshStandardMaterial or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
                     + ", textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"))
             }
+        }
+        if places.contains(.tv) {
+            budgets.append((-2, "a Samsung or LG TV's, whose browser draws three.js far slower than any phone: under about 100 draws and 100,000 triangles a frame, "
+                + "textures at most 1024 px, no shadow maps or post-processing, MeshLambertMaterial or cheaper"))
+        }
+        if places.contains(.androidTV) {
+            budgets.append((-1, "a Google TV streamer's or a Fire TV stick's, a phone's chip from years ago drawing through its WebView at 1080p: under about 150 draws "
+                + "and 150,000 triangles a frame, textures at most 1024 px, no shadow maps or post-processing"))
         }
         if places.contains(.android) {
             budgets.append((1, "a mid-range Android phone's, far slower than an iPhone and drawing through its WebView: under about 300 draws and "

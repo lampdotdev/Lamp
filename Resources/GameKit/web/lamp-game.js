@@ -199,8 +199,11 @@ export const sound = {
 const keys = new Set();
 // Only the keyboard's own keys: the Xbox's lamp.js sends the controller as key events too (which aren't trusted, being
 // made by a script), and the controller is read whole through the Gamepad API.
-window.addEventListener('keydown', e => { if (!e.isTrusted) return; keys.add(e.code); if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault(); });
-window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(e.code); });
+// A Samsung or LG TV's remote names its keys only by number: its arrows are the keyboard's, OK is Enter, Back is Escape.
+const REMOTE = { 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown', 13: 'Enter', 10009: 'Escape', 461: 'Escape' };
+const codeOf = e => e.code || REMOTE[e.keyCode] || '';
+window.addEventListener('keydown', e => { if (!e.isTrusted) return; const code = codeOf(e); keys.add(code); if (code.startsWith('Arrow') || code === 'Space' || code === 'Tab') e.preventDefault(); });
+window.addEventListener('keyup', e => { if (e.isTrusted) keys.delete(codeOf(e)); });
 window.addEventListener('blur', () => keys.clear());
 
 // The keyboard as a pad: the keys for each button and for each way a stick or trigger goes, the first the one a

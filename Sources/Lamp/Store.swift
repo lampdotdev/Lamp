@@ -13,11 +13,17 @@ import LampFileLook
 /// chose. How Lamp builds, opens, looks at, uses and quits an app goes by this, so a kind that opens where another
 /// does gets all of that.
 enum Destination: String, Codable {
-    case mac, ios, android, tv, device
+    /// Android TV is Android with a TV's emulator and the person's TVs: an Android TV app opens there, and a page
+    /// opens there in the same Android app as on a phone (`Places`).
+    case mac, ios, android, androidTV = "android-tv", tv, device
 
     /// Where the person's own devices are found to open on (phones, Android devices, TVs), so Lamp looks for them as
     /// it starts when an app could open on one.
-    var listsDevices: Bool { self == .ios || self == .android || self == .tv }
+    var listsDevices: Bool { self != .mac && self != .device }
+    /// Android, on a phone or a TV: built, installed and looked at the same way.
+    var isAndroid: Bool { self == .android || self == .androidTV }
+    /// The Android emulator Lamp opens it in when no device of the person's is chosen.
+    var emulator: Emulator.Kind { self == .androidTV ? .tv : .phone }
 }
 
 /// Which simulator an iOS app opens on. The app itself is built for iPhone and iPad together; Apple TV and Vision Pro
@@ -140,7 +146,7 @@ struct LampProject: Identifiable, Hashable {
     /// was given, so a game played on the Mac alone asks nothing of iOS, and a TV app shown on its TV alone is no Mac app.
     var hasMac: Bool { openPlaces.contains(.mac) }
     var hasIOS: Bool { openPlaces.contains(.ios) }
-    var hasAndroid: Bool { openPlaces.contains(.android) }
+    var hasAndroid: Bool { openPlaces.contains(where: \.isAndroid) }
     var hasTV: Bool { openPlaces.contains(.tv) }
     var hasDevice: Bool { openPlaces.contains(.device) }
     /// Where the app is built for and opened now.
@@ -152,7 +158,7 @@ struct LampProject: Identifiable, Hashable {
     /// app for both goes through it only while that's where it opens.
     var onIOS: Bool { destination == .ios }
     /// An Android app: the emulator, or the person's own Android device (`device`, its adb serial).
-    var onAndroid: Bool { destination == .android }
+    var onAndroid: Bool { destination.isAndroid }
     /// A TV app: the TV preview on this Mac, or one of the person's TVs (`device`, its id in `TVs`).
     var onTV: Bool { destination == .tv }
     /// An app for a device of the person's that Lamp reaches through its integration (`device`, the device's id there).
@@ -2029,19 +2035,22 @@ final class Store: ObservableObject {
 
     /// Which Android device an Android app opens on: the person's own, by its serial, or nil for the emulator.
     /// The copy on the old one is closed, so Play and Stop are about the one chosen.
-    func setAndroidDevice(_ project: LampProject, _ serial: String?) {
-        // A game has Android among its places, and may be pointed at another of them now.
-        let reaches = project.onAndroid || (GameKit.isGame(project) && project.openPlaces.contains(.android))
-        guard reaches, project.device != serial || !project.onAndroid, begin(project) != nil else { return }
+    /// `place` is Android or Android TV: which emulator is meant when `serial` is nil, and for a device, whether it's a
+    /// TV. A page with both opens on either; a kind with one is given the one it has.
+    func setAndroidDevice(_ project: LampProject, _ serial: String?, place: Destination = .android) {
+        // A game or a screen has Android among its places, and may be pointed at another of them now.
+        let places = project.openPlaces.filter(\.isAndroid)
+        guard let chosen = places.contains(place) ? place : places.first,
+              project.device != serial || project.destination != chosen, begin(project) != nil else { return }
         var changed = project
         changed.device = serial
-        changed.chosen = .android
+        changed.chosen = chosen
         try? Template.saveMeta(changed)
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
         syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
         let name = devices.first(where: { $0.udid == serial })?.name
         let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
-            ?? "\(changed.name) will open in the emulator from now on."
+            ?? "\(changed.name) will open in the \(chosen == .androidTV ? "TV emulator" : "emulator") from now on."
         Task {
             await quit(project)
             log(changed, .status, said)
@@ -7992,7 +8001,7 @@ final class Store: ObservableObject {
     private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let serial: String
-        let kind = project.platform.target.androidEmulator
+        let kind = project.destination.emulator
         if let chosen = project.device {
             await refreshAndroidDevices()
             let found = devices.first { $0.udid == chosen }
@@ -9935,7 +9944,7 @@ final class Store: ObservableObject {
         // A device's app only once it's on a device, or going there now: one made and never put on one would have macOS
         // ask about the local network as Lamp opens, for nothing.
         gateway?.setLocalNetwork(everyApp.contains {
-            (($0.hasIOS || $0.platform.reaches(.android) || $0.onTV) && $0.device != nil)
+            (($0.hasIOS || $0.hasAndroid || $0.onTV) && $0.device != nil)
                 || ($0.onDevice && !DeviceSupport.libraries(for: $0).isEmpty && (puttingOnDevices.contains($0.id) || DeviceApps.wentOnADevice($0)))
         })
         PhoneSites.sync(projects)
