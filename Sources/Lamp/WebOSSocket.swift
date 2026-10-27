@@ -156,11 +156,15 @@ final class WebOSSocket: NSObject, SetupConnection, URLSessionDelegate, @uncheck
     private var currentCertificate: String? { lock.lock(); defer { lock.unlock() }; return seen }
 
     private func keep(_ kept: Kept) throws {
+        // A TV that knows Lamp hands back the same key each time: nothing to write.
+        guard self.kept != kept else { return }
         try FileManager.default.createDirectory(at: keyURL.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         // Readable by this user alone from the moment it exists, then moved into place.
         let staged = keyURL.deletingLastPathComponent().appendingPathComponent(".staging-\(UUID().uuidString)")
-        let data = try JSONEncoder().encode(kept)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let data = try encoder.encode(kept)
         let file = Darwin.open(staged.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard file >= 0 else { throw SetupConnectionError.failed("Lamp couldn't keep the TV's key") }
         let written = data.withUnsafeBytes { Darwin.write(file, $0.baseAddress, $0.count) }
