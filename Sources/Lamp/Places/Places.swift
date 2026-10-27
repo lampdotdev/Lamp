@@ -56,6 +56,8 @@ struct Place: Equatable {
     /// Whether its `noWeb` is a gap of Lamp's own (the device shows pages, but Lamp has no host for one there yet) rather
     /// than something the device can't do, so "not yet" is never said as "can't".
     var noHostYet = false
+    /// The same for its `noNative`: the device runs its own apps, but Lamp has no recipe that builds one there yet.
+    var noRecipeYet = false
     /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
     /// own does; nil when Lamp doesn't know, which a page there can't be built without.
     let input: Input?
@@ -135,7 +137,8 @@ enum Places {
               skills: ["tv-design"], input: .generic),
         Place(id: "tv", name: "Samsung / LG TV", words: ["tv"], destination: .tv,
               web: .init(host: .tvBrowser, reach: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)"),
-              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs", skills: ["tv-design"], input: .generic),
+              native: nil, noNative: "Lamp has no recipe for a native Samsung or LG TV app yet", skills: ["tv-design"],
+              noRecipeYet: true, input: .generic),
     ]
 
     /// Where a page can open: every place one of Lamp's web hosts is, in the table's order, and last an integration's own
@@ -164,7 +167,8 @@ enum Places {
                      native: makes.contains(.native) ? .init(code: .integration, reach: reach) : nil,
                      // The device's own words for what it runs, when it says, so a refusal is the real reason.
                      noWeb: integration.runs.map { $0 + ", so a page there needs a native version" } ?? "it has no web engine Lamp can reach, so a page there needs a native version", noNative: integration.runs ?? "its integration declares no native app",
-                     skills: integration.skills ?? [], input: integration.input)
+                     // A device that doesn't say what it runs may well run its own apps: Lamp only has no recipe for one.
+                     skills: integration.skills ?? [], noRecipeYet: integration.runs == nil, input: integration.input)
     }
 
     /// The makes an integration's `supports` names, or nil when it names none (or one Lamp doesn't know).
@@ -227,15 +231,19 @@ enum Places {
 
     // MARK: Checking a request
 
-    /// Why an app of this make can't be on these devices, quoting each row that refuses it; nil when every one runs it.
+    /// Why an app of this make can't be on these devices, quoting each row that refuses it, and saying which refusals are
+    /// Lamp's own gaps rather than the device's (`noHostYet`, `noRecipeYet`); nil when every one runs it.
     /// A word no row has is left to the caller, which already says what it doesn't know.
     static func refusal(make: Place.Make, devices: Set<String>, in table: [Place] = all) -> String? {
         let refused = devices.sorted().compactMap { named($0, in: table) }.filter { !$0.runs(make) }
         guard !refused.isEmpty else { return nil }
         return refused.map { place in
             let why = make == .web ? place.noWeb : place.noNative
+            let yet = make == .web ? place.noHostYet : place.noRecipeYet
             let other = make == .web ? place.native.map { "; it runs a native app: \($0.reach)" } : place.web.map { "; it runs a web app: \($0.reach)" }
-            return "\(place.name) can't run a \(make.rawValue) app (\(why ?? "Lamp has no way to build one there"))\(other ?? "")."
+            // A gap of Lamp's own is said as Lamp's, so the agent never tells the person their device can't do it.
+            let refused = yet ? "Lamp can't build a \(make.rawValue) app for \(place.name) yet" : "\(place.name) can't run a \(make.rawValue) app"
+            return "\(refused) (\(why ?? "Lamp has no way to build one there"))\(other ?? "")."
         }.joined(separator: " ")
     }
 }

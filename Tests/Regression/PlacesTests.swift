@@ -57,6 +57,23 @@ final class PlacesTests: XCTestCase {
         XCTAssertNil(Places.refusal(make: .web, devices: ["iphone", "mac"]))
     }
 
+    /// Where Lamp only lacks a host or a recipe (a native Samsung or LG TV app, a page on Vision Pro, a native app for a
+    /// device whose integration doesn't say what it runs), the refusal says Lamp can't build it yet, never that the
+    /// device can't run it; a device that really can't (an Apple TV's page) is still said so.
+    func testLampsOwnGapsAreRefusedAsLampsNotTheDevices() throws {
+        let tv = Places.refusal(make: .native, devices: ["tv"]) ?? ""
+        XCTAssertTrue(tv.hasPrefix("Lamp can't build a native app for Samsung / LG TV yet"), tv)
+        XCTAssertFalse(tv.contains("can't run"), tv)
+        let vision = Places.refusal(make: .web, devices: ["vision-pro"]) ?? ""
+        XCTAssertTrue(vision.hasPrefix("Lamp can't build a web app for Vision Pro yet"), vision)
+        XCTAssertTrue(Places.refusal(make: .web, devices: ["apple-tv"])?.hasPrefix("Apple TV can't run a web app") == true)
+        let table = try ["xbox-one", "roku"].compactMap { Places.row(for: try shipped($0).integration) }
+        let xbox = Places.refusal(make: .native, devices: ["xbox-one"], in: table) ?? ""
+        XCTAssertTrue(xbox.hasPrefix("Lamp can't build a native app for"), xbox)
+        let roku = Places.refusal(make: .web, devices: ["roku"], in: table) ?? ""
+        XCTAssertTrue(roku.contains("can't run a web app") && roku.contains("BrightScript"), "a Roku's own limit stays its own: \(roku)")
+    }
+
     /// Every stored kind reads back as devices that, asked for again as it's made, plan the same kind: nothing changes.
     func testEveryStoredKindReadsBackAsItself() throws {
         let dir = URL(fileURLWithPath: "/tmp/places-kinds")

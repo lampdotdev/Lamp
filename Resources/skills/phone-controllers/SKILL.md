@@ -15,10 +15,10 @@ depends on how an app is made and run, not on the device alone. What follows is 
 
 - **Several people's** (family, friends, a class): each phone has to join with nothing to install. That's a page for
   phones: they scan a QR code on the screen and play in their browser. The phone-pages skill says how to build it.
-- **Only the person's own phone**: an app of the wish's own on their iPhone or Android phone can be the controller
-  too, and does what a page does poorly (the phone's hardware, haptics, data the phone keeps). It joins as a player the
-  way a phone's page does (`LampController` over `LampWish`). The cost is installing it, the way the table says for
-  that phone. A page still works for their phone too.
+- **Only the person's own phone**: an app of the wish's own on their iPhone or Android phone, made natively, is the
+  controller: it has the phone's own feel, hardware and haptics, and keeps its data. It joins as a player with
+  `LampController` over `LampWish`. Installing it goes the way the table says for that phone. A page works for their
+  phone too, when they ask for one.
 
 ## What hosts phones today
 
@@ -45,8 +45,10 @@ played with a controller, the remote or touch.
 
 ## A page or an app on the phones?
 
-Unless the phones are only the person's own and the app needs what only an app on the phone does, a page: nothing to
-install, and any phone on the Wi‑Fi joins. The web-or-native skill has the rest of that choice.
+For the person's own phone, an app of the wish's on it, made natively, where the table gives that phone a native app.
+For several people's phones joining one TV app, a page: nothing to install, and any phone on the Wi‑Fi joins (that's
+one app shared across devices, the case where web-or-native chooses web). The web-or-native skill has the rest of that
+choice.
 
 ## Away from home
 
