@@ -296,7 +296,7 @@ public struct SidebarBanner: Codable, Equatable {
 
 /// A new app's first build, as its plan's parts: each a heading with its mark and how long it took, with what was said
 /// and done in it under it, the part going on with the turn's live line at its foot, the parts to come greyed, and
-/// Lamp's own last part (building and opening it). Once the app is made it folds to one line, with the answer under it.
+/// Lamp's own last part (building and opening it). Once the app is made each part folds to a line of its own, with the answer under them.
 public struct SidebarBuild: Codable, Equatable {
     public enum State: String, Codable { case done, now, later }
 
@@ -327,7 +327,8 @@ public struct SidebarBuild: Codable, Equatable {
     public var finishing: State?
     public var finishingActivity: String?
     public var finishingSince: Date?
-    /// Made: one line ("Built it in 3 parts"), its time, and the agent's answer under it.
+    /// Made: each part as one line that opens to it, and the agent's answer under them. `foldTitle` ("Built it in 3 parts")
+    /// names the build as a whole.
     public var folded: Bool
     public var foldTitle: String
     public var time: String?

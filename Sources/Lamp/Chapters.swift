@@ -3,7 +3,7 @@ import LampSidebarKit
 
 /// A new app's first build in the chat: the parts of the agent's plan (its `plan` tool) are the chat's chapters, each a
 /// heading with its tick and how long it took, with what the agent said during it and its steps, folded, under it. The
-/// parts still to come wait greyed below. Once the app is made it all folds to one line ("Built it in 3 parts · 4 min 29 s"), with the agent's answer under it.
+/// parts still to come wait greyed below. Once the app is made each part folds to one line of its own in the chat (its tick, title and time), with the agent's answer under them.
 /// It took the place of a card above the chat, whose checklist and steps took over the window and left the agent's
 /// own words and its question lost below it.
 ///
@@ -35,7 +35,7 @@ enum Chapters {
         /// The whole chat, for which question still waits.
         let chat: [LogLine]
 
-        /// The app came of it, with nothing gone wrong after: the build folds to one line.
+        /// The app came of it, with nothing gone wrong after: each part folds to one line.
         let built: Bool
         var folded: Bool { built }
 
@@ -57,7 +57,7 @@ enum Chapters {
             return end.map { max(0, $0.timeIntervalSince(start)) }
         }
 
-        /// "Built it in 3 parts".
+        /// "Built it in 3 parts": what the build is called where it's named as a whole, and a part with no title of its own.
         var foldTitle: String { titles.count == 1 ? "Built it" : "Built it in \(titles.count) parts" }
 
         /// The run's whole time, from its summary ("4 min 29 s").

@@ -277,7 +277,6 @@ extension ChatLook {
     public struct BuildChapters<Part: View>: View {
         let build: SidebarBuild
         @ViewBuilder let part: (SidebarBuild.Part) -> Part
-        @State private var open = false
 
         public init(build: SidebarBuild, @ViewBuilder part: @escaping (SidebarBuild.Part) -> Part) {
             self.build = build
@@ -287,20 +286,58 @@ extension ChatLook {
         public var body: some View {
             VStack(alignment: .leading, spacing: 0) {
                 if build.folded {
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) { open.toggle() }
-                    } label: {
-                        ChapterHeading(state: .done, number: 0, title: build.foldTitle, time: build.time, chevron: open)
+                    // Made: each part is a fold of its own in the chat, as a finished turn's steps are, rather than
+                    // the parts packed inside one fold for the whole build.
+                    ForEach(Array(build.parts.enumerated()), id: \.offset) { index, piece in
+                        PartFold(title: piece.title ?? build.foldTitle, time: piece.time, first: index == 0) {
+                            part(piece)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .pointingHand()
-                    .help(open ? "Hide the parts" : "Show the parts")
-                    .accessibilityHint(open ? "Hides the parts" : "Shows the parts")
-                    if open { chapters.padding(.leading, ChatLook.stepSymbolRoom).transition(.opacity) }
                     if let answer = build.answer { ChatLook.AgentText(answer).padding(.top, 12) }
                 } else {
                     chapters
                 }
+            }
+        }
+
+        /// A done part as one line, its tick, title and time, that opens to what was said and done in it.
+        private struct PartFold<Content: View>: View {
+            let title: String
+            let time: String?
+            let first: Bool
+            @ViewBuilder let content: () -> Content
+            @State private var open = false
+
+            var body: some View {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { open.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, .green).frame(width: 16)
+                            Text(title).fixedSize(horizontal: false, vertical: true)
+                            if let time { Text(time).font(.caption).foregroundStyle(.tertiary).fixedSize() }
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(open ? 90 : 0))
+                        }
+                        .font(ChatLook.stepFont)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, ChatLook.stepIndent)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHand()
+                    .help(open ? "Hide this part" : "Show this part")
+                    if open {
+                        content()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4).padding(.bottom, 8)
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.top, first ? 0 : 8)
             }
         }
 

@@ -1,13 +1,19 @@
-// Lamp's bridge between a page and the app around it, for a game drawn with three.js and a screen, on the Mac, the
-// iPhone and the iPad. Lamp writes this file before every build.
+// Lamp's common host for a page, on the Mac, the iPhone and the iPad: whatever the page is (a game drawn with three.js,
+// an app), the app around it serves it, shows it and answers it here. Lamp writes this file before every build.
 //
-// The page is Web/ in a web view of the app's own. What it asks of Lamp (LampAI in Web/lamp.js) goes through this
+// The page is Web/ in a web view of the app's own, served from the app's bundle at an address of its own
+// (<scheme>://app/, `LampPageFiles`), never as a file, so it reads its own files with fetch and loads its modules; the
+// address is the app's for good, since what the page saves (localStorage, IndexedDB) is kept under it. What it asks of Lamp (LampAI in Web/lamp.js) goes through this
 // app with the app's own token, never the page's; what it asks of this device (`LampNative.call` in lamp.js: the
 // person's mail, calendar, reminders, photos…) is answered by Swift in Sources/Native.swift, the app's own code, with
 // Lamp's building blocks in LampSupport.swift. Only the app's own page, in its main frame, is answered.
 import Combine
 import Foundation
+import UniformTypeIdentifiers
 import WebKit
+#if os(iOS)
+import UIKit
+#endif
 
 /// Calls the page can make of this device, by name. Register each in `Native.register()` (Sources/Native.swift):
 ///
@@ -278,5 +284,77 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let line = message.body as? String else { return }
         FileHandle.standardError.write(Data((line.prefix(2000) + "\n").utf8))
+    }
+}
+
+// MARK: - Serving and showing the page
+
+/// The page's files, from the app's bundle (Web/), each a plain file inside it, at <scheme>://app/.
+final class LampPageFiles: NSObject, WKURLSchemeHandler {
+    let scheme: String
+    private let folder = Bundle.main.resourceURL?.appendingPathComponent("Web")
+
+    init(scheme: String) { self.scheme = scheme }
+
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
+        guard let data = file(at: url) else {
+            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!)
+            task.didFinish()
+            return
+        }
+        let ext = url.pathExtension.lowercased()
+        let type = ["js": "text/javascript", "mjs": "text/javascript", "html": "text/html", "css": "text/css", "json": "application/json",
+                    "wasm": "application/wasm"][ext] ?? UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
+        task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                        headerFields: ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": "no-store"])!)
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+
+    private func file(at url: URL) -> Data? {
+        guard let folder, url.host == "app" else { return nil }
+        let root = folder.standardizedFileURL.path + "/"
+        let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
+        let file = folder.appendingPathComponent(path).standardizedFileURL
+        guard file.path.hasPrefix(root), let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+        return try? Data(contentsOf: file)
+    }
+}
+
+/// The web view the page is shown in: its sound and pictures without a tap first, nothing to scroll or bounce.
+@MainActor enum LampPageView {
+    /// A page that logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
+    static func make(_ files: LampPageFiles, catchErrors: Bool = true) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(files, forURLScheme: files.scheme)
+        // LampAI and the page's calls of this device, and its console into the app's log.
+        LampPage.attach(to: configuration, scheme: files.scheme, catchErrors: catchErrors)
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        #if os(iOS)
+        configuration.allowsInlineMediaPlayback = true
+        #endif
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        #if os(macOS)
+        view.setValue(false, forKey: "drawsBackground")
+        #else
+        view.isOpaque = false
+        view.backgroundColor = .black
+        view.scrollView.isScrollEnabled = false
+        view.scrollView.bounces = false
+        view.scrollView.contentInsetAdjustmentBehavior = .never
+        #endif
+        view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
+        return view
+    }
+
+    /// A page laid out at a fixed size of its own (`canvas`), zoomed to the space it has; nil leaves it at the window's.
+    static func fit(_ view: WKWebView, in size: CGSize, canvas: CGSize?) {
+        guard let canvas, size.width > 0, size.height > 0 else { return }
+        let zoom = min(size.width / canvas.width, size.height / canvas.height)
+        if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
     }
 }

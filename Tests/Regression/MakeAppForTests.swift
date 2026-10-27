@@ -133,7 +133,8 @@ final class MakeAppForTests: XCTestCase {
             default: nil
             }
         }
-        XCTAssertEqual(kind(try make(.web, ["mac", "tv"], in: [])), .screen)
+        // A new web app is never made a screen: only a wish's own screen stays one (testAnIPadAskedForIsAnIPad).
+        XCTAssertNotEqual(kind(try make(.web, ["mac", "tv"], in: [])), .screen)
         XCTAssertEqual(kind(try make(.web, ["tv"], in: [])), .tv)
         XCTAssertEqual(kind(try make(.web, ["iphone", "android"], in: [])), .game)
         XCTAssertEqual(kind(try make(.native, ["android-tv"], in: [])), .androidTV)

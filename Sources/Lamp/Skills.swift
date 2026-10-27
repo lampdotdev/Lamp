@@ -63,6 +63,35 @@ enum Skills {
         everywhere + platform.target.guidance.skills() + (platform == .device ? [] : ["wish-links"]) + (sidebar ? ["chrome-sidebar"] : [])
     }
 
+    /// The skills the devices an app is on offer it (`Place.skills`: the TV rows' tv-design), for any kind of app and
+    /// either make, as a rule of its prompt; empty when its devices offer none. Optional guidance, listed like the
+    /// kind's own skills, never a rule the app must follow.
+    static func forDevices(of project: LampProject, from skills: [String: Skill] = all) -> String {
+        forDevices(of: [project], from: skills)
+    }
+
+    /// For a wish's apps together, each skill once: its prompt is every app's, the one in its own folder and those in
+    /// folders of their own alike, so a TV app beside a Mac app is offered a TV's design in every turn.
+    static func forDevices(of apps: [LampProject], from skills: [String: Skill] = all) -> String {
+        forDevices(rows: apps.reduce(into: Set<String>()) { $0.formUnion(AppKinds.member(of: $1).target.rows) }, from: skills)
+    }
+
+    static func forDevices(rows: Set<String>, in table: [Place] = Places.all, from skills: [String: Skill] = all) -> String {
+        let listed = Places.skills(rows: rows, in: table).compactMap { skills[$0] }
+        guard !listed.isEmpty else { return "" }
+        return "- Skills for the devices it's on, there when they help with what it shows there. Open one with `read_skill` before designing for that device:\n"
+            + listed.map { "  • \($0.name): \($0.description)\n" }.joined()
+    }
+
+    /// What `make_app_for` adds to its answer when an app goes on a device that offers a skill it wasn't on before:
+    /// the skill's name, which the prompt the turn began with may not list.
+    static func forNewDevices(_ rows: Set<String>, had: Set<String> = []) -> String {
+        let new = Places.skills(rows: rows).filter { !Places.skills(rows: had).contains($0) }
+        guard !new.isEmpty else { return "" }
+        return "For what it shows on the devices it's on now, " + new.map { "the \($0) skill" }.joined(separator: " and ")
+            + " (`read_skill`) says how to design for them, when it helps."
+    }
+
     /// The skills every prompt offers, whatever the app is now: how an app is made (web or native) and on which
     /// devices, games of every kind, 3D in a page, web apps, and phones as controllers are the agent's to choose for
     /// any request, so their guidance can't wait for the app to be of a kind that has them.

@@ -20,6 +20,14 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
     /// Which TV the window is for now: work started for another (a check, a connection, a sign-in) that ends after
     /// the person moved on is dropped, so its result can't stand for this TV or resume its Play.
     private var selection = UUID()
+    /// Do It for Me: the steps of the skill the device table names for the TV's system, run for this TV.
+    let guided = GuidedSetup()
+    private var following: AnyCancellable?
+
+    override init() {
+        super.init()
+        following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+    }
 
     enum Step: CaseIterable { case developerMode, connected, permission }
 
@@ -41,7 +49,22 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
     var next: Step? { Step.allCases.first { !passed.contains($0) } }
     var ready: Bool { next == nil && record != nil }
 
+    /// The steps Do It for Me follows for this TV, when its system has a setup skill that can be followed.
+    var guide: SetupSteps? {
+        guard let record, let skill = Places.setupSkill(row: "tv", system: record.os),
+              case .success(let steps) = SetupSteps.parse(skill: skill.body) else { return nil }
+        return steps
+    }
+
+    func doItForMe() {
+        guard let record, let steps = guide, working == nil,
+              let connection = SetupConnections.make(steps.connection, address: record.address, id: record.id) else { return }
+        problem = nil
+        guided.start(steps, name: record.name, connection: connection)
+    }
+
     func show(_ id: String, then: (() -> Void)? = nil) {
+        if record?.id != id { guided.cancel() }
         if record?.id != id || working == nil { selection = UUID() }
         record = TVs.record(id)
         waiting = then
@@ -124,6 +147,7 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     /// Closed with its own button or the title bar's: what was waiting for this TV (Play) doesn't go ahead later.
     func windowWillClose(_ notification: Notification) {
+        guided.cancel()
         waiting = nil
         selection = UUID()
     }
@@ -177,7 +201,8 @@ struct TVSetupView: View {
                 Spacer()
                 Button(model.ready ? "Done" : "Close") { model.close() }.keyboardShortcut(model.ready ? .defaultAction : .cancelAction)
                 if let label = buttonLabel {
-                    Button(label) { model.act() }.keyboardShortcut(.defaultAction).disabled(model.working != nil)
+                    Button(label) { model.act() }.keyboardShortcut(.defaultAction)
+                        .disabled(model.working != nil || (model.guided.running && !model.guided.atPassphrase))
                 }
             }
             .padding(.top, 20)
@@ -220,6 +245,37 @@ struct TVSetupView: View {
         return "On the TV, install Developer Mode from the LG Content Store and sign in to it with an LG developer account (free, from LG's developer site). Turn Dev Mode Status on and let the TV restart, then open Developer Mode again and turn Key Server on. Enter the passphrase it shows here."
     }
 
+    /// Do It for Me as it goes: what's done, what Lamp is doing, and what the person does now on the TV.
+    private var guide: some View {
+        let guided = model.guided
+        return VStack(alignment: .leading, spacing: 6) {
+            ForEach(guided.lines) { line in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    switch line.state {
+                    case .doing: ProgressView().controlSize(.mini)
+                    case .done: Image(systemName: "checkmark").foregroundStyle(.green)
+                    case .note: Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                    }
+                    Text(line.text).foregroundStyle(line.state == .done ? .secondary : .primary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let ask = guided.ask {
+                Text(ask).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
+            }
+            if let failure = guided.failure {
+                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                if let button = guided.button { Button(button) { guided.confirm() } }
+                if let link = guided.link { Button(link.title) { NSWorkspace.shared.open(link.url) } }
+                if guided.failure != nil { Button("Try Again") { model.doItForMe() } }
+                // A way back to the steps in words, whatever the TV does: the guide stops, and the passphrase and
+                // Connect are the person's again.
+                if !guided.atPassphrase { Button("Do It Myself") { guided.cancel() } }
+            }
+        }
+    }
+
     @ViewBuilder
     private func row(_ step: TVSetup.Step) -> some View {
         let passed = model.passed.contains(step)
@@ -233,8 +289,18 @@ struct TVSetupView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title(step, samsung: samsung)).font(current ? .headline : .body).fontWeight(current ? .semibold : .medium)
                 if current, let record = model.record {
-                    Text(instructions(step, record: record)).fixedSize(horizontal: false, vertical: true)
-                    if !samsung {
+                    if model.guided.started {
+                        guide
+                    } else {
+                        Text(instructions(step, record: record)).fixedSize(horizontal: false, vertical: true)
+                        if model.guide != nil {
+                            HStack(spacing: 8) {
+                                Button("Do It for Me") { model.doItForMe() }.disabled(model.working != nil)
+                                Text("Lamp opens each screen on the TV; you press the buttons.").font(.callout).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if !samsung, !model.guided.running || model.guided.atPassphrase {
                         TextField("Passphrase", text: $model.passphrase).textFieldStyle(.roundedBorder).frame(width: 160)
                     }
                 }

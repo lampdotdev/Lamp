@@ -1,21 +1,17 @@
 import Foundation
 
-/// Screens: Lamp's own kind of app (`Platform.screen`) for something shown full screen and glanced at from across a room:
-/// a family calendar, a photo album, a dashboard, a scoreboard, a clock. It's a page in `Web/` with the TV app's
-/// `Web/lamp.js` (`TVTemplate`: LampAI, LampStore and LampAssets for the web, a remote's keys, focus moved with the
-/// arrows), and it's shown wherever it's been put (`LampProject.places`). The page fills whatever it's shown on, as a web
-/// page fills a browser: a TV, a Mac window of any size, an iPad either way up, a phone, a photo frame. A screen made
-/// before that is laid out at a fixed 1920x1080 (its viewport says so, `fillsAnyShape`), and is still zoomed to fit.
+/// Screens, as Lamp once made them (`Platform.screen`): a web app, a page in `Web/` with the TV app's `Web/lamp.js`
+/// (`TVTemplate`), shown wherever it's been put (`LampProject.places`). No new app is made one: what an app is (a game or
+/// an app) and how it's made are the agent's to choose, and designing for a TV is the tv-design skill's, offered by
+/// the TV rows of the table of devices (`Place.skills`) to any app on a TV. This keeps the screens already made loading,
+/// building and restoring as they were: their folder and marker, their identity, and their page at its own address
+/// (lamp-screen://app/), where its saved data is.
 ///
-/// Its home is the Mac: a Mac app in the person's Apps like any other, with a little Swift of Lamp's own around the page
-/// (`LampScreen.swift` and LampSupport.swift, so it has the wand and the chat beside it), which zooms the page to the
-/// window (`LampScreenPage.fit`) and answers its LampAI calls for it (the `lampGateway` bridge, with the app's own token). The same app goes on
-/// an iPhone or iPad. On Android (a tablet, or a photo frame running Android) it's Lamp's own Android app around the
-/// page, the one a three.js game has there (`GameAndroid`), kept awake and fitted to the screen. On a Samsung or LG TV it's the TV app's own way there (`TVs`), and on the Xbox the integration's
-/// web app ("xbox-one"), each reaching Lamp as a TV app does.
-///
-/// Wherever it's shown, the agent looks at it in the TV preview on the Mac, the same page with a remote's keys, at any
-/// shape it asks for (`look_at_app`'s `shape`), so it never waits for a build of the Mac app to see a change.
+/// On the Mac, an iPhone and an iPad it's Lamp's common app around a page (`GameKit/apple/LampWebApp.swift`, with
+/// LampPage.swift and LampSupport.swift), given the screen's address. The page fills whatever it's shown on, as a web page fills a
+/// browser; one made at a fixed 1920x1080 (its viewport says so, `fillsAnyShape`) is zoomed to the window instead. On Android it's Lamp's Android app around the page, on a Samsung or LG TV the TV app's own way there (`TVs`),
+/// and on the Xbox the integration's web app ("xbox-one"). Wherever it's shown, the agent looks at it in the TV preview
+/// on the Mac (`Target.looksInTVPreview`), at any shape it asks for (`look_at_app`'s `shape`), so it never waits for a build of the Mac app to see a change.
 enum ScreenKit {
     /// What marks a screen's folder, kept with the code so a version restored brings the kind back with it.
     static let marker = ".lamp-screen"
@@ -36,7 +32,7 @@ enum ScreenKit {
     }
 
     /// A page laid out at a fixed 1920x1080: its viewport meta names that width (Lamp's TV scaffold's
-    /// `width=1920, height=1080`). The app around a screen reads the same thing (`LampScreenPage.fixed`).
+    /// `width=1920, height=1080`). The app around it is given that canvas only then (`host`).
     static func isFixed(_ page: String) -> Bool {
         page.range(of: #"<meta[^>]*name=["']viewport["'][^>]*width\s*=\s*1920"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
@@ -53,13 +49,19 @@ enum ScreenKit {
         var errorDescription: String? { message }
     }
 
-    private static var host: String? {
-        Bundle.main.resourceURL.flatMap { try? String(contentsOf: $0.appendingPathComponent("GameKit/apple/LampScreen.swift"), encoding: .utf8) }
+    /// Where a screen's page is served, which is where its saved data is kept: never changed for a screen already made.
+    static let scheme = "lamp-screen"
+
+    /// Lamp's common app around a page, as a screen has it: at the screen's own address, its page laid out at the
+    /// window's size, or at 1920x1080 and zoomed for a page made that way (`fillsAnyShape`). It's still written as
+    /// Sources/LampScreen.swift, the file a screen's build and every version of it know.
+    private static func host(for project: LampProject) -> String? {
+        GameKit.webApp(scheme: scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
     }
 
     /// Lamp's own files, written before every turn and build: the page's script, the Swift around it, what builds it.
     static func write(for project: LampProject) throws {
-        guard let host else { throw Failure(message: "This copy of Lamp is missing its screen kit.") }
+        guard let host = host(for: project) else { throw Failure(message: "This copy of Lamp is missing its screen kit.") }
         try TVTemplate.writeOwnedFiles(for: project)
         try Template.write(host, to: "Sources/LampScreen.swift", for: project)
         try GameKit.writePage(for: project)
@@ -149,9 +151,9 @@ enum ScreenKit {
     static let appMd = """
     # {{NAME}}
 
-    A screen built and changed with Lamp: a page in Web/ (HTML, CSS and JavaScript) shown full screen and glanced at from
-    across a room, filling whatever it's shown on. It's a Mac app shown in its own window, and goes on an iPhone, an iPad, an Android tablet or photo
-    frame, a Samsung or LG TV or an Xbox too once it's put there. Lamp looks at it in its TV preview on the Mac.
+    A web app built and changed with Lamp: a page in Web/ (HTML, CSS and JavaScript) shown full screen, filling whatever
+    it's shown on. It's a Mac app shown in its own window, and goes on an iPhone, an iPad, an Android device, a Samsung
+    or LG TV or an Xbox too once it's put there. Lamp looks at it in its TV preview on the Mac.
 
     ## What it does
     Nothing yet: fresh scaffold.
@@ -180,8 +182,10 @@ enum ScreenKit {
     }
 
     static var stamp: String {
-        (host ?? "") + (GameKit.page?.text ?? "") + buildSh + packageSwift + TVTemplate.lampJS
-            + GameAndroid.stamp
+        // Both ways the app around the page is written: a change to either is a change of Lamp's.
+        let hosts: String = (GameKit.webApp(scheme: scheme, canvas: nil) ?? "") + (GameKit.webApp(scheme: scheme, canvas: (1920, 1080)) ?? "")
+        let rest: String = (GameKit.page?.text ?? "") + buildSh + packageSwift
+        return hosts + rest + TVTemplate.lampJS + GameAndroid.stamp
     }
 }
 
@@ -206,7 +210,7 @@ extension Agent {
         let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
                      Skills.index(Skills.offered(.screen))]
-        return (Rules.partHeader("a screen, a page in Web/ shown full screen and glanced at from across a room, at home on the Mac and shown anywhere else a page goes (an iPhone or iPad, an Android tablet or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
+        return (Rules.partHeader("a web app, a page in Web/ shown full screen, at home on the Mac and shown anywhere else a page goes (an iPhone or iPad, an Android tablet or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -216,13 +220,12 @@ extension Agent {
 
 extension Agent.Rules {
     static let screenHeader = """
-    You are Lamp's builder agent. The current directory is a screen: a page (HTML, CSS and JavaScript in Web/) shown \
-    full screen and glanced at from across a room, the same page wherever it's shown, filling the screen it's on. Its \
-    home is the person's Mac, where it's an app in its own window; it's shown anywhere else a page goes (an iPhone or \
-    iPad, an Android tablet or photo frame, a Google TV, Android TV or Fire TV, a Samsung or LG TV, the person's Xbox) \
-    once it's put there. You try it in the TV preview on this Mac, the same page with a remote's keys, at any shape. \
-    The request's device line says where it's shown: never say it's on a device it isn't on. Read APP.md first for \
-    context.
+    You are Lamp's builder agent. The current directory is a web app: a page (HTML, CSS and JavaScript in Web/) shown \
+    full screen, the same page wherever it's shown, filling the screen it's on. Its home is the person's Mac, \
+    where it's an app in its own window; it's shown anywhere else a page goes (an iPhone or iPad, an Android tablet or \
+    photo frame, a Google TV, Android TV or Fire TV, a Samsung or LG TV, the person's Xbox) once it's put there. You try \
+    it in the TV preview on this Mac, the same page with a remote's keys, at any shape. The request's device line says \
+    where it's shown: never say it's on a device it isn't on. Read APP.md first for context.
     """
 
     static var screenEdit: String { """

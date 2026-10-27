@@ -49,9 +49,16 @@ struct Place: Equatable {
     var families: Set<DeviceFamily> { Set(wordFamilies.values) }
     /// The row whose native app it comes with, never alone: an Apple Watch's app is the iPhone app's.
     var comesWith: String? = nil
+    /// Lamp's skills for designing what the device shows, offered to every app on it, whatever it is and however it's
+    /// made (`Places.skills`): a TV's across-the-room design is the TV rows'.
+    var skills: [String] = []
     /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
     /// own does; nil when Lamp doesn't know, which a page there can't be built without.
     let input: Input?
+    /// The skill that does a setup step for the person on a device of this row (Do It for Me), by the system the device
+    /// runs, as a TV reports it ("webOS"): one row can cover devices that set up differently, and a system with no
+    /// skill here has its steps said in words only.
+    var setupSkills: [String: String] = [:]
 
     /// The device's input as a game's page is told it. Every field is a fact about the device; one left out is what a
     /// web view with a PC keyboard and no controller of its own has (`generic`).
@@ -112,7 +119,8 @@ enum Places {
               noWeb: "watchOS has no web view, so a page there needs a native version", comesWith: "iphone", input: nil),
         Place(id: "apple-tv", name: "Apple TV", words: ["apple-tv"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Apple TV simulator on this Mac; Lamp can't put it on a real Apple TV yet"),
-              noWeb: "tvOS has no web view, so a page there needs a native version", wordFamilies: ["apple-tv": .appletv], input: nil),
+              noWeb: "tvOS has no web view, so a page there needs a native version", wordFamilies: ["apple-tv": .appletv],
+              skills: ["tv-design"], input: nil),
         Place(id: "vision-pro", name: "Vision Pro", words: ["vision-pro"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Vision Pro simulator on this Mac; Lamp can't put it on a real Vision Pro yet"),
               noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version", wordFamilies: ["vision-pro": .vision], input: .apple),
@@ -123,10 +131,11 @@ enum Places {
         Place(id: "android-tv", name: "Android TV / Google TV / Fire TV", words: ["android-tv"], destination: .androidTV,
               web: .init(host: .androidWebView, reach: "in the same app of Lamp's around the page as on Android phones, on the TV's home screen: in the TV emulator on this Mac, or on the person's TV over Wi‑Fi"),
               native: .init(code: .androidTV, reach: "in the TV emulator on this Mac, or Lamp installs it on each of the person's TVs over Wi‑Fi"),
-              input: .generic),
+              skills: ["tv-design"], input: .generic),
         Place(id: "tv", name: "Samsung / LG TV", words: ["tv"], destination: .tv,
               web: .init(host: .tvBrowser, reach: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)"),
-              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs", input: .generic),
+              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs", skills: ["tv-design"], input: .generic,
+              setupSkills: ["webOS": "lg-developer-mode"]),
     ]
 
     /// Where a page can open: every place one of Lamp's web hosts is, in the table's order, and last an integration's own
@@ -164,7 +173,7 @@ enum Places {
                      native: makes.contains(.native) ? .init(code: .integration, reach: reach) : nil,
                      // The device's own words for what it runs, when it says, so a refusal is the real reason.
                      noWeb: integration.runs.map { $0 + ", so a page there needs a native version" } ?? "it has no web engine Lamp can reach, so a page there needs a native version", noNative: integration.runs ?? "its integration declares no native app",
-                     input: integration.input)
+                     skills: integration.skills ?? [], input: integration.input)
     }
 
     /// The makes an integration's `supports` names, or nil when it names none (or one Lamp doesn't know).
@@ -180,9 +189,22 @@ enum Places {
         declared.support?["web"] != nil || declared.preview != nil || declared.host != nil ? .web : .native
     }
 
+    /// The skills the rows an app is on offer it, each once, in the table's order: what every app on a TV is offered
+    /// for designing what it shows there, whichever kind it is and however it's made.
+    static func skills(rows: Set<String>, in table: [Place] = all) -> [String] {
+        var skills: [String] = []
+        for place in table where rows.contains(place.id) { for skill in place.skills where !skills.contains(skill) { skills.append(skill) } }
+        return skills
+    }
+
     static func named(_ word: String, in table: [Place] = all) -> Place? {
         let word = word.trimmed.lowercased()
         return table.first { $0.id == word || $0.words.contains(word) }
+    }
+
+    /// The skill that sets up a device of this row running this system, when Lamp ships it.
+    static func setupSkill(row id: String, system: String, skills: [String: Skills.Skill] = Skills.all) -> Skills.Skill? {
+        builtIn.first { $0.id == id }?.setupSkills[system].flatMap { skills[$0] }
     }
 
     // MARK: What the agent is told

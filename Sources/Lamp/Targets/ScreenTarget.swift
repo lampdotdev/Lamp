@@ -1,9 +1,9 @@
 import Foundation
 
 extension Platform {
-    /// A screen: a page shown full screen and glanced at from across a room (`ScreenKit`). Its home is the Mac; every
-    /// other place a page goes (`Places.pagePlaces`: an iPhone or iPad, an Android tablet, photo frame or TV, a Samsung
-    /// or LG TV, an Xbox) is one it's given as well (`LampProject.places`), never another kind.
+    /// A screen, as Lamp once made them (`ScreenKit`): a web app, kept for the screens already made, which load, build,
+    /// restore and keep their saved data as they did. Nothing chooses it for a new app: it has no device words, and
+    /// `make_app_for` only ever keeps a wish's own screen (`AppKinds.target`).
     static let screen = Platform(kind: "screen")
 }
 
@@ -11,18 +11,10 @@ extension Target {
     static let screen = Target(
         // A page: wherever one of Lamp's web hosts is.
         platform: .screen, places: Places.pagePlaces,
-        identity: Identity(name: "the screen", phrase: "a screen shown on the Mac, an iPad, an Android tablet, a TV or an Xbox", analytics: "screen",
+        identity: Identity(name: "the screen", phrase: "a web app shown full screen on the Mac, an iPad, an Android tablet, a TV or an Xbox", analytics: "screen",
                            made: { _, _ in "a screen" },
-                           devices: Words(words: [("screen", "\"screen\" for a screen (where it's shown beside the Mac, any place a page goes, goes in `places`)",
-                                                   "\"screen\" for something shown full screen and glanced at")],
-                                          hint: "[\"screen\"] for something shown full screen and glanced at from across a room rather than used up close: "
-                                              + "a family calendar or chore board, a photo frame or album slideshow, a dashboard, a scoreboard, a clock, "
-                                              + "the day's weather, with where else it's shown in \"places\": \"tv\" for their Samsung or LG TV, "
-                                              + "\"android-tv\" for a Google TV, Android TV or Fire TV, \"ipad\" for an iPad on a stand, "
-                                              + "\"android\" for an Android tablet or a photo frame that runs Android, "
-                                              + "\"xbox-one\" for their Xbox. An app the person works in or plays is no screen",
-                                          claims: { $0 == ["screen"] },
-                                          alone: true),
+                           // No word of its own: a new app is never made a screen.
+                           devices: Words(words: [], hint: nil, claims: { _ in false }, alone: true),
                            tryOnHelp: { _ in "Where it's shown: this Mac, an iPhone or iPad, an Android tablet, photo frame or TV, a Samsung or LG TV, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.screenPrompt(for:),
@@ -50,5 +42,5 @@ extension Target {
             AppFile.read(dir.appendingPathComponent(ScreenKit.marker), inFolder: wish, last: 1) != nil
         },
         setup: .none,
-        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, installFolder: "Screens")
+        startsAt: [.mac], hostedByLamp: true, showsPage: { _ in true }, installFolder: "Screens", looksInTVPreview: true)
 }

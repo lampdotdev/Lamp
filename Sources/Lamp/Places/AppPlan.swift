@@ -139,7 +139,7 @@ enum AppKinds {
             if let integration { return .success(AppTarget(kind: .device, devices: devices, integration: integration)) }
             let fits = pageKinds.filter { $0 != .device && reached.isSubset(of: Set($0.target.places)) }
             let kept = existing.map(\.target.kind).first(where: fits.contains)
-            guard let kind = kept ?? fits.min(by: { $0.target.places.count < $1.target.places.count }) else {
+            guard let kind = kept ?? fits.filter({ $0 != .screen }).min(by: { $0.target.places.count < $1.target.places.count }) else { // a screen is only ever kept
                 let reach = { (kind: Platform) in table.filter { $0.runs(.web) && kind.target.places.contains($0.destination) }.map(\.name).joined(separator: ", ") }
                 return .failure(Refusal("Lamp can't put one web app on all of these yet: \(rows.map(\.name).joined(separator: ", ")). "
                     + pageKinds.filter { $0 != .device && $0.target.places.count > 1 }.map { "One web app goes on \(reach($0))" }.joined(separator: "; ")
