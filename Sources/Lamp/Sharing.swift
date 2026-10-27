@@ -609,8 +609,26 @@ enum Sharing {
         let family = waitingFolder(in: wish, for: kind)
         guard let data = try? Data(contentsOf: family.appendingPathComponent("lamp-part.json")),
               let note = try? JSONDecoder().decode(Waiting.self, from: data),
-              (note.folder ?? Parts.folder(for: note.platform)).lowercased() == slot.lowercased() else { return own }
+              (note.slot ?? note.folder ?? Parts.folder(for: note.platform)).lowercased() == slot.lowercased() else { return own }
         return family
+    }
+
+    /// The folder files an earlier Lamp kept for this kind's family alone were claimed for, if they were.
+    static func claimedSlot(in wish: URL, for kind: Platform) -> String? {
+        let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
+        guard let data = try? Data(contentsOf: note), let kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind else { return nil }
+        return kept.slot
+    }
+
+    /// Notes in files an earlier Lamp kept for this kind's family alone that they're for `slot`, before the wish's list
+    /// says so and before they move (`claimKept`): from then on they're found from that slot, whichever step comes next.
+    /// False when nothing's kept so for this kind, or the note couldn't be written.
+    @discardableResult
+    static func markKept(in wish: URL, for kind: Platform, slot: String) -> Bool {
+        let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
+        guard let data = try? Data(contentsOf: note), var kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind,
+              let encoded = try? JSONEncoder().encode({ kept.slot = slot; return kept }()) else { return false }
+        return (try? encoded.write(to: note, options: .atomic)) != nil
     }
 
     /// What a kept part was made for, beside its files.
@@ -621,6 +639,9 @@ enum Sharing {
         var folder: String?
         /// The licence texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
         var licences: [String]?
+        /// For files an earlier Lamp kept for the family alone: the folder on the wish's list they're now for
+        /// (`claimKept`), written before anything else moves, so they're found from it at every step of the way.
+        var slot: String?
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.

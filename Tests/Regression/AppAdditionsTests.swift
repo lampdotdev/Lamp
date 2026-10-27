@@ -211,6 +211,28 @@ final class AppAdditionsTests: XCTestCase {
         XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone2"), "iPhone")
     }
 
+    /// The same, stopped part way: with the files' note naming their slot and the list saved, but the files not moved
+    /// yet, they're still found from that slot; with only the note written, the slot it names is the one given again.
+    func testAnOlderWaitingAppsKeptFilesAreFoundAfterAStopPartWay() async throws {
+        var wish = try Template.scaffold(name: "Remote", platform: .tv, in: root)
+        wishes.append(wish)
+        try FileManager.default.createDirectory(at: wish.dir.appendingPathComponent("iPhone"), withIntermediateDirectories: true)
+        let family = Sharing.waitingFolder(in: wish.dir, for: .iphone)
+        try FileManager.default.createDirectory(at: family, withIntermediateDirectories: true)
+        try #"{"platform":"iphone","folder":"iPhone"}"#.write(to: family.appendingPathComponent("lamp-part.json"), atomically: true, encoding: .utf8)
+        // Stopped after the note: the list still has no folder.
+        XCTAssertTrue(Sharing.markKept(in: wish.dir, for: .iphone, slot: "iPhone7"))
+        wish.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone, needs: "Xcode")]
+        try Template.saveMeta(wish)
+        // Stopped after the list too: the files are where they were, found from the slot all the same.
+        XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone7"), "iPhone")
+        let store = Store(testingAt: root)
+        let given = try XCTUnwrap(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))))
+        XCTAssertEqual(given.apps.map(\.folder), [".", "iPhone7"])
+        XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone7"), "iPhone")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: family.path))
+    }
+
     /// The planner alone: a wish with no app gets its first, and an app still to be made counts as one the wish has.
     func testAWaitingAppCountsAsAnApp() throws {
         let waiting = AppKinds.member(waiting: WishApp(kind: .mac, needs: "Xcode", folder: "Mac"))

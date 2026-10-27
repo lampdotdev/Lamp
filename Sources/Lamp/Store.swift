@@ -3383,14 +3383,23 @@ final class Store: ObservableObject {
         let waiting = Parts.waiting(in: wish, parts: parts(of: wish))
         guard waiting.contains(where: { $0.folder == nil }) else { return wish }
         var apps = wish.apps
+        var claimed: [(kind: Platform, folder: String)] = []
         for index in apps.indices where apps[index].folder == nil && waiting.contains(apps[index]) {
             var sized = wish
             sized.apps = apps
-            let folder = Parts.legacySlot(for: apps[index], in: sized)
-            Sharing.claimKept(in: wish.dir, for: apps[index].kind, slot: folder)
+            // A slot its kept files were already claimed for (an earlier try stopped part way) is the one it gets again.
+            let folder = Sharing.claimedSlot(in: wish.dir, for: apps[index].kind).flatMap { Parts.isFolderName($0) ? $0 : nil }
+                ?? Parts.legacySlot(for: apps[index], in: sized)
+            // In this order, so a quit or a failure at any step leaves the files found: the files' own note names the
+            // slot, then the list does, and only then do they move.
+            if Sharing.markKept(in: wish.dir, for: apps[index].kind, slot: folder) { claimed.append((apps[index].kind, folder)) }
             apps[index].folder = folder
         }
+        var listed = wish
+        listed.apps = apps
+        guard (try? Template.saveMeta(listed)) != nil else { return wish }
         wish = setApps(wish, apps)
+        for claim in claimed { Sharing.claimKept(in: wish.dir, for: claim.kind, slot: claim.folder) }
         return wish
     }
 
