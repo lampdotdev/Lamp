@@ -1973,7 +1973,7 @@ extension Template {
         /** A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name. */
         fun isCollection(name: String): Boolean {
             val plain = name.removePrefix("files:")
-            return plain.length in 1..64 && plain.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "-_." }
+            return plain.length in 1..64 && plain != "__proto__" && plain.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "-_." }
         }
         private fun isItemID(id: String): Boolean = id.toByteArray().size in 1..128 && id != "__proto__"
 
@@ -1987,6 +1987,9 @@ extension Template {
         }
 
         private fun item(name: String, id: String): Any? = valuesLock.withLock { collections[name]?.get(id)?.entry?.value }
+
+        /** An item as the collection holds it now (a copy), null when it has none or it was deleted. */
+        fun itemNow(name: String, id: String): Any? = copyOf(item(name, id))
 
         /** Hears every change to a collection, a batch at a time, on the main thread: each item's id and its value (null when
          *  deleted), and the app that made them (`me` for this app's own copies). */
@@ -3250,7 +3253,9 @@ extension Template {
         init {
             reload()
             LampWish.onItems(name) { changed, from ->
-                val said = changed.map { (id, value) -> id to value?.let { decode(it, id) }.also { item -> if (item != null) byID[id] = item else byID.remove(id) } }
+                // Each item as the collection holds it now, not as the change said: a later put of the same id, already
+                // read back here, is never undone by an earlier change heard after it.
+                val said = changed.map { (id, _) -> id to LampWish.itemNow(name, id)?.let { decode(it, id) }.also { item -> if (item != null) byID[id] = item else byID.remove(id) } }
                 itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] }
                 for ((id, item) in said) for (listener in listeners) listener(id, item, from)
             }

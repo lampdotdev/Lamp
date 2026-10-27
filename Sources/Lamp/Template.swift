@@ -16557,7 +16557,7 @@ enum Template {
         /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name.
         nonisolated static func isCollection(_ name: String) -> Bool {
             let plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
-            return (1...64).contains(plain.utf8.count) && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
+            return (1...64).contains(plain.utf8.count) && plain != "__proto__" && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
         }
         nonisolated fileprivate static func isItemID(_ id: String) -> Bool { (1...128).contains(id.utf8.count) && id != "__proto__" }
 
@@ -16583,7 +16583,7 @@ enum Template {
         func putItems(in name: String, _ given: [(String, Any?)]) -> Bool {
             let what = "LampStore.shared(\"\(name.hasPrefix("files:") ? String(name.dropFirst(6)) : name)\")"
             guard Self.isCollection(name) else {
-                fputs("\(what): a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\".\n", stderr)
+                fputs("\(what): a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\", and not __proto__.\n", stderr)
                 return false
             }
             guard collections[name] != nil || collections.count < Self.collectionsLimit else {

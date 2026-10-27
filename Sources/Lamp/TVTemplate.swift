@@ -2398,13 +2398,13 @@ extension TVTemplate {
           // item saying its size, type and checksum; a copy without its bytes asks one that has them, which sends them as a
           // file. The same in LampSupport.swift and LampSupport.kt.
           var ITEM = 8192, SHARED = 1048576, SHARED_FILES = 268435456, COLLECTIONS = 32;
-          var cols = Object.create(null), colOn = Object.create(null), unsaved = {}, saving = null;
+          var cols = Object.create(null), colOn = Object.create(null), unsaved = Object.create(null), saving = null;
           // A shared file's bytes on this TV, kept in memory (a TV page has no files of its own): asked again of the
           // others each time the page opens.
           var fileBytes = Object.create(null), fileAsks = {}, fileTries = {}, filesOut = {}, filesSending = {};
           function colOk(n) {
             var plain = typeof n === 'string' && n.indexOf('files:') === 0 ? n.slice(6) : n;
-            return typeof plain === 'string' && plain.length > 0 && plain.length <= 64 && /^[A-Za-z0-9._-]+$/.test(plain);
+            return typeof plain === 'string' && plain.length > 0 && plain.length <= 64 && plain !== '__proto__' && /^[A-Za-z0-9._-]+$/.test(plain);
           }
           function itemOk(id) { return typeof id === 'string' && id.length > 0 && bytes(id) <= 128 && id !== '__proto__'; }
           // JSON with its keys in order, to tell an item set again unchanged.
@@ -2694,7 +2694,7 @@ extension TVTemplate {
                 if (some) storage(n + '.shared.' + name, out);
                 else try { window.localStorage.removeItem('lamp:' + n + '.shared.' + name); } catch (e) {}
               }
-              unsaved = {};
+              unsaved = Object.create(null);
               for (var each in cols) { for (var x in cols[each]) { kept.push(each); break; } }
               storage(n + '.shared', kept);
             }, 1000);
