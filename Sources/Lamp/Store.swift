@@ -6658,7 +6658,8 @@ final class Store: ObservableObject {
     /// it): before the wish's next turn, when the tools arrive (`prepareStarters`), and on a later launch for one where it
     /// didn't take. A starter's is "From Lamp", which Undo and Versions go back to.
     private func saveFirstVersion(of project: LampProject) async {
-        guard Versions.hasGit, project.scaffolded,
+        // A part's files are its wish's, saved in the wish's history: a history of its own there would hide them from it.
+        guard Versions.hasGit, !project.isPart, project.scaffolded,
               !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) else { return }
         if !(await initRepo(project, message: Starters.isStarter(project) ? "From Lamp" : "Scaffold")) {
             try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
@@ -6668,7 +6669,7 @@ final class Store: ObservableObject {
 
     /// Every wish's first version still to be saved, once Apple's tools (and so git) are there.
     private func saveFirstVersions() async {
-        for project in projects { await saveFirstVersion(of: project) }
+        for project in projects where !project.isPart { await saveFirstVersion(of: project) }
     }
 
     /// A starter that's never been built and that nothing else is working on.
