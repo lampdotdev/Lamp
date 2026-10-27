@@ -300,8 +300,12 @@ window.DATA = (function () {
   D.clearExamples = function () {
     D.cleared = true;
     D.events = D.events.filter(function (e) { return !e.ex; });
-    D.chores = D.chores.filter(function (c) { return !c.ex; });
-    D.groceries = D.groceries.filter(function (g) { return !g.ex; });
+    // A chore list the family changed is theirs, examples and all; a shopping item they changed is theirs too.
+    D.chores = D.edited.chores ? D.chores.map(function (c) { delete c.ex; return c; }) : D.chores.filter(function (c) { return !c.ex; });
+    var made = {};
+    examples.groceries.forEach(function (g) { made[g.id] = JSON.stringify([g.name, g.qty, g.note, g.store, g.cat]); });
+    D.groceries = D.groceries.filter(function (g) { return !g.ex || made[g.id] !== JSON.stringify([g.name, g.qty, g.note, g.store, g.cat]); })
+      .map(function (g) { delete g.ex; return g; });
     D.photos = D.photos.filter(function (p) { return !p.ex; });
     Object.keys(D.stars).forEach(function (k) { D.stars[k] = 0; });
     Object.keys(D.week).forEach(function (k) { D.week[k] = [0, 0, 0, 0, 0, 0, 0]; });
@@ -316,6 +320,13 @@ window.DATA = (function () {
   // Until then the examples show (renamed or not in the editor), behind the welcome unless the person chose to look at
   // them.
   D.isSetUp = function () { return D.cleared; };
+  // Something of the family's own: their people or chores changed, their calendar, place or album, an event or a
+  // shopping item they added. The examples go then, for good (js/views/setup.js), with no setup to finish first.
+  D.ownsSomething = function () {
+    var s = D.settings;
+    return D.edited.people || D.edited.chores || !!s.calendars || !!s.place || s.album != null ||
+      D.events.some(function (e) { return !e.ex && !e.cal; }) || D.groceries.some(function (g) { return !g.ex; });
+  };
 
   // Puts back what a snapshot holds, any of its parts: what this device saved, or a part another copy shared.
   D.restore = function (p) {

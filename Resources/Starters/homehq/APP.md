@@ -24,7 +24,9 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - **Photo frame and night clock** (`views/ambient.js`): after two minutes untouched it goes back to Today and then to a
   slideshow with the time and the next event, or at night (10 PM to 6 AM) a dim clock; a touch wakes it.
 - **First run** (`views/setup.js`): a screen that isn't set up opens on a welcome: Set up my family, or Show me an
-  example. The setup asks who's at home (people and pets, who earns stars), where they live, the family's shared
+  example. The examples are only a first look: the moment anything is the family's own (their people or chores, their
+  calendar, place or album, an event or shopping item they added) they go for good, everywhere, keeping what the family
+  changed (`DATA.ownsSomething`, `DATA.clearExamples`); empty pages then say what goes there. The setup asks who's at home (people and pets, who earns stars), where they live, the family's shared
   calendar, an album, and a few chores to start; finishing takes the examples away for good, and every other
   copy of the screen follows. A family already made in the editor, and a calendar or album already chosen, are where
   the setup starts. A look at a fresh copy shows the welcome over the example family (`App.setup`,
@@ -32,7 +34,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a colour each, Stars for those who
   earn them, and pets, with a picture instead of a colour) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
   they're changed. The editor's own picture and colour lists are at its top.
-- **Settings** (the clock at the foot of the rail, or D): the weather's place, the family's own calendars and photos
+- **Settings** (Settings on the rail, the clock below it, or D): the weather's place, the family's own calendars and photos
   (only where the app around the page can read them: the Mac, iPhone and iPad), Set up my family while the example shows, the photo frame and
   night clock, and the credit. Keys: 1–5 the sections, A the photo frame, N the night clock, Escape or Back closes.
   A remote's arrows move between the buttons and OK presses one (`Web/lamp.js`).

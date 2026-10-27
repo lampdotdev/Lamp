@@ -281,7 +281,17 @@
   App.on('ready', function () {
     if (!D.isSetUp() && !D.settings.example) App.setup('welcome');
   });
+  // The examples are only a first look: the moment something is the family's own, they go, here and on every copy.
+  function examplesGo() {
+    if (D.cleared || !D.ownsSomething()) return false;
+    D.clearExamples();
+    App.loadPhotos();
+    App.rerender();
+    return true;
+  }
+  App.on('ready', function () { if (examplesGo()) App.emit('data'); });
   App.on('data', function () {
+    if (!F) examplesGo();
     if (F && F.step === 'welcome' && D.isSetUp()) { F = null; App.closeSheet(); }
   });
 })();

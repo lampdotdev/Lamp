@@ -123,6 +123,7 @@
 
   function chores() {
     var r = App.currentRoutine();
+    if (!D.chores.length) return '<div class="label">Chores</div><p class="h-empty serif"><i>No chores yet.</i> Add some on the Chores page.</p>';
     var who = D.people.map(function (p) { return p.id; }).concat(['any']);
     return '<div class="label">Chores · ' + r.name + '</div><div class="h-rings">' + who.map(function (id) {
       var list = D.chores.filter(function (c) { return c.r === r.id && c.who === id; });

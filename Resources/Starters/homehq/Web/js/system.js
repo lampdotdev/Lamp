@@ -114,7 +114,7 @@
       '<div class="demo-head"><div><div class="label label--light">Home HQ</div><h2 class="serif">Settings</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
       weatherSec() + calendarsSec() + photosSec() +
       sec('Your family', grid([btn('data-family', 'Family'), btn('data-chores', 'Chores')])) +
-      (D.isSetUp() ? '' : sec('Example family', grid([btn('data-setup', 'Set up my family')]))) +
+      (D.isSetUp() && D.edited.people ? '' : sec(D.isSetUp() ? 'Your family' : 'Example family', grid([btn('data-setup', 'Set up my family')]))) +
       sec('Screen', grid([btn('data-mode="ambient"', 'Photo frame'), btn('data-mode="night"', 'Night clock')])) +
       '<p class="demo-note">Based on <a href="' + UPSTREAM + '" target="_blank" rel="noopener">photo-frame-dashboard</a> by <a href="https://wesbos.com" target="_blank" rel="noopener">Wes Bos</a> (MIT)</p>' +
       '</div>';
@@ -188,6 +188,7 @@
     $('#demo').addEventListener('click', settingsClick);
     $('#demo').addEventListener('keydown', function (e) { if (e.target.hasAttribute('data-place-q') && e.keyCode === 13) { e.preventDefault(); findPlace(); } });
     $('#railClock').addEventListener('click', App.openSettings);
+    $('#railSettings').addEventListener('click', App.openSettings);
     if (window.Lamp && Lamp.onBack) Lamp.onBack(function () {
       if ($('#demo').classList.contains('is-open')) { closeSettings(); return true; }
       if ($('#sheetLayer').classList.contains('is-open')) { App.closeSheet(); return true; }
