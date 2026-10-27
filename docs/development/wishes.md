@@ -491,7 +491,14 @@ Values suit a few small things; what every **copy** of one app shows (a shopping
 screen open on a Mac, a kitchen iPad, a TV and an Android frame) goes in the app's **shared collections**, built on the
 same block and kept the same on every copy of it: `LampStore.shared(name)` (`items`/`all`, `put`, `get`, `delete`,
 `publish`, `onChange`; `LampStore.Shared` in Swift, `LampShared` in Kotlin, an object in lamp.js) and
-`LampStore.sharedFiles(name)`. A collection is the app's own, never another app's of the wish. Each copy keeps every
+`LampStore.sharedFiles(name)`. A collection is the app's own, never another app's of the wish, unless it's the
+**wish's own**: `shared(name, wish: true)` (`wish = true` in Kotlin, `{ wish: true }` in lamp.js; `sharedFiles` the
+same) names it `wish:<name>` (`files:wish:<name>` for files), and every app of the wish keeps it the same, so a Mac app
+and the iPhone app beside it share one calendar without either keeping it for the other. Everything below holds for it,
+except who it goes to: an app's own collections go between its copies that speak 5 and are taken only from them, the
+wish's own between every copy of every app of the wish that speaks 6 (`storePeers`, `shares`), each side checking the
+name before it sends, answers or takes (`sum` and `ask` say only what both share). The relay passes a `store` message by
+its `to` whichever app it's for. Each copy keeps every
 item with its setting's time, as a value is kept (`c: [ms, n, peer]`, on the values' clock, a deletion kept a month
 without its value), and copies merge item by item, so two copies that changed different items while apart keep both.
 What they say is one sealed message, `{"t":"store", op, …}`, through the room with `to` and `from` as `values`
@@ -540,14 +547,14 @@ On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow th
 two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
 them.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 5 since shared collections, 4 brought copies,
+What a wish's apps say to each other is numbered (`wire` in each library: 6 since the wish's own collections, 5 shared collections, 4 brought copies,
 3 files and a game's controls, 2 values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
 newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
 an app that speaks 2 or more, files and a game's controls only to one that speaks 3, shared collections only to one
-that speaks 5 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
+that speaks 5, and the wish's own only to one that speaks 6 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
 (`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
 fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`

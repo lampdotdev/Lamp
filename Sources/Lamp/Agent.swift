@@ -744,7 +744,9 @@ enum Agent {
         without losing anything. Data that should be the same wherever the app is open (one shopping list on the \
         Mac, the kitchen iPad and the TV): `LampStore.shared("groceries", of: Grocery.self)` (`items`, `put`, \
         `delete`, `publish`, `onChange`), merged item by item between the app's copies on the home network, and \
-        `LampStore.sharedFiles("photos")` for pictures one copy reads for the others; open the `wish-links` skill first.
+        `LampStore.sharedFiles("photos")` for pictures one copy reads for the others; with `wish: true` the list is \
+        the wish's own, the same in every app of the wish (a Mac app and its iPhone app sharing one calendar), never \
+        kept by one app for the others. Open the `wish-links` skill first.
         """
 
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look

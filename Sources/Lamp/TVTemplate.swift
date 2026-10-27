@@ -1156,8 +1156,9 @@ extension TVTemplate {
           var MESSAGE = 16384, VALUE = 8192, VALUES = 65536;
           // What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
           // 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-          // (LampStore.shared); an app from before says none, which counts as 1.
-          var WIRE = 5;
+          // (LampStore.shared), 6 the wish's own collections, shared by all its apps; an app from before says none, which
+          // counts as 1.
+          var WIRE = 6;
           var REASONS = { connecting: "Connecting to the wish's other apps…",
                           away: "Can't reach the wish's other apps. Keep this device on the same Wi‑Fi as them." };
           var UNCLAIMED = 'This app needs Lamp to put it on this TV once more before it can reach the wish\'s other apps: press Play in Lamp on your Mac.';
@@ -1378,7 +1379,8 @@ extension TVTemplate {
             // again whichever was open meanwhile.
             for (var j = 0; j < arrived.length; j++) if (wireOf(arrived[j]) >= 2) share(entries, arrived[j]);
             // And what its shared collections add up to, so each asks the other for what differs.
-            for (var sj = 0; sj < arrived.length; sj++) if (wireOf(arrived[sj]) >= 5 && appOf(arrived[sj]) === mine) sendSums(arrived[sj]);
+            var sharing = storePeers();
+            for (var sj = 0; sj < arrived.length; sj++) if (sharing.indexOf(arrived[sj]) >= 0) sendSums(arrived[sj]);
             if (arrived.length) fetchFiles();
           }
           // What another open copy speaks: 1 for an app from before values, which says nothing of it.
@@ -2276,7 +2278,7 @@ extension TVTemplate {
             var each = copiesFor(null);
             if (beats % 12 === 0) for (var j = 0; j < each.length; j++) if (wireOf(each[j]) >= 2) share({}, each[j], { sum: digest() });
             // And its shared collections; a shared file asked of a copy that has gone quiet is asked again.
-            if (beats % 12 === 0) { var ownCopies = storeCopies(); for (var sj = 0; sj < ownCopies.length; sj++) sendSums(ownCopies[sj]); }
+            if (beats % 12 === 0) { var sharers = storePeers(); for (var sj = 0; sj < sharers.length; sj++) sendSums(sharers[sj]); }
             if (beats % 12 === 6) fetchFiles();
             // A page without the wish's key keeps saying why (open, claim) rather than "Connecting…".
             if (key) rebuild();
@@ -2404,10 +2406,14 @@ extension TVTemplate {
           // A shared file's bytes on this TV, kept in memory (a TV page has no files of its own): asked again of the
           // others each time the page opens.
           var fileBytes = Object.create(null), fileAsks = {}, fileTries = {}, filesOut = {}, filesSending = {};
+          // A collection's name; "files:" before it for shared files, and "wish:" for one of the wish's own, which every app of
+          // the wish keeps rather than this app's copies.
           function colOk(n) {
             var plain = typeof n === 'string' && n.indexOf('files:') === 0 ? n.slice(6) : n;
+            if (typeof plain === 'string' && plain.indexOf('wish:') === 0) plain = plain.slice(5);
             return typeof plain === 'string' && plain.length > 0 && plain.length <= 64 && plain !== '__proto__' && /^[A-Za-z0-9._-]+$/.test(plain);
           }
+          function wishWide(n) { return typeof n === 'string' && (n.indexOf('files:') === 0 ? n.slice(6) : n).indexOf('wish:') === 0; }
           function itemOk(id) { return typeof id === 'string' && id.length > 0 && bytes(id) <= 128 && id !== '__proto__'; }
           // JSON with its keys in order, to tell an item set again unchanged.
           function canon(v) {
@@ -2441,7 +2447,7 @@ extension TVTemplate {
             for (var n in cols) for (var id in cols[n]) if (cols[n][id].v === undefined && cols[n][id].c[0] <= old) { delete cols[n][id]; unsaved[n] = true; }
           }
           function putItems(name, given) {
-            var what = 'LampStore.shared("' + (String(name).indexOf('files:') === 0 ? name.slice(6) : name) + '")';
+            var what = 'LampStore.shared("' + (String(name).indexOf('files:') === 0 ? name.slice(6) : name).replace(/^wish:/, '') + '")';
             if (!colOk(name)) { say(what + ': a collection\'s name is 1 to 64 letters, digits, "-", "_" or ".".'); return false; }
             var count = 0;
             for (var k in cols) count++;
@@ -2474,8 +2480,8 @@ extension TVTemplate {
             if (!changed.length) return !failed;
             keepValues();
             itemsChanged(name, changed, myCopy() || mine);
-            var list = storeCopies();
-            for (var j = 0; j < list.length; j++) shareItems(name, sets, list[j]);
+            var list = storePeers();
+            for (var j = 0; j < list.length; j++) if (shares(name, list[j])) shareItems(name, sets, list[j]);
             return !failed;
           }
           function publishItems(name, given) {
@@ -2484,22 +2490,25 @@ extension TVTemplate {
             for (var id in c) if (!ids[id] && c[id].v !== undefined && c[id].c[2] === me) list.push([id, null]);
             return putItems(name, list);
           }
-          // The other copies of this app open now that speak 5: a collection is this app's own, never another app's of
-          // the wish, so it goes only to them and is taken only from them.
-          function storeCopies() {
+          // Who this page shares collections with now: the other copies of this app that speak 5, which share all of them,
+          // and the copies of the wish's other apps that speak 6, which share only the wish's own (shares).
+          function storePeers() {
             if (!mine) return [];
             var me = myCopy();
-            return copiesFor(mine).filter(function (id) { return id !== me && wireOf(id) >= 5; });
+            return copiesFor(null).filter(function (id) { return id !== me && wireOf(id) >= (appOf(id) === mine ? 5 : 6); });
           }
+          // A collection goes to another copy and is taken from it: this app's own only between its copies, never another
+          // app's of the wish; the wish's own between every app of it.
+          function shares(name, peer) { return !!mine && peer !== myCopy() && (appOf(peer) === mine || wishWide(name)); }
           function heardStore(m, from) {
             var name, i;
-            if (!mine || appOf(from) !== mine || from === myCopy()) return;
+            if (!mine || from === myCopy()) return;
             if (m.op === 'items') {
-              if (colOk(m.s) && m.items && typeof m.items === 'object') mergeItems(m.s, m.items, from);
+              if (colOk(m.s) && shares(m.s, from) && m.items && typeof m.items === 'object') mergeItems(m.s, m.items, from);
             } else if (m.op === 'sum') {
               var theirs = m.sums && typeof m.sums === 'object' ? m.sums : {}, asks = {}, any = false;
               for (name in theirs) {
-                if (!own(theirs, name) || !colOk(name) || typeof theirs[name] !== 'string' || theirs[name].length !== 128) continue;
+                if (!own(theirs, name) || !colOk(name) || !shares(name, from) || typeof theirs[name] !== 'string' || theirs[name].length !== 128) continue;
                 var ours = sums(name), differ = [];
                 for (i = 0; i < 16; i++) {
                   var part = parseInt(theirs[name].substr(i * 8, 8), 16) >>> 0;
@@ -2511,14 +2520,14 @@ extension TVTemplate {
             } else if (m.op === 'ask') {
               var asked = m.asks && typeof m.asks === 'object' ? m.asks : {};
               for (name in asked) {
-                if (!own(asked, name) || !colOk(name) || !(asked[name] instanceof Array) || !cols[name]) continue;
+                if (!own(asked, name) || !colOk(name) || !shares(name, from) || !(asked[name] instanceof Array) || !cols[name]) continue;
                 var want = {}, list = {}, some = false;
                 for (i = 0; i < asked[name].length; i++) want[asked[name][i]] = true;
                 for (var id in cols[name]) if (want[fnv(id) & 15]) { list[id] = cols[name][id]; some = true; }
                 if (some) shareItems(name, list, from);
               }
             } else if (m.op === 'file') {
-              var meta = typeof m.s === 'string' && cols[m.s] && typeof m.id === 'string' && cols[m.s][m.id] && cols[m.s][m.id].v;
+              var meta = typeof m.s === 'string' && shares(m.s, from) && cols[m.s] && typeof m.id === 'string' && cols[m.s][m.id] && cols[m.s][m.id].v;
               var kept = meta && fileBytes[m.s + '\t' + m.id];
               if (!kept || kept.sum !== meta.sum || m.sum !== meta.sum) return;
               var queue = filesOut[from] || (filesOut[from] = []);
@@ -2580,10 +2589,10 @@ extension TVTemplate {
             else { var u = false; for (var un in unsaved) u = true; if (u) saveItemsSoon(); }
             if (!any) return;
             // Passed on as values are: to the copies open now that the one it came from may not reach.
-            var each_ = storeCopies();
+            var each_ = storePeers();
             for (var j = 0; j < each_.length; j++) {
               var to = each_[j], straight = directs[to] && directs[to].ready;
-              if (to !== from && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
+              if (to !== from && shares(name, to) && (straight || (!relayPresent[from] && relayPresent[to]))) shareItems(name, taken, to);
             }
           }
           function shareItems(name, list, id) {
@@ -2617,6 +2626,7 @@ extension TVTemplate {
             var said = {}, any = false;
             for (var name in cols) {
               var some = false;
+              if (!shares(name, id)) continue;
               for (var x in cols[name]) { some = true; break; }
               if (!some) continue;
               said[name] = sums(name).map(function (p) { return ('0000000' + p.toString(16)).slice(-8); }).join('');
@@ -2633,8 +2643,8 @@ extension TVTemplate {
             }
           }
           function fetchFiles() {
-            var sources = storeCopies(), now = Date.now(), here = 0, name, id;
-            if (!sources.length) return;
+            var open = storePeers(), now = Date.now(), here = 0, name, id;
+            if (!open.length) return;
             for (var k in fileBytes) here += fileBytes[k].data.length;
             var list = names(cols);
             for (var i = 0; i < list.length; i++) {
@@ -2645,6 +2655,8 @@ extension TVTemplate {
                 id = ids[j];
                 var item = cols[name][id], meta = item.v, key_ = name + '\t' + id;
                 if (!meta || typeof meta.sum !== 'string' || typeof meta.size !== 'number') continue;
+                var sources = open.filter(function (peer) { return shares(name, peer); });
+                if (!sources.length) continue;
                 if (fileBytes[key_] && fileBytes[key_].sum === meta.sum) { delete fileAsks[key_]; delete fileTries[key_]; continue; }
                 var ask = fileAsks[key_];
                 if (ask && sources.indexOf(ask.peer) >= 0 && now - ask.at < 60000) continue;
@@ -2672,7 +2684,7 @@ extension TVTemplate {
             }
           }
           function sharedFileArrived(name, id, data, from) {
-            if (appOf(from) !== mine) return;
+            if (!shares(name, from)) return;
             var key_ = name + '\t' + id, meta = cols[name] && cols[name][id] && cols[name][id].v;
             delete fileAsks[key_];
             if (!meta || typeof meta.sum !== 'string' || checksum(data) !== meta.sum) return fetchFiles();
@@ -2769,8 +2781,12 @@ extension TVTemplate {
           var sharedLists = Object.create(null), sharedFolders = Object.create(null);
           // A list the app keeps the same on every copy of it (the same app on a Mac, an iPad, a TV and a photo frame):
           // see LampStore.shared in lamp.js's header.
+          // shared(name, { wish: true }) is the wish's own list, kept the same by every app of the wish rather than this
+          // app's copies; an id key other than "id" is the second argument, as a string or { id: "…" }.
           function shared(name, idKey) {
-            idKey = idKey || 'id';
+            var options = idKey && typeof idKey === 'object' ? idKey : {};
+            idKey = typeof idKey === 'string' ? idKey : options.id || 'id';
+            if (options.wish) name = 'wish:' + name;
             if (sharedLists[name]) return sharedLists[name];
             api.start();
             var on_ = [];
@@ -2796,7 +2812,8 @@ extension TVTemplate {
             return list;
           }
           // Files the app keeps the same on every copy of it: see LampStore.sharedFiles in lamp.js's header.
-          function sharedFiles(name) {
+          function sharedFiles(name, options) {
+            if (options && options.wish) name = 'wish:' + name;
             if (sharedFolders[name]) return sharedFolders[name];
             api.start();
             var key_ = 'files:' + name, on_ = [], urls = Object.create(null);
@@ -3327,7 +3344,8 @@ extension Agent.Rules {
     saved one. The app's own files (pictures, data) come in its package: `LampAssets.url(name)`, `.json(name)`. \
     Data that should be the same wherever the app is open (one list on the TV, an iPad and the Mac): \
     `LampStore.shared(name)` (put, get, all, delete, publish, onChange), merged item by item between the app's \
-    copies, and `LampStore.sharedFiles(name)` for pictures another copy reads; open the `wish-links` skill first.
+    copies, and `LampStore.sharedFiles(name)` for pictures another copy reads; `{ wish: true }` as the second argument \
+    makes either the wish's own, the same in every app of the wish. Open the `wish-links` skill first.
     """
 
     static let tvPhone = """

@@ -739,8 +739,9 @@ extension Agent.Rules {
     - The screen reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, as a TV app does: messages, shared \
     values and files, wherever it's shown, the Xbox included. Lamp's TV preview, where you look at it, joins them only when the screen is shown there, so what \
     another app sends shows where the screen is shown. What every place shows (a list, the calendar, photos) goes in \
-    `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen, with a copy that can \
-    read the calendar or the album (on the Mac, an iPhone or an iPad, through `LampNative`) publishing it for the others.
+    `LampStore.shared` and `LampStore.sharedFiles`, kept the same on every copy of the screen (and with `{ wish: true }` \
+    in every app of the wish), with a copy that can read the calendar or the album (on the Mac, an iPhone or an iPad, \
+    through `LampNative`) publishing it for the others.
     """
 
     static let gameHeader = """

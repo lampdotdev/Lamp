@@ -1021,9 +1021,9 @@ extension Template {
         const val valueLimit = 8 * 1024
         const val valuesLimit = 64 * 1024
         /** What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-         *  2 brought values, 3 files, 4 copies of one app on several devices, 5 shared collections (`LampStore.shared`); an
-         *  app from before says none, which counts as 1. */
-        private const val wire = 5
+         *  2 brought values, 3 files, 4 copies of one app on several devices, 5 shared collections (`LampStore.shared`), 6 the
+         *  wish's own collections, shared by all its apps; an app from before says none, which counts as 1. */
+        private const val wire = 6
 
         private val appsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
         private val peersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
@@ -1455,7 +1455,8 @@ extension Template {
             // again whichever was open meanwhile.
             for (id in arrived) if (wireOf(id) >= 2) share(valuesLock.withLock { entries.toMap() }, id)
             // And what its shared collections add up to, so each asks the other for what differs.
-            for (id in arrived) if (wireOf(id) >= 5 && appOf(id) == me) sendSums(id)
+            val sharing = storePeers().toSet()
+            for (id in arrived) if (id in sharing) sendSums(id)
             if (arrived.isNotEmpty()) fetchFiles()
         }
 
@@ -1970,11 +1971,14 @@ extension Template {
         private val filesSending = mutableMapOf<String, Int>()
         internal val sharedLists = mutableMapOf<String, Any>()
 
-        /** A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name. */
+        /** A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name, and
+         *  one of the wish's own, shared by all its apps rather than this app's copies, has "wish:" before the name. */
         fun isCollection(name: String): Boolean {
-            val plain = name.removePrefix("files:")
+            val plain = name.removePrefix("files:").removePrefix("wish:")
             return plain.length in 1..64 && plain != "__proto__" && plain.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "-_." }
         }
+        /** One of the wish's own collections (`LampStore.shared(name, wish = true)`): every app of the wish keeps it. */
+        fun isWishWide(name: String): Boolean = name.removePrefix("files:").startsWith("wish:")
         private fun isItemID(id: String): Boolean = id.toByteArray().size in 1..128 && id != "__proto__"
 
         // What `LampStore.shared` and `LampStore.sharedFiles` call, and the bridge to the page Lamp's Android app is around:
@@ -2005,7 +2009,7 @@ extension Template {
          *  item set to what it is already changes nothing. False, with why in the app's log, when one wasn't set. */
         fun putItems(name: String, given: List<Pair<String, Any?>>): Boolean {
             start(); ensureCollections()
-            val what = "LampStore.shared(\"${name.removePrefix("files:")}\")"
+            val what = "LampStore.shared(\"${name.removePrefix("files:").removePrefix("wish:")}\")"
             if (!isCollection(name)) { Log.e("LampStore", "$what: a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\"."); return false }
             val sets = mutableMapOf<String, Entry>()
             val changed = mutableListOf<Pair<String, Any?>>()
@@ -2040,7 +2044,7 @@ extension Template {
             if (changed.isEmpty()) return !failed
             keepValues()
             itemsChanged(name, changed, copy)
-            for (each in storeCopies()) shareItems(name, sets, each)
+            for (each in storePeers()) if (shares(name, each)) shareItems(name, sets, each)
             return !failed
         }
 
@@ -2078,26 +2082,30 @@ extension Template {
             if (named) saveCollectionsSoon()
         }
 
-        /** The other copies of this app open now that speak 5: a collection is this app's own, never another app's of the
-         *  wish, so it goes only to them and is taken only from them. */
-        private fun storeCopies(): List<String> {
+        /** Who this copy shares collections with now: the other copies of this app that speak 5, which share all of them, and
+         *  the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`). */
+        private fun storePeers(): List<String> {
             val mine = me
             if (mine.isEmpty()) return emptyList()
             val self = copy
-            return copiesFor(mine).filter { it != self && wireOf(it) >= 5 }
+            return copiesFor(null).filter { it != self && wireOf(it) >= (if (appOf(it) == mine) 5 else 6) }
         }
 
+        /** Whether a collection goes to another copy and is taken from it: this app's own only between its own copies, never
+         *  another app's of the wish; the wish's own between every app of it. */
+        private fun shares(name: String, peer: String): Boolean = me.isNotEmpty() && peer != copy && (appOf(peer) == me || isWishWide(name))
+
         private fun heardStore(m: JSONObject, from: String) {
-            if (me.isEmpty() || appOf(from) != me || from == copy) return
+            if (me.isEmpty() || from == copy) return
             ensureCollections()
             when (m.optString("op")) {
-                "items" -> { val name = m.optString("s"); if (isCollection(name)) m.optJSONObject("items")?.let { mergeItems(name, it, from) } }
+                "items" -> { val name = m.optString("s"); if (isCollection(name) && shares(name, from)) m.optJSONObject("items")?.let { mergeItems(name, it, from) } }
                 "sum" -> {
                     val theirs = m.optJSONObject("sums") ?: return
                     val asks = JSONObject()
                     for (name in theirs.keys()) {
                         val sum = theirs.opt(name) as? String ?: continue
-                        if (!isCollection(name) || sum.length != 128) continue
+                        if (!isCollection(name) || !shares(name, from) || sum.length != 128) continue
                         val mine = sums(name)
                         val differ = (0 until 16).filter { val part = sum.substring(it * 8, it * 8 + 8).toLongOrNull(16)?.toInt() ?: 0; part != 0 && part != mine[it] }
                         if (differ.isNotEmpty()) asks.put(name, JSONArray(differ))
@@ -2107,7 +2115,7 @@ extension Template {
                 "ask" -> {
                     val asks = m.optJSONObject("asks") ?: return
                     for (name in asks.keys()) {
-                        if (!isCollection(name)) continue
+                        if (!isCollection(name) || !shares(name, from)) continue
                         val list = asks.optJSONArray(name) ?: continue
                         val wanted = (0 until list.length()).map { list.optInt(it, -1) }.toSet()
                         val chosen = valuesLock.withLock { (collections[name] ?: emptyMap<String, SharedItem>()).filterKeys { (fnv(it) and 15) in wanted }.mapValues { it.value.entry } }
@@ -2117,7 +2125,7 @@ extension Template {
                 "file" -> {
                     val name = m.optString("s"); val id = m.optString("id"); val sum = m.optString("sum")
                     val meta = item(name, id) as? JSONObject ?: return
-                    if (!name.startsWith("files:") || meta.optString("sum") != sum || !bytesFile(name, id, sum).exists()) return
+                    if (!name.startsWith("files:") || !shares(name, from) || meta.optString("sum") != sum || !bytesFile(name, id, sum).exists()) return
                     val queue = filesToSend.getOrPut(from) { mutableListOf() }
                     if (queue.none { it.first == name && it.second == id }) queue.add(name to id)
                     sendFiles(from)
@@ -2184,8 +2192,8 @@ extension Template {
             // Passed on as values are: to the copies open now that the one it came from may not reach.
             val ways = routes
             val inRoom = relayed
-            for (each in storeCopies()) {
-                if (each == from) continue
+            for (each in storePeers()) {
+                if (each == from || !shares(name, each)) continue
                 if (each in ways || (from !in inRoom && each in inRoom)) shareItems(name, taken, each)
             }
         }
@@ -2220,7 +2228,7 @@ extension Template {
         private fun sendSums(peer: String) {
             ensureCollections()
             val said = JSONObject()
-            val names = valuesLock.withLock { collections.filterValues { it.isNotEmpty() }.keys.toList() }
+            val names = valuesLock.withLock { collections.filterValues { it.isNotEmpty() }.keys.toList() }.filter { shares(it, peer) }
             for (name in names) said.put(name, sums(name).joinToString("") { String.format("%08x", it) })
             if (said.length() > 0) storeSay(JSONObject().put("op", "sum").put("sums", said), peer)
         }
@@ -2284,8 +2292,8 @@ extension Template {
          *  of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes. On the main
          *  thread. */
         private fun fetchFiles() {
-            val sources = storeCopies()
-            if (sources.isEmpty()) return
+            val open = storePeers()
+            if (open.isEmpty()) return
             val now = System.currentTimeMillis()
             val all = valuesLock.withLock { collections.filterKeys { it.startsWith("files:") }.toSortedMap().mapValues { it.value.toSortedMap().mapValues { e -> e.value.entry } } }
             var here = 0L
@@ -2294,6 +2302,8 @@ extension Template {
                 val meta = entry.value as? JSONObject ?: continue
                 val sum = meta.optString("sum").takeIf { it.isNotEmpty() } ?: continue
                 val size = meta.optInt("size")
+                val sources = open.filter { shares(name, it) }
+                if (sources.isEmpty()) continue
                 val key = "$name\t$id"
                 if (fileOf(name, id) != null) { fileAsks.remove(key); fileTries.remove(key); continue }
                 val ask = fileAsks[key]
@@ -2333,7 +2343,7 @@ extension Template {
 
         /** A shared file's bytes from another copy: kept when they're the file as it is now. On the main thread. */
         private fun sharedFileArrived(name: String, id: String, bytes: ByteArray, from: String) {
-            if (appOf(from) != me) return
+            if (!shares(name, from)) return
             val key = "$name\t$id"
             fileAsks.remove(key)
             val meta = item(name, id) as? JSONObject
@@ -2619,7 +2629,7 @@ extension Template {
             // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
             if (beats % 12 == 0) for (each in copiesFor(null)) if (wireOf(each) >= 2) share(emptyMap(), each, JSONObject().put("sum", digest()))
             // And its shared collections; a shared file asked of a copy that has gone quiet is asked again.
-            if (beats % 12 == 0) for (each in storeCopies()) sendSums(each)
+            if (beats % 12 == 0) for (each in storePeers()) sendSums(each)
             if (beats % 12 == 6) fetchFiles()
             rebuild()
             val mine = addresses()
@@ -3233,6 +3243,11 @@ extension Template {
      *                                                     // exactly these
      *     groceries.onChange { id, item, from -> }        // item null when deleted; from == LampWish.me for this app's copies
      *
+     * With `wish = true` the list is the wish's own rather than this app's: every app of the wish keeps it the same (the
+     * Android app and the Mac app beside it sharing one calendar), each with the same name:
+     *
+     *     val events = LampStore.shared<Event>("events", wish = true) { it.id }
+     *
      * An item is at most `LampWish.itemLimit` (8 KB) as JSON, and everything the app shares at most `LampWish.sharedLimit`
      * (1 MB, thousands of small items); pictures and other big things go in `LampStore.sharedFiles`.
      */
@@ -3343,14 +3358,18 @@ extension Template {
         }
     }
 
-    inline fun <reified T> LampStore.shared(name: String, noinline id: (T) -> Any): LampShared<T> = sharedList(name, serializer<T>(), id)
+    inline fun <reified T> LampStore.shared(name: String, wish: Boolean = false, noinline id: (T) -> Any): LampShared<T> =
+        sharedList(if (wish) "wish:$name" else name, serializer<T>(), id)
 
     @Suppress("UNCHECKED_CAST")
     fun <T> LampStore.sharedList(name: String, serializer: KSerializer<T>, id: (T) -> Any): LampShared<T> =
         synchronized(LampWish.sharedLists) { LampWish.sharedLists.getOrPut(name) { LampShared(name, serializer, id) } as LampShared<T> }
 
-    fun LampStore.sharedFiles(name: String): LampSharedFiles =
-        synchronized(LampWish.sharedLists) { LampWish.sharedLists.getOrPut("files:$name") { LampSharedFiles(name) } as LampSharedFiles }
+    /** With `wish = true` the files are the wish's own, kept by every app of it, as `shared`'s are. */
+    fun LampStore.sharedFiles(name: String, wish: Boolean = false): LampSharedFiles {
+        val key = if (wish) "wish:$name" else name
+        return synchronized(LampWish.sharedLists) { LampWish.sharedLists.getOrPut("files:$key") { LampSharedFiles(key) } as LampSharedFiles }
+    }
 
     /**
      * Keeps the app's data safe across launches and across changes to the app, in a SQLite database in the app's own

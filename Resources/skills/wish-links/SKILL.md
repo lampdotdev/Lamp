@@ -82,8 +82,14 @@ in `values`:
   file, 256 MB in all. On a TV the bytes are kept in memory and fetched again each time the app opens.
 - Draw from the collection and redraw on `onChange`; never keep a copy of your own. Never split a list into `values`
   by hand, or send the same data around with messages to keep copies in step.
-- A shared collection is the app's own, the same on all its copies; it isn't shared with the wish's other apps. For
-  what another app of the wish should see, use `values`, messages and files.
+- A shared collection is the app's own, the same on all its copies, unless it's the **wish's own**: with
+  `wish: true` (`LampStore.shared("events", of: Event.self, wish: true)` in Swift,
+  `LampStore.shared<Event>("events", wish = true) { it.id }` in Kotlin, `LampStore.shared('events', { wish: true })`
+  in lamp.js, and `sharedFiles(name, wish: true)` likewise) every app of the wish keeps it the same: a Mac app and the
+  iPhone app beside it sharing one calendar, a TV game and the phone controllers sharing a scoreboard. Every app that
+  uses it gives the same name and the same item shape. It merges as above, and the wish's apps share its limits.
+  Use the wish's own collection whenever different apps of the wish show the same records; never make one app the
+  keeper of them for the others, since that app is often closed or asleep.
 
 What it gives: the apps find each other on the home Wi‑Fi with nothing to sign up for, pair, host or pay for. While
 Lamp is open on the Mac it introduces them; with Lamp closed, the Mac asleep or Lamp updating they go on talking
@@ -94,7 +100,8 @@ message or a file for an app that isn't open, or hold more than a small amount i
 How to use it well:
 - Start it as each app opens.
 - Pick by what the data is. Something that happens now (a button pressed, "next round") is a message. A list or
-  records every copy of this app shows (groceries, chores, events, photos) is a shared collection. Something another
+  records every copy of this app shows (groceries, chores, events, photos) is a shared collection, and the wish's own
+  (`wish: true`) when the wish's other apps show them too. Something another
   app of the wish should still see after being closed (a score, a setting, what's on the dashboard) fits `values`:
   they catch up by themselves when they meet, so there's nothing to resend. Something big the other app should have
   (a photo, a recording, a document, a game to play) is a file: send it when that app is open, show its progress, and
@@ -106,8 +113,8 @@ How to use it well:
 - Keep values to a few names you reuse. Each name counts at least 32 bytes against the 64 KB, and a removed one keeps
   counting for a month, so values aren't a queue of ever-new names: keep such records in the app's own store.
 - Several apps may change the same value while apart, and the later setting wins whole. Where both sides add to one
-  list of the same app's copies, use a shared collection; between different apps, give each item of a short list its
-  own value ("todo.<id>") or keep each app's part under its own name, so neither undoes the other's.
+  list, use a shared collection: the app's own between its copies, the wish's own (`wish: true`) between different
+  apps, so neither undoes the other's.
 - Watch `peers` as it changes (onChange of it, collecting the StateFlow, onPeers), not by looking now and then: an app
   closed and opened again quickly leaves and comes back between two looks.
 - Where something needs another app, show why it isn't there with its `reason` (or the status view), and keep every

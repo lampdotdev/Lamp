@@ -480,7 +480,8 @@ extension Agent.Rules {
     saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets. Data that \
     should be the same wherever the app is open (one list on a phone, a tablet and the Mac): \
     `LampStore.shared<Grocery>("groceries") { it.id }` (items, put, delete, publish, onChange), merged item by item \
-    between the app's copies, and `LampStore.sharedFiles("photos")` for files; open the `wish-links` skill first.
+    between the app's copies, and `LampStore.sharedFiles("photos")` for files; `wish = true` makes either the wish's \
+    own, the same in every app of the wish. Open the `wish-links` skill first.
     """
 
     static let androidPermissions = """
