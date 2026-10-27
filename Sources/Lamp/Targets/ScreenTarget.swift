@@ -18,7 +18,7 @@ extension Target {
                            tryOnHelp: { _ in "Where it's shown: this Mac, an iPhone or iPad, an Android tablet, photo frame or TV, a Samsung or LG TV, or your Xbox" },
                            place: { _ in .window }),
         guidance: Guidance(prompt: Agent.screenPrompt(for:),
-                           changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.tvFrameworks + Agent.Rules.tvDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
+                           changeRules: { _ in Agent.Rules.screenEdit + Agent.Rules.tvFrameworks + Agent.Rules.screenDesign + Agent.Rules.tvKeys + Agent.Rules.tvData + Agent.Rules.tvTry },
                            skills: { [] },
                            elsewhere: { _ in "- On the person's TV, iPad, Android tablet, photo frame or Google TV, or Xbox: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI" }),
         recipe: Recipe(language: .web, fill: ScreenKit.fill, ownedFiles: ScreenKit.write(for:), support: ScreenKit.write(for:),

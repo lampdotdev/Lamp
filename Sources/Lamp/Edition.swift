@@ -77,16 +77,24 @@ enum Edition {
         /// The emulator's control interface (gRPC), which it always starts: it drives the screen for whoever holds
         /// the token the emulator leaves in the caches folder, which the sandbox opens, so it's refused by port too.
         let control: Int
+        /// The same two for the TV emulator, which runs beside the phone on ports of its own, so a screen can be open
+        /// in both at once and opening one never closes the other.
+        let tvConsole: Int
+        var tvBridge: Int { tvConsole + 1 }
+        let tvControl: Int
+        /// Every one of them, for the sandbox to close.
+        var all: [Int] { [server, console, bridge, control, tvConsole, tvBridge, tvControl] }
     }
     static let androidPorts = androidPorts(isDev: isDev, instance: instance)
 
     static func androidPorts(isDev: Bool, instance: String) -> AndroidPorts {
-        guard isDev else { return AndroidPorts(server: 47815, console: 47818, control: 47816) }
-        guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 47828, control: 47826) }
-        // A range of each for the instances, a pair for the emulator's two: instances whose names land on different
-        // slots never share a port, so never an emulator.
+        guard isDev else { return AndroidPorts(server: 47815, console: 47818, control: 47816, tvConsole: 47880, tvControl: 47882) }
+        guard !instance.isEmpty else { return AndroidPorts(server: 47825, console: 47828, control: 47826, tvConsole: 47884, tvControl: 47886) }
+        // A range of each for the instances, a pair for each emulator's two: instances whose names land on different
+        // slots never share a port, so never an emulator. The TV's are above the phone pages' (`phonePagePorts`).
         let slot = Int(slot(of: instance))
-        return AndroidPorts(server: 49000 + slot, console: 49600 + 2 * slot, control: 49300 + slot)
+        return AndroidPorts(server: 49000 + slot, console: 49600 + 2 * slot, control: 49300 + slot,
+                            tvConsole: 54000 + 2 * slot, tvControl: 54500 + slot)
     }
 
     /// The same for the Lamp whose folder has this name (`lampFolderNames`), so each Lamp's sandbox closes every

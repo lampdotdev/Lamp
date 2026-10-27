@@ -56,7 +56,7 @@ A capability given to one engine must be given to all of them that can take it, 
   `Template.ownSecret`, and the conversation ids), and what Lamp rewrites in place (the migration, a rename, the
   live layout), which would otherwise bring what a link leads to into the folder. A new such read belongs there. Lamp's own
   writes there around a build go through `AppFolder` on the same terms (see "Generated apps").
-  Lamp's adb server and Android emulator run on ports of each Lamp's own (`Edition.androidPorts`), never adb's usual
+  Lamp's adb server and Android emulators (the phone and the TV) run on ports of each Lamp's own (`Edition.androidPorts`), never adb's usual
   5037 and 5554–5585, and the profile refuses every Lamp's at any address, and running adb or the emulator from the
   tools Lamp downloaded: through them a command could install, remove or drive apps on the emulator and the
   person's phone. Codex's sandbox can't refuse a port, so there only the ports being Lamp's own keeps `adb` away.

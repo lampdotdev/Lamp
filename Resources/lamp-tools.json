@@ -26,6 +26,10 @@
           "type": "string",
           "description": "The name of a prop in the LampSceneView's props, to see it on its own from four sides."
         },
+        "shape": {
+          "type": "string",
+          "description": "For a screen: the width and height in CSS pixels to show its page at, as a device would, such as \"1920x1080\" (a TV), \"1280x800\" (a photo frame), \"820x1180\" (an iPad upright) or \"390x844\" (a phone). It stays at that shape for later looks."
+        },
         "part": {
           "type": "string",
           "description": "For a wish of more than one app: which one, by its device (\"iphone\", \"tv\", \"mac\"). Needed then; left out only when the wish has one app."

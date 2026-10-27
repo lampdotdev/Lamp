@@ -61,7 +61,7 @@ final class SandboxTests: XCTestCase {
     func testLampsAdbServerAndEmulatorAreClosed() throws {
         let (project, _) = try project()
         let ports = Edition.androidPorts
-        for port in [ports.server, ports.console, ports.bridge, ports.control] {
+        for port in ports.all {
             let reach = try run("/usr/bin/nc -z -G 2 127.0.0.1 \(port) 2>&1; /usr/bin/nc -l 127.0.0.1 \(port) 2>&1 & sleep 0.5; kill %1 2>/dev/null", in: project)
             XCTAssertTrue(reach.output.contains("Operation not permitted"), "\(port): \(reach.output)")
         }

@@ -5041,7 +5041,7 @@ final class Store: ObservableObject {
         }
         if project.onAndroid {
             if await isAndroidRunning(project), !Runtime.sourcesChanged(project) {
-                await Emulator.bringForward()
+                if let kind = emulatorKind(of: project) { await Emulator.bringForward(kind) }
                 return
             }
             if FileManager.default.fileExists(atPath: project.builtURL.path), !Runtime.sourcesChanged(project), !Template.androidWishOutdated(project) {
@@ -5854,7 +5854,9 @@ final class Store: ObservableObject {
             if !placed.hasPrefix("It's already") || said.isEmpty { said.append(placed) }
             if let now = current(app) {
                 said.append(kind == .screen
-                    ? "It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. " + Agent.Rules.screenPlaces(now)
+                    ? (ScreenKit.fillsAnyShape(now)
+                       ? "It's the same page everywhere, filling each screen; look at it in each new place's shape with `look_at_app`'s `shape`. "
+                       : "It's the same page everywhere, laid out at 1920x1080 and scaled to each screen. ") + Agent.Rules.screenPlaces(now)
                     : "It's the same game everywhere: the kit gives each place its screen, controls and sound. " + Agent.Rules.gamePlaces(now))
             }
         } else if let family = target.family, kind.reaches(.ios), family != now.family {
@@ -6560,8 +6562,8 @@ final class Store: ObservableObject {
             return await Simulator.isBooted(udid)
         case .android, .androidTV:
             if await openAndroidCopy(app, on: place) != nil { return true }
-            guard AndroidTools.isReady, Emulator.runningKind() == place.emulator else { return false }
-            return await Emulator.running() != nil
+            guard AndroidTools.isReady else { return false }
+            return await Emulator.running(place.emulator) != nil
         case .tv, .device: return false
         }
     }
@@ -6654,13 +6656,11 @@ final class Store: ObservableObject {
     }
 
     /// The app's copy open on Android, only when it's on the place asked for. Its phone and TV places share one package,
-    /// and Lamp's phone and TV emulators one serial, so a copy open on the TV emulator is no copy on the phone's place:
-    /// updating it there would close the TV emulator to start the phone's.
+    /// so a copy open on the TV emulator (or a TV of the person's) is no copy on the phone's place.
     private func openAndroidCopy(_ app: LampProject, on place: Destination) async -> AndroidRun? {
         guard let open = androidApps[app.id], await isAndroidRunning(app) else { return nil }
         let tv: Bool
-        if open.serial == Emulator.serial {
-            guard let kind = Emulator.runningKind() else { return nil }
+        if let kind = Emulator.kind(of: open.serial) {
             tv = kind == .tv
         } else {
             guard let device = devices.first(where: { $0.udid == open.serial }) else { return nil }
@@ -6674,10 +6674,10 @@ final class Store: ObservableObject {
     private func quietlyOnAndroid(_ project: LampProject, owner: Turn) async -> String? {
         if let open = await openAndroidCopy(project, on: project.destination) {
             var there = project
-            there.device = open.serial == Emulator.serial ? nil : open.serial
+            there.device = Emulator.kind(of: open.serial) == nil ? open.serial : nil
             return await installOnAndroid(there, owner: owner, inFront: false)
         }
-        guard Emulator.runningKind() == project.destination.emulator, let serial = await Emulator.running() else { return "The emulator isn't on." }
+        guard let serial = await Emulator.running(project.destination.emulator) else { return "The emulator isn't on." }
         let package = Template.androidPackage(for: project)
         do {
             try await Adb.install(project.builtURL, package: package, on: serial)
@@ -7830,8 +7830,19 @@ final class Store: ObservableObject {
     }
 
     /// `look_at_app` for a TV app: the preview pictured at half the TV's size and read as text, with what it printed.
-    private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool) async -> (Int, [String: Any]) {
+    private func lookOnTV(_ project: LampProject, turn: Turn, changed: Bool, reopen: Bool, shape: String? = nil) async -> (Int, [String: Any]) {
         let device = previewDevice(project)
+        // A screen that fills any shape is looked at in the one asked for; one laid out at a fixed 1920x1080 only as a TV.
+        var size: CGSize?
+        if let shape {
+            guard ScreenKit.isScreen(project), ScreenKit.fillsAnyShape(project) else {
+                return (400, ["error": "`shape` is for a screen whose page fills any shape; this page is laid out at a fixed 1920x1080."])
+            }
+            guard let asked = ScreenKit.shape(shape) else {
+                return (400, ["error": "`shape` is the page's width and height in CSS pixels, such as \"1920x1080\" or \"390x844\", each 200 to 4000."])
+            }
+            size = asked
+        }
         var summary = "The app is open in the \(device) preview on this Mac."
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
@@ -7850,11 +7861,17 @@ final class Store: ObservableObject {
             turn.look.presented = true
             TVPreview.bringForward(project)
         }
+        if let size { await TVPreview.reshape(project, to: size) }
+        let shown = TVPreview.shape(of: project)
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         let taken = await TVPreview.picture(project)
         if let taken, (try? AppFolder.write(taken.png, to: picture, in: project.dir)) != nil { screenshots = [picture] }
-        var text = summary + " " + Self.notTheDevice(device) + " It shows the 1920×1080 page at half size: a pixel in the picture is two of the page's. "
+        let measured = "\(Int(shown.width))×\(Int(shown.height))"
+        var text = summary + " " + Self.notTheDevice(device)
+            + (ScreenKit.isScreen(project) && ScreenKit.fillsAnyShape(project)
+               ? " It shows the page at \(measured) CSS pixels (`shape` shows it at another), pictured with its long side 960 pixels. "
+               : " It shows the \(measured) page at half size: a pixel in the picture is two of the page's. ")
             + (screenshots.isEmpty ? "No picture of it could be taken." : Privacy.sharesPictures ? "A picture of the \(device) preview follows. Points for use_app are pixels in it." : Privacy.picturesOff)
         if let taken, !screenshots.isEmpty, Privacy.sharesPictures {
             text += " " + TVPreview.takenNote(taken)
@@ -8254,8 +8271,9 @@ final class Store: ObservableObject {
     /// The Android apps open now, by project.
     private var androidApps: [String: AndroidRun] = [:]
 
-    /// The app is open in Lamp's emulator (not on the person's own Android device), for its chat to go beside it.
-    func isOpenInEmulator(_ project: LampProject) -> Bool { androidApps[project.id]?.serial.hasPrefix("emulator-") == true }
+    /// Which of Lamp's emulators the app is open in, or nil when it's on the person's own Android device or not open,
+    /// for its chat to go beside it.
+    func emulatorKind(of project: LampProject) -> Emulator.Kind? { androidApps[project.id].flatMap { Emulator.kind(of: $0.serial) } }
     /// Which project each Android device's screen belongs to: the last launched there. A look or `use_app` by
     /// another project whose app is still alive in the background is refused the screen, as the simulator's
     /// leases do it.
@@ -8295,15 +8313,14 @@ final class Store: ObservableObject {
                     return error.localizedDescription
                 }
             }
-            serial = Emulator.serial
+            serial = kind.serial
         }
         guard stillOwns() else { return "The app was deleted or stopped before it opened." }
         let previous = androidWork[serial]
         let mine = Task<String?, Never> { [self] in
             await previous?.value
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
-            // Lamp's phone and TV emulators share its ports and serial: one is started (the other closed) only in this
-            // queue, so an install or launch under way in the other is never cut short, nor made in the wrong one.
+            // Each of Lamp's emulators is started only in its own queue, so a launch never races its start.
             if project.device == nil {
                 do {
                     note(kind == .tv ? "Starting the Android TV emulator…" : "Starting the Android emulator…", for: project)
@@ -8384,7 +8401,7 @@ final class Store: ObservableObject {
                     }
                 }
             }
-            if inFront, project.device == nil { await Emulator.bringForward() }
+            if inFront, let kind = Emulator.kind(of: serial) { await Emulator.bringForward(kind) }
             let opened = Date()
             // The verdict asks the device once more as the window ends, since the watch's reading may be half a second old.
             _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, confirm: {
@@ -8471,9 +8488,9 @@ final class Store: ObservableObject {
         // keyboard. A device of the person's has nothing of it on the Mac's screen to show.
         let scale = Adb.scale(density: density)
         var shown: Emulator.Glass?
-        if open.serial == Emulator.serial, let size = await Adb.displaySize(on: open.serial) {
-            await Emulator.unhide()
-            shown = await Emulator.glass(size: CGSize(width: size.width / scale, height: size.height / scale))
+        if let kind = Emulator.kind(of: open.serial), let size = await Adb.displaySize(on: open.serial) {
+            await Emulator.unhide(kind)
+            shown = await Emulator.glass(kind, size: CGSize(width: size.width / scale, height: size.height / scale))
         }
         let glass = shown
         // Driving the emulator needs no permission, so none is asked for just to hear Esc: without it the pill offers
@@ -10143,10 +10160,16 @@ final class Store: ObservableObject {
             return true
         }
         if project.onAndroid {
+            let package = Template.androidPackage(for: project)
             if let running = androidApps[project.id] {
-                await Adb.stop(Template.androidPackage(for: project), on: running.serial)
+                await Adb.stop(package, on: running.serial)
                 running.end()
                 if androidLeases[running.serial] == project.id { androidLeases[running.serial] = nil }
+            } else {
+                // Open there without Lamp watching it (opened on the device, or by a Lamp that has since restarted):
+                // Stop still closes it where Try On points.
+                let serial = project.device ?? project.destination.emulator.serial
+                if await Adb.pid(of: package, on: serial) != nil { await Adb.stop(package, on: serial) }
             }
             androidApps[project.id] = nil
             refreshOpenApps()
@@ -11126,7 +11149,8 @@ final class Store: ObservableObject {
             arguments["sidebar"] as? Bool == true
                 ? await lookAtSidebar(app, page: arguments["page"] as? String, reopen: arguments["reopen"] as? Bool ?? false)
                 : await look(at: app, prop: arguments["prop"] as? String, motion: arguments["motion"] as? Bool ?? false,
-                             reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false)
+                             reopen: arguments["reopen"] as? Bool ?? false, onDevice: arguments["on_device"] as? Bool ?? false,
+                             shape: arguments["shape"] as? String)
         }
     }
 
@@ -11182,11 +11206,12 @@ final class Store: ObservableObject {
     /// open, code run once at the start), where otherwise a change goes into the open app. The agent ending the
     /// app's process itself skipped that question, and Lamp rightly asked the person about every such command.
     /// `onDevice`: for a game, where Try On points (its window, the simulator or the Xbox) rather than in the preview (`GameKit`).
-    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false) async -> (Int, [String: Any]) {
-        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice), of: project)
+    private func look(at project: LampProject, prop: String? = nil, motion: Bool = false, reopen: Bool = false, onDevice: Bool = false,
+                      shape: String? = nil) async -> (Int, [String: Any]) {
+        withLateCrash(await lookNow(at: project, prop: prop, motion: motion, reopen: reopen, onDevice: onDevice, shape: shape), of: project)
     }
 
-    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool) async -> (Int, [String: Any]) {
+    private func lookNow(at project: LampProject, prop: String?, motion: Bool, reopen: Bool, onDevice: Bool, shape: String? = nil) async -> (Int, [String: Any]) {
         // Only for the agent Lamp is running right now. The app knows the same token and must not
         // be able to rebuild itself.
         guard let turn = turns[project.id], turn.agent != nil else {
@@ -11223,9 +11248,9 @@ final class Store: ObservableObject {
         if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
         // A page with the remote's focus and keys (a screen) is looked at in the TV preview, wherever it's shown, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
-        // the preview.
+        // the preview, at any shape the agent asks for.
         if project.platform.target.looksInTVPreview, !onDevice, !project.onTV {
-            return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
+            return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen, shape: shape)
         }
         let changed = Runtime.sourcesChanged(project)
         if changed, let errors = await build(project, inPlace: !reopen) {
@@ -11247,7 +11272,7 @@ final class Store: ObservableObject {
         let saved = turn.autoApplied
         turn.autoApplied = 0
         if project.onAndroid { return await lookOnAndroid(project, turn: turn, changed: changed, reopen: reopen) }
-        if project.onTV { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
+        if project.onTV { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen, shape: shape) }
         if project.onDevice { return await lookOnDeviceApp(project, turn: turn, changed: changed, reopen: reopen, onDevice: onDevice) }
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
@@ -11447,7 +11472,7 @@ final class Store: ObservableObject {
               !turn.keptOpen else { return }
         if project.isPart { turn.look.presentedParts.insert(project.id) } else { turn.look.presented = true }
         if project.onAndroid {
-            if project.device == nil { await Emulator.bringForward() }
+            if project.device == nil { await Emulator.bringForward(project.destination.emulator) }
         } else if project.onIOS {
             if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
         } else if !project.isPart {
