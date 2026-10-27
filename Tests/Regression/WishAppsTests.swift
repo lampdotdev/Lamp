@@ -255,6 +255,67 @@ final class WishAppsKeptTests: XCTestCase {
         XCTAssertEqual(Versions.apps(from: apps.map(Versions.trailerWord).joined(separator: " ")), apps)
     }
 
+    /// A Roku app made and an Xbox app still waiting, then both made: each is its own entry on the wish's list, so the made
+    /// Roku app never makes the Xbox's look made and taking one off the list leaves the other; each has its own folder,
+    /// its own rules and its own word in look_at_app and use_app, and "device" is asked about rather than read as the first.
+    func testARokuAppAndAnXboxAppAreEachTheirOwn() throws {
+        var wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        wish.apps = [WishApp(kind: .iphone), WishApp(kind: .device, integration: "roku"),
+                     WishApp(kind: .device, needs: "No Xbox yet", devices: ["xbox-one"], integration: "xbox-one")]
+        try Template.saveMeta(wish)
+        func mark(_ folder: String, _ integration: String) throws {
+            let dir = wish.dir.appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try "\(integration)\n".write(to: dir.appendingPathComponent(DeviceApps.marker), atomically: true, encoding: .utf8)
+        }
+        try mark("Roku", "roku")
+        let one = try XCTUnwrap(Store.readWish(at: wish.dir))
+        let roku = try XCTUnwrap(Parts.load(one).first)
+        XCTAssertEqual(Parts.waiting(in: one, parts: [roku]).map(\.integration), ["xbox-one"], "the made Roku app isn't the Xbox app")
+        XCTAssertEqual(Parts.waiting(in: one, parts: [roku]).first?.needs, "No Xbox yet")
+        XCTAssertEqual(Parts.wanted(in: one, parts: [roku]).count, 3)
+        XCTAssertEqual(Parts.listing(.device, integration: "xbox-one", madeFor: one, parts: [roku]).map(\.integration), [nil, "roku", "xbox-one"])
+        XCTAssertEqual(one.apps.filter { !Parts.lists($0, roku) }.map(\.integration), [nil, "xbox-one"], "taking the Roku app away leaves the Xbox's")
+        // A list from before kept no integration: its device entry is the Roku app it was for.
+        var old = one
+        old.apps = [WishApp(kind: .iphone), WishApp(kind: .device)]
+        XCTAssertEqual(Parts.waiting(in: old, parts: [roku]), [])
+
+        // A new device's app never goes into another's folder, whatever the case of its name.
+        XCTAssertEqual(DeviceApps.freeFolder("Xbox", for: "xbox-one", in: wish.dir), "Xbox")
+        XCTAssertEqual(DeviceApps.freeFolder("Roku", for: "roku", in: wish.dir), "Roku")
+        XCTAssertEqual(DeviceApps.freeFolder("Roku", for: "xbox-one", in: wish.dir), "Roku2")
+        XCTAssertEqual(DeviceApps.freeFolder("ROKU", for: "roku", in: wish.dir), "ROKU2")
+
+        try mark("Xbox", "xbox-one")
+        let both = try XCTUnwrap(Store.readWish(at: wish.dir))
+        let parts = Parts.load(both)
+        XCTAssertEqual(Set(parts.map(\.id)), [Parts.id(wish: both.id, folder: "Roku"), Parts.id(wish: both.id, folder: "Xbox")])
+        XCTAssertEqual(Set(parts.compactMap(\.integration)), ["roku", "xbox-one"])
+        XCTAssertEqual(Parts.waiting(in: both, parts: parts), [])
+        XCTAssertEqual(Set(parts.map(Parts.skill(of:))), ["target-device-roku", "target-device-xbox"])
+        let skills = Parts.packs(for: parts)
+        XCTAssertTrue(try XCTUnwrap(skills["target-device-xbox"]).body.contains("Xbox/"))
+        XCTAssertFalse(try XCTUnwrap(skills["target-device-xbox"]).body.contains("Roku/"))
+        XCTAssertTrue(try XCTUnwrap(skills["target-device-roku"]).body.contains("Roku/"))
+        XCTAssertTrue(try XCTUnwrap(skills["target-device"]).body.contains("target-device-xbox"), "the kind's skill says which is whose")
+        XCTAssertEqual(Set(Skills.applying(to: both, parts: parts).map(\.name)).intersection(skills.keys), ["target-device-roku", "target-device-xbox"])
+        XCTAssertEqual(Parts.picks("device", among: [both] + parts).count, 2)
+        XCTAssertEqual(Parts.pick("xbox", among: [both] + parts)?.integration, "xbox-one")
+        XCTAssertEqual(Parts.pick("roku", among: [both] + parts)?.integration, "roku")
+    }
+
+    /// A wish of a Roku app and an Xbox app alone has other apps: each is told it's one of several.
+    func testARokuAppBesideAnXboxAppHasAnother() throws {
+        var wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        wish.apps = [WishApp(kind: .device, integration: "roku"), WishApp(kind: .device, integration: "xbox-one")]
+        for name in ["Sources", "Package.swift", "build.sh", "APP.md"] { try? FileManager.default.removeItem(at: wish.dir.appendingPathComponent(name)) }
+        try Template.saveMeta(wish)
+        let roku = LampProject(id: wish.id + ".roku", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("Roku"),
+                               platform: .device, integration: "roku", partOf: wish.id)
+        XCTAssertTrue(Template.hasOtherApps(roku))
+    }
+
     /// An Android app in Android/ is one of the wish's parts, found from its files as the others are.
     func testAnAndroidPartIsFoundInItsFolder() throws {
         let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)

@@ -66,6 +66,24 @@ enum DeviceApps {
         return taken.contains(base) ? base + "App" : base
     }
 
+    /// The folder a new app for this integration's device is made in, in this wish: `wanted` while nothing is there, or
+    /// what's there holds no device's app or this integration's own; else the first of "Xbox2", "Xbox3"… that's free. So
+    /// a new device's app never goes into another's folder, whether two integrations' names come to one folder or one's
+    /// name changed since its app was made. Names are compared whatever their case, as the Mac's disks and a part's id
+    /// (`Parts.id`) do.
+    static func freeFolder(_ wanted: String, for integration: String, in wish: URL) -> String {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: wish.path)) ?? []
+        func free(_ name: String) -> Bool {
+            let same = names.filter { $0.lowercased() == name.lowercased() }
+            guard !same.isEmpty else { return true }
+            guard same == [name] else { return false }
+            let marker = wish.appendingPathComponent(name).appendingPathComponent(self.marker)
+            guard let data = AppFile.read(marker, inFolder: wish, last: 4096) else { return true }
+            return split(String(decoding: data, as: UTF8.self).trimmed).integration == split(integration).integration
+        }
+        return free(wanted) ? wanted : (2...).lazy.map { wanted + String($0) }.first(where: free)!
+    }
+
     /// Every folder a device's app may be in: one per integration that declares apps.
     static func folders() -> [String] {
         Integrations.all().filter { $0.app?.declared != nil }.compactMap { folder(for: $0.id) }

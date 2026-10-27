@@ -156,9 +156,31 @@ final class MakeAppForTests: XCTestCase {
         guard case .add(let channel) = try make(.native, ["roku"], in: [app("notes", .mac)]) else { return XCTFail("a Roku app goes beside the Mac app") }
         XCTAssertEqual(channel.kind, .device)
         XCTAssertEqual(channel.integration, "roku")
-        XCTAssertTrue(refused(.web, ["xbox-one"], in: [roku])?.contains("remove_app") == true)
         guard case .update(let same, _) = try make(.native, ["roku"], in: [roku]) else { return XCTFail() }
         XCTAssertEqual(same, roku)
+    }
+
+    /// "Put it on our Roku and on the Xbox too": a Roku app and an Xbox app are two apps of one wish, side by side. Asked
+    /// for beside each other they're added, in either order, the Roku app is never made into the Xbox's, and asking for
+    /// either again changes that one alone. Each is found by its own device, and "device" fits both.
+    func testARokuAppAndAnXboxAppGoSideBySide() throws {
+        let roku = app("party.roku", .device, folder: "Roku", integration: "roku")
+        guard case .add(let xbox) = try make(.web, ["xbox-one"], in: [app("party", .iphone), roku]) else { return XCTFail("the Xbox app goes beside the Roku app") }
+        XCTAssertEqual(xbox.kind, .device)
+        XCTAssertEqual(xbox.integration, "xbox-one")
+        let made = app("party.xbox", .device, folder: "Xbox", integration: "xbox-one")
+        XCTAssertEqual(made.target.rows, ["xbox-one"], "a made Xbox app reads back as the Xbox's")
+        guard case .add(let channel) = try make(.native, ["roku"], in: [made]) else { return XCTFail("the Roku app goes beside the Xbox app") }
+        XCTAssertEqual(channel.integration, "roku")
+        guard case .update(let changed, _) = try make(.native, ["roku"], in: [roku, made]) else { return XCTFail() }
+        XCTAssertEqual(changed, roku)
+        guard case .update(let other, _) = try make(.web, ["xbox-one"], in: [roku, made]) else { return XCTFail() }
+        XCTAssertEqual(other, made)
+        XCTAssertEqual(AppPlanner.find("xbox-one", in: [roku, made], table: table), .one(made))
+        XCTAssertEqual(AppPlanner.find("Roku", in: [roku, made], table: table), .one(roku))
+        guard case .several = AppPlanner.find("device", in: [roku, made], table: table) else { return XCTFail("\"device\" is either") }
+        let waiting = AppKinds.member(waiting: WishApp(kind: .device, needs: "No Xbox yet", devices: ["xbox-one"], integration: "xbox-one"), in: table)
+        guard case .add = try make(.native, ["roku"], in: [waiting]) else { return XCTFail("a Roku app goes beside a waiting Xbox app") }
     }
 
     /// `remove_app` finds an app by its folder or own word first, then by any device it's on through the table, and

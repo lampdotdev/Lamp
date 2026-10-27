@@ -184,6 +184,11 @@ enum AppKinds {
         for row in table where opening.contains(row.destination) {
             // A device's own app is on its integration's devices; a page with a device among its places, on each that shows one.
             if row.destination == .device, let device, row.id != device { continue }
+            // Its integration's row, whichever make the row runs it as: an Xbox's app is a web one, and still the Xbox's.
+            if kind == .device, row.destination == .device {
+                if device != nil { devices.append(DeviceWord(word: row.words[0], in: row)) }
+                continue
+            }
             if let code { guard row.native?.code == code else { continue } } else { guard row.runs(.web) else { continue } }
             if row.comesWith != nil, !companions.contains(row.id) { continue }
             if row.wordFamilies.isEmpty {
@@ -227,12 +232,8 @@ enum AppPlanner {
         case .success(let found): target = found
         case .failure(let refusal): return .failure(refusal)
         }
-        // A device's own app is one of the wish's apps beside the others, one per wish for now: another device's is never
-        // made out of it (two integrations are two codes), and asked for while it's there, it waits for the old one to go.
-        if target.kind == .device, let other = members.first(where: { $0.target.kind == .device && $0.target.code != target.code }) {
-            return .failure(Refusal("A wish has one app for a device of its own for now, and this one has \(Parts.name(of: .device, integration: other.target.integration)). "
-                                    + "If the person wants this device's app instead, take that one away with remove_app, then ask again."))
-        }
+        // A device's own app is a code of its own per integration (`AppKinds.code`): another device's app goes beside it,
+        // and is never made out of it.
         let same = members.filter { $0.target.code == target.code }
         if let member = same.first(where: \.isMade) ?? same.first { return .success(.update(member, to: target)) }
         return .success(.add(target))

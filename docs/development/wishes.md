@@ -18,7 +18,8 @@ app's own id (`macCopies`, never by the install place its name shares with a Mac
 that app quits it as any app is quit. A wish's apps are installed under its name, and where each is installed follows from that
 name and its kind alone, with nothing kept beside it (`LampProject.installedURL`): a game or a screen goes in a folder
 of its kind's in the apps folder (`Target.installFolder`: Games/, Screens/), every other kind in the apps folder
-itself. Wishes' names are unique and a wish has one app of each kind, so no two apps share a place, and a copy of the
+itself. Wishes' names are unique and a wish has one app of each kind outside a device's own (each of those is put on
+its own device, never installed on this Mac), so no two apps share a place, and a copy of the
 wish, a restore, or its other apps coming and going never move one. A game or a screen installed before those folders
 is moved into its kind's once, by its own bundle id (`Store.reload`). A rename moves every app's installed copy
 (`Store.giveName`); Play, Open and Use open its apps (`openWish`),
@@ -70,17 +71,27 @@ never what its kind alone would be, by the path an app made at once takes (`Stor
 app, a game's places, its rules) goes with the requests until one carrying it has reached the agent (`Parts.madeNote`, kept in `.lamp/made-notes.json` and cleared by `Store.told`, as the note about going back is), so a turn whose engine never started leaves it for the next. Each note is kept with its app as it was made (`Parts.Made.App`: who it is and what it was made for, its kind, places and integration, never where Try On opens it) and sent only while that app is one of the wish's: a version restored without it, or an app made for something else since, drops it, a Try On choice keeps it, and a `make_app_for` on the app replaces it with what that says. A request that reaches the agent counts as telling only the notes it carried.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
 `controllerSession`, which find the wish's TV app wherever it is). A device's app made through its integration (a Roku
-channel) is one of a wish's apps like any other (family "device", one per wish), in a folder named for its device
-(`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, which `Part.folderFor` gives a new
-one), found by its folder's marker whatever the folder is called (`Part.marked`, `DeviceApps.markedFolders`), so an
+channel) is one of a wish's apps like any other, and a wish can have one for each of its devices: a Roku's app and an
+Xbox's side by side (family "device" says how they're built; each is its own app by its code, `Parts.key`). Each is in a
+folder named for its device (`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, Xbox/,
+which `Part.folderFor` gives a new one), never in another device's app's folder: when that name is taken by another
+integration's app, whatever its case, the new one gets the first free "Roku2", "Roku3"… (`DeviceApps.freeFolder`), and
+an existing app keeps its folder, id and data. It's found by its folder's marker whatever the folder is called (`Part.marked`, `DeviceApps.markedFolders`), so an
 integration renamed since never loses its app, read as that integration's from the marker (`Parts.load`), and kept on
 the wish's list with its integration (`WishApp.integration`, and in versions as "device:roku" in `Lamp-Apps`), so one
-that waits, or comes back with a restore, is made for the right device (`addPart`'s `integration`). Its rules as a part are `Agent.devicePrompt(part:)` (the integration's
-rules for the files in its folder), its word in `look_at_app` and `use_app` is its folder's ("roku", `Parts.word(of:)`),
-and the chat names it by its device ("the Roku app", `Parts.name(of:)`, `Parts.menu(of:)`). Another device's app is never made out of
-it (its code is its integration's, `AppKinds.code`), and `make_app_for` refuses a second device's app while the wish has
-one: the agent takes the old one away with `remove_app`, which takes only its own entry off the list (`Parts.lists`),
-and asks for the new one, which gets its own device's folder; each folder is found by its mark meanwhile. It isn't shared yet (its kind's `shareRefusal`), so a wish with one isn't either. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
+that waits, or comes back with a restore, is made for the right device (`addPart`'s `integration`). The list's entries
+and the wish's made apps are matched by code everywhere (`Parts.lists`, `wanted`, `waiting`, `setting`): a made Roku app
+never makes a waiting Xbox app look made, a retry, a change or a restore of one leaves the other's entry, and taking one
+away (`remove_app`) takes only its own. A device's entry from a list written before the list kept integrations stands
+for the device's app the wish had then. Its rules as a part are `Agent.devicePrompt(part:)` (the integration's rules
+for the files in its folder), a skill of its own per app (`Parts.skill(of:)`, "target-device-roku"; "target-device" is
+that app's while it's the wish's only one, and says which is whose once there are several), its word in `look_at_app`
+and `use_app` is its folder's ("roku", `Parts.word(of:)`), and "device" beside two of them is asked about rather than
+read as the first (`Parts.picks`); the chat names it by its device ("the Roku app", `Parts.name(of:)`,
+`Parts.menu(of:)`), and the wish's prompt gives each its device's rule (`Parts.rule`). Another device's app is never
+made out of it (its code is its integration's, `AppKinds.code`): `make_app_for` adds it beside the others, and asked
+for again, changes that one. It doesn't join the wish's room yet, so two devices' apps of one wish don't share data,
+but each counts as another app of the wish (`Template.hasOtherApps`). It isn't shared yet (its kind's `shareRefusal`), so a wish with one isn't either. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
 its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). `make_app_for` and `remove_app` are plans
 (`Places/AppPlan.swift`): the request is typed (`DeviceWord`: the word as asked, "ipad", its row, "iphone", and the
 family that word names in its row's `wordFamilies`; the first device asked for that names a family is where Try On
@@ -90,8 +101,9 @@ what it is: `AppTarget`, its kind, devices, integration, Try On family and place
 written in), planned (`AppPlanner`: `AppPlan.add`, `.update`, `.remove` or `.cancel`) and carried out as planned by
 `Store.agentKind` and `agentRemove`. `make_app_for` gives one app, the `devices` it's to be on and whether it's `made` "web"
 or "native": it updates the wish's app of the same code (changed in place by `convert`, its code and data kept) or adds
-one beside the others, and never takes an app away. A device's own app is a code of its own per integration, one of the wish's apps beside the others, one per wish
-for now. `remove_app` finds an app by its folder or own word, then by any device it's on through the table (unique,
+one beside the others, and never takes an app away. A device's own app is a code of its own per integration, one of the
+wish's apps beside the others, as many as the wish has devices. One app per code is how `make_app_for` matches the app it
+changes (a second Mac app in one wish has no way to be named apart yet), not something the devices require. `remove_app` finds an app by its folder or own word, then by any device it's on through the table (unique,
 several or none, each said as such), takes a made one away reversibly, takes one still waiting off the list, and never
 takes the wish's only made app. Today's kinds are read in these terms in one place, `AppKinds`, which holds only the
 translation from rows to today's recipes: a native app is the kind of its rows' one `native.code` (Apple's a Mac app,

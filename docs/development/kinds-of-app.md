@@ -9,7 +9,9 @@ What an app is for (`Platform`, kept in meta.json as "mac", "iphone", "universal
 `make_app_for` answers with, skills, AI away from the Mac), its `recipe` (its language, scaffold, Lamp's own files, how
 its folder is told apart, what a build is made from, whether it can be shared), its `part` when it can be one of a
 wish's other apps (folder, family, rules), and its `setup` (what this Mac must have to build it, and the chat's setup
-line). Kinds of one language change into each other in place; a wish has one part of a family. Code outside
+line). Kinds of one language change into each other in place. A part's family says how its code is built and what it can
+be changed into, not how many a wish has: a wish's apps are told apart by their code (`AppKinds.code`, the family, and
+for a device's own app its integration too), so a Roku's app and an Xbox's are two apps of one wish. Code outside
 `Targets/` asks a kind what it can do (`hasMac`, `hasIOS`, `hasTV`, `hasDevice`, `choosesPlace`), never which kind it is,
 except where an Apple kind's own build and signing differ. Lists of kinds go in `Targets.all`'s order, the kinds that
 stand alone after the rest and the Mac's hint last; a folder or a list of devices is matched with a kind made from

@@ -39,8 +39,9 @@ extension Target {
                        },
                        builtURL: DeviceApps.packageURL(for:), marker: DeviceApps.marker, refills: true, integration: DeviceApps.integrationID(in:),
                        shareRefusal: "Lamp doesn't share apps for devices like this one yet."),
-        // One of a wish's apps in a folder named for its device (Roku/), one per wish: what makes it, builds it and puts it
-        // on the device is its integration's, as for a wish of its own. It doesn't join the wish's room yet.
+        // One of a wish's apps in a folder named for its device (Roku/), beside other devices' (Xbox/): what makes it,
+        // builds it and puts it on the device is its integration's, as for a wish of its own. It doesn't join the wish's
+        // room yet.
         part: Part(folder: "Device", family: "device", word: "device", menu: ("Device", "appletvremote.gen4"),
                    rules: { Agent.devicePrompt(part: $0, alone: $1) }, wishRule: Agent.Rules.deviceAmongApps,
                    isMade: { dir, wish in DeviceApps.isMade(dir, wish: wish) },

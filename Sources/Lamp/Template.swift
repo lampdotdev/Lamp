@@ -285,28 +285,32 @@ enum Template {
     /// is on its own as far as the link goes.
     static func talksToOtherApps(_ project: LampProject) -> Bool {
         guard WishRooms.joins(project.platform) else { return false }
-        guard let kinds = kindsInWish(of: project) else { return true }
-        return Set(kinds.filter(WishRooms.joins).map(Parts.group)).count >= 2
+        guard let apps = appsInWish(of: project) else { return true }
+        return Set(apps.map(\.kind).filter(WishRooms.joins).map(Parts.group)).count >= 2
     }
 
     /// Whether the wish an app is of has other apps at all, linked or not: what gives a device's app its `LampWish`
-    /// saying it can't reach them yet (`DeviceSupport`).
+    /// saying it can't reach them yet (`DeviceSupport`). Counted by app, so a Roku's app beside an Xbox's has another.
     static func hasOtherApps(_ project: LampProject) -> Bool {
-        guard let kinds = kindsInWish(of: project) else { return true }
-        return Set(kinds.map(Parts.group)).count >= 2
+        guard let apps = appsInWish(of: project) else { return true }
+        return Set(apps.map(Parts.key(of:))).count >= 2
     }
 
-    /// The kinds of the apps of an app's wish, asked for or made, whichever folder each is in; nil when its wish can't be
-    /// read (a part whose wish is gone), which is taken as one of several, as every part was before a wish could lose its
-    /// first app.
-    private static func kindsInWish(of project: LampProject) -> [Platform]? {
+    /// The apps of an app's wish, asked for or made, whichever folder each is in, each with the integration of a device's
+    /// app; nil when its wish can't be read (a part whose wish is gone), which is taken as one of several, as every part
+    /// was before a wish could lose its first app.
+    private static func appsInWish(of project: LampProject) -> [WishApp]? {
         guard let wish = project.isPart ? Store.readWish(at: project.dir.deletingLastPathComponent()) : project else { return nil }
-        var kinds = wish.apps.map(\.kind)
-        for app in [project, wish] where app.holdsApp { kinds.append(app.platform) }
+        var apps = wish.apps
+        for app in [project, wish] where app.holdsApp { apps.append(WishApp(kind: app.platform, integration: Parts.listedIntegration(of: app))) }
         for folder in wish.partFolders {
-            if let kind = Parts.kindOfScaffold(in: wish.dir.appendingPathComponent(folder), wish: wish.dir) { kinds.append(kind) }
+            let dir = wish.dir.appendingPathComponent(folder)
+            if let kind = Parts.kindOfScaffold(in: dir, wish: wish.dir) {
+                apps.append(WishApp(kind: kind, integration: kind == .device ? kind.target.recipe.integration(dir) : nil))
+            }
         }
-        return kinds
+        // An entry from before the list kept a device's integration is the device's app it was for, not one more.
+        return apps.filter { entry in !(entry.kind == .device && entry.integration == nil && apps.contains { $0.kind == .device && $0.integration != nil }) }
     }
 
     /// Whether an app carries `LampWish`, the block for reaching its wish's other apps and its own other copies: every

@@ -39,6 +39,9 @@ the part it governs. Only a rule that every change must follow belongs here.
 - **A wish's chat is one screen.** It's drawn by `ChatScreen` (LampSidebarKit) from the state Lamp sends, beside a Mac
   app and in Lamp's own panel alike, and never in Lamp's window, which is the desk. What the chat shows or does is
   added to that state and that screen, never to one place it's drawn. Details: [chat](docs/development/chat.md).
+- **Implementation structure is not a product limit.** Don't limit how many apps, devices or combinations a person can
+  use just because the code currently stores one or groups them. A refusal must name a verified platform limit, a safety
+  reason or an explicit product decision. Don't turn "for now" into a rule.
 - **Screens are for doing, not explaining.** On-screen words are short and plain, a control appears once it
   works, and a thing is shown where it's chosen. A new card or card state gets its entry in the gallery in the same
   change. Details: [interface](docs/development/interface.md).

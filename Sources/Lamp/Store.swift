@@ -1848,7 +1848,10 @@ final class Store: ObservableObject {
         guard let wish = current(wish), !wish.isPart else { return (nil, "Lamp can't find the wish.", false) }
         // A device's app is its integration's to make: one Lamp no longer has can't be.
         let device = kind.reaches(.device) && !kind.addsPlaces
-        if let have = parts(of: wish).first(where: { $0.platform == kind && (!device || $0.integration == integration) }) { return (have, nil, false) }
+        let deviceID = integration.map { DeviceApps.split($0).integration }
+        if let have = parts(of: wish).first(where: { $0.platform == kind && (!device || $0.integration.map { DeviceApps.split($0).integration } == deviceID) }) {
+            return (have, nil, false)
+        }
         guard Parts.partKinds.contains(kind) else { return (nil, "Lamp can't make \(Parts.name(of: kind)) as a part of another wish yet.", false) }
         if device, integration.map(DeviceApps.makesApps) != true {
             return (nil, "Lamp doesn't know how to make apps for that device any more.", false)
@@ -1860,8 +1863,11 @@ final class Store: ObservableObject {
         // A part from a shared file is made in the folder it had there (`given`, or the one kept with its files), which
         // is its name among the wish's apps (`WishRooms.peer`): an iPhone app made for the Mac too stays the "iphone"
         // the others talk to, rather than coming in as the "apple" none of them knows.
-        let folder = [given, kept?.folder].compactMap { $0 }.first { Parts.folder($0, canHold: kind) && !device }
+        var folder = [given, kept?.folder].compactMap { $0 }.first { Parts.folder($0, canHold: kind) && !device }
             ?? Parts.folder(for: kind, integration: device ? integration : nil)
+        // Two integrations' names can come to the same folder ("Xbox One" and "XBOX-One"), and a folder can be another
+        // device's app's under a name its integration no longer gives: the new app gets a folder of its own beside it.
+        if device, let deviceID { folder = DeviceApps.freeFolder(folder, for: deviceID, in: wish.dir) }
         let dir = wish.dir.appendingPathComponent(folder)
         // The wish's folder is the agent's: what's there under the part's name must be a plain folder or nothing.
         if let type = (try? FileManager.default.attributesOfItem(atPath: dir.path))?[.type] as? FileAttributeType, type != .typeDirectory {
@@ -3306,7 +3312,7 @@ final class Store: ObservableObject {
         guard let wish = current(wish), !wish.isPart else { return }
         for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
             let said = await add(AppKinds.member(waiting: app).target, to: wish)
-            if let part = parts(of: current(wish) ?? wish).first(where: { Parts.group($0.platform) == Parts.group(app.kind) }) {
+            if let part = parts(of: current(wish) ?? wish).first(where: { Parts.lists(app, $0) }) {
                 Parts.rememberMade(said, about: part, in: wish)
             }
         }
@@ -3333,9 +3339,10 @@ final class Store: ObservableObject {
 
     /// The setup one of a wish's apps was waiting for is done (`IPhoneSetupLine`): what stopped it is cleared, so the
     /// next turn makes it, and the request that asks for it is sent.
+    /// The setup is this Mac's for the kind, so every app of the wish it held back (two devices' apps, say) is tried again.
     func retryWaitingApp(_ kind: Platform, of wish: LampProject) {
         guard let wish = current(wish), let app = wish.apps.first(where: { Parts.group($0.kind) == Parts.group(kind) }) else { return }
-        let cleared = setApps(wish, Parts.setting(app.needing(nil), in: wish.apps))
+        let cleared = setApps(wish, wish.apps.map { Parts.group($0.kind) == Parts.group(kind) ? $0.needing(nil) : $0 })
         send(Parts.request(for: app.kind), to: cleared)
     }
 
@@ -5693,12 +5700,14 @@ final class Store: ObservableObject {
         // Lamp held before it.
         if !projects[index].isPart, let saved = Self.readWish(at: project.dir) { projects[index].apps = saved.apps }
         if let kind, projects[index].platform != kind || projects[index].integration != integration {
-            let was = projects[index].platform
+            let was = projects[index]
             projects[index].platform = kind
             projects[index].integration = integration
             if !kind.reaches(.ios) { projects[index].device = nil }
-            if !projects[index].apps.contains(where: { $0.kind == kind }) {
-                projects[index].apps = Parts.setting(WishApp(kind: kind), in: projects[index].apps.filter { Parts.group($0.kind) != Parts.group(was) })
+            // In place of the entry of the app it was, and no other: a wish's other device's app keeps its own.
+            let now = WishApp(kind: kind, integration: Parts.listedIntegration(of: projects[index]))
+            if !projects[index].apps.contains(where: { Parts.key(of: $0) == Parts.key(of: now) }) {
+                projects[index].apps = Parts.setting(now, in: projects[index].apps.filter { !Parts.lists($0, was) })
             }
             try? Template.saveMeta(projects[index])
             refreshOpenApps()
@@ -5866,9 +5875,7 @@ final class Store: ObservableObject {
         case .success(.cancel(let member)):
             let name = Parts.name(of: member.target.kind, integration: member.target.integration)
             // Only its own entry: a device's app waiting for one device leaves another device's.
-            setApps(wish, wish.apps.filter { entry in
-                !(Parts.group(entry.kind) == Parts.group(member.target.kind) && (member.target.kind != .device || entry.integration == member.target.integration))
-            })
+            setApps(wish, wish.apps.filter { Parts.key(of: $0) != member.target.code })
             log(wish, .status, "\(wish.name) won't have \(name).")
             return (200, ["text": "Lamp took \(name) off the wish's list: it won't be made."])
         case .success(.remove(let member)):
@@ -5923,8 +5930,9 @@ final class Store: ObservableObject {
         changed.waitsForDevice = false
         // Its conversation began with no kind's rules: the next request starts one with them (`finish`).
         if undecided { changed.decided = true }
-        // The app is this kind now in the wish's list, in place of what it was.
-        changed.apps = Parts.setting(WishApp(kind: kind), in: current.apps.filter { Parts.group($0.kind) != Parts.group(current.platform) })
+        // The app is this kind now in the wish's list, in place of what it was and of nothing else: another device's app
+        // of the wish keeps its entry.
+        changed.apps = Parts.setting(WishApp(kind: kind, integration: Parts.listedIntegration(of: changed)), in: current.apps.filter { !Parts.lists($0, current) })
         // Where it opens next: where it's newly made for, so the person sees the change.
         changed.chosen = current.platform == .mac && !undecided ? .ios : .mac
         if !kind.reaches(.ios) { changed.device = nil }
@@ -10876,7 +10884,12 @@ final class Store: ObservableObject {
             guard apps.count > 1 else { return (apps.first ?? project, nil) }
             return (nil, "This wish has \(apps.count) apps: say which with `part`: \(have).")
         }
-        if let found = Parts.pick(word, among: apps) { return (found, nil) }
+        let found = Parts.picks(word, among: apps)
+        if found.count == 1 { return (found[0], nil) }
+        if found.count > 1 {
+            return (nil, "\"\(word)\" is more than one of this wish's apps: say which with `part`: "
+                    + found.map { "\"\(Parts.word(of: $0))\" (\(Parts.name(of: $0)))" }.joined(separator: ", ") + ".")
+        }
         return (nil, "This wish has no \(word) app. Its apps: \(have). To add one, use make_app_for.")
     }
 

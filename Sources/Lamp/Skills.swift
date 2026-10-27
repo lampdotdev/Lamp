@@ -103,7 +103,7 @@ enum Skills {
     static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
         let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.hasMac) + named(project.platform)
         var found: [(name: String, because: String)] = parts.map { part in
-            (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(of: part))\" in look_at_app and use_app)")
+            (Parts.skill(of: part), "this wish has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(of: part))\" in look_at_app and use_app)")
         }
         if Template.talksToOtherApps(project) { found.append(("wish-links", "this wish is more than one app: the ways its apps can share data")) }
         else if appSwift(of: project, matches: #"\bLampWish\b|\bLampStore\.shared"#) { found.append(("wish-links", "its code uses LampWish or LampStore.shared")) }
