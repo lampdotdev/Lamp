@@ -7223,26 +7223,21 @@ enum Template {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { MainActor.assumeIsolated { firstSnapshot(waited: waited + 0.1) } }
         }
 
-        /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png.
-        /// An app may picture its own windows without screen recording permission.
+        /// Saves up to three open windows, frontmost first, as screenshot.png, screenshot-2.png and screenshot-3.png,
+        /// then calls `done`. An app may picture its own windows without screen recording permission.
         @MainActor
-        static func snapshot() {
+        static func snapshot(then done: (@MainActor () -> Void)? = nil) {
             LampDriver.keepBarPanel()
             let windows = windowsOnScreen
-            guard !windows.isEmpty else { return }   // nothing on screen: keep the last pictures
+            guard !windows.isEmpty else { done?(); return }   // nothing on screen: keep the last pictures
             // The app's own window, not a dialog or sheet in front of it (a menu bar app's panel when that's all it has):
             // the desk keeps this picture until the next launch.
-            if !previewTaken, let window = windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel) {
-                preview(of: window)
-            }
-            for index in 0..<3 {
-                let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
-                if index < windows.count, let png = picture(of: windows[index]) {
-                    try? png.write(to: url, options: .atomic)
-                } else {
-                    try? FileManager.default.removeItem(at: url)
-                }
-            }
+            let previewWindow = previewTaken ? nil : windows.first(where: { !$0.isSheet && !($0 is NSPanel) }) ?? windows.first(where: LampDriver.isBarPanel)
+            if previewWindow != nil { previewTaken = true }
+            let front = Array(windows.prefix(3))
+            let seen = capturable()
+            let shots = front.map { seen ? shot(of: $0) : nil }
+            let previewShot = previewWindow.flatMap { seen ? shot(of: $0) : nil }
             // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name.
             let text = folder.appendingPathComponent("screen.txt")
             if let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item)) {
@@ -7250,18 +7245,55 @@ enum Template {
             } else {
                 try? FileManager.default.removeItem(at: text)
             }
+            // The window server's pictures are taken off the main thread: the first after a build has the system check
+            // the app's signature before it answers, which can take seconds, and the app froze (a spinning cursor) meanwhile.
+            pictures.async {
+                let taken = shots.map { $0.flatMap(capture) }
+                let previewPicture = previewShot.flatMap(capture)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        // The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it
+                        // shows after each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+                        if let previewWindow {
+                            if let png = previewPicture ?? drawn(previewWindow) {
+                                try? png.write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
+                            } else {
+                                previewTaken = false
+                            }
+                        }
+                        for index in 0..<3 {
+                            let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
+                            if index < front.count, let png = taken[index] ?? drawn(front[index]) {
+                                try? png.write(to: url, options: .atomic)
+                            } else {
+                                try? FileManager.default.removeItem(at: url)
+                            }
+                        }
+                        done?()
+                    }
+                }
+            }
         }
 
         @MainActor private static var previewTaken = false
+        private static let pictures = DispatchQueue(label: "lamp.pictures")
 
-        /// The picture Lamp's desk shows when the pointer rests on this app's icon: the first window it shows after
-        /// each launch, without Lamp's chat beside it, so it keeps up with the app as it changes.
+        /// What a picture of a window needs from it, read on the main thread; the picture is taken off it (`capture`).
+        struct Shot: Sendable {
+            let number: Int
+            let size: CGSize
+            let scale: CGFloat
+        }
+
         @MainActor
-        private static func preview(of window: NSWindow) {
-            guard let png = picture(of: window), let image = NSBitmapImageRep(data: png)?.cgImage else { return }
-            previewTaken = true
-            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
-                .write(to: folder.appendingPathComponent("preview.png"), options: .atomic)
+        static func shot(of window: NSWindow) -> Shot? {
+            guard window.windowNumber > 0, let view = window.contentView?.superview ?? window.contentView else { return nil }
+            return Shot(number: window.windowNumber, size: view.bounds.size, scale: scale(of: window))
+        }
+
+        /// The window server's picture of a window, as a PNG at the size every picture of it is sent at.
+        static func capture(_ shot: Shot) -> Data? {
+            shown(number: shot.number).flatMap { png($0, size: shot.size, scale: shot.scale) }
         }
 
         /// Open windows, frontmost first. A dialog or sheet comes before the window it's attached to: it's
@@ -7292,6 +7324,12 @@ enum Template {
         @MainActor
         static func picture(of window: NSWindow) -> Data? {
             if let shown = shown(window) { return png(shown, at: window) }
+            return drawn(window)
+        }
+
+        /// The app's own drawing of the window, when the window server has no picture of it.
+        @MainActor
+        private static func drawn(_ window: NSWindow) -> Data? {
             guard let view = window.contentView?.superview ?? window.contentView,
                   let bitmap = bitmap(for: window) else { return nil }
             view.cacheDisplay(in: view.bounds, to: bitmap)
@@ -7301,7 +7339,12 @@ enum Template {
         /// A picture the window server took of the window, at the size every picture of it is sent at.
         @MainActor
         static func png(_ image: CGImage, at window: NSWindow) -> Data? {
-            guard let bitmap = bitmap(for: window), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+            guard let view = window.contentView?.superview ?? window.contentView else { return nil }
+            return png(image, size: view.bounds.size, scale: scale(of: window))
+        }
+
+        static func png(_ image: CGImage, size: CGSize, scale: CGFloat) -> Data? {
+            guard let bitmap = bitmap(size: size, scale: scale), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
             context.cgContext.interpolationQuality = .high
             context.cgContext.draw(image, in: CGRect(origin: .zero, size: bitmap.size))
             return bitmap.representation(using: .png, properties: [:])
@@ -7310,8 +7353,10 @@ enum Template {
         @MainActor
         private static func bitmap(for window: NSWindow) -> NSBitmapImageRep? {
             guard let view = window.contentView?.superview ?? window.contentView else { return nil }
-            let size = view.bounds.size
-            let scale = scale(of: window)
+            return bitmap(size: view.bounds.size, scale: scale(of: window))
+        }
+
+        private static func bitmap(size: CGSize, scale: CGFloat) -> NSBitmapImageRep? {
             let bitmap = NSBitmapImageRep(
                 bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -7324,14 +7369,23 @@ enum Template {
         /// marks it unavailable in favour of ScreenCaptureKit, which would ask for screen recording permission.
         @MainActor
         private static func shown(_ window: NSWindow) -> CGImage? {
-            typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-            // While the screen is locked or the display sleeps, the window server hands back a blank picture.
+            guard window.windowNumber > 0, capturable() else { return nil }
+            return shown(number: window.windowNumber)
+        }
+
+        /// Whether the window server would give a picture now: not while the app is hidden, the screen is locked or the
+        /// display sleeps, when it hands back a blank one.
+        @MainActor
+        private static func capturable() -> Bool {
             let session = CGSessionCopyCurrentDictionary() as? [String: Any]
-            guard window.windowNumber > 0, NSApp.isHidden == false,
-                  session?["CGSSessionScreenIsLocked"] == nil, CGDisplayIsAsleep(CGMainDisplayID()) == 0,
-                  let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+            return NSApp.isHidden == false && session?["CGSSessionScreenIsLocked"] == nil && CGDisplayIsAsleep(CGMainDisplayID()) == 0
+        }
+
+        private static func shown(number: Int) -> CGImage? {
+            typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+            guard number > 0, let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
             // Only this window (1 << 3); its bounds without the shadow (1 << 0), at full resolution (1 << 3).
-            let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 | 1 << 3)?
+            let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(number), 1 | 1 << 3)?
                 .takeRetainedValue()
             guard let image, image.width > 1, image.height > 1 else { return nil }
             return image
@@ -8478,11 +8532,13 @@ enum Template {
             let before = front.flatMap(LampRuntime.picture), dialog = front.map(isDialog) ?? false
             var report: [String] = []
             func answer(stopped: Bool) {
-                LampRuntime.snapshot()
                 var answer = ["id": id, "report": report.joined(separator: "\n")]
                 if stopped { answer["stopped"] = "person" }
-                try? JSONSerialization.data(withJSONObject: answer)
-                    .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+                // Once the pictures are written, which Lamp reads with the answer.
+                LampRuntime.snapshot {
+                    try? JSONSerialization.data(withJSONObject: answer)
+                        .write(to: LampRuntime.folder.appendingPathComponent("use.json"), options: .atomic)
+                }
             }
             let batch = Handover.begin(id: id, count: actions.count) { why in
                 // The person has the app now, the menu bar icon's panel included: it takes the keyboard again and
