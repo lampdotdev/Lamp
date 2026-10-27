@@ -626,6 +626,9 @@ final class Store: ObservableObject {
 
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
+        /// The apps `make_app_for` added with `another` in this request, by what each is (`additionKey`), with the folder
+        /// each went in: the same call again in the request is that app, not one more.
+        var added: [String: String] = [:]
         /// Lamp ended the engine itself after it had answered (`endAfterAnswer`): its exit is no failure.
         var endedAfterAnswer = false
         var build: Process?                 // the app's build.sh, while it runs
@@ -3228,7 +3231,6 @@ final class Store: ObservableObject {
         // has them after a relaunch.
         // Anything but a click on a card is the person going on: what they allowed once is spent.
         if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
-        requestBegins(for: project)
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         let files = message.attachments, pointed = message.pointed
@@ -5844,11 +5846,11 @@ final class Store: ObservableObject {
             // The same call again in the same request (its answer lost on the way, or sent twice) is the app it added, not
             // one more: one new app of a kind and devices per request.
             let key = Self.additionKey(target)
-            if let folder = addedInRequest[wish.id]?[key], members.contains(where: { $0.slot?.lowercased() == folder.lowercased() }) {
+            if let folder = added(in: wish)[key], members.contains(where: { $0.slot?.lowercased() == folder.lowercased() }) {
                 return (200, ["text": "Already done in this request: \(Parts.name(of: target.waiting)) in \(folder)/. Nothing more was added; build that one."])
             }
             let folder = Parts.newFolder(Parts.folder(for: target.kind, integration: target.kind == .device ? target.integration : nil), in: wish)
-            addedInRequest[wish.id, default: [:]][key] = folder
+            noteAdded(key, in: folder, for: wish)
             said += await add(target, to: wish, folder: folder)
             said.append("The wish's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
         case .update(let member, let asked):
@@ -5888,13 +5890,19 @@ final class Store: ObservableObject {
         return (200, ["text": said.joined(separator: "\n\n")])
     }
 
-    /// The new apps `make_app_for` added with `another` in the request under way, by wish and by what each is
-    /// (`additionKey`), with the folder each went in. Forgotten when the next message is sent: only Lamp's memory of this
-    /// request, so a repeated call can't make a folder more.
-    private var addedInRequest: [String: [String: String]] = [:]
+    /// The apps added with `another` in the request under way (`Turn.added`): kept with the turn that runs it, from when
+    /// it takes its messages until it ends, so a message queued meanwhile changes nothing. A call made outside any turn
+    /// keeps its own, by wish, until `requestBegins`.
+    private var addedOutsideTurns: [String: [String: String]] = [:]
 
-    /// A new request: an app added in the one before is no repeat of what this one asks.
-    func requestBegins(for project: LampProject) { addedInRequest[wish(of: project).id] = nil }
+    private func added(in wish: LampProject) -> [String: String] { turns[wish.id]?.added ?? addedOutsideTurns[wish.id] ?? [:] }
+
+    private func noteAdded(_ key: String, in folder: String, for wish: LampProject) {
+        if let turn = turns[wish.id] { turn.added[key] = folder } else { addedOutsideTurns[wish.id, default: [:]][key] = folder }
+    }
+
+    /// A new request outside any turn: an app added before it is no repeat of what it asks.
+    func requestBegins(for project: LampProject) { addedOutsideTurns[wish(of: project).id] = nil }
 
     /// What one added app is, for telling a repeated call from another: its kind and the devices it's for.
     private static func additionKey(_ target: AppTarget) -> String {

@@ -25,8 +25,8 @@ another by default: a call with neither is refused, as is one with both, a blank
 change of mind changes the app the wish has. Whether a request is for one more app or a change to the one the wish
 has is the person's to say: the agent asks them with its own `ask` before adding one (the `more-apps` skill,
 which every kind of app is offered, with a line in every engine's prompt pointing to it). A call with `another` adds the
-app in a folder of its own; the same call again in the same request is that app, not one more (`Store.addedInRequest`,
-Lamp's memory of the request, forgotten when the next message is sent). An app Lamp makes later from the wish's list
+app in a folder of its own; the same call again in the same request is that app, not one more (`Turn.added`,
+kept with the turn that runs the request, from when it takes its messages until it ends). An app Lamp makes later from the wish's list
 (`makeWaitingParts`) reuses the folder kept for it and isn't asked about again. `part` in `look_at_app` and `use_app` names an app by its folder before anything else (`Parts.picks`), and
 a word that fits several ("mac" beside two Mac apps) is asked about, each app then offered by a word that reaches it
 alone (`Parts.address`). A wish whose folder holds no app of its own (its apps all in

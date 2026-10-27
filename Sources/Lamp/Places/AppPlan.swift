@@ -264,7 +264,7 @@ enum AppPlanner {
         if adding || members.isEmpty { return .success(members.isEmpty ? .first : .another) }
         return .failure(Refusal("This wish already has \(members.count == 1 ? "an app" : "\(members.count) apps") (`app` \(folders(members))). "
             + "To change one, including when the person changed their mind or wants something else in its place, give its folder in `app`. "
-            + "To add one more app beside it, only when the person asked for another app, give `another: true`: Lamp then asks them to choose. "
+            + "To add one more app beside it, ask the person first with `ask` and end your turn; give `another: true` only once they chose a second app. "
             + "Nothing changed."))
     }
 

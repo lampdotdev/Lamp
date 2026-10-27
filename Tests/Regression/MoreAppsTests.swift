@@ -41,6 +41,7 @@ final class MoreAppsTests: XCTestCase {
         let (status, text) = await call(store, wish)
         XCTAssertEqual(status, 400)
         XCTAssertTrue(text.contains("`app`") && text.contains("Nothing changed"), text)
+        XCTAssertTrue(text.contains("`ask`"), "the refusal says to ask the person before adding: \(text)")
         XCTAssertEqual(folders(wish), [])
         let (changed, said) = await call(store, wish, ["app": "."])
         XCTAssertEqual(changed, 200)
