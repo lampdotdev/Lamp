@@ -10,6 +10,10 @@ host for the page isn't enough on its own, so check WebGL 2 first (below). What 
 more than a phone, and a TV's chip is often slower than a phone's. Nothing here limits what you make; it says what
 costs the most, so you can choose what the game is worth on the devices it's played on.
 
+This is three.js as Lamp ships it in a game's page (`make_app_for` with `kind` "game"). A Samsung or LG TV app's page,
+which is what a game played with phones is for now (the phone-controllers skill), has no three.js and no game
+runtime: draw that game in 2D on a canvas.
+
 For 3D in Swift in a Mac-only app (RealityKit through LampSceneView), open the scene-3d skill instead; native 3D on
 iPhone, iPad or Apple TV is written with that device's own frameworks. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
@@ -17,7 +21,7 @@ iPhone, iPad or Apple TV is written with that device's own frameworks. The game 
 ## The renderer
 
 The page loads three.js from `Web/three` through the import map in index.html (`three` and `three/addons/`, the
-WebGL build and its addons such as GLTFLoader; nothing is loaded from the network). A game makes one
+WebGL build and its addons such as GLTFLoader; nothing is loaded from the network). A game on the runtime makes one
 `THREE.WebGLRenderer({ antialias: true })` and hands it to `game()` in lamp-game.js, which sizes the canvas to
 1920x1080, fits it to the screen and runs your `frame`. Read lamp-game.js's comments first.
 
