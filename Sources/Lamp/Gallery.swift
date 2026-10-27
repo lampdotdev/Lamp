@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -852,6 +852,46 @@ enum Gallery {
                                    credit: "Based on Slop New York by Mr.doob",
                                    openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
                                    copied: copied, republish: page, canPublish: stage == .ready || { if case .failed = stage { true } else { false } }(), publish: {}, fix: {}, openPage: {}, copy: {}, close: {}, width: width)
+            return AnyView(card
+                .frame(width: width == nil ? 340 : nil)
+                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+    }
+
+    /// The card that says what goes on GitHub and where, from checking it to its being up, in the chat's place at its
+    /// narrowest and widest.
+    private static let repoEntries: [Entry] = [
+        repo("Checking", stage: .preparing),
+        repo("Needs GitHub's tool", stage: .needsGitHub(.install)),
+        repo("Needs a sign-in", stage: .needsGitHub(.signIn)),
+        repo("No license", stage: .refused("New York can't be shared. It uses Found Code by someone, which came with no license. It can still be used on this Mac.")),
+        repo("Ready, first time", stage: .ready),
+        repo("Ready, with a share link", stage: .ready, link: true),
+        repo("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."], canChooseLicense: false),
+        repo("Working", stage: .working("Uploading…")),
+        repo("Couldn't put it up", stage: .failed("GitHub didn't take it: the connection was lost.")),
+        repo("Up", stage: .done(unchanged: false), up: true),
+        repo("Up and copied", stage: .done(unchanged: false), up: true, copied: true),
+        repo("Up, unchanged", stage: .done(unchanged: true), up: true),
+        repo("Up, changed since", stage: .ready, up: true),
+        repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
+    ]
+
+    private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
+                             canChooseLicense: Bool = true, width: CGFloat? = nil) -> Entry {
+        Entry(group: "GitHub", name: name) {
+            let folder = Starters.folder?.appendingPathComponent("newyork")
+            let ready = stage != .preparing
+            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+                                stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
+                                credit: "Based on Slop New York by Mr.doob", openInLamp: link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
+                                size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
+                                canPut: stage == .ready || { if case .failed = stage { true } else { false } }(), isPrivate: false, license: canChooseLicense,
+                                canChooseLicense: canChooseLicense, put: {}, fix: {}, makeLink: {}, setPrivate: { _ in }, setLicense: { _ in },
+                                openRepo: {}, copy: {}, close: {}, width: width)
             return AnyView(card
                 .frame(width: width == nil ? 340 : nil)
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))

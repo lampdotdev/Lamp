@@ -203,6 +203,19 @@ enum Publish {
         var text = "# \(project.name)\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
         text += "**Play it:** \(url)\n\n"
+        text += creditsSection(credits)
+        text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev)."
+        if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
+        if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
+        text += "\n\n"
+        text += "`lamp-game.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
+        return text
+    }
+
+    /// What a README says of the wish's credits: what it's based on and under which licenses, what else it uses, the
+    /// pictures made with AI and the wishes it was remixed from. Empty for a wish with none.
+    static func creditsSection(_ credits: Credits) -> String {
+        var text = ""
         if !credits.upstream.isEmpty {
             text += "## Credits\n\n"
             for (index, source) in credits.upstream.enumerated() {
@@ -210,7 +223,7 @@ enum Publish {
                 var line = (index == 0 ? "Based on " : "Uses ") + name + (source.author.map { " by \($0)" } ?? "")
                 if let license = source.license { line += ", \(license)" }
                 if let commit = source.commit { line += ", at commit `\(commit.prefix(12))`" }
-                if let file = source.licenseFile { line += " (licence: `\(file.hasPrefix("Web/") ? String(file.dropFirst(4)) : file)`)" }
+                if let file = source.licenseFile { line += " (license: `\(file.hasPrefix("Web/") ? String(file.dropFirst(4)) : file)`)" }
                 text += "- \(line)\n"
             }
             text += "\n"
@@ -223,12 +236,38 @@ enum Publish {
         if !credits.remixOf.isEmpty {
             text += "Remixed from " + credits.remixOf.map { $0.name + ($0.starter != nil ? " (a Lamp starter)" : "") }.joined(separator: ", then ") + ".\n\n"
         }
-        text += "## Open in Lamp\n\nMade with [Lamp](https://lamp.dev)."
-        if let link = open.link { text += " [Make your own](\(link.absoluteString)) from the same wish, with Lamp or by downloading it." }
-        if let file = open.file { text += " Or download [\(file)](\(file)) and open it with Lamp: it's this exact wish, yours to remix, with the credits above kept." }
-        text += "\n\n"
-        text += "`lamp-game.js`, `lamp-controllers.js`, `lamp-device.js`, `lamp.js` and `three/` are the game's runtime, written by Lamp; three.js is MIT (`three/LICENSE`).\n"
         return text
+    }
+
+    /// The wish's name as a repository the account doesn't have yet: "new-york", else "new-york-2" and on.
+    static func freeName(for project: LampProject, login: String, gh: String) async -> String {
+        let base = slug(project.name)
+        for n in 1...20 {
+            let name = "\(login)/\(n == 1 ? base : "\(base)-\(n)")"
+            if !(await Subprocess.run(gh, ["repo", "view", name, "--json", "name"], timeout: 30)).ok { return name }
+        }
+        return "\(login)/\(base)-\(UUID().uuidString.prefix(6).lowercased())"
+    }
+
+    /// Gets what a card needs from GitHub: gh's site to install it from, or a sign-in. gh signs in on github.com in the
+    /// browser, from a terminal it asks a question in, so Terminal comes to the front with it; once the sign-in is seen
+    /// (checked every few seconds for up to five minutes, while `stillNeeded`), `signedIn` is called.
+    @MainActor static func obtain(_ need: PublishCard.Need, stillNeeded: @escaping @MainActor () -> Bool, signedIn: @escaping @MainActor () -> Void) {
+        switch need {
+        case .install: NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
+        case .signIn:
+            Task {
+                guard let gh = await gh() else { return }
+                let script = "tell application \"Terminal\" to do script \"'\(gh)' auth login --web --git-protocol https --hostname github.com\""
+                    + "\ntell application \"Terminal\" to activate"
+                _ = await Subprocess.run("/usr/bin/osascript", ["-e", script], timeout: 20)
+                for _ in 0..<100 {
+                    try? await Task.sleep(for: .seconds(3))
+                    guard stillNeeded() else { return }
+                    if await login(gh: gh) != nil { return signedIn() }
+                }
+            }
+        }
     }
 
     // MARK: Putting it up
@@ -347,7 +386,7 @@ enum Publish {
             guard let login = await Publish.login(gh: gh) else { return set(project, .needsGitHub(.signIn)) }
             let kept = Publish.kept(for: project)
             let repo: String
-            if let known = kept?.repo { repo = known } else { repo = await freeName(for: project, login: login, gh: gh) }
+            if let known = kept?.repo { repo = known } else { repo = await Publish.freeName(for: project, login: login, gh: gh) }
             do {
                 let staged = try await Task.detached(priority: .userInitiated) { try Publish.stage(project, url: Publish.pageURL(repo), link: WishLink.kept(for: project)?.url) }.value
                 guard cards[project.id] != nil else {
@@ -363,16 +402,6 @@ enum Publish {
                 set(project, .refused(((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription))
             }
         }
-    }
-
-    /// The wish's name as a repository the account doesn't have yet: "new-york", else "new-york-2" and on.
-    private func freeName(for project: LampProject, login: String, gh: String) async -> String {
-        let base = Publish.slug(project.name)
-        for n in 1...20 {
-            let name = "\(login)/\(n == 1 ? base : "\(base)-\(n)")"
-            if !(await Subprocess.run(gh, ["repo", "view", name, "--json", "name"], timeout: 30)).ok { return name }
-        }
-        return "\(login)/\(base)-\(UUID().uuidString.prefix(6).lowercased())"
     }
 
     private func set(_ project: LampProject, _ stage: PublishCard.Stage) { cards[project.id]?.stage = stage }
@@ -411,23 +440,9 @@ enum Publish {
 
     func fix(_ project: LampProject) {
         guard case .needsGitHub(let need) = cards[project.id]?.stage else { return }
-        switch need {
-        case .install: NSWorkspace.shared.open(URL(string: "https://cli.github.com")!)
-        case .signIn:
-            // gh signs in on github.com in the browser, from a terminal it asks a question in: Terminal, in front.
-            Task {
-                guard let gh = await Publish.gh() else { return }
-                let script = "tell application \"Terminal\" to do script \"'\(gh)' auth login --web --git-protocol https --hostname github.com\""
-                    + "\ntell application \"Terminal\" to activate"
-                _ = await Subprocess.run("/usr/bin/osascript", ["-e", script], timeout: 20)
-                // Checked again once the sign-in is done there, for up to five minutes.
-                for _ in 0..<100 {
-                    try? await Task.sleep(for: .seconds(3))
-                    guard case .needsGitHub = cards[project.id]?.stage else { return }
-                    if await Publish.login(gh: gh) != nil { return prepare(project) }
-                }
-            }
-        }
+        Publish.obtain(need, stillNeeded: { [weak self] in
+            if case .needsGitHub = self?.cards[project.id]?.stage { return true } else { return false }
+        }, signedIn: { [weak self] in self?.prepare(project) })
     }
 
     func openPage(_ project: LampProject) {

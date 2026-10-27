@@ -92,6 +92,8 @@ public struct SidebarState: Codable, Equatable {
     public var wishLink: SidebarWishLink?
     /// The Publish card, while it's open in this chat (`SidebarCommand.publish`): shown in the chat's place.
     public var publish: SidebarPublish?
+    /// The Put on GitHub card, while it's open in this chat (`SidebarCommand.repo`): shown in the chat's place.
+    public var repo: SidebarRepo?
     /// Try On's choices, for a wish that opens anywhere but this Mac alone (an iPhone app, a TV app, a game, a screen):
     /// the bar's device button opens them, and a click is `SidebarCommand.tryOn`. Nil for a Mac app, which has none.
     public var tryOn: SidebarTryOn?
@@ -615,6 +617,8 @@ public enum SidebarCommand: Codable, Equatable {
     case wishLink(SidebarWishLinkCommand)
     /// The Publish card: open it, or what was done on it.
     case publish(SidebarPublishCommand)
+    /// The Put on GitHub card: open it, or what was done on it.
+    case repo(SidebarRepoCommand)
     /// A Try On choice, by its id (`SidebarTryOn.Item.id`).
     case tryOn(String)
     /// Try On's menu opened: Lamp looks for devices, as when Lamp's own Try On opens, so the list is the one now.
@@ -844,4 +848,55 @@ public enum SidebarPublishCommand: Codable, Equatable {
     case open, publish, fix, openPage, copy, close
     /// Make a Share Link first, through its own card.
     case makeLink
+}
+
+/// The Put on GitHub card as Lamp has it (`RepoCard`): everything on it is Lamp's, worked out before the person confirms.
+public struct SidebarRepo: Codable, Equatable {
+    public var name: String
+    public var icon: Data?
+    public var stage: RepoCard.Stage
+    public var repo: String?
+    /// The repository's address, once it's up.
+    public var url: String?
+    public var credit: String?
+    /// Where the README's Remix it with Lamp goes: the wish's Share Link, or nil when it has none yet (the card offers to make one).
+    public var openInLamp: String?
+    public var notes: [String]
+    public var size: String?
+    public var copied: Bool
+    /// It's up already: Put on GitHub adds the wish as it is now as a new commit.
+    public var update: Bool
+    /// Put on GitHub can be pressed: it's ready, or a try failed and can be made again.
+    public var canPut: Bool
+    /// The choices made before the repository is made.
+    public var isPrivate: Bool
+    public var license: Bool
+    public var canChooseLicense: Bool
+
+    public init(name: String, icon: Data?, stage: RepoCard.Stage, repo: String?, url: String?, credit: String?, openInLamp: String?,
+                notes: [String], size: String?, copied: Bool, update: Bool, canPut: Bool, isPrivate: Bool, license: Bool, canChooseLicense: Bool) {
+        self.name = name
+        self.icon = icon
+        self.stage = stage
+        self.repo = repo
+        self.url = url
+        self.credit = credit
+        self.openInLamp = openInLamp
+        self.notes = notes
+        self.size = size
+        self.copied = copied
+        self.update = update
+        self.canPut = canPut
+        self.isPrivate = isPrivate
+        self.license = license
+        self.canChooseLicense = canChooseLicense
+    }
+}
+
+public enum SidebarRepoCommand: Codable, Equatable {
+    case open, put, fix, openRepo, copy, close
+    /// Make a Share Link first, through its own card.
+    case makeLink
+    case setPrivate(Bool)
+    case setLicense(Bool)
 }
