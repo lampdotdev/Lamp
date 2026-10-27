@@ -262,15 +262,16 @@ struct TVSetupView: View {
             if let ask = guided.ask {
                 Text(ask).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
             }
-            if guided.button != nil || guided.link != nil {
-                HStack(spacing: 8) {
-                    if let button = guided.button { Button(button) { guided.confirm() } }
-                    if let link = guided.link { Button(link.title) { NSWorkspace.shared.open(link.url) } }
-                }
-            }
             if let failure = guided.failure {
                 Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                Button("Try Again") { model.doItForMe() }
+            }
+            HStack(spacing: 8) {
+                if let button = guided.button { Button(button) { guided.confirm() } }
+                if let link = guided.link { Button(link.title) { NSWorkspace.shared.open(link.url) } }
+                if guided.failure != nil { Button("Try Again") { model.doItForMe() } }
+                // A way back to the steps in words, whatever the TV does: the guide stops, and the passphrase and
+                // Connect are the person's again.
+                if !guided.atPassphrase { Button("Do It Myself") { guided.cancel() } }
             }
         }
     }
