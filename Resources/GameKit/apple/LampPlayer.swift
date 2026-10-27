@@ -17,11 +17,24 @@ enum LampPlayer {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? ProcessInfo.processInfo.processName
     }
 
-    /// A game's window, or any other page's.
-    static var isGame: Bool { info["kind"] as? String != "page" }
+    /// A game's window, or any other page's. A copy that says neither was made wrong: it stops, saying so, rather than
+    /// open as something it isn't.
+    static let isGame: Bool = {
+        switch info["kind"] as? String {
+        case "game": return true
+        case "page": return false
+        default: fatalError("This app's Info.plist doesn't say what kind of page it is (LampPlayer.kind).")
+        }
+    }()
 
-    /// Where the page is served, which is where what it saves is kept: the kind's own address, for good.
-    static var scheme: String { info["scheme"] as? String ?? "lamp-game" }
+    /// Where a page is served, which is where what it saves is kept: its kind's own address, for good. A game's is its
+    /// own (`LampGamePage`); any other page has to name one of the addresses Lamp gives.
+    static let scheme: String = {
+        guard let scheme = info["scheme"] as? String, ["lamp-screen", "lamp-web-app"].contains(scheme) else {
+            fatalError("This app's Info.plist doesn't name the address its page is served at (LampPlayer.scheme).")
+        }
+        return scheme
+    }()
 
     /// The size a page made at a fixed size is laid out at ("1920x1080"), or nil for the window's.
     static var canvas: CGSize? {
