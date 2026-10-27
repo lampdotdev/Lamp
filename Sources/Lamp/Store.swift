@@ -508,6 +508,15 @@ final class Store: ObservableObject {
     }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
+    /// The app whose window a wish's chat goes beside: the app in the wish's own folder while it holds one, else its one
+    /// Mac app in a folder of its own that takes the chat (a game in Game/, say). The wish itself when it has neither, or
+    /// several, which no one window stands for.
+    func chatApp(of project: LampProject) -> LampProject {
+        let wish = wish(of: project)
+        if wish.holdsApp { return wish }
+        let macs = parts(of: wish).filter(Sidebar.applies)
+        return macs.count == 1 ? macs[0] : wish
+    }
     /// Who a line about where an app opens names: the wish, or for one of its several apps that app ("The iPhone app"),
     /// since every app of a wish has the wish's name.
     func placeName(_ project: LampProject) -> String {
@@ -1707,10 +1716,12 @@ final class Store: ObservableObject {
     /// else in Lamp's panel beside whatever shows the wish, or on its own (`ChatPanel`). Lamp's window is the desk only.
     func showChat(_ id: String) {
         reload()
+        // Asked by an app of a wish's in a folder of its own: its chat is the wish's.
+        if let part = projects.first(where: { $0.id == id && $0.isPart }) { return showChat(wish(of: part).id) }
         offerStarterChanges(id, after: 0.5)
         selection = id
         if SidebarServer.shared.isConnected(id), let project = projects.first(where: { $0.id == id }),
-           !macCopies(of: project).isEmpty, MagicPanel.runningCopiesTakeTheChat(project) {
+           !macCopies(of: chatApp(of: project)).isEmpty, MagicPanel.runningCopiesTakeTheChat(project) {
             return MagicPanel.shared.openChat(in: project)
         }
         ChatPanel.show(id)
@@ -11794,8 +11805,8 @@ final class Store: ObservableObject {
             if project.device == nil { await Emulator.bringForward(project.destination.emulator) }
         } else if project.onIOS {
             if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
-        } else if !project.isPart {
-            // The chat goes beside the wish's own app; a Mac part has no chat of its own to bring.
+        } else if chatApp(of: project).id == project.id {
+            // The chat goes beside the app that stands for the wish on this Mac: its own, or its one Mac app in a folder.
             Task { await MagicPanel.shared.handOff(project) }
         }
     }

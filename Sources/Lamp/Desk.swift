@@ -1799,9 +1799,10 @@ extension Store {
     /// app) in Lamp's panel, beside whatever shows it or on its own (`ChatPanel`).
     func change(_ project: LampProject) {
         Task {
-            guard !project.finding, FileManager.default.fileExists(atPath: project.installedURL.path),
+            let app = chatApp(of: project)
+            guard !project.finding, FileManager.default.fileExists(atPath: app.installedURL.path),
                   await MagicPanel.chatsInApp(project) else { return showChat(project.id) }
-            let running = !macCopies(of: project).isEmpty
+            let running = !macCopies(of: app).isEmpty
             // A copy built before the chat could be asked for this way keeps its chat in Lamp's window.
             guard !running || MagicPanel.runningCopiesTakeTheChat(project) else { return showChat(project.id) }
             unread.remove(project.id)

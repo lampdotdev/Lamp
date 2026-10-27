@@ -183,7 +183,8 @@ final class SidebarServer {
             close(socket)
             return
         }
-        let connection = Connection(socket: socket, projectID: project.id, server: self)
+        // A wish's Mac app in a folder of its own shows the wish's chat, which is the only one it has.
+        let connection = Connection(socket: socket, projectID: Store.shared.wish(of: project).id, server: self)
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
         MagicPanel.shared.chatOpenedInApp(project)
@@ -367,9 +368,11 @@ final class SidebarServer {
         return state
     }
 
-    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window.
+    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window, the
+    /// wish's own or its one Mac app in a folder (`Store.chatApp`).
     static func besideItsApp(_ project: LampProject, place: WishPlace?) -> Bool {
-        project.holdsApp && project.destination == .mac && project.hasMac && (place ?? .window) == .window
+        let app = Store.shared.chatApp(of: project)
+        return app.holdsApp && app.destination == .mac && app.hasMac && (place ?? .window) == .window
     }
 
     /// Where each chat was being read, the first line in view, or none at its end (`SidebarCommand.scrolled`).
@@ -1239,7 +1242,7 @@ final class SidebarServer {
             // anything else, an app built before the chat could go beside it included, is opened as Play opens it.
             let beside = Self.besideItsApp(project, place: histories[project.id]?.value?.place)
             Task {
-                if beside, FileManager.default.fileExists(atPath: project.installedURL.path), await MagicPanel.chatsInApp(project) {
+                if beside, FileManager.default.fileExists(atPath: store.chatApp(of: project).installedURL.path), await MagicPanel.chatsInApp(project) {
                     return store.change(project)
                 }
                 store.openWish(project)
