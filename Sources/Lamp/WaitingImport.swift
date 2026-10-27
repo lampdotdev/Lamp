@@ -41,8 +41,17 @@ struct WaitingImport {
     func keep(_ file: URL) -> Bool {
         let fm = FileManager.default
         let kept = paths
-        if kept.contains(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
-            && fm.contentsEqual(atPath: $0, andPath: file.path) }) { return true }
+        if let same = kept.first(where: { URL(fileURLWithPath: $0).lastPathComponent == file.lastPathComponent
+            && fm.contentsEqual(atPath: $0, andPath: file.path) }) {
+            // The same file again, with a request: the newer request is the one meant, so it replaces the kept one.
+            let request = file.deletingLastPathComponent().appendingPathComponent(Self.requestFile)
+            if Store.fetchedRequest(beside: file) != nil, fm.fileExists(atPath: request.path) {
+                let keptRequest = URL(fileURLWithPath: same).deletingLastPathComponent().appendingPathComponent(Self.requestFile)
+                try? fm.removeItem(at: keptRequest)
+                try? fm.copyItem(at: request, to: keptRequest)
+            }
+            return true
+        }
         let home = folder.appendingPathComponent(UUID().uuidString)
         let copy = home.appendingPathComponent(file.lastPathComponent)
         do {
