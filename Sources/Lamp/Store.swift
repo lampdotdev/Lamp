@@ -6470,6 +6470,12 @@ final class Store: ObservableObject {
     /// The code a place's background build failed on, by app and place: not tried again until the code changes, which
     /// opening it there does whatever this says.
     private var placesFailed: [String: String] = [:]
+    /// The wait before keeping a wish's places current, by wish: a run of requests builds each place once, after the last.
+    private var placesDelay: [String: Task<Void, Never>] = [:]
+    /// How many times each wish's unreached places have been looked at again, so a simulator never booted isn't asked for forever.
+    private var placesRetries: [String: Int] = [:]
+    /// How long the wish is left alone after a change before its other places are built.
+    private static let placesSettle: Duration = .seconds(20)
 
     /// Keeps every place of a wish's apps on its latest code. After anything that changed the wish (a request, Undo, a
     /// restore, an update for this Lamp), each place Try On doesn't point at whose build is older than the code is built
@@ -6477,12 +6483,20 @@ final class Store: ObservableObject {
     /// simulator's, the running emulator's. Nothing is opened that wasn't open, and a copy open there takes the change as a
     /// request's would (`install`'s `quiet`). The places it can't reach are said in one line; they get the change when
     /// they're next reachable (`retryPlaces`) or opened there (`open`). A request sent meanwhile ends it (`send`).
-    func updatePlaces(of project: LampProject) {
+    func updatePlaces(of project: LampProject, retrying: Bool = false) {
         let wish = self.wish(of: project)
         refreshPlacesBehind(wish)
-        guard setup.hasBuildTools, !wish.makesNoApp, !wish.untitled, placesIdle(wish),
-              updatingPlaces.insert(wish.id).inserted else { return }
-        Task {
+        guard setup.hasBuildTools, !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
+              apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
+        // Started by a change, not a retry: the places out of reach get their tries afresh.
+        if !retrying { placesRetries[wish.id] = nil }
+        // Each change waits out the one before: only the last of a run of requests builds every place.
+        placesDelay[wish.id]?.cancel()
+        placesDelay[wish.id] = Task {
+            try? await Task.sleep(for: Self.placesSettle)
+            guard !Task.isCancelled else { return }
+            placesDelay[wish.id] = nil
+            guard placesIdle(wish), updatingPlaces.insert(wish.id).inserted else { return }
             var unreached: [String: Set<Destination>] = [:]
             var stopped = false
             for app in apps(of: wish) {
@@ -6497,8 +6511,9 @@ final class Store: ObservableObject {
             guard !stopped else { return }
             for app in apps(of: wish) { tellUnreached(app, unreached[app.id] ?? []) }
             // A TV or an Xbox gets it when Play puts the app there: putting it there now would take its screen over.
-            if unreached.values.contains(where: { $0.contains { $0 != .tv && $0 != .device } }) { placesWaiting.insert(wish.id); retryPlaces() }
-            else { placesWaiting.remove(wish.id) }
+            if unreached.values.contains(where: { $0.contains { $0 != .tv && $0 != .device } }), placesRetries[wish.id, default: 0] < 5 {
+                placesWaiting.insert(wish.id); retryPlaces()
+            } else { placesWaiting.remove(wish.id) }
         }
     }
 
@@ -6534,7 +6549,7 @@ final class Store: ObservableObject {
             guard let udid = await Task.detached(operation: { Simulator.device(family, preferring: chosen) }).value else { return false }
             return await Simulator.isBooted(udid)
         case .android, .androidTV:
-            if await isAndroidRunning(app) { return true }
+            if await openAndroidCopy(app, on: place) != nil { return true }
             guard AndroidTools.isReady, Emulator.runningKind() == place.emulator else { return false }
             return await Emulator.running() != nil
         case .tv, .device: return false
@@ -6549,9 +6564,12 @@ final class Store: ObservableObject {
         defer { finish(app) }
         let there = app.at(place)
         let chats = Set([app.id, wish(of: app).id])
+        // Every status and detail line added meanwhile is this work's own: nothing else has the wish while it runs
+        // (`placesIdle`, and a request sent ends it first), so taking them away again takes nobody else's.
         let before = Set(chats.flatMap { (logs[$0] ?? []).map(\.id) })
         let fingerprint = Runtime.fingerprint(there)
         if await build(there, inPlace: false) == nil, !turn.stopped {
+            placesFailed[app.id + "/" + place.rawValue] = nil
             _ = await install(there, inFront: false, saysReady: false, quiet: true)
         } else if !turn.stopped {
             placesFailed[app.id + "/" + place.rawValue] = fingerprint
@@ -6581,7 +6599,10 @@ final class Store: ObservableObject {
                 try? await Task.sleep(for: .seconds(120))
                 for id in placesWaiting {
                     guard let wish = projects.first(where: { $0.id == id }) else { placesWaiting.remove(id); continue }
-                    updatePlaces(of: wish)
+                    // A few tries, then it waits for the next change or for being opened there.
+                    placesRetries[id, default: 0] += 1
+                    placesWaiting.remove(id)
+                    updatePlaces(of: wish, retrying: true)
                 }
             }
             placesRetry = nil
@@ -6607,10 +6628,26 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The app's copy open on Android, only when it's on the place asked for. Its phone and TV places share one package,
+    /// and Lamp's phone and TV emulators one serial, so a copy open on the TV emulator is no copy on the phone's place:
+    /// updating it there would close the TV emulator to start the phone's.
+    private func openAndroidCopy(_ app: LampProject, on place: Destination) async -> AndroidRun? {
+        guard let open = androidApps[app.id], await isAndroidRunning(app) else { return nil }
+        let tv: Bool
+        if open.serial == Emulator.serial {
+            guard let kind = Emulator.runningKind() else { return nil }
+            tv = kind == .tv
+        } else {
+            guard let device = devices.first(where: { $0.udid == open.serial }) else { return nil }
+            tv = device.features.contains("tv")
+        }
+        return tv == (place == .androidTV) ? open : nil
+    }
+
     /// A place kept current on Android: the copy open there opens again where it was, as any change does; one that isn't
     /// open is only put on Lamp's running emulator, for next time.
     private func quietlyOnAndroid(_ project: LampProject, owner: Turn) async -> String? {
-        if let open = androidApps[project.id], await isAndroidRunning(project) {
+        if let open = await openAndroidCopy(project, on: project.destination) {
             var there = project
             there.device = open.serial == Emulator.serial ? nil : open.serial
             return await installOnAndroid(there, owner: owner, inFront: false)
