@@ -64,8 +64,9 @@ A capability given to one engine must be given to all of them that can take it, 
   on has its steps so far and the live line, as any turn has; the parts still to come wait greyed below, with Lamp's
   own last one, building and opening it; and a question card comes where it was asked, in its part. A part's steps are
   its own: a stretch of steps ends where the build moves to the next part, as where something is said, and is titled
-  then like any fold (`StepTitles.closed(in:)`), so a part's last steps read what they did, not how many they were. Once the app is made the build folds to one line ("Built it in 3 parts · 4 min 29 s") that opens to the
-  parts, with the agent's answer under it; a build that asked on the way, failed or was stopped stays open. Which
+  then like any fold (`StepTitles.closed(in:)`), so a part's last steps read what they did, not how many they were. Once the app is made each part folds to one line of its own in the chat (its tick, title and time) that opens to
+  what was said and done in it, drawn as any turn is, with the agent's answer under them: the parts are never packed
+  inside one fold for the whole build; a build that asked on the way, failed or was stopped stays open. Which
   part a line goes under is decided as it's logged (`TurnProgress.chapter(for:)`) from what Lamp is sure of: the plan,
   the files it lists for each part and the files written. A file listed for a later part moves the build on, and so
   does something said (a message, a progress line, a question, a new plan) once the part it's on is done, to the next part; anything
