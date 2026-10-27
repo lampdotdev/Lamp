@@ -1570,32 +1570,55 @@ final class Store: ObservableObject {
     /// A wish the site's link brought (`Wish`). During the welcome it goes to the first-app box; after it, into
     /// the message box of a new app, written in a word at a time as the site writes. It is never sent from
     /// here: any web page can open such a link, so the person reads it and presses Send.
-    /// The request a link brought with the exact wish it names (`Wish.Exact`), for that wish's box once it's here.
-    private var importDraft: String?
+    /// Where a shared file a link named is kept once fetched, with the request that came with it beside it
+    /// (`fetchedRequest`), so the request stays with that file through the review, a wait for setup, or a restart.
+    private static let fetchedPrefix = "lamp-fetched-"
+    private static let requestFile = "request.txt"
 
-    /// The exact wish a link names: its shared file is fetched (no bigger than any shared file may be), then goes the
-    /// way a file opened by hand does, review included, and the request the link brought waits for its box.
+    /// The request kept beside a fetched file, for the wish made from it; nil for a file opened by hand.
+    nonisolated static func fetchedRequest(beside file: URL) -> String? {
+        let folder = file.deletingLastPathComponent()
+        guard folder.lastPathComponent.hasPrefix(fetchedPrefix) else { return nil }
+        return Wish.tidy(try? String(contentsOf: folder.appendingPathComponent(requestFile), encoding: .utf8))
+    }
+
+    /// The exact wish a link names: its shared file is fetched, no bigger than any shared file may be (refused early
+    /// by its declared length, and cut off as it comes), then goes the way a file opened by hand does, review
+    /// included, with the request the link brought beside it for its box.
     func take(exact: Wish.Exact) {
         NSApp.activate()
         Task {
-            let folder = Sharing.workFolder.appendingPathComponent("lamp-fetched-\(UUID().uuidString)")
+            let folder = Sharing.workFolder.appendingPathComponent(Self.fetchedPrefix + UUID().uuidString)
             do {
                 var request = URLRequest(url: exact.file)
                 request.timeoutInterval = 60
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200, data.count <= Sharing.maxArchiveBytes else {
-                    throw Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
-                }
+                let data = try await Self.fetch(request, upTo: Sharing.maxArchiveBytes)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 let file = folder.appendingPathComponent("Shared Wish.lampapp")
                 try data.write(to: file)
-                importDraft = exact.text
+                if let text = exact.text { try text.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
                 importApp(from: file)
             } catch {
                 try? FileManager.default.removeItem(at: folder)
                 NSAlert(error: error).runModal()
             }
         }
+    }
+
+    /// A response of at most `limit` bytes: one that says it's bigger is refused before a byte is read, and one that
+    /// turns out bigger is dropped as soon as it passes the limit, so nothing larger is ever held.
+    nonisolated static func fetch(_ request: URLRequest, upTo limit: Int) async throws -> Data {
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let refusal = Sharing.ImportError("Lamp couldn't get the shared wish.", detail: "The link may be old, or the wish was taken down.")
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw refusal }
+        guard response.expectedContentLength <= Int64(limit) else { throw Sharing.ImportError("This file is too large to be a Lamp app (over 64 MB).") }
+        var data = Data()
+        data.reserveCapacity(Int(max(0, min(response.expectedContentLength, Int64(limit)))))
+        for try await byte in bytes {
+            data.append(byte)
+            guard data.count <= limit else { throw Sharing.ImportError("This file is too large to be a Lamp app (over 64 MB).") }
+        }
+        return data
     }
 
     func take(wish: String) {
@@ -2936,6 +2959,8 @@ final class Store: ObservableObject {
     struct PendingImport: Identifiable {
         let id = UUID()
         let package: Sharing.Package
+        /// The request a link brought with this file (`take(exact:)`), for the wish's box; nil for a file opened by hand.
+        var request: String? = nil
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
@@ -3003,7 +3028,7 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package, existing: existingCopy(of: package))
+            let pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package))
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -3027,7 +3052,6 @@ final class Store: ObservableObject {
 
     func cancelImport() {
         importRequest = nil
-        importDraft = nil
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
         pendingImport = nil
     }
@@ -3036,7 +3060,7 @@ final class Store: ObservableObject {
         guard let pending = pendingImport else { return }
         importRequest = nil
         pendingImport = nil
-        finishImport(pending.package)
+        finishImport(pending.package, request: pending.request)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -3161,7 +3185,7 @@ final class Store: ObservableObject {
     private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
     private static let updateChangedIcon = " Only its icon may have changed."
 
-    private func finishImport(_ package: Sharing.Package) {
+    private func finishImport(_ package: Sharing.Package, request: String? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -3183,10 +3207,7 @@ final class Store: ObservableObject {
         showChat(project.id)
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
         // box, ready to send once the wish is built.
-        if let text = importDraft {
-            importDraft = nil
-            updateDraft(Draft(text: text), for: project)
-        }
+        if let request { updateDraft(Draft(text: request), for: project) }
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
             defer { try? FileManager.default.removeItem(at: package.folder) }
