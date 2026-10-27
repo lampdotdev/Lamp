@@ -189,6 +189,13 @@ final class WishFolderIdentityTests: XCTestCase {
         wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .device, needs: "a TV", integration: "roku", folder: "Roku"),
                      WishApp(kind: .device, needs: "a TV", integration: "roku", folder: "Roku2")]
         XCTAssertEqual(Template.layout(of: wish), NewerWish.layout)
+        // One device app waiting for a folder other than its device's own, which an earlier Lamp would make it in.
+        wish.apps = [WishApp(kind: .mac, folder: "."),
+                     WishApp(kind: .device, needs: "a TV", integration: "roku", folder: Parts.folder(for: .device, integration: "roku") + "2")]
+        XCTAssertEqual(Template.layout(of: wish), NewerWish.layout)
+        wish.apps = [WishApp(kind: .mac, folder: "."),
+                     WishApp(kind: .device, needs: "a TV", integration: "roku", folder: Parts.folder(for: .device, integration: "roku"))]
+        XCTAssertNil(Template.layout(of: wish))
     }
 
     /// The app in the wish's own folder made a Mac app beside a Mac app in Mac/ would be "mac" and installed under the

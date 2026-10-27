@@ -207,7 +207,13 @@ enum Parts {
         var families: Set<String> = []
         for app in wanted(in: wish, parts: load(wish)) {
             guard let part = app.kind.target.part else { continue }
-            if let folder = app.folder, folder != ".", part.folderFor == nil, !self.folder(folder, canHold: app.kind) { return false }
+            if let folder = app.folder, folder != "." {
+                // A made device's app is found by its mark wherever it is; one still to be made, that Lamp makes in its
+                // device's own folder, so it must be waiting for that one.
+                if part.folderFor == nil, !self.folder(folder, canHold: app.kind) { return false }
+                if part.folderFor != nil, !wish.partFolders.contains(folder),
+                   folder != self.folder(for: app.kind, integration: app.integration) { return false }
+            }
             guard families.insert(part.family).inserted else { return false }
         }
         return true
