@@ -17,9 +17,17 @@ folder is found before anything can stop it being made (`Parts.newFolder`: its k
 `Mac3`…), letters and digits only, never one that's there already whatever's in it, that differs only in case from
 one, that's kept for an app still to be made (`WishApp.folder`), or that an app was taken away from
 (`RemovedApp`), even for an app of the same kind: that folder's id and data stay the app's that left, so Undo
-brings it back into its own. `make_app_for` adds a new app unless its `app` names one by its folder exactly ("." for
-the app in the wish's own folder; `AppPlanner.select`), and nothing else (no kind, device or code) picks an existing
-app for it. `part` in `look_at_app` and `use_app` names an app by its folder before anything else (`Parts.picks`), and
+brings it back into its own. Which app `make_app_for` is about is read before anything is written (`AppPlanner.decide`,
+the one place every caller decides it): a wish with no app, made or still to be made, gets its first; `app` names one
+to change by its folder exactly ("." for the app in the wish's own folder; `AppPlanner.select`), and nothing else (no
+kind, device or code) picks an existing app; `another` asks for one more beside them. A wish with an app never gets
+another by default: a call with neither is refused, as is one with both, a blank `app` or one that names no app, so a
+change of mind changes the app the wish has. One more app is added only when the person chooses "Add another app" on
+Lamp's own card (`AppAdditions`, like the device card: only the person answers it, Lamp keeps the choice in its own
+folder, never the wish's). The choice is for one app of the code it was asked for and is used once; the folder it gets
+is noted before anything is made, so a call repeated after its answer was lost gets that app back, not a third, until
+the person next writes, which spends what's left of it. Anything typed instead of choosing adds nothing. An app Lamp
+makes later from the wish's list (`makeWaitingParts`) was chosen when it was asked for and isn't asked about again. `part` in `look_at_app` and `use_app` names an app by its folder before anything else (`Parts.picks`), and
 a word that fits several ("mac" beside two Mac apps) is asked about, each app then offered by a word that reaches it
 alone (`Parts.address`). A wish whose folder holds no app of its own (its apps all in
 folders, `LampProject.holdsApp` false, read off its files each time so an Undo that brings the first app back has it

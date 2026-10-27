@@ -3227,7 +3227,10 @@ final class Store: ObservableObject {
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
         // Anything but a click on a card is the person going on: what they allowed once is spent.
-        if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
+        if card == nil {
+            DevicePermissions.endOnce(for: wish(of: project))
+            AppAdditions.endExchange(for: wish(of: project))
+        }
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         let files = message.attachments, pointed = message.pointed
@@ -3804,6 +3807,8 @@ final class Store: ObservableObject {
                let device = ask.device, let choice = ask.answers?.first {
                 DevicePermissions.answer(choice, about: device, for: wish(of: project))
             }
+            // Lamp's card about adding another app: the same, kept once delivered.
+            AppAdditions.delivered(card: message.card, in: logs[project.id] ?? [], for: wish(of: project))
             if message.byLamp, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].byLamp = true
                 saveChat(project)
@@ -4751,6 +4756,7 @@ final class Store: ObservableObject {
         let disposed = RemovedApp.disposals(of: project, parts: parts)
         // What the person allowed on their devices is the wish's, and goes with it.
         DevicePermissions.forget(project)
+        AppAdditions.forget(project)
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -5763,7 +5769,7 @@ final class Store: ObservableObject {
     /// `make_app_for`: one app, on the devices asked for, made the way asked (`AppPlanner.make`): the wish's app of that
     /// code changed in place, its code and data kept, or a new app beside the wish's others. It never takes an app away:
     /// that's `remove_app`'s. What this Mac can't build yet waits on the wish's list with its setup.
-    private func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
+    func agentKind(_ arguments: [String: Any], for project: LampProject) async -> (Int, [String: Any]) {
         guard let wish = current(project), !wish.isPart else { return (404, ["error": "Lamp can't find the wish."]) }
         guard let made = (arguments["made"] as? String).flatMap({ Place.Make(rawValue: $0.trimmed.lowercased()) }),
               let devices = arguments["devices"] as? [String], !devices.isEmpty else {
@@ -5771,7 +5777,7 @@ final class Store: ObservableObject {
         }
         let members = members(of: wish)
         let plan: AppPlan
-        switch AppPlanner.make(made, devices: devices, app: arguments["app"] as? String, in: members) {
+        switch AppPlanner.make(made, devices: devices, app: arguments["app"], another: arguments["another"], in: members) {
         case .success(let planned): plan = planned
         case .failure(let refusal): return (400, ["error": refusal.reason])
         }
@@ -5787,12 +5793,22 @@ final class Store: ObservableObject {
                 said.append(text)
             } else {
                 said += await add(target, to: wish)
-                let others = members.filter(\.isMade).map(describe)
-                if !others.isEmpty {
-                    said.append("The wish's other apps stay as they are (" + others.joined(separator: ", ") + "). If this one was to take the place "
-                                + "of one of them, ask the person whether to keep it as well, and take it away with remove_app only if they say so.")
-                }
             }
+        case .another(let asked):
+            target = asked
+            let key = AppAdditions.key(target)
+            // A call repeated after the person's choice was used (its answer lost on the way): the same app, not a third.
+            if let folder = AppAdditions.added(key, for: wish), members.contains(where: { $0.slot?.lowercased() == folder.lowercased() }) {
+                return (200, ["text": "Already done: the person's choice added \(Parts.name(of: target.waiting)) in \(folder)/. Nothing more was added; build that one."])
+            }
+            guard AppAdditions.take(key, for: wish) else {
+                return askToAdd(target, beside: members, in: wish, for: project)
+            }
+            let folder = Parts.newFolder(Parts.folder(for: target.kind, integration: target.kind == .device ? target.integration : nil), in: wish)
+            AppAdditions.adding(key, in: folder, for: wish)
+            said += await add(target, to: wish, folder: folder)
+            let others = members.map(describe)
+            said.append("The person chose to add it: the wish's other apps stay as they are (" + others.joined(separator: ", ") + ").")
         case .update(let member, let asked):
             target = asked
             if let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }),
@@ -5801,13 +5817,18 @@ final class Store: ObservableObject {
                 return (400, ["error": "\(describe(member).prefix(1).uppercased() + describe(member).dropFirst()) can't become this: it would share its name among "
                               + "the wish's apps, or its place on this Mac, with \(Parts.name(of: other)) in "
                               + (other.isPart ? other.dir.lastPathComponent + "/" : "the wish's own folder")
-                              + ". Leave `app` out to add a new app for these devices instead. Nothing changed."])
+                              + ". Nothing changed. Tell the person in a sentence that this app can't become that while the other one is there."])
             }
             if let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }) {
                 let (status, answer) = await change(app, to: target)
                 let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
                 if status != 200 { return (status, answer) }
                 said.append(members.filter(\.isMade).count > 1 ? "For \(describe(member)): " + text : text)
+                // What the reply says follows what happened: a change that didn't happen says so, and one that did says the
+                // wish has no more apps than before.
+                let unchanged = text.hasPrefix("Not yet") || text.hasPrefix("Nothing changed") || text.hasPrefix("It's already")
+                said.append(unchanged ? "Nothing changed, and nothing was added."
+                            : "That changed \(describe(member)); nothing was added: the wish has the same apps as before.")
             } else {
                 var waiting = target.waiting
                 waiting.folder = member.slot
@@ -5823,6 +5844,24 @@ final class Store: ObservableObject {
             said.append("Its \(family.name) build is this same Swift code: Try On's \(family.name) opens it in the simulator. " + Agent.Rules.otherOS(family))
         }
         return (200, ["text": said.joined(separator: "\n\n")])
+    }
+
+    /// Lamp's card asking the person whether to add another app or change the one the wish has (`AppAdditions`): the
+    /// agent's call adds nothing until they choose "Add another app". Asked once at a time, as `ask` is.
+    private func askToAdd(_ target: AppTarget, beside members: [WishMember], in wish: LampProject, for project: LampProject) -> (Int, [String: Any]) {
+        let turn = turns[project.id]
+        if turn?.asked == true || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
+        let ask = AppAdditions.card(new: Parts.name(of: target.waiting), existing: members.map(describe))
+        let line = chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project)
+        AppAdditions.asking(card: line.id, key: AppAdditions.key(target), for: wish)
+        logs[project.id, default: []].append(line)
+        closeSteps(project)
+        turn?.asked = true
+        away.questionAsked(project.id)
+        saveChat(project)
+        return (200, ["text": "Nothing was added yet: Lamp asked the person whether to add another app or change the one the wish has. "
+                      + "Change no files and end your turn now: their answer is the next message. If it's \"\(AppAdditions.add)\", call make_app_for "
+                      + "again as you did, with `another`. Otherwise change the app they mean, with its folder in `app`."])
     }
 
     /// A new app of the wish, in a folder of its own, made as the plan says. Its folder is found and kept for it first

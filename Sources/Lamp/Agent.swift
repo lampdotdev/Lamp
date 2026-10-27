@@ -177,7 +177,10 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
-    (the iPhone, the Mac or a TV), and `remove_app` when they want one of the wish's apps gone. When a piece fits, use it instead of writing the same \
+    (the iPhone, the Mac or a TV), and `remove_app` when they want one of the wish's apps gone. A change of mind \
+    ("never mind, make it a timer instead") changes the app the wish has, in its own code and, when what it's made for \
+    changes, with `make_app_for` and its folder in `app`; only a request for one more app ("a second Mac app") is \
+    `another`, and Lamp asks the person before adding it. When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.

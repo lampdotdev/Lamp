@@ -101,8 +101,7 @@ single picture hides. Play it the way the person would before you finish: a game
 
 When the person wants an app to become a game ("actually, make it a game"), change its code in place: the same app,
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
-or replace it. `make_app_for` with the app's folder in `app` changes that app in place; without `app` it adds the game
-beside the app in a folder of its own, whatever code each is in (a Mac game beside a Mac app is two apps). To replace
-the app with a game, make the game first, and take the old app away with `remove_app` (which they can undo) only once
-the game is there. A game that becomes an app again is the same in
+or replace it. Turning it into a game is a change to that app: `make_app_for` with its folder in `app` when what it's
+made for changes, its code otherwise. A game beside the app is one more app, only when they say they want both:
+`make_app_for` with `another`, which Lamp asks them to confirm before it adds it in a folder of its own. A game that becomes an app again is the same in
 reverse.

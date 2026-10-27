@@ -71,8 +71,11 @@ struct WishMember: Equatable {
 /// What `make_app_for` or `remove_app` does to a wish, worked out before anything is touched, so what's done is what
 /// was planned and the answer says what was done.
 enum AppPlan: Equatable {
-    /// A new app beside the wish's others, whatever they are: it never takes the place of one.
+    /// The first app of a wish that has none, made or waiting.
     case add(AppTarget)
+    /// One more app beside the wish's others, asked for with `another`: made only once the person has chosen
+    /// "Add another app" on Lamp's own card (`AppAdditions`), never on the agent's word alone.
+    case another(AppTarget)
     /// The app `make_app_for` named, made or waiting, given what's asked: changed in place, its folder, id and data kept.
     case update(WishMember, to: AppTarget)
     /// A made app taken away, reversibly: its files stay in the wish's versions and its data stays.
@@ -219,24 +222,70 @@ struct Refusal: Error, Equatable {
 /// `make_app_for` and `remove_app` as plans over a wish's apps (`WishMember`): typed in, checked against the table and
 /// the wish's apps, and handed to `Store` to carry out as planned.
 enum AppPlanner {
-    /// `make_app_for`: the app `app` names changed, or without one a new app beside the others, whatever they are: two
-    /// apps of one code (two Mac apps, a Roku's app and an Xbox's) are two apps, each in its own folder. Never a
-    /// removal. `table` is the table of devices, every row Lamp has unless said.
-    static func make(_ made: Place.Make, devices words: [String], app selector: String? = nil, in members: [WishMember],
-                     table: [Place] = Places.all) -> Result<AppPlan, Refusal> {
-        // Which app is to change is found before anything else is read, so a selector that names none changes nothing.
-        var chosen: WishMember?
-        if let selector = selector?.trimmed, !selector.isEmpty {
+    /// What a `make_app_for` call is, read from its `app` and `another` before anything else: the first app of a wish
+    /// with none, a change to the app `app` names, or one more app beside the wish's others. A wish with an app, made or
+    /// still to be made, never gets another by default: a call that names none is refused, so a change of mind ("never
+    /// mind, make it a timer instead") changes the app the wish has, and adding one is always asked for in so many
+    /// words (`another`) and then chosen by the person (`AppAdditions`). Anything malformed is refused here, before
+    /// anything is written. This is the one place the decision is made, for every caller.
+    enum Mode: Equatable {
+        case first
+        case change(WishMember)
+        case another
+    }
+
+    static func decide(app: Any?, another: Any?, in members: [WishMember]) -> Result<Mode, Refusal> {
+        let adding: Bool
+        switch another {
+        case nil, is NSNull: adding = false
+        case let flag as Bool: adding = flag
+        default: return .failure(Refusal("`another` is true or left out. Nothing changed."))
+        }
+        let selector: String?
+        switch app {
+        case nil, is NSNull: selector = nil
+        case let text as String:
+            guard !text.trimmed.isEmpty else { return .failure(Refusal("`app` is an app's folder: \(folders(members)). Nothing changed.")) }
+            selector = text.trimmed
+        default: return .failure(Refusal("`app` is an app's folder, as text: \(folders(members)). Nothing changed."))
+        }
+        if selector != nil, adding {
+            return .failure(Refusal("`app` changes an app the wish has; `another` adds a new one. Give one of them. Nothing changed."))
+        }
+        if let selector {
             switch select(selector, in: members) {
-            case .one(let member): chosen = member
+            case .one(let member): return .success(.change(member))
             case .several(let found):
-                return .failure(Refusal("`app` \"\(selector)\" is more than one of the wish's apps (\(found.compactMap(\.slot).joined(separator: ", "))): give its folder."))
+                return .failure(Refusal("`app` \"\(selector)\" is more than one of the wish's apps (\(found.compactMap(\.slot).joined(separator: ", "))): give its folder. Nothing changed."))
             case .none:
-                let folders = members.compactMap(\.slot).map { "\"\($0)\"" }.joined(separator: ", ")
-                return .failure(Refusal("The wish has no app in \"\(selector)\"" + (folders.isEmpty ? "." : ": `app` is one of \(folders).")
-                                        + " Leave `app` out to add a new app."))
+                return .failure(Refusal("The wish has no app in \"\(selector)\"" + (members.isEmpty ? "." : ": `app` is one of \(folders(members)).") + " Nothing changed."))
             }
         }
+        if adding || members.isEmpty { return .success(members.isEmpty ? .first : .another) }
+        return .failure(Refusal("This wish already has \(members.count == 1 ? "an app" : "\(members.count) apps") (`app` \(folders(members))). "
+            + "To change one, including when the person changed their mind or wants something else in its place, give its folder in `app`. "
+            + "To add one more app beside it, only when the person asked for another app, give `another: true`: Lamp then asks them to choose. "
+            + "Nothing changed."))
+    }
+
+    private static func folders(_ members: [WishMember]) -> String {
+        let all = members.compactMap(\.slot).map { "\"\($0)\"" }
+        return all.isEmpty ? "none yet" : all.joined(separator: ", ")
+    }
+
+    /// `make_app_for`: what `decide` reads from `app` and `another`, as a plan over the wish's apps: the first app, the
+    /// app `app` names changed, or one more beside the others (two apps of one code, two Mac apps, are two apps, each in
+    /// its own folder). Never a removal. `table` is the table of devices, every row Lamp has unless said.
+    static func make(_ made: Place.Make, devices words: [String], app: Any? = nil, another: Any? = nil, in members: [WishMember],
+                     table: [Place] = Places.all) -> Result<AppPlan, Refusal> {
+        // Which app is to change, if any, is found before anything else is read, so a call that names none changes nothing.
+        let mode: Mode
+        switch decide(app: app, another: another, in: members) {
+        case .success(let decided): mode = decided
+        case .failure(let refusal): return .failure(refusal)
+        }
+        var chosen: WishMember?
+        if case .change(let member) = mode { chosen = member }
         var devices: [DeviceWord] = []
         for word in words {
             guard let device = DeviceWord(word, in: table) else {
@@ -250,8 +299,11 @@ enum AppPlanner {
         case .success(let found): target = found
         case .failure(let refusal): return .failure(refusal)
         }
-        if let chosen { return .success(.update(chosen, to: target)) }
-        return .success(.add(target))
+        switch mode {
+        case .change(let member): return .success(.update(member, to: target))
+        case .another: return .success(.another(target))
+        case .first: return .success(.add(target))
+        }
     }
 
     /// The app `make_app_for`'s `app` names: its folder exactly, whatever the case ("Mac2"), or "." for the app in the
