@@ -940,10 +940,12 @@ enum AppAI {
                 let options = (q["criteria"] as? [String: Any])?.keys.map { $0 } ?? (q["criteria"] as? [String] ?? [])
                 // The model's own wording of an option ("dairy and eggs" for "Dairy & Eggs") is that option.
                 func key(_ text: String) -> String { text.lowercased().replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&", with: "and").filter { $0.isLetter || $0.isNumber } }
-                let byKey = Dictionary(options.map { (key($0), $0) }, uniquingKeysWith: { first, _ in first })
+                let byKey = Dictionary(grouping: options, by: key)   // a key two options share names neither
                 func option(_ text: String) -> String? {
                     if options.contains(text) { return text }
-                    if let named = byKey[key(text)] { return named }
+                    let sameCase = options.filter { $0.lowercased() == text.lowercased() }
+                    if sameCase.count == 1 { return sameCase[0] }
+                    if let named = byKey[key(text)], named.count == 1 { return named[0] }
                     // Shortened ("Dairy" for "Dairy & Eggs"): the one option it begins.
                     let begun = options.filter { !key(text).isEmpty && key($0).hasPrefix(key(text)) }
                     return begun.count == 1 ? begun[0] : nil
