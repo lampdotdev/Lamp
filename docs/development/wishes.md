@@ -204,7 +204,8 @@ author, an https address, the commit, the license as an SPDX id or `LicenseRef-`
 which the agent writes when it brings such work in (`Agent.Rules.about`, in every kind's prompt and so every engine's),
 and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds to: a starter's copy begins it with the
 starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
-stays one link). Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
+stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by Put on GitHub
+and by opening a repository, "Generated apps"). The info panel, the About window and a repository's README link it. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
 changed is still shown and shared. Lamp keeps only what passes `Credits.checked`, from the agent and from a shared file
 alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the

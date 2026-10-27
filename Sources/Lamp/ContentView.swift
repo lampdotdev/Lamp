@@ -286,6 +286,7 @@ struct AppMenu: View {
 enum AppInfoView {
     static let useSettingsChoices = "settingsChoices"
     static let basedOnPage = "basedOnPage"
+    static let remixedFromPage = "remixedFromPage"
 
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
     /// shown in Finder, or this app's own model choices undone.
@@ -297,6 +298,8 @@ enum AppInfoView {
         case "showSource": NSWorkspace.shared.activateFileViewerSelecting([project.dir])
         case basedOnPage:
             if let page = Credits.load(project).upstream.first?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
+        case remixedFromPage:
+            if let page = Credits.load(project).remixOf.last(where: { $0.url != nil })?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         default: break
         }
     }
@@ -385,8 +388,11 @@ enum AppInfoView {
         if !credits.remixOf.isEmpty {
             rows.append(SidebarInfoRow(label: "Remixed from", value: credits.remixOf.map { $0.name + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: " → ")))
         }
-        let page = credits.upstream.first.flatMap { source in source.url.map { _ in SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage) } }
-        return SidebarInfoSection(title: "Credits", rows: rows, buttons: page.map { [$0] } ?? [])
+        var buttons: [SidebarInfoButton] = []
+        if let source = credits.upstream.first, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
+        // The wish this one was most directly remixed from, where it lives (its repository on GitHub).
+        if let remix = credits.remixOf.last(where: { $0.url != nil }) { buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage)) }
+        return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
 
     /// A model's name without the description Settings shows: "Fast & cheap (Claude Haiku)" → "Claude Haiku",

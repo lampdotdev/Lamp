@@ -6252,6 +6252,11 @@ enum Template {
                 show(chat)
                 return
             }
+            // An app built from its code with its own script has no chat of its own: the extension is Lamp's and goes
+            // into an app only as Lamp installs it. Nothing to wait for, so it goes straight to Lamp, or its site.
+            guard FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent("Contents/Extensions/LampSidebar.appex").path) else {
+                return fallback()
+            }
             Task { @MainActor in
                 // Just after Lamp installs a new build, macOS may not have registered its chat yet: the first
                 // answer can be an empty list with the chat a moment behind it. A few seconds are given before

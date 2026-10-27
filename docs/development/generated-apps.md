@@ -268,7 +268,21 @@ built by Xcode from a project Lamp keeps, so its README says Lamp builds it). On
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to), as a
-published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them.
+published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them. The file's credits
+name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened
+from there links where it came from.
+
+A repository opens in Lamp as a shared file does (`RepoImport`): File → Open from GitHub… takes its address (owner and
+name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared Wish… takes a
+folder it was cloned into, and a wish's link may name it (`lamp://wish?file=https://github.com/…`, `Store.take(exact:)`).
+The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
+a folder of Lamp's with the network open, never asking for a sign-in), then copied into an import folder without the
+repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
+a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
+afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
+the install does). A folder holding only a shared file opens that file. The chain's last link takes the repository's
+address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
+The person's folder is only read, never changed or removed.
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
@@ -291,7 +305,8 @@ opened by hand, and the request is in the wish's box once it's here (`PendingImp
 file that's another version of an app already here). The clipboard isn't used: macOS 15.4 asks before a browser's copy is read. A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
 Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
 goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
-and goes into an app only as Lamp installs it (`Sidebar.install`).
+and goes into an app only as Lamp installs it (`Sidebar.install`). An app with no extension in its bundle goes there at
+once, without the few seconds' wait for a chat that was never put in.
 
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About

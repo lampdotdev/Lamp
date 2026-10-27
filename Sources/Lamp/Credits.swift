@@ -38,6 +38,9 @@ struct Credits: Codable, Equatable {
         var starter: String?
         /// The shared wish's identity (`Sharing.identity`), for one that came in a shared file.
         var wish: String?
+        /// Where the wish lives, https only: its repository on GitHub, written as it's put there (`GitHubRepo`) or
+        /// opened from there (`RepoImport`), so a remix of a remix links each repository.
+        var url: String?
     }
 
     /// A picture made with AI, by its path in the wish.
@@ -155,6 +158,10 @@ struct Credits: Codable, Equatable {
                                             licenseFile: newer.licenseFile ?? source.licenseFile)
         }
         for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameWish(as: remix) }) { result.remixOf.append(remix) }
+        // A wish both name keeps the address it has, or takes the one the newer file gives.
+        for (index, remix) in result.remixOf.enumerated() where remix.url == nil {
+            if let url = other.remixOf.first(where: { $0.sameWish(as: remix) })?.url { result.remixOf[index].url = url }
+        }
         for picture in other.generated where !result.generated.contains(picture) { result.generated.append(picture) }
         return result.checked
     }
@@ -202,7 +209,9 @@ struct Credits: Codable, Equatable {
         }
         if !generated.isEmpty { lines.append(Self.generatedLine(generated.count)) }
         if !remixOf.isEmpty {
-            lines.append("Remixed from " + remixOf.map { escaped($0.name) + ($0.starter != nil ? " (Lamp)" : "") }.joined(separator: ", then "))
+            lines.append("Remixed from " + remixOf.map { remix in
+                (remix.url.map { "<a href=\"\(escaped($0))\">\(escaped(remix.name))</a>" } ?? escaped(remix.name)) + (remix.starter != nil ? " (Lamp)" : "")
+            }.joined(separator: ", then "))
         }
         return """
             <!doctype html><html><head><meta charset="utf-8"><style>
@@ -296,7 +305,7 @@ extension Credits.Remix {
         guard let name = Credits.text(name) else { return nil }
         let starter = starter.flatMap(Credits.text).flatMap { $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" } ? $0 : nil }
         let wish = wish.flatMap { UUID(uuidString: $0.trimmed)?.uuidString }
-        return Credits.Remix(name: name, starter: starter, wish: wish)
+        return Credits.Remix(name: name, starter: starter, wish: wish, url: Credits.validURL(url))
     }
 
     func sameWish(as other: Credits.Remix) -> Bool {

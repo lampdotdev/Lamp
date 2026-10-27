@@ -72,7 +72,9 @@ enum GitHubRepo {
         // The wish as a shared file, held to the same checks and carrying the credits with this wish at the end of the
         // chain, and its contents unpacked beside it: the code as people read it on GitHub.
         let fileName = Publish.slug(project.name) + ".lampapp"
-        let shared = try Sharing.export(project)
+        // The file's credits end the chain with this wish, named where it's going: the repository's address, which a
+        // remix opened from there carries on.
+        let shared = try Sharing.export(project, repository: url(repo))
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", shared.path, tree.path], timeout: 120).ok else {
             throw Failure(message: "Couldn't unpack \(project.name)'s files.")
@@ -96,7 +98,7 @@ enum GitHubRepo {
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
         let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty)
-        try Data(readme(for: project, credits: credits, open: open, build: build).utf8).write(to: tree.appendingPathComponent("README.md"))
+        try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo).utf8).write(to: tree.appendingPathComponent("README.md"))
 
         let leaks = ShareCheck.secrets(in: tree, known: Sharing.knownSecrets(project))
         if let first = leaks.first {
@@ -151,7 +153,7 @@ enum GitHubRepo {
     }
 
     /// The repository's README: what the wish is, how to remix it with Lamp, how to build it, and what it's based on.
-    static func readme(for project: LampProject, credits: Credits, open: Publish.OpenInLamp, build: Build) -> String {
+    static func readme(for project: LampProject, credits: Credits, open: Publish.OpenInLamp, build: Build, repo: String? = nil) -> String {
         var text = "# \(project.name)\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
         text += "Made with [Lamp](https://lamp.dev), a Mac app that builds apps from a description and changes them as you ask.\n\n"
@@ -159,7 +161,12 @@ enum GitHubRepo {
         if let link = open.link {
             text += "[Make your own](\(link.absoluteString)) from this wish: with Lamp, or by getting Lamp from that page. "
         }
-        if let file = open.file {
+        if let repo {
+            text += (open.link == nil ? "With" : "Or, with") + " Lamp, choose File → Open from GitHub… and paste this repository's address (`\(url(repo))`): "
+                + "you get this exact wish, yours to change by asking, with the credits below kept."
+            if open.link == nil { text += " Don't have Lamp? [Get it](https://lamp.dev)." }
+            if let file = open.file { text += " [\(file)](\(file)) is the same wish as a file Lamp opens." }
+        } else if let file = open.file {
             text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared Wish…): "
                 + "you get this exact wish, yours to change by asking, with the credits below kept. The code here is what that file holds."
             if open.link == nil { text += " Don't have Lamp? [Get it](https://lamp.dev)." }

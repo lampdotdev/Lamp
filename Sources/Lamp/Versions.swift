@@ -52,10 +52,10 @@ enum Versions {
     /// what the agent's own commands are: it runs under the same sandbox (`Sandbox`), confined to the app's
     /// folder. Nothing in the history has to be trusted, checked or cleaned, and nothing the agent does with
     /// git has to be refused.
-    static func git(_ command: String, cwd: URL, env: [String: String] = [:],
+    static func git(_ command: String, cwd: URL, env: [String: String] = [:], started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
         guard let confined = confined(command, in: cwd) else { return unconfined }
-        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, started: started, onLine: onLine)
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).
