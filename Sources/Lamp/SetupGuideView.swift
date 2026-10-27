@@ -11,6 +11,8 @@ struct SetupGuideView: View {
         var button: String?
         var link: Link?
         var failure: String?
+        /// Try Again is offered: not once a guide gave a step back for fear of sending it twice.
+        var canRetry = true
 
         struct Link: Equatable { var title: String; var url: URL }
     }
@@ -42,7 +44,7 @@ struct SetupGuideView: View {
             HStack(spacing: 8) {
                 if let button = state.button { Button(button, action: confirm) }
                 if let link = state.link { Button(link.title) { NSWorkspace.shared.open(link.url) } }
-                if state.failure != nil { Button("Try Again", action: retry) }
+                if state.failure != nil, state.canRetry { Button("Try Again", action: retry) }
                 if let doItMyself { Button("Do It Myself", action: doItMyself) }
             }
         }

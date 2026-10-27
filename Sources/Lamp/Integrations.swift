@@ -405,6 +405,12 @@ struct IntegrationRunner {
         var errorDescription: String? { message }
     }
 
+    /// The device turned the sign-in away: waiting or going on won't mend it, the person has to type it again.
+    struct Rejected: LocalizedError {
+        var message = "The device rejected the sign-in. Check the user name and password, then try again."
+        var errorDescription: String? { message }
+    }
+
     /// What a sequence gave back: a picture from a look, a stream that's running.
     struct Outcome {
         var picture: Data?
@@ -558,18 +564,19 @@ struct IntegrationRunner {
                         changed.restores.append(Restore(request: request, was: was, values: values))
                     }
                 }
-                var answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
+                var answer = try await transfer(request, values: values, files: files)
                 // A device still working on what it was sent says so with 204 until it's done.
                 if let poll = request.poll {
                     let until = Date().addingTimeInterval(TimeInterval(min(max(poll, 2), 600)))
                     while answer.status == 204, Date() < until {
                         try await Task.sleep(for: .seconds(2))
-                        answer = try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: DeviceTLS.Pins(deviceID: device.id))
+                        answer = try await transfer(request, values: values, files: files)
                     }
                     // Still working when the time is up is no answer: the step didn't finish.
                     if answer.status == 204 { throw Failure(message: "\(device.name) was still working on \(request.path) after \(poll) seconds.") }
                 }
                 cookies.merge(answer.cookies) { $1 }
+                if request.auth != nil, answer.status == 401 { throw Rejected() }
                 if answer.ok { await learnRoot(request, answer) }
                 guard answer.ok else {
                     let said = DeviceApps.plain(answer.text)
@@ -621,6 +628,14 @@ struct IntegrationRunner {
             }
         }
         return outcome
+    }
+
+    /// One request of a sequence. Without a package it goes through `send`, as a check's do, so tests can answer for a
+    /// made-up device.
+    private func transfer(_ request: Request, values: [String: String], files: [String: URL]) async throws -> DeviceHTTP.Answer {
+        let pins = DeviceTLS.Pins(deviceID: device.id)
+        if files.isEmpty { return try await send(request, try address, values, pins) }
+        return try await DeviceHTTP.send(request, to: try address, values: values, files: files, pins: pins)
     }
 
     private func probed(_ probe: String) async throws -> Bool {
@@ -682,9 +697,7 @@ struct IntegrationRunner {
                 }
                 // A device that turns the password away keeps doing so however long Lamp waits: the person has to
                 // type it again, so the card says so and stops checking.
-                if request.auth != nil, answer.status == 401 {
-                    return .rejected("The device rejected the sign-in. Check the user name and password, then try again.")
-                }
+                if request.auth != nil, answer.status == 401 { return .rejected(Rejected().message) }
                 guard answer.ok else { return .waiting(waiting) }
                 if condition.json != nil || condition.xml != nil {
                     let value = DeviceHTTP.value(json: condition.json, xml: condition.xml, in: answer)

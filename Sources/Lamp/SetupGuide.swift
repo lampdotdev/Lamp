@@ -43,6 +43,9 @@ struct SetupSteps {
         var every: Double = 3
         var button: String?
         var link: (title: String, url: URL)?
+
+        /// How many changes a `request` sends the device: one over a socket, each request but a GET over HTTP.
+        var changes: Int { uri != nil ? 1 : run.filter { ($0.http?.method ?? "GET").uppercased() != "GET" }.count }
     }
 
     let connection: String
@@ -123,9 +126,9 @@ struct SetupSteps {
                 return .failure(Problem("step \(number) is a handoff, which does nothing and says nothing is done"))
             case .handoff where index != list.count - 1:
                 return .failure(Problem("step \(number) is a handoff, which can only be the last step"))
-            // Try Again goes on from the step that failed: a request that presses the device's keys must say when it's
-            // already done, so it isn't pressed again blindly.
-            case .request where http && step.unless == nil && step.run.filter({ ($0.http?.method ?? "GET").uppercased() != "GET" }).count > 1:
+            // Presses are sent once (a failure part way hands the step back to the person, `GuidedSetup.unsure`), so a
+            // request of several says what holds once they're done, and isn't sent at all when it already holds.
+            case .request where http && step.unless == nil && step.changes > 1:
                 return .failure(Problem("step \(number) sends the device more than one change, so it needs unless: what holds once it's done"))
             default: break
             }
@@ -336,6 +339,7 @@ final class HTTPSetupConnection: SetupConnection {
         switch error {
         case is CancellationError: error
         case let refusal as DeviceTLS.Refusal: SetupConnectionError.rejected(refusal.localizedDescription)
+        case let rejected as IntegrationRunner.Rejected: SetupConnectionError.rejected(rejected.message)
         case is URLError: SetupConnectionError.unreachable
         case let failure as IntegrationRunner.Failure: SetupConnectionError.failed(failure.message)
         default: SetupConnectionError.failed(error.localizedDescription)
@@ -382,6 +386,10 @@ final class GuidedSetup: ObservableObject {
     private var onFinish: (() -> Void)?
     /// Where Try Again goes on from.
     private var resumeAt = 0
+    /// Whether Try Again can go on: not after a request of several changes failed part way.
+    private var canRetry = true
+    /// The step under way began sending its request, so a failure may have left part of it on the device.
+    private var sending = false
     private var confirmed: CheckedContinuation<Void, Never>?
     /// The person said a `rejoin` step's restart isn't needed.
     private var skipped = false
@@ -391,7 +399,8 @@ final class GuidedSetup: ObservableObject {
     var holdsDevice: Bool { started && !handedBack }
 
     var state: SetupGuideView.State {
-        SetupGuideView.State(lines: lines, ask: ask, button: button, link: link.map { .init(title: $0.title, url: $0.url) }, failure: failure)
+        SetupGuideView.State(lines: lines, ask: ask, button: button, link: link.map { .init(title: $0.title, url: $0.url) }, failure: failure,
+                             canRetry: canRetry)
     }
 
     /// Runs `steps` for the setup's `step`, over a connection `connect` makes (again for Try Again).
@@ -407,7 +416,7 @@ final class GuidedSetup: ObservableObject {
 
     /// Goes on from the step that failed, over a new connection; what was seen before stays said.
     func retry() {
-        guard failure != nil, steps != nil else { return }
+        guard failure != nil, canRetry, steps != nil else { return }
         failure = nil
         launch()
     }
@@ -445,6 +454,7 @@ final class GuidedSetup: ObservableObject {
         connect = nil
         onFinish = nil
         resumeAt = 0
+        canRetry = true
         lines = []
         ask = nil
         button = nil
@@ -476,12 +486,16 @@ final class GuidedSetup: ObservableObject {
             }
             if let doing = fill(step.doing) { lines.append(Line(text: doing, state: .doing)) }
             if step.kind != .rejoin { ask = fill(step.ask) }
+            sending = false
             do {
                 let done = try await perform(step, over: connection)
                 guard !Task.isCancelled else { return }
                 settle(done, as: .done)
             } catch is CancellationError {
                 return
+            } catch where sending && step.changes > 1 {
+                guard !Task.isCancelled else { return }
+                return unsure(step, connection: connection)
             } catch SetupConnectionError.failed(let words) where step.continueOnFailure {
                 guard !Task.isCancelled else { return }
                 // The device couldn't do this one (a store that isn't there): the person is told how to do it
@@ -512,6 +526,7 @@ final class GuidedSetup: ObservableObject {
         case .request:
             // Already done (the device says so): nothing is sent, and nothing claims Lamp asked for it.
             if let unless = step.unless, try await connection.holds(unless) { return nil }
+            sending = true
             try await connection.send(step)
             return fill(step.done)
         case .wait:
@@ -545,14 +560,21 @@ final class GuidedSetup: ObservableObject {
             link = nil
         }
         while true {
+            // Only the device not answering at all is its going away: `connect` alone says so.
             do {
                 try await connection.connect()
                 connected = true
-                if gone { return skipped ? nil : fill(step.done) }
-                if let unless = step.unless, try await connection.holds(unless) { return nil }
             } catch SetupConnectionError.unreachable {
                 gone = true
                 connected = false
+            }
+            if connected {
+                if gone { return skipped ? nil : fill(step.done) }
+                // A port `unless` reads that isn't open (developer mode off) is the device answering otherwise: the
+                // check doesn't hold, and nothing went away.
+                if let unless = step.unless {
+                    do { if try await connection.holds(unless) { return nil } } catch SetupConnectionError.unreachable {}
+                }
             }
             if !asked {
                 ask = fill(step.ask)
@@ -564,6 +586,22 @@ final class GuidedSetup: ObservableObject {
             if skipped && connected { return nil }
             try await Task.sleep(for: .seconds(step.every))
         }
+    }
+
+    /// A request of several changes failed part way: Lamp can't tell which reached the device, so it sends none of them
+    /// again. The step goes back to the person, with what it was for, and the setup checks its own step itself.
+    private func unsure(_ step: SetupSteps.Step, connection: SetupConnection) {
+        if lines.last?.state == .doing { lines.removeLast() }
+        failure = fill(step.failed) ?? "Lamp can't tell how much of that reached \(name), so it won't send it again. Finish this step on \(name) yourself."
+        canRetry = false
+        ask = nil
+        button = nil
+        link = nil
+        connection.close()
+        self.connection = nil
+        running = false
+        handedBack = true
+        onFinish?()
     }
 
     private func fail(_ error: Error, at index: Int, words step: SetupSteps.Step, connection: SetupConnection) {

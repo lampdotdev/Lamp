@@ -367,6 +367,132 @@ final class SetupGuideTests: XCTestCase {
         await assertThrows(SetupConnectionError.rejected(DeviceTLS.Refusal.changed.localizedDescription)) { try await changed.connect() }
     }
 
+    // MARK: What a retry, a late check, a rejected sign-in and a closed port can't do
+
+    /// A request of several key presses that failed part way: Lamp can't tell which presses reached the device, so it
+    /// doesn't send them again. The guide hands the device back to the setup's own step, with no Try Again.
+    func testAKeySequenceThatFailedPartWayIsntSentAgain() async throws {
+        let body = """
+        ```lamp-setup
+        {"connection": "http", "reach": [{"tcp": 8060}], "steps": [
+          {"do": "request", "doing": "Pressing keys…", "done": "Pressed",
+           "run": [{"http": {"method": "POST", "port": 8060, "path": "/keypress/Home"}}, {"http": {"method": "POST", "port": 8060, "path": "/keypress/Up"}}],
+           "unless": [{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "developer-enabled", "equals": "true"}]},
+          {"do": "handoff", "ask": "Finish on the device."}
+        ]}
+        ```
+        """
+        let steps = try SetupSteps.parse(skill: body).get()
+        let device = SequenceDevice()
+        var handedBack = 0
+        let guided = GuidedSetup()
+        guided.start(steps, name: "Den TV", step: "developer-mode", connect: { device }, onFinish: { handedBack += 1 })
+        await guided.finished()
+        XCTAssertEqual(device.sequences, 1)
+        XCTAssertNotNil(guided.failure)
+        XCTAssertFalse(guided.state.canRetry, "no Try Again for presses that may have reached the device")
+        guided.retry()
+        await guided.finished()
+        XCTAssertEqual(device.sequences, 1, "the presses were sent again")
+        XCTAssertTrue(guided.handedBack)
+        XCTAssertEqual(handedBack, 1, "the setup takes its step back and checks it itself")
+    }
+
+    /// A check of the setup's own step that was under way when the guide started answers after it: what it found is
+    /// left alone, so it can't pass the step or cancel the guide that now holds the device.
+    func testACheckUnderWayWhenTheGuideStartsIsDropped() async throws {
+        let integration = try JSONDecoder().decode(Integration.self, from: Data("""
+        {"id": "simulated", "name": "Simulated", "maker": "Lamp", "find": [{"ssdp": "lamp:simulated"}],
+         "identity": {"os": "Simulated OS", "id": {"http": {"port": 8060, "path": "/info"}, "xml": "serial"},
+                      "model": {"http": {"port": 8060, "path": "/info"}, "xml": "model"}},
+         "steps": [{"id": "developer-mode", "title": "Turn on developer mode", "wait": true,
+                    "check": [{"http": {"port": 8060, "path": "/info"}, "xml": "developer", "equals": "true"}]}]}
+        """.utf8))
+        let guide = Skills.Skill(name: "simulated-guide", description: "A guide.", body: """
+        ```lamp-setup
+        {"connection": "http", "reach": [{"http": {"port": 8060, "path": "/info"}}], "steps": [
+          {"do": "connect", "done": "{name} answers"},
+          {"do": "confirm", "ask": "Turn it on.", "button": "Done"},
+          {"do": "handoff", "ask": "Finish."}
+        ]}
+        ```
+        """, meta: ["setup-for": "simulated", "setup-step": "developer-mode"])
+        var device = Device(id: "simulated:RACE", kind: .other, maker: "Lamp", model: "Simulated", modelID: "SIM-1",
+                            name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
+        device.address = "192.168.1.20"
+        let gate = Gate()
+        let model = DeviceSetupModel(testing: device, integration: integration, skills: [guide.name: guide]) { request, _, _, _ in
+            // The first look is the watch's, held until the guide has started; every later one answers at once.
+            await gate.firstWaits()
+            return DeviceHTTP.Answer(status: 200, body: Data("<info><developer>false</developer></info>".utf8))
+        }
+        XCTAssertNotNil(model.guide)
+        model.watch()
+        try await until { gate.waiting }
+        model.doItForMe()
+        try await until { model.guided.button == "Done" }
+        gate.open()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(model.state, .idle, "the watch's late answer was shown over the guide")
+        XCTAssertEqual(model.guided.button, "Done", "the guide was cancelled")
+        XCTAssertTrue(model.guided.holdsDevice)
+        model.guided.cancel()
+        model.stopWatching()
+    }
+
+    /// A request whose sign-in the device turns away stops the guide with that reason, even where an ordinary failure
+    /// would let it go on: the person has to fix the password, as a check that meets a 401 says.
+    func testARejectedSignInOnARequestStopsTheGuide() async throws {
+        let integration = try JSONDecoder().decode(Integration.self, from: Data("""
+        {"id": "simulated", "name": "Simulated", "maker": "Lamp", "find": [{"ssdp": "lamp:simulated"}],
+         "identity": {"os": "Simulated OS", "id": {"http": {"port": 8060, "path": "/info"}, "xml": "serial"},
+                      "model": {"http": {"port": 8060, "path": "/info"}, "xml": "model"}},
+         "steps": [{"id": "developer-mode", "title": "Turn on developer mode", "check": [{"tcp": 8060}]}]}
+        """.utf8))
+        var device = Device(id: "simulated:AUTH", kind: .other, maker: "Lamp", model: "Simulated", modelID: "SIM-1",
+                            name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
+        device.address = "192.168.1.20"
+        var asked: [String] = []
+        var runner = IntegrationRunner(integration: integration, device: device)
+        runner.send = { request, _, _, _ in
+            asked.append(request.path)
+            return DeviceHTTP.Answer(status: request.path == "/install" ? 401 : 200, body: Data())
+        }
+        let steps = try SetupSteps.parse(skill: """
+        ```lamp-setup
+        {"connection": "http", "reach": [{"http": {"port": 8060, "path": "/info"}}], "steps": [
+          {"do": "request", "run": [{"http": {"method": "POST", "port": 80, "path": "/install",
+                                              "auth": {"digest": true, "user": "dev", "password": "{field:password}"}}}],
+           "failed": "Do it yourself.", "continueOnFailure": true},
+          {"do": "request", "run": [{"http": {"method": "POST", "port": 8060, "path": "/next"}}], "done": "Went on"},
+          {"do": "handoff", "ask": "Finish."}
+        ]}
+        ```
+        """, fields: ["password"]).get()
+        let guided = GuidedSetup()
+        guided.start(steps, name: "Simulated Device", step: "developer-mode", connect: { HTTPSetupConnection(runner: runner, reach: steps.reach) }, onFinish: {})
+        await guided.finished()
+        XCTAssertEqual(guided.failure, "The device rejected the sign-in. Check the user name and password, then try again.")
+        XCTAssertFalse(asked.contains("/next"), "the guide went on past a rejected sign-in")
+        XCTAssertEqual(guided.lines, [])
+    }
+
+    /// The device answers but the port `unless` reads is closed (developer mode is off): that isn't the device going
+    /// away, so its next answer isn't a restart, and nothing claims one.
+    func testAClosedPortInUnlessIsntARestart() async throws {
+        let device = FakeDevice()
+        device.failing = ["list": .unreachable]
+        let guided = start(try rejoin(unless: true), on: device)
+        try await until { guided.button == "Not Needed" }
+        try await Task.sleep(for: .seconds(2.5))
+        XCTAssertEqual(guided.lines, [], "a closed port was taken for a restart")
+        XCTAssertTrue(guided.running)
+        guided.confirm()
+        await guided.finished()
+        XCTAssertEqual(guided.lines, [])
+        XCTAssertTrue(guided.handedBack)
+    }
+
     private func assertThrows(_ expected: SetupConnectionError, _ body: () async throws -> Void, line: UInt = #line) async {
         do { try await body(); XCTFail("didn't throw", line: line) } catch { XCTAssertEqual(error as? SetupConnectionError, expected, line: line) }
     }
@@ -375,6 +501,33 @@ final class SetupGuideTests: XCTestCase {
         for _ in 0..<100 where !condition() { try await Task.sleep(for: .milliseconds(50)) }
         XCTAssertTrue(condition(), "timed out")
     }
+}
+
+/// An HTTP-like device whose key presses fail part way through the first time they're sent.
+private final class SequenceDevice: SetupConnection {
+    var sequences = 0
+    func connect() async throws {}
+    func send(_ step: SetupSteps.Step) async throws {
+        sequences += 1
+        // One press reached the device before the connection dropped.
+        if sequences == 1 { throw SetupConnectionError.unreachable }
+    }
+    func holds(_ check: SetupSteps.Check) async throws -> Bool { false }
+    func close() {}
+}
+
+/// Holds the first request until opened.
+@MainActor
+private final class Gate {
+    private(set) var waiting = false
+    private var held: CheckedContinuation<Void, Never>?
+    private var first = true
+    func firstWaits() async {
+        guard first else { return }
+        first = false
+        await withCheckedContinuation { held = $0; waiting = true }
+    }
+    func open() { held?.resume(); held = nil }
 }
 
 private final class FakeDevice: SocketSetupConnection {

@@ -49,12 +49,29 @@ final class DeviceSetupModel: ObservableObject {
     @Published private(set) var trial: [IntegrationProbe.Stage] = []
     private var answer: CheckedContinuation<Bool, Never>?
     private var watching: Task<Void, Never>?
+    /// Counts the watch's stops: a look begun before one is dropped when it answers.
+    private var looks = 0
     /// What asked for the setup, run once the device is ready.
     var then: (() -> Void)?
     /// Do It for Me: the steps of the skill that says it does the device's next step, run for this device. While they
     /// run they alone talk to the device; the watch below is stopped until they hand it back.
     let guided = GuidedSetup()
     private var following: AnyCancellable?
+
+    /// The integration its steps come from, the skills its guides are read from and how its requests are answered, when a
+    /// test gives them for a made-up device; otherwise the device's own, Lamp's, and the network.
+    private var given: Integration?
+    private var skills = Skills.all
+    private var testSend: ((Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer)?
+
+    init(testing device: Device, integration: Integration, skills: [String: Skills.Skill],
+         send: @escaping (Request, String, [String: String], DeviceTLS.Pins?) async throws -> DeviceHTTP.Answer) {
+        self.device = device
+        given = integration
+        self.skills = skills
+        testSend = send
+        following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+    }
 
     private init(device: Device) {
         self.device = device
@@ -69,7 +86,7 @@ final class DeviceSetupModel: ObservableObject {
         }
     }
 
-    var integration: Integration? { device.integration.flatMap(Integrations.integration) }
+    var integration: Integration? { given ?? device.integration.flatMap(Integrations.integration) }
 
     /// Whether a test run can start: the device is set up, its integration makes apps, and none is running.
     var canTry: Bool { ready && integration?.app?.declared != nil && !trial.contains { $0.state == .running } }
@@ -92,9 +109,11 @@ final class DeviceSetupModel: ObservableObject {
 
     private var runner: IntegrationRunner? {
         guard let integration else { return nil }
-        return IntegrationRunner(integration: integration, device: device, approve: { [weak self] approval in
+        var runner = IntegrationRunner(integration: integration, device: device, approve: { [weak self] approval in
             await self?.ask(approval) ?? false
         })
+        if let testSend { runner.send = testSend }
+        return runner
     }
 
     /// The steps Do It for Me follows for the device's next step, when a skill does that step for its integration and
@@ -102,7 +121,8 @@ final class DeviceSetupModel: ObservableObject {
     var guide: SetupSteps? {
         guard let integration, let step = next,
               case .success(let steps)? = SetupGuides.find(step.id, in: .init(row: integration.id, system: device.os, steps: Set(steps.map(\.id)),
-                                                                       fields: Set(steps.compactMap { $0.field?.key }), integration: true))
+                                                                       fields: Set(steps.compactMap { $0.field?.key }), integration: true),
+                                                       skills: skills)
         else { return nil }
         return steps
     }
@@ -179,14 +199,18 @@ final class DeviceSetupModel: ObservableObject {
     func stopWatching() {
         watching?.cancel()
         watching = nil
+        looks += 1
     }
 
     private func checkOnce(_ step: Integration.Step, runner: IntegrationRunner, keepWatching: Bool, quietly: Bool = false) async {
         // The watch's look every few seconds leaves the card as it is: only a check the person asked for shows as
         // checking, so nothing on the card blinks while they're at the device.
         if !quietly, !state.isBusy || state == .checking { state = .checking }
+        let look = looks
         let (ok, why, read, failed) = await runner.check(step)
-        guard next == step else { return }
+        // A look the watch began before it was stopped (a guide took the device) answers too late to count: the step
+        // may have moved on, and what it found isn't the guide's to have overwritten.
+        guard next == step, look == looks, !guided.holdsDevice else { return }
         if ok {
             runner.passed(step, read: read)
             passed = Integrations.kept(device.id)?.passed ?? passed + [step.id]
