@@ -26,9 +26,10 @@ depends on how an app is made and run, not on the device alone. What follows is 
 
 Phones join in two separate ways.
 
-A phone's browser, joined by a QR code, needs the app's phone page (`Phone/index.html`) and a TV app's page, on a
-Samsung or LG TV, that uses lamp.js's `Lamp.controllers`: Lamp serves the phone page and runs the relay only while that
-app is open on such a TV or in its TV preview on this Mac.
+A phone's browser, joined by a QR code, needs the TV app's phone page (`Phone/index.html` in the TV app's own folder,
+beside its `Web/`: the phone-pages skill says where) and a TV app's page, on a Samsung or LG TV, that uses lamp.js's
+`Lamp.controllers`: Lamp serves the phone page and runs the relay only while that app is open on such a TV or in its
+TV preview on this Mac.
 
 An iPhone app of the wish's own needs no browser page: it joins the TV app's game as a player with `LampController`
 over `LampWish`. An Android app has no `LampController` and doesn't join as a player. Every app of the wish's talks to
@@ -65,5 +66,5 @@ by its own rules (the wish-links skill).
 
 ## Building it
 
-Once you've chosen, open the phone-pages skill: the page in Phone/, `LampController` on the phone and
+Once you've chosen, open the phone-pages skill: the TV app's page in its own Phone/, `LampController` on the phone and
 `Lamp.controllers` on the screen, files, tilt and second screens.
