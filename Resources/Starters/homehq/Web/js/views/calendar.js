@@ -204,7 +204,7 @@
   }
 
   function render() {
-    if (!V.mode) V.mode = App.narrow ? 'week' : 'day';
+    if (!V.mode) V.mode = 'week';   // the week at a glance: a day is a tap away
     var body = { day: dayView, '3day': threeDay, week: weekView, month: monthView }[V.mode]();
     V.el.innerHTML = '<div class="cal cal--' + V.mode + '">' + header() + '<div class="cal-body">' + body + '</div></div>';
     var sc = V.el.querySelector('.grid-scroll');
