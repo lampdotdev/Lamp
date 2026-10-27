@@ -66,7 +66,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { game, fixedStep } from './lamp-game.js';
 
-let world, events, physics;
+let world, events, physics, pad, presses = 0;
 game({ renderer, async init() {
     await RAPIER.init();
     world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -75,10 +75,19 @@ game({ renderer, async init() {
     // … the ground, the bodies and their meshes
 }, frame(f) {
     pad = f.pads[0];
+    presses |= pad.pressed;   // kept until a step uses them
     physics(f.dt);
     place();
     renderer.render(scene, camera);
 } });
+
+function steer() {
+    // Held buttons and sticks are read as they are now, every step.
+    ball.applyImpulse({ x: pad.lx * PUSH, y: 0, z: -pad.ly * PUSH }, true);
+    // A press is used by one step only: a frame can run no step (at 120 frames a second) or two (at 30).
+    if (presses & CONTROLS.jump) ball.applyImpulse({ x: 0, y: JUMP, z: 0 }, true);
+    presses = 0;
+}
 ```
 
 - `await RAPIER.init()` goes inside `init` (never at the top of the module), so a failure is the game's start-up
@@ -87,7 +96,9 @@ game({ renderer, async init() {
   needs, so the game plays the same at 30, 60 or 120 frames a second and the preview replays it exactly: the same
   moves give the same tumble every play. Never pass `f.dt` to the world or change `timestep` per frame. Anything that
   pushes bodies (the controls, a motor) runs inside the step, as `steer()` does above, reading the pad the frame
-  kept; anything random in the setup comes from `random()`.
+  kept. A press (`pressed`, `released`) belongs to a frame, not a step: gather it into `presses` in `frame` and let the
+  first step that runs use it and clear it, or a jump is lost at 120 frames a second and done twice at 30. Anything
+  random in the setup comes from `random()`.
 - Meters, kilograms and seconds, y up, as three.js has them. Keep things their real size: a box a meter across, a
   marble a few centimeters. Rapier's tolerances are tuned for things about a meter across: in a world of small things
   (a tabletop maze, marbles, dice) set `world.lengthUnit` to their typical size in meters (0.05 for marbles), or they
