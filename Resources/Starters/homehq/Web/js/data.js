@@ -242,7 +242,11 @@ window.DATA = (function () {
     { seed: 'pumpkins', o: 'l', date: '2025-10-25', place: "Chudleigh's", from: 'maya', tag: 'fall25', ex: true }
   ];
 
+  // The examples as made, for the sync to tell them from the family's own (js/sync.js).
+  var examples = { groceries: groceries.map(function (g) { return Object.assign({}, g); }) };
+
   var D = {
+    examples: examples,
     people: people, family: family, ALL: ALL,
     events: events,
     routines: routines, chores: chores, stars: stars, week: week,

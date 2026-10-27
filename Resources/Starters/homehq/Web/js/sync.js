@@ -1,156 +1,188 @@
 // One Home HQ on every screen: the copies of this screen (the Mac, the kitchen iPad, the TV, the photo frame) keep the
-// same family, chores, shopping list and settings, through Lamp.wish in Web/lamp.js. Each part of DATA.snapshot() is
-// a value the copies share (the later change wins where two were made apart); the calendars and photos are read by
-// a copy that can read them (the Mac, an iPhone or iPad: LampNative) and handed to the others, the calendars as values
-// and the pictures as files. A copy alone keeps working on what it saved, and catches up when it next meets the others.
-// A copy shares only what changes on it: one opened for the first time (still showing the examples) takes what the
-// others have rather than putting its examples over them, and gives a part only no copy has shared yet.
+// family's own data the same through Lamp's shared collections (LampStore.shared in Web/lamp.js), merged item by item,
+// so two devices changing different things never lose either. What's here is only the family's own: the examples are
+// made on each device and never shared, so a copy opened for the first time can't put them over real data.
+//
+//   people, chores      the family and the chore list, once changed in the editor (until then, the examples)
+//   groceries, events   the shopping list and the events added on the screen (an example changed is kept as theirs;
+//                       one taken away is kept as { id, gone: true }, so it stays away)
+//   ticks               a chore ticked off: one item per chore per day
+//   stars               each kid's stars and week
+//   settings            one item per setting: place, calendars, album, cleared
+//   favs                photos marked as favourites
+//   calendar, photos    what a copy that can read them (LampNative: the Mac, an iPhone or iPad) publishes for the
+//                       others: the chosen calendars' events, and the album's pictures (their bytes in
+//                       LampStore.sharedFiles('photos'))
+//
+// The views change DATA as they always have and say so with App.emit('data'); this works out which items changed and
+// puts just those. What another copy changes comes in through onChange and is drawn again.
 (function () {
   'use strict';
   var D = window.DATA;
-  var W = window.Lamp && window.Lamp.wish;
-  if (!W) return;
-  var PARTS = ['cleared', 'events', 'groceries', 'people', 'chores', 'done', 'stars', 'favs', 'settings'];
-  var CHUNKS = 4;                     // the calendars, in up to four values of at most 8 KB each
-  var known = {};                     // each value as JSON, as last set here or heard from another copy
-  var base = {};                      // each part of this copy's data as JSON, as it was when last in step with the others
-  var ready = false;
+  if (!window.LampStore || !LampStore.shared) return;
+  var S = {};
+  ['people', 'chores', 'groceries', 'events', 'ticks', 'stars', 'settings', 'favs', 'calendar', 'photos'].forEach(function (n) {
+    S[n] = LampStore.shared(n);
+  });
+  var pictures = LampStore.sharedFiles('photos');
+  var known = {};          // collection -> id -> the item as JSON, as last put here or taken from another copy
+  var taking = false;
 
-  function json(v) { return JSON.stringify(v === undefined ? null : v); }
+  function json(v) { return JSON.stringify(v); }
   function native() { return !!(window.LampNative && LampNative.available); }
+  function today() { var d = App.now(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+  function mine(name) { return known[name] || (known[name] = {}); }
 
-  function set(key, value) {
-    var text = json(value);
-    if (known[key] === text) return;
-    if (text.length > W.valueLimit) { if (window.console) console.warn('Home HQ: ' + key + ' is too big to share (' + text.length + ' bytes)'); return; }
-    known[key] = text;
-    W.set(key, value);
-  }
-
-  // In step: what this copy has now is what the others have (after taking their values, or sharing its own).
-  function settle() {
-    var snap = D.snapshot();
-    PARTS.forEach(function (k) { base[k] = json(snap[k]); });
-  }
-
-  // What changed here, and only that, goes to the other copies.
-  function share() {
-    if (!ready) return;
-    var snap = D.snapshot();
-    PARTS.forEach(function (k) {
-      var text = json(snap[k]);
-      if (text === base[k]) return;
-      base[k] = text;
-      if (snap[k] != null) set(k, snap[k]);
+  // ------------------------------------------------------------ what this copy changed
+  // Puts the items that differ from what this copy last held; `gone` ids are deleted, or kept as gone for an example.
+  // `dry` only notes what it holds now, putting nothing: after taking the others' items, and as a copy opens, so
+  // what's shared is only what then changes here (never a new copy's examples or empty settings over real ones).
+  function sync(name, items, examples, dry) {
+    if (dry) { known[name] = {}; items.forEach(function (item) { known[name][item.id] = json(item); }); return; }
+    var k = mine(name), now = {};
+    items.forEach(function (item) {
+      now[item.id] = true;
+      var text = json(item);
+      if (k[item.id] !== text) { k[item.id] = text; S[name].put(item); }
     });
-    if (native() && D.settings.calendars) shareCalendars();
-  }
-
-  // A part no copy has shared yet (the first copy ever, or a part a newer version added) is given as this copy has it.
-  function seed() {
-    var have = W.values() || {}, snap = D.snapshot();
-    PARTS.forEach(function (k) { if (have[k] === undefined && snap[k] != null) set(k, snap[k]); });
-  }
-
-  // The calendars this copy read, short enough to share: [title, start, end, allDay, people, loc], split across values.
-  function shareCalendars() {
-    var rows = D.events.filter(function (e) { return e.cal; }).map(function (e) {
-      return [e.title, +e.start, +e.end, e.allDay ? 1 : 0, e.people, e.loc || ''];
+    Object.keys(k).forEach(function (id) {
+      if (now[id]) return;
+      var was = JSON.parse(k[id]);
+      if (was && was.gone) return;
+      if (examples && (examples === ALL_GONE || examples[id])) { var g = { id: id, gone: true }; k[id] = json(g); S[name].put(g); }
+      else { delete k[id]; S[name]['delete'](id); }
     });
-    var chunks = [], cur = [], size = 2;
-    rows.forEach(function (r) {
-      var n = json(r).length + 1;
-      if (size + n > W.valueLimit - 64) { chunks.push(cur); cur = []; size = 2; }
-      if (chunks.length < CHUNKS) { cur.push(r); size += n; }
-    });
-    if (cur.length && chunks.length < CHUNKS) chunks.push(cur);
-    for (var i = 0; i < CHUNKS; i++) set('cal' + i, chunks[i] || null);
   }
 
-  // What another copy shared comes in here.
-  function take(key, value) {
-    var text = json(value);
-    if (known[key] === text) return;
-    known[key] = text;
-    if (value == null) return;
-    if (/^cal\d$/.test(key)) {
-      if (native() && D.settings.calendars) return;   // this copy reads them itself
-      var all = [];
-      for (var i = 0; i < CHUNKS; i++) { try { all = all.concat(JSON.parse(known['cal' + i] || 'null') || []); } catch (e) {} }
-      D.events = D.events.filter(function (e) { return !e.cal; }).concat(all.map(function (r, n) {
-        return { id: 'k' + n, cal: true, title: r[0], start: new Date(r[1]), end: new Date(r[2]), allDay: !!r[3], people: r[4], loc: r[5] || undefined };
+  function exampleIds(list) { var o = {}; list.forEach(function (x) { if (x.ex) o[x.id] = true; }); return o; }
+  function plain(o, keys) { var r = {}; keys.forEach(function (key) { if (o[key] !== undefined) r[key] = o[key]; }); return r; }
+
+  var ALL_GONE = { hasOwnProperty: function () { return true; } };
+  var GROCERY = ['id', 'name', 'cat', 'qty', 'store', 'done', 'note', 'ex'];
+  var original = {};       // each example grocery as made, to tell one the family changed
+  D.examples.groceries.forEach(function (g) { original[g.id] = json(plain(g, GROCERY)); });
+
+  function share(dry) {
+    if (taking) return;
+    if (D.edited.people) sync('people', D.people.map(function (p, i) { return Object.assign(plain(p, ['id', 'name', 'color', 'rgb', 'ink', 'age']), { order: i }); }), null, dry);
+    if (D.edited.chores || D.cleared) sync('chores', D.chores.map(function (c) { return plain(c, ['id', 'r', 'who', 'title', 'emoji', 'stars']); }), null, dry);
+    sync('groceries', D.groceries.map(function (g) { return plain(g, GROCERY); }).filter(function (g) { return !g.ex || original[g.id] !== json(g); }),
+         exampleIds(D.examples.groceries), dry);
+    sync('events', D.events.filter(function (e) { return !e.ex && !e.cal; }).map(function (e) {
+      return { id: e.id, title: e.title, people: e.people, allDay: !!e.allDay, start: +e.start, end: +e.end, loc: e.loc || '', notes: e.notes || '' };
+    }), null, dry);
+    var day = today();
+    // A tick taken back stays as gone, so the copies can tell "not ticked" from "nothing heard yet".
+    sync('ticks', D.chores.filter(function (c) { return c.done; }).map(function (c) { return { id: day + ':' + c.id, day: day, chore: c.id, by: c.doneBy || '' }; }), ALL_GONE, dry);
+    sync('stars', Object.keys(D.stars).map(function (k) { return { id: k, stars: D.stars[k], week: D.week[k] || [0, 0, 0, 0, 0, 0, 0] }; }), null, dry);
+    sync('settings', [{ id: 'place', value: D.settings.place }, { id: 'calendars', value: D.settings.calendars },
+                      { id: 'album', value: D.settings.album }, { id: 'cleared', value: D.cleared }], null, dry);
+    sync('favs', D.photos.filter(function (p) { return p.fav; }).map(function (p) { return { id: p.id || p.seed }; }), null, dry);
+    if (native() && !dry) publishCalendar();
+  }
+
+  function publishCalendar() {
+    if (!D.settings.calendars) return;
+    var items = D.events.filter(function (e) { return e.cal; }).map(function (e) {
+      return { id: e.id, title: e.title, start: +e.start, end: +e.end, allDay: !!e.allDay, people: e.people, loc: e.loc || '' };
+    });
+    var text = json(items);
+    if (known.publishedCalendar === text) return;
+    known.publishedCalendar = text;
+    S.calendar.publish(items);
+  }
+
+  // The album's pictures, for the copies that can't read it: each one's bytes once, and the list in the album's order.
+  function publishPhotos() {
+    if (!native() || D.settings.album == null) return;
+    var list = D.photos.filter(function (p) { return p.src && p.id; });
+    if (!list.length) return;
+    var have = {};
+    pictures.all().forEach(function (f) { have[f.name] = true; });
+    list.forEach(function (p) {
+      if (have[p.id]) return;
+      var bytes = atob(p.src.split(',')[1]), buf = new Uint8Array(bytes.length);
+      for (var i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+      pictures.put(p.id, buf, 'image/jpeg');
+    });
+    S.photos.publish(list.map(function (p, i) { return { id: p.id, o: p.o, date: p.date, order: i }; }));
+  }
+
+  // ------------------------------------------------------------ what the copies have, into DATA
+  function take() {
+    taking = true;
+    try {
+      var settings = {};
+      S.settings.all().forEach(function (s) { settings[s.id] = s.value; });
+      ['place', 'calendars', 'album'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
+      if (settings.cleared && !D.cleared) D.clearExamples();
+
+      var people = S.people.all().sort(function (a, b) { return a.order - b.order; });
+      if (people.length) { D.people = people; D.edited.people = true; D.ALL = people.map(function (p) { return p.id; }); }
+
+      var chores = S.chores.all();
+      if (chores.length || D.cleared) { D.chores = chores; D.edited.chores = true; }
+      // Today's ticks, once any copy has ticked or unticked something today; until then the examples' own.
+      var ticks = {}, heard = false;
+      S.ticks.all().forEach(function (t) { if (t.day === today()) { heard = true; if (!t.gone) ticks[t.chore] = t.by || true; } });
+      if (heard || D.edited.chores || D.cleared) {
+        D.chores.forEach(function (c) { c.done = !!ticks[c.id]; c.doneBy = typeof ticks[c.id] === 'string' && ticks[c.id] ? ticks[c.id] : undefined; });
+      }
+
+      var groceries = {};
+      S.groceries.all().forEach(function (g) { groceries[g.id] = g; });
+      if (Object.keys(groceries).length || D.cleared) {
+        D.groceries = (D.cleared ? [] : D.examples.groceries.filter(function (g) { return !groceries[g.id]; }).map(function (g) { return Object.assign({}, g); }))
+          .concat(Object.keys(groceries).map(function (id) { return groceries[id]; }).filter(function (g) { return !g.gone; }));
+      }
+
+      D.events = D.events.filter(function (e) { return e.ex || e.cal; }).concat(S.events.all().map(function (e) {
+        return Object.assign({}, e, { start: new Date(e.start), end: new Date(e.end) });
       }));
-    } else if (key === 'photos') {
-      havePhotos(value);
-      return;
-    } else if (PARTS.indexOf(key) > -1) {
-      var part = {};
-      part[key] = value;
-      D.restore(part);
-      if (key === 'settings') { App.loadWeather(); App.loadCalendars(); }
-    } else return;
-    settle();
-    D.save();
+      if (!(native() && D.settings.calendars)) {
+        D.events = D.events.filter(function (e) { return !e.cal; }).concat(S.calendar.all().map(function (e) {
+          return Object.assign({}, e, { cal: true, start: new Date(e.start), end: new Date(e.end) });
+        }));
+      }
+
+      S.stars.all().forEach(function (s) { D.stars[s.id] = s.stars; D.week[s.id] = s.week; });
+      var favs = {};
+      S.favs.all().forEach(function (f) { favs[f.id] = true; });
+      D.photos.forEach(function (p) { p.fav = !!favs[p.id || p.seed]; });
+      if (!(native() && D.settings.album != null)) takePhotos();
+
+      D.save();
+    } finally { taking = false; }
+    // What this copy holds now is in step with the others: nothing of it to put back.
+    share(true);
     App.emit('data');
     App.rerender();
   }
 
-  // ------------------------------------------------------------ photos
-  // A copy that reads the album sends each picture to the copies that can't, once each time they meet; the pictures
-  // listed in the 'photos' value show as they arrive.
-  var sentTo = {}, arrived = {};
-  function sendPhotos() {
-    if (!native() || D.settings.album == null) return;
-    var mine = D.photos.filter(function (p) { return p.src && p.id; });
-    if (!mine.length) return;
-    set('photos', mine.map(function (p) { return { id: p.id, o: p.o, date: p.date, fav: !!p.fav }; }));
-    var me = W.copy();
-    var others = (W.apps() || []).filter(function (a) { return a.peer === W.me(); })
-      .concat((W.peers() || []).filter(function (a) { return a.peer === W.me(); }));
-    others.forEach(function (app) {
-      (app.copies || []).forEach(function (c) {
-        if (c.id === me || sentTo[c.id]) return;
-        sentTo[c.id] = true;
-        mine.forEach(function (p) {
-          var bytes = atob(p.src.split(',')[1]), buf = new Uint8Array(bytes.length);
-          for (var i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
-          W.sendFile(buf, c.id, { name: p.id, type: 'image/jpeg' });
-        });
+  // The album another copy published: each picture shows once its bytes are here.
+  function takePhotos() {
+    var list = S.photos.all().sort(function (a, b) { return a.order - b.order; });
+    if (!list.length) return;
+    var byId = {};
+    D.photos.forEach(function (p) { if (p.id) byId[p.id] = p; });
+    D.photos = list.map(function (m) { return byId[m.id] || { id: m.id, o: m.o, date: m.date, place: '', tag: m.date || m.id }; })
+      .filter(function (p) { return p.src; });
+    list.forEach(function (m) {
+      if (byId[m.id] && byId[m.id].src) return;
+      pictures.url(m.id).then(function (url) {
+        if (!url) return;
+        var p = { id: m.id, o: m.o, date: m.date, place: '', tag: m.date || m.id, src: url };
+        D.photos = D.photos.filter(function (x) { return x.id !== m.id; }).concat([p]);
+        App.emit('data');
       });
     });
   }
-  function havePhotos(list) {
-    if (native() && D.settings.album != null) return;   // this copy shows its own
-    var byId = {};
-    D.photos.forEach(function (p) { if (p.id) byId[p.id] = p; });
-    D.photos = list.map(function (m) { return byId[m.id] || { id: m.id, o: m.o, date: m.date, fav: m.fav, place: '', tag: m.date || m.id, src: arrived[m.id] }; })
-      .filter(function (p) { return p.src; });
-    App.emit('data');
-  }
 
-  W.onFile(function (from, file) {
-    if (from !== W.me() || !/^[\w.:\/+=-]{1,200}$/.test(file.name)) return file.cancel();
-    file.done.then(function (buf) {
-      arrived[file.name] = URL.createObjectURL(new Blob([buf], { type: 'image/jpeg' }));
-      try { havePhotos(JSON.parse(known.photos || '[]')); } catch (e) {}
-    }, function () {});
-  });
-
-  // ------------------------------------------------------------ joining
-  W.onChange(function (key, value) { take(key, value); });
-  W.onPeers(function () { sendPhotos(); share(); });
+  var again = null;
+  function soon() { clearTimeout(again); again = setTimeout(take, 50); }
+  Object.keys(S).forEach(function (n) { S[n].onChange(soon); });
+  pictures.onChange(soon);
   App.on('data', share);
-  App.on('ready', function () {
-    W.start();
-    // The values kept on this device from last time come first; then whatever this copy has that they don't goes out.
-    var kept = W.values() || {};
-    Object.keys(kept).forEach(function (k) { take(k, kept[k]); });
-    settle();
-    ready = true;
-    // Once the others have had time to say what they have, anything none of them has shared goes from here.
-    setTimeout(seed, 6000);
-    sendPhotos();
-  });
-  // A copy that reads calendars or the album shares them again once they're read.
-  App.on('data', function () { if (native()) sendPhotos(); });
+  App.on('data', function () { if (native() && !taking) publishPhotos(); });
+  App.on('ready', take);
 })();

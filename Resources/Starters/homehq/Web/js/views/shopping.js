@@ -205,6 +205,7 @@
       q.qty = Math.max(1, q.qty + +t.dataset.qty);
       t.parentNode.querySelector('.num').textContent = q.qty;
       refreshSuggestFor(q);
+      App.emit('data');
       return;
     }
     if ((t = e.target.closest('[data-add]'))) return add(t.dataset.add);
@@ -220,8 +221,9 @@
       D.groceries = D.groceries.filter(function (x) { return gone.indexOf(x) < 0; });
       V.drawer = false;
       paintList();
+      App.emit('data');
       App.toast('Cleared ' + gone.length + ' items', {
-        icon: 'check', undo: function () { D.groceries = D.groceries.concat(gone); paintList(); }
+        icon: 'check', undo: function () { D.groceries = D.groceries.concat(gone); paintList(); App.emit('data'); }
       });
     }
   }

@@ -44,6 +44,8 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   the screen's shape (below).
 - `Web/js/system.js`: the example pictures (`App.img`, a landscape drawn as SVG from a seed), banners (`App.banner`)
   and the settings drawer.
+- `Web/js/sync.js`: the family's data the same on every copy of the screen (below).
+- `Web/js/views/editor.js`: the Family and Chores sheets.
 - `Web/js/live.js`: the real weather (Open-Meteo, open data with no key: `App.findPlaces`, `App.loadWeather`), and the
   family's calendars and photos through `LampNative` (`App.loadCalendars`, `App.loadPhotos`).
 - `Web/js/slideshow.js`: `App.Slideshow`, used by Photos, the Today tile and the photo frame.
@@ -92,10 +94,17 @@ either way up and a phone, and reflows for each.
   fav }`.
 - `settings`: `place` ({ name, lat, lon }), `calendars` (null off, [] all, or names), `album` (null off, or its id).
 
-Examples are made afresh at each launch, relative to today, until Clear Examples. What the family changes is saved
-whole with `LampStore` under "homehq" by `DATA.save()` (called on every `App.emit('data')`): their own events, the
-shopping list, today's ticks, stars, favourites, settings. Only add fields to what's saved, never rename one. On a TV,
-Android or the Xbox the page keeps its own saved copy there, and calendars and photos stay examples.
+Examples are made afresh on each device at each launch, relative to today, until Clear Examples; they're never
+shared. What the family changes is the same on every copy of the screen (the Mac, the kitchen iPad, the TV, the
+frame) through Lamp's shared collections, merged item by item (`Web/js/sync.js`, `LampStore.shared` in lamp.js):
+`people`, `chores`, `groceries`, `events`, `ticks` (one per chore per day), `stars`, `settings` (one item per
+setting), `favs`, and what a copy that can read them publishes for the others: `calendar` (the chosen calendars'
+events) and `photos` (the album, its pictures in `LampStore.sharedFiles('photos')`). A change on any copy reaches
+the others at once while they're on the same Wi‑Fi, and when they next meet otherwise. The views change `DATA` and
+call `App.emit('data')`: that's what saves and shares a change, so every change must call it. An example changed is
+kept as the family's; one taken away is kept as `{ id, gone: true }` so it stays away. Each device also keeps its own
+copy with `LampStore` under "homehq" (`DATA.save`, `DATA.snapshot`, `DATA.restore`). Only add fields to what's saved
+or shared, never rename one.
 
 ## Where it's shown
 
@@ -117,7 +126,8 @@ USB debugging?" prompt) rather than doing any of it.
 ## Easy to change
 
 - The family and chores: the person changes them on the screen (Family and Chores in Settings); the examples are in
-  `data.js` beside the events and groceries. Saved ones are in LampStore and win over the examples once changed.
+  `data.js` beside the events and groceries. The family's own are in the shared collections and win over the
+  examples once changed.
 - The sections: the rail in `index.html`, a view in `js/views/` registered with `App.register`, its CSS in
   `css/views/`; Today's cards are in `views/home.js` (`.h-side` holds the photo, chores, shopping and tomorrow).
 - A countdown (to school, a trip, a birthday) or the week's chores at a glance: a card on Today, a date in `data.js`.
