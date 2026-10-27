@@ -93,7 +93,9 @@ enum ScreenKit {
         // On Android: Lamp's Android app around the page, as a game's.
         if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
         try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
-        try Template.write(buildSh, to: "build.sh", for: project, executable: true)
+        // What the player's copy is told it is: the kind's address, and the fixed canvas a page made at one has.
+        let played = GameKit.playerPlist(game: false, scheme: page.scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
+        try Template.write(buildSh.replacingOccurrences(of: "{{PLAYER_PLIST}}", with: played), to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
         try Template.write(page.says, to: page.marker, for: project)
         // On Android: Lamp's Android app around the page, as a game's.

@@ -308,9 +308,9 @@ final class SidebarServer {
             guard let line = log.first(where: { $0.id == state.lines[index].id }),
                   let message = Talk.waiting(on: line, in: waiting) else { continue }
             state.lines[index].takeBack = message.id
-            state.lines[index].waitingForSetup = store.setup.ready ? nil : true
+            state.lines[index].waitingForSetup = store.readyFor(project) ? nil : true
         }
-        state.waitingForSetup = !store.setup.ready
+        state.waitingForSetup = !store.readyFor(project)
         state.waitingForReload = store.queueWaitsForReload(in: project) ? true : nil
         state.approval = store.approvals[project.id].map {
             SidebarApproval(id: $0.id, title: $0.title, command: $0.command, explanation: $0.explanation?.look, request: $0.request,
@@ -347,7 +347,8 @@ final class SidebarServer {
             state.tryOn = tryOn(for: project, busy: busy)
         }
         state.intro = log.isEmpty && (store.queued[project.id] ?? []).isEmpty ? intro(for: project, busy: busy, draft: draft.text) : nil
-        if store.setup.checked && !store.setup.hasBuildTools {
+        // Only for a wish that needs them: a game or a screen is made without them.
+        if store.setup.checked && !store.setup.hasBuildTools && store.needsAppleTools(project) {
             state.banner = SidebarBanner(text: "Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.",
                                          button: store.setup.installRequested ? "Show Installer" : "Install…")
         }

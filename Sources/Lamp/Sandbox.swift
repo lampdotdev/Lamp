@@ -29,9 +29,10 @@ enum Sandbox {
     /// whatever runs there runs as the agent's commands do, never as Lamp: with Lamp's keys, sign-ins and the
     /// other apps out of reach.
     static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:], opening folders: [String] = [],
+                    reading: [String] = [],
                     started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
-        guard let confined = wrapEngine("/bin/zsh -c " + quoted(command), for: project, opening: folders) else {
+        guard let confined = wrapEngine("/bin/zsh -c " + quoted(command), for: project, opening: folders, reading: reading) else {
             await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
             return unconfined
         }

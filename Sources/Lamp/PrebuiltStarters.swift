@@ -117,6 +117,8 @@ enum PrebuiltStarters {
         build.currentDirectoryURL = project.dir
         build.environment = ProcessInfo.processInfo.environment.merging(["LAMP_LIVE": "1"]) { $1 }
             .merging(try GamePage.buildEnvironment(for: project)) { $1 }
+            // A game or a screen with no Swift of its own is a copy of Lamp's player, as it is on the person's Mac.
+            .merging(GameKit.playerEnvironment(for: project)) { $1 }
         let output = Pipe()
         build.standardOutput = output
         build.standardError = output

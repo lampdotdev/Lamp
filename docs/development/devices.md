@@ -297,7 +297,8 @@ answer says where the person turns it on rather than that nothing answered. A ru
 A three.js game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
 `Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (Lamp's common host for a page, `LampPage.swift`:
 `LampPageFiles` serves `Web/` at the app's own address and `LampPageView` shows it, at the window's size or zoomed from a
-fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
+fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's; on the Mac
+both are one prebuilt app, Lamp's player, copied for each: "Lamp's player", under Games); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
 and Fire TV (`GameAndroid`, in the page's `Lamp/Android`); the TV's own browser on a Samsung or LG (`TVs`); and the
 integration's own host on the Xbox (WebView2, `WebHost`). A row of the table of devices names its host in its `web`;
 the kinds' places are `Places.pagePlaces`, the destinations of every row with one, named by the rows' own words, so a
@@ -419,7 +420,54 @@ On the Mac and on iOS a three.js game is an app like any other Lamp makes, of La
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
 is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and
 the chat beside it. A change to a game never goes into the open app (`LiveReload.eligible`, `Target.hostedByLamp`): it
-reopens, held for Reload while the person has it open.
+reopens, held for Reload while the person has it open. On the Mac it's made from Lamp's player (below) unless it has
+Swift of its own.
+
+### Lamp's player
+
+Every game and screen on the Mac is its own Mac app (its own name, bundle id, icon, Dock and ⌘-Tab entry, opening
+without Lamp), but none is compiled for itself: each is a copy of **Lamp's player**, one Mac app around a page compiled
+when Lamp is built and shipped in its bundle as `Contents/Resources/LampPlayer.bundle` (not an .app, so the system never
+lists it as an app of its own). build.sh writes its Swift with `Lamp --player-sources` (`GameKit.playerSources`: the
+same `LampWebGame.swift`, `LampWebApp.swift`, `LampPage.swift`, the default `Native.swift` and LampSupport.swift a
+compiled page app has, with `apple/LampPlayer.swift` as its main.swift), compiles it with the same `__RESTRICT` segment
+every app Lamp builds has, and keeps it in `.build/player` under a key of its sources and the compiler (a release builds
+it afresh); it's signed with the rest of Lamp. Its version is a hash of those sources (`LampPlayerVersion` in its
+Info.plist, `GameKit.playerVersion`).
+
+Nothing of one game is compiled in. What `Template.write` fills in for a compiled app is read by the copy from its own
+bundle: its name (`CFBundleDisplayName`), what kind of page it is, where the page is served and the fixed canvas a screen
+made at 1920x1080 has (`LampPlayer` in Info.plist, `GameKit.playerPlist`, read by `LampPlayer` in main.swift, which opens
+`LampGameApp` or `LampWebApp`); what it's told about itself and Lamp (`LampInstall`), its permission reasons, its
+capabilities.json, its icon and the chat beside it are what `stageSigned` gives every Mac app. It always carries
+`LampWish` and `LampPageWish`, as every app on its own does (`Template.carriesWish`), and looks for its other copies only
+once Lamp's room shows one, so it asks for nothing it doesn't use.
+
+To make one, the game's own build.sh copies the player in place of `swift build` (`LAMP_PLAYER`, handed over by
+`GameKit.playerEnvironment` only for the Mac): it renames the binary to the game's program name, writes the game's
+Info.plist as before, puts `Web/` in Contents/Resources/Web and signs it ad hoc; it runs in the app's sandbox as every
+build does, with the player opened for reading. Lamp then installs and signs it as any Mac app (`stageSigned`: the
+identity and entitlements Mac apps get). That takes about a second, and needs neither the Command Line Tools nor Xcode
+(`Pretend.buildEnvironment` runs builds with no developer folder while `LAMP_PRETEND_MISSING` has `tools`, so a build
+that would compile fails as on a bare Mac). The copy is stamped with the player's version (`BuildStamp.player`): one
+made by another player, compiled where the player would do, or copied where it's compiled now reads as out of date and
+is made again when it's opened from Lamp (`BuildStamp.playerOutdated`), and the version is in the build's inputs
+(`GameKit.playerInput`), so a new player also makes it again at the next look.
+
+**When it's still compiled.** A page with Swift of its own in `Sources/` (`GameKit.hasOwnSwift`: a `Native.swift` that's
+no longer Lamp's, which is how a page reads the person's things, or any other file; Home HQ's reads calendars and photos)
+is compiled as before. The rule is decided at every build (`GameKit.usesPlayer`), so adding or taking away Swift moves it
+between the two, and `Rules.pageNative` tells the agent that Swift of its own makes builds slow and needs Apple's tools.
+iPhone, iPad and Android copies are always built as before. Since bundle ids stay per game, camera, microphone and
+photos permissions stay per game too; macOS's **Local Network** answer goes by the executable's build ID (see "Two
+Lamps on one Mac"), and every copy of one player has the same executable, so it's asked once and that answer is shared
+by every game and screen made from that player, until a new player comes with a Lamp update.
+
+**Without Apple's tools.** A wish's requests wait for the Command Line Tools only when something in it is compiled
+(`Store.needsAppleTools`, `readyFor`: a wish not yet named goes ahead, and its turn waits once the naming call names
+something compiled). Lamp asks for the tools only then, and the desk's and the chat's banners show only while they
+install or something waits for them. git is one of Apple's tools, so on a Mac without them a game has no versions (and
+no Undo) until they come; Lamp never runs `/usr/bin/git` then (`Versions.hasGit`), which would open Apple's installer.
 
 A C++ game is written against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
 controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`, and sound: `lamp_sound_load`,
@@ -529,6 +577,7 @@ app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach
 routes, only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
 `Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
 which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.
+Registering a call makes the Mac copy compiled rather than copied from Lamp's player.
 So a game made of the person's unanswered emails, or a family calendar on the kitchen iPad, is a game or a screen and not
 a Mac app. `Native.swift` is the app's own: Lamp writes it only when it isn't there and takes it away with the kind only
 while it's still Lamp's scaffold, and the two Package.swift files compile all of `Sources/`. Everywhere else (a TV, the

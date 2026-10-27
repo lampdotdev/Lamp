@@ -16,6 +16,8 @@ struct LampApp: App {
             if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
             if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
         }
+        // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
+        if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
     }
 
     var body: some Scene {

@@ -35,7 +35,7 @@ extension Target {
                        sources: { _ in ["Game", "Assets", GameKit.webFolder, "Sources", "icon.json", "capabilities.json"] },
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again. So is what the
                        // page is told of the device it's built for: a change to that row builds it again too.
-                       inputs: { GameKit.stamp + GameAndroid.stamp + GamePage.buildInput(for: $0) },
+                       inputs: { GameKit.stamp + GameAndroid.stamp + GamePage.buildInput(for: $0) + GameKit.playerInput(for: $0) },
                        builtURL: { project in
                            project.onTV ? TVs.stagingFolder(for: project).appendingPathComponent("web/index.html")
                                : project.onDevice ? DeviceApps.packageURL(for: project) : project.onAndroid ? GameAndroid.apk(project)
