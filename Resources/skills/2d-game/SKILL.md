@@ -108,8 +108,11 @@ What Lamp has changed in Phaser, so its usual code works here:
   taken. Matter (`physics: { default: 'matter' }`) only when things must tumble, stack, swing on joints or have real
   shapes (a physics puzzle, a pile of crates): it costs far more a body and its bodies don't stand still as simply.
 - **Many of a thing** (bullets, coins, enemies, sparks): a group made once with `maxSize` and taken from with
-  `group.get(x, y)`, put back with `setActive(false).setVisible(false)`; particles from one emitter
-  (`this.add.particles`) with a modest `maxParticles`.
+  `group.get(x, y)`. A physics group's member is put back with `disableBody(true, true)` and taken out again with
+  `enableBody(true, x, y, true, true)`: hidden and inactive alone, its body still collides and overlaps, so a
+  collected coin is collected again and a spent bullet still hits. Sprites without bodies are put back with
+  `setActive(false).setVisible(false)`. Particles come from one emitter (`this.add.particles`) with a modest
+  `maxParticles`.
 
 ### Controls on every input
 
@@ -207,8 +210,9 @@ struct GameScreen: View {
 
 Make the scene once (`@State`), never in `body`. A scene of a fixed size with `scaleMode = .aspectFit` is laid out
 once and letterboxed on any window, like the game kind's stage; `.resizeFill` with an `SKCameraNode` following the
-player shows more of a big world on a big window. The scene is an `ObservableObject` (or `@Observable`) for what
-SwiftUI shows over it.
+player shows more of a big world on a big window. What SwiftUI shows over it (the score, lives, a pause) comes from
+the scene as `@Observable` (Observation), which `@State` holds as above; a scene that is an `ObservableObject` with
+`@Published` values is held with `@StateObject` instead, or the view never sees them change.
 
 - **The step**: `update(_ currentTime:)` works out the time since the last frame (at most 1/20 s, so a pause doesn't
   jump) and moves by it; physics bodies move themselves. Logic that must be exact counts fixed steps of 1/60 s from it.
