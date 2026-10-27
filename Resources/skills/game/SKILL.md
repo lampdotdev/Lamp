@@ -102,8 +102,9 @@ single picture hides. Play it the way the person would before you finish: a game
 When the person wants an app to become a game ("actually, make it a game"), change its code in place: the same app,
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
 or replace it. `make_app_for` changes the wish's app of the same code rather than adding another, so a game beside the
-app has to be in another code: a web game beside a native Mac app, or the reverse. Two apps in one code (two native
-Swift apps, such as a Mac app and a Mac game) can't both be in one wish: say so, and change the app in place if they
-still want the game. To replace the app with a game in another code, make the game first, and take the old app away
+app has to be in another code: a web game beside a native Mac app, or the reverse. Each device's own app is a code of
+its own, so a game on a Roku and one on an Xbox go side by side. Lamp can't yet keep two apps of one code (two native
+Swift apps, such as a Mac app and a Mac game) in one wish, as it has no way to tell them apart when asked to change
+one: that's Lamp, not the devices, so say it that way, and change the app in place if they still want the game. To replace the app with a game in another code, make the game first, and take the old app away
 with `remove_app` (which they can undo) only once the game is there. A game that becomes an app again is the same in
 reverse.
