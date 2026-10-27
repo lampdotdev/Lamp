@@ -56,7 +56,7 @@ suspension, a door on a hinge, a chain, a pile of anything. Once a game starts w
 rolling, it wants physics: hand-made physics is where objects sink, jitter and pass through walls.
 
 **Rapier.** Lamp ships Rapier, a physics engine in WebAssembly, as one module that loads like three.js does,
-wherever the game is played. Add it to the import map in index.html,
+wherever the game is played. It's for a game's page on its runtime; a TV app's page doesn't get it. Add it to the import map in index.html,
 `"@dimforge/rapier3d-compat": "./rapier/rapier.js"`, and Lamp puts `Web/rapier/` beside the page (it's Lamp's, like
 `Web/three/`; a game that doesn't import it doesn't carry it). Start it once, in `init`, and step the world with
 `fixedStep` from lamp-game.js:
