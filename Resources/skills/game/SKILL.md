@@ -103,5 +103,5 @@ When the person wants an app to become a game ("actually, make it a game"), chan
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
 or replace it. Turning it into a game is a change to that app: `make_app_for` with its folder in `app` when what it's
 made for changes, its code otherwise. A game beside the app is one more app, only when they say they want both:
-`make_app_for` with `another`, which Lamp asks them to confirm before it adds it in a folder of its own. A game that becomes an app again is the same in
+`make_app_for` with `another`, in a folder of its own, once they chose that when you asked (the `more-apps` skill). A game that becomes an app again is the same in
 reverse.

@@ -322,8 +322,6 @@ enum Gallery {
         offer: true)),
         // Lamp's card before the agent changes one of the person's devices (`device_permission`): only theirs to answer.
         ask("A device of the person's", DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")),
-        // Lamp's card before one more app is added to a wish that has one (`make_app_for` with `another`).
-        ask("Another app for the wish", AppAdditions.card(new: "the Mac app", existing: ["the Mac app in the wish's own folder"])),
         ask("A device of the person's, answered", {
             var card = DevicePermissions.card(device: "Living Room TV", doing: "Press Home and open Netflix to check the buttons")
             card.answers = [DevicePermissions.allowOnce]

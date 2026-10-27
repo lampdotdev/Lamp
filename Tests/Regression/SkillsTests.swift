@@ -42,7 +42,7 @@ final class SkillsTests: XCTestCase {
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
                                            "scripting", "game", "icloud-sync", "wish-links", "device-control", "web-or-native",
-                                           "3d-game", "web-app", "phone-pages", "tv-design"])
+                                           "3d-game", "web-app", "phone-pages", "tv-design", "more-apps"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -56,9 +56,10 @@ final class SkillsTests: XCTestCase {
         let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
         if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
-        // How an app is made and on which devices, games, 3D in a page, web apps and phones as controllers are offered to
-        // every kind, first, whatever the app is now.
-        let everywhere = ["web-or-native", "game", "3d-game", "web-app", "phone-controllers"]
+        // How an app is made and on which devices, games, 3D in a page, web apps, phones as controllers, and whether a
+        // request is for one more app or a change to the one the wish has are offered to every kind, first, whatever the
+        // app is now.
+        let everywhere = ["web-or-native", "game", "3d-game", "web-app", "phone-controllers", "more-apps"]
         XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
         XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
         XCTAssertEqual(Skills.offered(.device), everywhere)
@@ -265,7 +266,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, phone-controllers, phone-pages, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {

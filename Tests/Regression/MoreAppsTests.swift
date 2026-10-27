@@ -1,11 +1,11 @@
 import XCTest
 @testable import Lamp
 
-/// A wish that has an app gets another only when the person chooses "Add another app" on Lamp's own card: a change of
-/// mind changes the app it has, and nothing the agent sends or quotes adds one. Each runs `make_app_for` as the agent
-/// calls it, on a Store over a folder of its own, and answers the card as a click does.
+/// A wish that has an app gets another only from a call that asks for one (`another`): a call that names no app is
+/// refused, so a change of mind changes the app it has. Each runs `make_app_for` as the agent calls it, on a Store over
+/// a folder of its own.
 @MainActor
-final class AppAdditionsTests: XCTestCase {
+final class MoreAppsTests: XCTestCase {
     private var root: URL!
     private var wishes: [LampProject] = []
 
@@ -16,7 +16,6 @@ final class AppAdditionsTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        for wish in wishes { AppAdditions.forget(wish) }
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -35,15 +34,6 @@ final class AppAdditionsTests: XCTestCase {
 
     private func folders(_ wish: LampProject) -> [String] { Parts.folders(in: wish.dir) }
 
-    /// The card Lamp put up, clicked as the person would, and the answer delivered to the agent.
-    private func choose(_ choice: String, in store: Store, for wish: LampProject) throws {
-        var lines = store.logs[wish.id] ?? []
-        let card = try XCTUnwrap(lines.last { $0.ask?.addition == true })
-        XCTAssertNotNil(Talk.give([choice], to: card.id, in: &lines))
-        store.logs[wish.id] = lines
-        AppAdditions.delivered(card: card.id, in: lines, for: wish)
-    }
-
     /// "Actually never mind, make it a timer instead": with no `app`, nothing is added, and the reply says how to change
     /// the app the wish has; with `app` it's that app changed, and the wish still has one.
     func testAChangeOfMindNeverAddsAnApp() async throws {
@@ -59,79 +49,25 @@ final class AppAdditionsTests: XCTestCase {
         XCTAssertEqual(store.apps(of: try XCTUnwrap(store.current(wish))).count, 1)
     }
 
-    /// "I want a second Mac app": `another` puts Lamp's card up and adds nothing; "Add another app" chosen on it, the same
-    /// call adds exactly one app. Repeated (its answer lost), it gets that app back, never a third; once the person writes
-    /// again, another one takes a new card.
-    func testAnotherAppIsAddedOnlyOnThePersonsChoiceAndOnlyOnce() async throws {
+    /// "I want a second Mac app": `another` adds exactly one app, in a folder of its own, the wish's app staying as it
+    /// is. The same call again in the same request is that app, never a third; a new request asking again adds one more.
+    func testAnotherAppIsAddedOncePerRequest() async throws {
         let (store, wish) = try macWish()
-        let (asked, text) = await call(store, wish, ["another": true])
-        XCTAssertEqual(asked, 200)
-        XCTAssertTrue(text.hasPrefix("Nothing was added yet"), text)
-        XCTAssertEqual(folders(wish), [])
-        XCTAssertEqual(store.logs[wish.id]?.last?.ask?.addition, true)
-        // Called again before the person answers: still nothing.
-        _ = await call(store, wish, ["another": true])
-        XCTAssertEqual(folders(wish), [])
-
-        try choose(AppAdditions.add, in: store, for: wish)
         let (added, said) = await call(store, wish, ["another": true])
         XCTAssertEqual(added, 200, said)
         XCTAssertEqual(folders(wish), ["Mac2"])
+        XCTAssertNil(store.logs[wish.id]?.last { $0.ask != nil }, "Lamp puts up no card of its own")
         let (again, repeated) = await call(store, wish, ["another": true])
         XCTAssertEqual(again, 200)
         XCTAssertTrue(repeated.hasPrefix("Already done"), repeated)
         XCTAssertEqual(folders(wish), ["Mac2"])
+        // Another app for other devices in the same request is one more.
+        _ = await call(store, wish, ["another": true, "devices": ["mac", "iphone"]])
+        XCTAssertEqual(Set(folders(wish)), ["Mac2", "Apple2"])
 
-        AppAdditions.endExchange(for: wish)
-        let (third, _) = await call(store, wish, ["another": true])
-        XCTAssertEqual(third, 200)
-        XCTAssertEqual(folders(wish), ["Mac2"], "a new choice is asked for, not taken from the last")
-    }
-
-    /// "Change this app" chosen, or the card answered in words ("yes, add it"), adds nothing; nor does an answer to the
-    /// agent's own card, whatever its words say.
-    func testOnlyChoosingAddOnLampsCardAdds() async throws {
-        let (store, wish) = try macWish()
+        store.requestBegins(for: wish)
         _ = await call(store, wish, ["another": true])
-        try choose(AppAdditions.change, in: store, for: wish)
-        _ = await call(store, wish, ["another": true])
-        XCTAssertEqual(folders(wish), [])
-
-        // A card answered by typing: the message under it says what was typed, and the card keeps no choice.
-        AppAdditions.endExchange(for: wish)
-        _ = await call(store, wish, ["another": true])
-        var lines = store.logs[wish.id] ?? []
-        let card = try XCTUnwrap(lines.last { $0.ask?.addition == true })
-        let index = try XCTUnwrap(lines.firstIndex { $0.id == card.id })
-        lines[index].ask?.typed = true
-        AppAdditions.delivered(card: card.id, in: lines, for: wish)
-        _ = await call(store, wish, ["another": true])
-        XCTAssertEqual(folders(wish), [])
-
-        // The agent's own card, with the same words as an answer.
-        let own = Talk.Ask(layout: .steps, questions: [Talk.Question(question: "Add another app?", options: [Talk.Option(title: AppAdditions.add)])],
-                           answers: [AppAdditions.add])
-        let line = LogLine(kind: .ask, text: own.text, ask: own, at: Date())
-        AppAdditions.delivered(card: line.id, in: [line], for: wish)
-        XCTAssertNil(AppAdditions.kept(wish).granted)
-        XCTAssertEqual(folders(wish), [])
-    }
-
-    /// A choice to add a Mac app adds no app of another code.
-    func testAChoiceIsForTheAppItWasAskedFor() async throws {
-        let (store, wish) = try macWish()
-        _ = await call(store, wish, ["another": true])
-        try choose(AppAdditions.add, in: store, for: wish)
-        let (status, answer) = await store.agentKind(["made": "native", "devices": ["android"], "another": true], for: wish)
-        let text = answer["text"] as? String ?? answer["error"] as? String ?? ""
-        XCTAssertEqual(status, 200, text)
-        XCTAssertTrue(text.hasPrefix("Nothing was added yet"), text)
-        XCTAssertEqual(folders(wish), [])
-        XCTAssertNotNil(AppAdditions.kept(wish).granted, "the Mac choice is still there for the Mac app")
-        // Nor an app for the Mac and the iPhone: the card was for a Mac app.
-        let (_, both) = await store.agentKind(["made": "native", "devices": ["mac", "iphone"], "another": true], for: wish)
-        XCTAssertTrue((both["text"] as? String ?? "").contains("Nothing was added yet") || (both["text"] as? String) == Talk.alreadyAsked, "\(both)")
-        XCTAssertEqual(folders(wish), [])
+        XCTAssertEqual(folders(wish).count, 3, "\(folders(wish))")
     }
 
     /// What isn't a plain choice is refused before anything is written: a blank, unknown or malformed `app`, `app` with

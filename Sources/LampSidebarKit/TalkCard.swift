@@ -76,19 +76,15 @@ public enum TalkCard {
         /// Lamp's own card asking whether the agent may change this device of the person's (`device_permission`):
         /// Lamp, not the agent, keeps what's chosen on it.
         public var device: String?
-        /// Lamp's own card asking whether to add one more app to the wish or change the one it has (`make_app_for` with
-        /// `another`): Lamp, not the agent, keeps what's chosen on it.
-        public var addition: Bool?
 
         public init(layout: Layout, questions: [Question], answers: [String]? = nil, typed: Bool? = nil, offer: Bool? = nil,
-                    device: String? = nil, addition: Bool? = nil) {
+                    device: String? = nil) {
             self.layout = layout
             self.questions = questions
             self.answers = answers
             self.typed = typed
             self.offer = offer
             self.device = device
-            self.addition = addition
         }
 
         private enum Earlier: String, CodingKey { case questions, dismissed }
@@ -105,7 +101,6 @@ public enum TalkCard {
             typed = try values.decodeIfPresent(Bool.self, forKey: .typed)
             offer = try values.decodeIfPresent(Bool.self, forKey: .offer)
             device = try values.decodeIfPresent(String.self, forKey: .device)
-            addition = try values.decodeIfPresent(Bool.self, forKey: .addition)
             let chosen = ((try? earlier.decode([Chosen].self, forKey: .questions)) ?? []).map(\.chosen)
             let given = try values.decodeIfPresent([String?].self, forKey: .answers)
             let assumed = !chosen.isEmpty && chosen.allSatisfy { $0 != nil }

@@ -3227,10 +3227,8 @@ final class Store: ObservableObject {
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
         // Anything but a click on a card is the person going on: what they allowed once is spent.
-        if card == nil {
-            DevicePermissions.endOnce(for: wish(of: project))
-            AppAdditions.endExchange(for: wish(of: project))
-        }
+        if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
+        requestBegins(for: project)
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
         if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
         let files = message.attachments, pointed = message.pointed
@@ -3852,8 +3850,6 @@ final class Store: ObservableObject {
                let device = ask.device, let choice = ask.answers?.first {
                 DevicePermissions.answer(choice, about: device, for: wish(of: project))
             }
-            // Lamp's card about adding another app: the same, kept once delivered.
-            AppAdditions.delivered(card: message.card, in: logs[project.id] ?? [], for: wish(of: project))
             if message.byLamp, let last = logs[project.id]?.indices.last {
                 logs[project.id]?[last].byLamp = true
                 saveChat(project)
@@ -4801,7 +4797,6 @@ final class Store: ObservableObject {
         let disposed = RemovedApp.disposals(of: project, parts: parts)
         // What the person allowed on their devices is the wish's, and goes with it.
         DevicePermissions.forget(project)
-        AppAdditions.forget(project)
         // Its widget's process too: in the Trash it would go on running, and answer for an app made later
         // under the same name.
         await WidgetProcess.end(for: project)
@@ -5846,19 +5841,16 @@ final class Store: ObservableObject {
             }
         case .another(let asked):
             target = asked
-            let key = AppAdditions.key(target)
-            // A call repeated after the person's choice was used (its answer lost on the way): the same app, not a third.
-            if let folder = AppAdditions.added(key, for: wish), members.contains(where: { $0.slot?.lowercased() == folder.lowercased() }) {
-                return (200, ["text": "Already done: the person's choice added \(Parts.name(of: target.waiting)) in \(folder)/. Nothing more was added; build that one."])
-            }
-            guard AppAdditions.take(key, for: wish) else {
-                return askToAdd(target, beside: members, in: wish, for: project)
+            // The same call again in the same request (its answer lost on the way, or sent twice) is the app it added, not
+            // one more: one new app of a kind and devices per request.
+            let key = Self.additionKey(target)
+            if let folder = addedInRequest[wish.id]?[key], members.contains(where: { $0.slot?.lowercased() == folder.lowercased() }) {
+                return (200, ["text": "Already done in this request: \(Parts.name(of: target.waiting)) in \(folder)/. Nothing more was added; build that one."])
             }
             let folder = Parts.newFolder(Parts.folder(for: target.kind, integration: target.kind == .device ? target.integration : nil), in: wish)
-            AppAdditions.adding(key, in: folder, for: wish)
+            addedInRequest[wish.id, default: [:]][key] = folder
             said += await add(target, to: wish, folder: folder)
-            let others = members.map(describe)
-            said.append("The person chose to add it: the wish's other apps stay as they are (" + others.joined(separator: ", ") + ").")
+            said.append("The wish's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
         case .update(let member, let asked):
             target = asked
             if let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }),
@@ -5896,23 +5888,17 @@ final class Store: ObservableObject {
         return (200, ["text": said.joined(separator: "\n\n")])
     }
 
-    /// Lamp's card asking the person whether to add another app or change the one the wish has (`AppAdditions`): the
-    /// agent's call adds nothing until they choose "Add another app". Asked once at a time, as `ask` is.
-    private func askToAdd(_ target: AppTarget, beside members: [WishMember], in wish: LampProject, for project: LampProject) -> (Int, [String: Any]) {
-        let turn = turns[project.id]
-        if turn?.asked == true || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
-        let devices = Places.all.filter { target.rows.contains($0.id) }.map(\.name).joined(separator: ", ")
-        let ask = AppAdditions.card(new: Parts.name(of: target.waiting), devices: target.rows.count > 1 ? devices : nil, existing: members.map(describe))
-        let line = chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project)
-        AppAdditions.asking(card: line.id, key: AppAdditions.key(target), for: wish)
-        logs[project.id, default: []].append(line)
-        closeSteps(project)
-        turn?.asked = true
-        away.questionAsked(project.id)
-        saveChat(project)
-        return (200, ["text": "Nothing was added yet: Lamp asked the person whether to add another app or change the one the wish has. "
-                      + "Change no files and end your turn now: their answer is the next message. If it's \"\(AppAdditions.add)\", call make_app_for "
-                      + "again as you did, with `another`. Otherwise change the app they mean, with its folder in `app`."])
+    /// The new apps `make_app_for` added with `another` in the request under way, by wish and by what each is
+    /// (`additionKey`), with the folder each went in. Forgotten when the next message is sent: only Lamp's memory of this
+    /// request, so a repeated call can't make a folder more.
+    private var addedInRequest: [String: [String: String]] = [:]
+
+    /// A new request: an app added in the one before is no repeat of what this one asks.
+    func requestBegins(for project: LampProject) { addedInRequest[wish(of: project).id] = nil }
+
+    /// What one added app is, for telling a repeated call from another: its kind and the devices it's for.
+    private static func additionKey(_ target: AppTarget) -> String {
+        ([target.kind.rawValue + (target.integration.map { ":" + $0 } ?? "")] + target.rows.sorted()).joined(separator: " ")
     }
 
     /// A new app of the wish, in a folder of its own, made as the plan says. Its folder is found and kept for it first
