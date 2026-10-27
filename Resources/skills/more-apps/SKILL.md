@@ -47,7 +47,7 @@ to that question.
 When they ask for another app of a kind the wish already has ("I want a second Mac app, a journal" in a wish with a
 Mac app), don't offer a second app: it can't be added yet. Tell them so in a sentence, and offer what can be done
 with `ask`: change the app they have into it, or make it a separate wish of its own (from Lamp's desk). Never add it
-by changing what it's made for so it slips in as another kind, unless that's what they asked for: a web app where
-native is what fits (the web-or-native skill) only to get around this limit is never the answer.
+by changing what it's made for so it slips in as another kind, unless that's what they asked for: another make than the
+defaults give (the web-or-native skill), only to get around this limit, is never the answer.
 
 Never answer the question for them, and never add an app for a change of mind.

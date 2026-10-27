@@ -12,7 +12,7 @@ RealityKit in Swift).
 The tools Lamp has for games:
 
 - **Web**: Lamp's game runtime, `Web/lamp-game.js`, with three.js, in a game `make_app_for` made with `kind` "game".
-  It's the same on every device that runs web. Read lamp-game.js first, all of it: its comments are the whole
+  It's a game's default make, 2D or 3D, wherever Lamp has a host for a page, and the same on every one of them. Read lamp-game.js first, all of it: its comments are the whole
   interface. Below, "Web" means this runtime.
 - **A game played with phones on a Samsung or LG TV**: for now a TV app's page (`kind` "app", the phone-controllers
   skill), since the runtime has no `Lamp.controllers` yet. It has no lamp-game.js: it follows the TV rules and lamp.js
@@ -22,8 +22,9 @@ The tools Lamp has for games:
   Web/three (the TV rules say how to load it, and the 3d-game skill how to keep it light). The rest of this skill
   holds for it wherever it doesn't name the runtime.
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
-  in LampSupport.swift. For 3D, LampSceneView (the scene-3d skill) is for Mac-only apps; a native 3D game on iPhone,
-  iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit), without LampSceneView.
+  in LampSupport.swift: a game made natively, where the person asked for that or the device has no host for a page
+  (an Apple TV). For 3D in Swift, LampSceneView (the scene-3d skill) is for a Mac app made natively; a native 3D game
+  on iPhone, iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit).
 - **Native Android**: Lamp has no game help in Kotlin yet: write the game's own frame loop on a SurfaceView or a
   Canvas, and its controls, sound and saves with Android's own APIs.
 - **An integration's device** (Roku…): what its integration declares; read the device-integrations skill.
@@ -110,7 +111,8 @@ single picture hides. Play it the way the person would before you finish: a game
 When the person wants an app to become a game ("actually, make it a game"), change its code in place: the same app,
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
 or replace it. Turning it into a game is a change to that app: `make_app_for` with its folder in `app` and `kind`
-"game" (made native first, as the web-or-native skill says), keeping its folder and data, and its code changed into a
+"game" (made as the table's defaults say unless the person names a make: web wherever Lamp has a host for a page),
+keeping its folder and data, and its code changed into a
 game. A game played with phones on a Samsung or LG TV is the exception for now: it stays `kind` "app", on its TV
 app's page (above). A game beside
 the app is one more app, only when they say they want both and the game is of another kind than the app:

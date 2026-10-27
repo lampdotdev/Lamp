@@ -33,8 +33,8 @@ opening comment for the whole list. What it gives:
 A page can't read the person's mail, calendar, contacts, photos or where they are. Where Lamp's app is around the page
 (a Mac, an iPhone or iPad), that app can: register a call in Sources/Native.swift and ask for it from the page with
 `LampNative.call(name, args)`. Elsewhere `LampNative.available` is false and the calls reject, so the page shows
-example content then, never an error. That difference is a reason to choose native (the web-or-native skill) when the
-app lives on the person's own things.
+example content then, never an error. When an app the defaults make web (on a TV, or across several devices) lives on
+the person's own things, say what a page can't reach there, and offer it native (the web-or-native skill).
 
 ## A remote: focus and keys
 

@@ -161,6 +161,32 @@ final class MakeAppForTests: XCTestCase {
         XCTAssertNotNil(refused(.web, ["toaster"]))
     }
 
+    /// The make each device's defaults give, asked for as it is, plans an app of the kind that make builds there and is
+    /// never refused: a game on the Mac, a phone, a TV or the Xbox is Lamp's web game; an app on a TV is the TV app, on
+    /// Android TV or the Xbox a web app of theirs, on one Mac or phone the device's own code; a game on an Apple TV or a
+    /// Roku is the device's own code.
+    func testEachDevicesDefaultMakeIsAnAppLampMakes() throws {
+        func kind(_ plan: AppPlan) -> Platform? {
+            if case .add(let target) = plan { return target.kind }
+            return nil
+        }
+        for place in table where place.comesWith == nil {
+            for intent in AppIntent.allCases {
+                let made = place.defaultMake(intent)
+                XCTAssertNil(refused(made, kind: intent, [place.words[0]]), "\(intent) on \(place.name), \(made)")
+            }
+        }
+        for device in ["mac", "iphone", "android", "tv", "android-tv", "xbox-one"] {
+            XCTAssertEqual(kind(try make(.web, kind: .game, [device], in: [])), .game, device)
+        }
+        XCTAssertEqual(kind(try make(.web, kind: .app, ["tv"], in: [])), .tv)
+        XCTAssertEqual(kind(try make(.web, kind: .app, ["android-tv"], in: [])), .webApp)
+        XCTAssertEqual(kind(try make(.native, kind: .app, ["mac"], in: [])), .mac)
+        XCTAssertEqual(kind(try make(.native, kind: .app, ["android"], in: [])), .android)
+        XCTAssertEqual(kind(try make(.native, kind: .game, ["roku"], in: [])), .device)
+        XCTAssertEqual(kind(try make(.web, kind: .app, ["mac", "iphone", "android"], in: [])), .webApp, "one app across several")
+    }
+
     /// A screen made before, changed as an app made with web, stays a screen wherever it goes, so its folder, address and
     /// saves stay its own; a new web app beside it is a web app, never a screen.
     func testAScreenMadeBeforeStaysAScreen() throws {

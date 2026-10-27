@@ -14,8 +14,10 @@ Lamp ships three.js in two pages: a game's page on its runtime (`make_app_for` w
 TV app's page, which is what a game played with phones is for now (the phone-controllers skill). The TV app's page has
 no game runtime: the TV rules say how it loads three.js, and it makes its own renderer and frame loop.
 
-For 3D in Swift in a Mac-only app (RealityKit through LampSceneView), open the scene-3d skill instead; native 3D on
-iPhone, iPad or Apple TV is written with that device's own frameworks. The game skill holds what every game needs
+A 3D game is made this way by default, on every device Lamp has a host for a page on, the Mac included. 3D in Swift,
+in a Mac app made natively (because the person asked for native, or the app was made so), is the scene-3d skill's
+(RealityKit through LampSceneView); native 3D on iPhone, iPad or Apple TV is written with that device's own
+frameworks. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
 ## The renderer
