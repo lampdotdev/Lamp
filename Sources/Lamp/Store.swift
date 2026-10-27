@@ -3392,7 +3392,12 @@ final class Store: ObservableObject {
                 ?? Parts.legacySlot(for: apps[index], in: sized)
             // In this order, so a quit or a failure at any step leaves the files found: the files' own note names the
             // slot, then the list does, and only then do they move.
-            if Sharing.markKept(in: wish.dir, for: apps[index].kind, slot: folder) { claimed.append((apps[index].kind, folder)) }
+            switch Sharing.markKept(in: wish.dir, for: apps[index].kind, slot: folder) {
+            case .marked: claimed.append((apps[index].kind, folder))
+            case .nothingKept: break
+            // Its files couldn't be noted for the slot: the list isn't changed, so they're still found as they were.
+            case .failed: return wish
+            }
             apps[index].folder = folder
         }
         var listed = wish

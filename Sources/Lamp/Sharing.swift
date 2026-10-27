@@ -622,13 +622,18 @@ enum Sharing {
 
     /// Notes in files an earlier Lamp kept for this kind's family alone that they're for `slot`, before the wish's list
     /// says so and before they move (`claimKept`): from then on they're found from that slot, whichever step comes next.
-    /// False when nothing's kept so for this kind, or the note couldn't be written.
+    enum Marked { case nothingKept, marked, failed }
+
+    /// `nothingKept` when no files are kept so for this kind; `failed` when there are and their note couldn't be written,
+    /// so nothing else may move them.
     @discardableResult
-    static func markKept(in wish: URL, for kind: Platform, slot: String) -> Bool {
+    static func markKept(in wish: URL, for kind: Platform, slot: String) -> Marked {
         let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
-        guard let data = try? Data(contentsOf: note), var kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind,
-              let encoded = try? JSONEncoder().encode({ kept.slot = slot; return kept }()) else { return false }
-        return (try? encoded.write(to: note, options: .atomic)) != nil
+        guard let data = try? Data(contentsOf: note), var kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind
+        else { return .nothingKept }
+        kept.slot = slot
+        guard let encoded = try? JSONEncoder().encode(kept), (try? encoded.write(to: note, options: .atomic)) != nil else { return .failed }
+        return .marked
     }
 
     /// What a kept part was made for, beside its files.

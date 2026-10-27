@@ -221,7 +221,7 @@ final class AppAdditionsTests: XCTestCase {
         try FileManager.default.createDirectory(at: family, withIntermediateDirectories: true)
         try #"{"platform":"iphone","folder":"iPhone"}"#.write(to: family.appendingPathComponent("lamp-part.json"), atomically: true, encoding: .utf8)
         // Stopped after the note: the list still has no folder.
-        XCTAssertTrue(Sharing.markKept(in: wish.dir, for: .iphone, slot: "iPhone7"))
+        XCTAssertEqual(Sharing.markKept(in: wish.dir, for: .iphone, slot: "iPhone7"), .marked)
         wish.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone, needs: "Xcode")]
         try Template.saveMeta(wish)
         // Stopped after the list too: the files are where they were, found from the slot all the same.
@@ -231,6 +231,26 @@ final class AppAdditionsTests: XCTestCase {
         XCTAssertEqual(given.apps.map(\.folder), [".", "iPhone7"])
         XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone7"), "iPhone")
         XCTAssertFalse(FileManager.default.fileExists(atPath: family.path))
+    }
+
+    /// Kept files whose note can't be written to name their slot stop it: the list keeps the app with no folder, so the
+    /// files are still found as they were.
+    func testAnOlderWaitingAppKeepsNoFolderWhenItsFilesCantBeNoted() async throws {
+        var wish = try Template.scaffold(name: "Remote", platform: .tv, in: root)
+        wishes.append(wish)
+        try FileManager.default.createDirectory(at: wish.dir.appendingPathComponent("iPhone"), withIntermediateDirectories: true)
+        let family = Sharing.waitingFolder(in: wish.dir, for: .iphone)
+        try FileManager.default.createDirectory(at: family, withIntermediateDirectories: true)
+        try #"{"platform":"iphone","folder":"iPhone"}"#.write(to: family.appendingPathComponent("lamp-part.json"), atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: family.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: family.path) }
+        wish.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone, needs: "Xcode")]
+        try Template.saveMeta(wish)
+        let store = Store(testingAt: root)
+        let given = try XCTUnwrap(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))))
+        XCTAssertEqual(given.apps.map(\.folder), [".", nil])
+        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps.map(\.folder), [".", nil])
+        XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone), "iPhone")
     }
 
     /// The planner alone: a wish with no app gets its first, and an app still to be made counts as one the wish has.
