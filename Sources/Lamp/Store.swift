@@ -9306,13 +9306,30 @@ final class Store: ObservableObject {
 
     /// What the installed copy carries about itself changed (its suggestions, its Share Link: what `Sidebar.install`
     /// writes into the chat beside it, for a Mac without Lamp): the copy is made again from the build on disk, signed
-    /// as before, now if the app isn't open, else at its next quit. Nothing is built; a wish with no build yet, or
-    /// one being worked on, waits for its next install.
+    /// as before, now if the app isn't open, else at its next quit. Nothing is built, and only a build that is the app
+    /// the person has goes in: never one set aside after a crash, one still watched for its crash, one a live change
+    /// left half made, or one waiting to go in with its data (`installIcon` does those). The app is owned meanwhile,
+    /// as for any install, so no request or Play takes it while the copy is staged, and the copy goes in only if the
+    /// app is still closed by then.
     func refreshInstalled(_ project: LampProject) {
-        guard project.holdsApp, Sidebar.applies(to: project), !busy.contains(project.id),
-              FileManager.default.fileExists(atPath: project.builtURL.path), FileManager.default.fileExists(atPath: project.installedURL.path) else { return }
-        guard macCopies(of: project).isEmpty else { refreshWhenQuit.insert(project.id); return }
-        Task { try? await deploy(project) }
+        guard project.holdsApp, Sidebar.applies(to: project), !project.onIOS, !busy.contains(project.id),
+              FileManager.default.fileExists(atPath: project.builtURL.path), FileManager.default.fileExists(atPath: project.installedURL.path),
+              setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil, !liveBuildFailed.contains(project.id),
+              !Runtime.holdsBuild(project) else { return }
+        guard !isRunning(project) else { refreshWhenQuit.insert(project.id); return }
+        guard begin(project) != nil else { refreshWhenQuit.insert(project.id); return }
+        Task {
+            defer { finish(project) }
+            do {
+                let staged = try await stageSigned(project)
+                guard let current = current(project), !isRunning(current), setAsideChanges[project.id] == nil, reloadWatches[project.id] == nil else {
+                    staged.discard()
+                    refreshWhenQuit.insert(project.id)
+                    return
+                }
+                try await swapIn(staged, for: current)
+            } catch {}
+        }
     }
 
     /// Everything `deploy` does before the swap: a copy of the build in the apps folder, finished and signed there.
