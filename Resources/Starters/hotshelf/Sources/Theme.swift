@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The shelf's whole mood in one place: its words, colours, type, light and how its shelves are named. Everything
+/// The shelf's whole mood in one place: its words, colors, type, light and how its shelves are named. Everything
 /// on the shelf screen is drawn from `Look.current`, so making the shelf about something else starts here, by
 /// writing a new mood rather than nudging this one: `hotShelf` is loud, bold and hard-lit; `cellar` below is the
 /// same shelf made quiet and elegant. APP.md says how to choose.

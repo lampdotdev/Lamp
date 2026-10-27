@@ -350,7 +350,7 @@ enum EngineInstall {
         else { throw Failure(message: "ChatGPT's release page didn't say which version is current.") }
         let found = String(tag.dropFirst("rust-v".count))
         guard isVersion(found), version == nil || version == found else {
-            throw Failure(message: "ChatGPT's release page named a version Lamp doesn't recognise.")
+            throw Failure(message: "ChatGPT's release page named a version Lamp doesn't recognize.")
         }
         let name = "codex-package-\(isArm ? "aarch64" : "x86_64")-apple-darwin.tar.gz"
         guard let asset = (release["assets"] as? [[String: Any]])?.first(where: { $0["name"] as? String == name }),

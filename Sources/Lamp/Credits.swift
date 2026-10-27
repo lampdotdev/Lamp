@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where a wish came from: `credits.json` at its root. `upstream` is other people's work in it (code, models, pictures,
-/// sounds, data), each with where it's from, the commit it was taken at, its licence as an SPDX id and its author, which
+/// sounds, data), each with where it's from, the commit it was taken at, its license as an SPDX id and its author, which
 /// the agent writes when it brings such work in (`Agent.Rules.about`); `remixOf` is the chain of wishes it was made
 /// from, oldest first, which only Lamp adds to: a starter's copy starts it (`Starters.copy`), and every share adds the
 /// wish being shared (`Sharing.export`), so a remix of a remix still names each wish before it.
@@ -24,10 +24,10 @@ struct Credits: Codable, Equatable {
         var url: String?
         /// The commit it was taken at, for code from a repository.
         var commit: String?
-        /// Its licence as an SPDX id or expression ("MIT", "Apache-2.0", "GPL-3.0-or-later", "MIT OR Apache-2.0"), or
-        /// a `LicenseRef-` for terms with no id. None when it came with no licence.
+        /// Its license as an SPDX id or expression ("MIT", "Apache-2.0", "GPL-3.0-or-later", "MIT OR Apache-2.0"), or
+        /// a `LicenseRef-` for terms with no id. None when it came with no license.
         var license: String?
-        /// Where its licence text is in the wish: "Web/LICENSE-slop-newyork".
+        /// Where its license text is in the wish: "Web/LICENSE-slop-newyork".
         var licenseFile: String?
     }
 
@@ -146,8 +146,8 @@ struct Credits: Codable, Equatable {
     func merged(with other: Credits) -> Credits {
         var result = self
         for source in other.upstream where !result.upstream.contains(where: { $0.sameWork(as: source) }) { result.upstream.append(source) }
-        // A source both name takes what the newer file says (a later commit, a licence filled in), field by field: one it
-        // leaves out keeps what was known, so a rewritten entry can't drop an author, an address or a licence.
+        // A source both name takes what the newer file says (a later commit, a license filled in), field by field: one it
+        // leaves out keeps what was known, so a rewritten entry can't drop an author, an address or a license.
         for (index, source) in result.upstream.enumerated() {
             guard let newer = other.upstream.first(where: { $0.sameWork(as: source) }) else { continue }
             result.upstream[index] = Source(name: newer.name, author: newer.author ?? source.author, url: newer.url ?? source.url,
@@ -186,7 +186,7 @@ struct Credits: Codable, Equatable {
     var basedOn: String? { upstream.first.map { "Based on " + Self.line(for: $0) } }
 
     /// The page Credits.html in a Mac app's bundle, which the standard About window shows under the app's name: each
-    /// work it's based on, linked where it lives, with its licence, then the wishes it was remixed from.
+    /// work it's based on, linked where it lives, with its license, then the wishes it was remixed from.
     var aboutPage: String? {
         guard !isEmpty else { return nil }
         func escaped(_ text: String) -> String {
@@ -222,7 +222,7 @@ struct Credits: Codable, Equatable {
     static let maxText = 100
 
     /// Only entries Lamp can show as they are: one plain line for each name, an https address, a commit that's a
-    /// commit, a licence that's an SPDX id or expression, a path inside the wish. A field that fails is dropped; an
+    /// commit, a license that's an SPDX id or expression, a path inside the wish. A field that fails is dropped; an
     /// entry with no name is.
     var checked: Credits {
         Credits(upstream: Array(upstream.compactMap(\.checked).prefix(Self.maxEntries)),
@@ -252,7 +252,7 @@ struct Credits: Codable, Equatable {
         return value.allSatisfy(allowed.contains) && value.contains(where: \.isLetter) ? value : nil
     }
 
-    /// A licence text: LICENSE, LICENCE, COPYING or NOTICE (with anything after it, "LICENSE-slop-newyork"), plain text
+    /// A license text: LICENSE, LICENCE, COPYING or NOTICE (with anything after it, "LICENSE-slop-newyork"), plain text
     /// or Markdown, inside the wish. Only such a file goes with a share beside the kind's own files, and is put in place on
     /// the way in: never code.
     static func isLicenceFile(_ path: String) -> Bool {

@@ -47,7 +47,7 @@ feature at hand is worth the interruption.
 
 It is built like the build card above it in the chat, so the chat reads as one thing:
 
-- **Header:** a 44pt tile with the capability's symbol on the accent colour (never the app's icon: this is
+- **Header:** a 44pt tile with the capability's symbol on the accent color (never the app's icon: this is
   Lamp asking, not the app), a headline, a status line under it, and **Not Now** on the right.
 - **Body,** under a divider: one row per upgrade, best first. Each row has a symbol, a title, a line of detail,
   and a small standard button on the right ("Add Key…", "Download", "Sign In…", "Open…"). A key is typed in

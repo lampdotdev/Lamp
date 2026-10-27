@@ -45,7 +45,7 @@ has it, so most apps need no key code of their own:
 - give the first thing to focus with `Lamp.focus(...)` when a screen opens;
 - Back goes back a screen with `Lamp.onBack(fn)` (return true when handled); unhandled on the first screen, it leaves
   the app;
-- other keys (play, pause, the colour keys, numbers) come by name through `Lamp.onKey(fn)`;
+- other keys (play, pause, the color keys, numbers) come by name through `Lamp.onKey(fn)`;
 - keep the arrows inside a dialog with `Lamp.scope` while it's open; a game takes them over with
   `Lamp.navigation = false`.
 

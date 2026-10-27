@@ -312,7 +312,7 @@ extension Template {
             if case .orbit(_, let distance, let yaw, let pitch) = rig { orbitDistance = distance; orbitYaw = yaw; orbitPitch = pitch }
             if case .firstPerson(let position, let heading) = rig { camera.position = position; lookYaw = heading }
             content.add(root)
-            // The near plane far enough out that surfaces a few millimetres apart still sort cleanly (RealityKit's
+            // The near plane far enough out that surfaces a few millimeters apart still sort cleanly (RealityKit's
             // default of 1 cm makes distant ground layers and decals fight and flicker).
             camera.camera.near = 0.1
             camera.camera.far = 4000
@@ -424,7 +424,7 @@ extension Template {
         private var slowTiles = 0
         private let streamRoot = Entity()
 
-        /// A big world built a square tile at a time: the tiles within `radius` metres of the camera (or of what
+        /// A big world built a square tile at a time: the tiles within `radius` meters of the camera (or of what
         /// `around` returns, such as the player's car) are made by `make` as they come into reach, nearest first, a
         /// few milliseconds' worth each frame so the app never stalls, and taken away again once well out of
         /// reach. So the app opens at once however big the world is. `make` returns what's drawn on one tile (its
@@ -911,7 +911,7 @@ extension Template {
             let c = colors
             let drawn: CGImage
             if let image { drawn = image } else {
-                // The sky drawn once for its colours and sun, off the main thread, and kept for the next launch.
+                // The sky drawn once for its colors and sun, off the main thread, and kept for the next launch.
                 let key = "sky-" + [c.zenith, c.horizon, c.ground, c.sun, sun].map { "\($0.x),\($0.y),\($0.z)" }.joined(separator: ";") + "-\(c.strength)"
                 drawn = await Task.detached(priority: .userInitiated) { LampTexture.stored(key) { LampSky.panorama(c, sun: sun) } }.value
             }
@@ -947,9 +947,9 @@ extension Template {
 
     // MARK: - Shapes
 
-    /// Meshes for props, in metres. Boxes, spheres and the like come from RealityKit; the rest are built here.
+    /// Meshes for props, in meters. Boxes, spheres and the like come from RealityKit; the rest are built here.
     enum LampMesh {
-        /// A box centred on its middle. Square-edged, its texture is laid on in metres, so a brick wall's bricks are
+        /// A box centered on its middle. Square-edged, its texture is laid on in meters, so a brick wall's bricks are
         /// brick-sized however long the wall; with rounded corners (`corner`, for props) each face holds one copy.
         /// Meshes shaped off the main thread (`LampMeshBuilder`s filled in a stream's `prepare`), made on it as one
         /// mesh with a part for each builder.
@@ -977,7 +977,7 @@ extension Template {
         static func cylinder(radius: Float, height: Float) -> MeshResource { .generateCylinder(height: height, radius: radius) }
         static func cone(radius: Float, height: Float) -> MeshResource { .generateCone(height: height, radius: radius) }
 
-        /// A flat rectangle lying on the ground, its texture repeated every `tile` metres.
+        /// A flat rectangle lying on the ground, its texture repeated every `tile` meters.
         static func plane(width: Float, depth: Float, tile: Float = 1) -> MeshResource {
             var b = LampMeshBuilder()
             let w = width / 2, d = depth / 2
@@ -1026,7 +1026,7 @@ extension Template {
             return b.mesh() ?? .generateSphere(radius: 0.01)
         }
 
-        /// An outline (a SwiftUI Path, in metres, y up) given depth along z, with its edges rounded by `chamfer`:
+        /// An outline (a SwiftUI Path, in meters, y up) given depth along z, with its edges rounded by `chamfer`:
         /// panels, brackets, signs, cut-out shapes, letters' outlines.
         static func extrude(_ outline: Path, depth: Float, chamfer: Float = 0) -> MeshResource {
             var options = MeshResource.ShapeExtrusionOptions()
@@ -1036,7 +1036,7 @@ extension Template {
             return (try? MeshResource(extruding: outline, extrusionOptions: options)) ?? .generateBox(size: depth)
         }
 
-        /// A cross-section (a SwiftUI Path, in metres) carried along points: frames, rails, handles, mouldings.
+        /// A cross-section (a SwiftUI Path, in meters) carried along points: frames, rails, handles, mouldings.
         static func sweep(_ section: Path, along points: [SIMD3<Float>]) -> MeshResource {
             var options = MeshResource.ShapeExtrusionOptions()
             options.extrusionMethod = .tracePositions(points)
@@ -1067,7 +1067,7 @@ extension Template {
             return out
         }
 
-        /// Writing, in metres tall, given depth.
+        /// Writing, in meters tall, given depth.
         static func text(_ string: String, size: Float, depth: Float = 0.01, weight: NSFont.Weight = .semibold) -> MeshResource {
             .generateText(string, extrusionDepth: depth, font: .systemFont(ofSize: CGFloat(size), weight: weight), alignment: .center)
         }
@@ -1109,7 +1109,7 @@ extension Template {
     // MARK: - Materials
 
     /// Materials that look like what they're named for, with surface detail drawn in code (no image files). Textured
-    /// ones repeat every metre of a shape's texture coordinates; pass `repeat` for finer or coarser.
+    /// ones repeat every meter of a shape's texture coordinates; pass `repeat` for finer or coarser.
     @MainActor
     enum LampMaterial {
         static func metal(_ color: NSColor = .gray, rough: Float = 0.35) -> PhysicallyBasedMaterial {
@@ -1129,7 +1129,7 @@ extension Template {
             m.clearcoat = .init(floatLiteral: 0.8)
             return m
         }
-        /// Car paint, lacquer, enamel: a coloured coat under a clear one.
+        /// Car paint, lacquer, enamel: a colored coat under a clear one.
         static func paint(_ color: NSColor) -> PhysicallyBasedMaterial {
             var m = base(color, rough: 0.35, metal: 0.3)
             m.clearcoat = .init(floatLiteral: 1)
@@ -1155,11 +1155,11 @@ extension Template {
         static func asphalt(repeat r: Float = 1) -> PhysicallyBasedMaterial {
             detailed(NSColor(white: 0.3, alpha: 1), rough: 0.95, color: LampTexture.concrete, height: "concrete", repeat: r * 2)
         }
-        /// Bricks 25 cm long, laid in courses: `repeat` 4 per metre of texture by default.
+        /// Bricks 25 cm long, laid in courses: `repeat` 4 per meter of texture by default.
         static func brick(_ color: NSColor = NSColor(red: 0.62, green: 0.3, blue: 0.22, alpha: 1), repeat r: Float = 1) -> PhysicallyBasedMaterial {
             detailed(color, rough: 0.85, color: LampTexture.brick, height: "brick", repeat: r)
         }
-        /// Square tiles with grout between them, `size` metres across.
+        /// Square tiles with grout between them, `size` meters across.
         static func tiles(_ color: NSColor = .white, size: Float = 0.2) -> PhysicallyBasedMaterial {
             var m = detailed(color, rough: 0.25, color: LampTexture.tiles, height: "tiles", repeat: 1 / (size * 4))
             m.clearcoat = .init(floatLiteral: 0.4)
@@ -1186,7 +1186,7 @@ extension Template {
             return m
         }
 
-        /// Colour detail and a matching bumpiness (a normal map from the same height field).
+        /// Color detail and a matching bumpiness (a normal map from the same height field).
         private static func detailed(_ tint: NSColor, rough: Float, color: String, height: String, repeat r: Float) -> PhysicallyBasedMaterial {
             var m = base(tint, rough: rough, texture: color, repeat: r)
             m.normal = .init(texture: .init(LampTexture.cached(height + "-normal", semantic: .normal) { LampTexture.stored(height + "-normal") { LampTexture.normalMap(height) } }, sampler: LampTexture.sampler))
@@ -1299,7 +1299,7 @@ extension Template {
             let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent(Bundle.main.bundleIdentifier ?? "app").appendingPathComponent("lamp-textures-1")
             let safe = key.map { $0.isLetter || $0.isNumber || $0 == "-" ? String($0) : "_" }.joined()
-            // A long key (the sky's colours) shortened with a hash that's the same at every launch.
+            // A long key (the sky's colors) shortened with a hash that's the same at every launch.
             let hash = key.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
             let name = safe.count > 80 ? String(safe.prefix(40)) + "-" + String(hash, radix: 16) : safe
             let url = folder.appendingPathComponent(name + ".png")
@@ -1382,7 +1382,7 @@ extension Template {
             becomePart(.turn(axis: axis, range: range), changed: changed)
         }
 
-        /// A drawer, slider or plunger: dragging moves it along `axis`, in its parent's space, within `range` metres
+        /// A drawer, slider or plunger: dragging moves it along `axis`, in its parent's space, within `range` meters
         /// of where it is now.
         @discardableResult func lampSlide(axis: SIMD3<Float> = [0, 0, 1], range: ClosedRange<Float> = 0 ... 0.4,
                                           changed: (@MainActor (Float) -> Void)? = nil) -> Self {
@@ -1434,7 +1434,7 @@ extension Template {
 
         let name: String
         let make: @MainActor () -> Entity
-        /// One copy for all four views, so a prop whose code varies it (a random rider, a random colour) shows the
+        /// One copy for all four views, so a prop whose code varies it (a random rider, a random color) shows the
         /// same thing from every side.
         @State private var made: Entity?
         private let views: [(String, Float, Float)] = [("Front", 0, 0.12), ("Right side", .pi / 2, 0.12),

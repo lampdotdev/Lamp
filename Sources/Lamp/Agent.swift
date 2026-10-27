@@ -875,9 +875,9 @@ enum Agent {
         from a repository, a library copied in, a model, a picture, a sound, a font, data), add it to `upstream`: \
         `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
         "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
-        (left out when it has none) and its licence text kept in the app beside the work. Never take anything out of \
-        \(Credits.file), never remove or change a licence or a notice of someone else's, and never take an author's \
-        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no licence can be used here but \
+        (left out when it has none) and its license text kept in the app beside the work. Never take anything out of \
+        \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
+        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
         not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \
         window and its info.
         """
@@ -971,7 +971,8 @@ enum Agent {
         and you're the one making theirs. Their app is open on screen beside this chat, and they want to see each \
         result there right away. Everything you say to them is about their app and what it does, in everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
         commands or compiler errors, unless they ask for them. Their Mac is set to \(language): write to them \
-        in that, with its spelling, and make the app's own words the same.
+        in that, with its spelling, and make the app's own words the same, whatever spelling the app's files, a \
+        starter or these instructions happen to use.
         """
 
         /// The language the Mac is set to, as it names itself in English ("English (United States)"): what the

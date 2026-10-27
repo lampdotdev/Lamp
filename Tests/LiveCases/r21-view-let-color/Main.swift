@@ -12,6 +12,6 @@ import AppKit
     print("before:", Log.take())
     reload(1)
     settle()
-    print("after1 (want it in, tint=true: a row, made only in a body, gains a let with a colour):", Log.take())
+    print("after1 (want it in, tint=true: a row, made only in a body, gains a let with a color):", Log.take())
     _ = window
 }}}

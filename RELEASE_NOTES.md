@@ -284,7 +284,7 @@ plain "Lamp x.y.z" line.
   date. A Claude Code or Codex already on your Mac is used as it is, with its sign-in.
 - The welcome asks what you wish your Mac did, and a wish written on lamp.dev arrives in Lamp without
   pasting. The starter ideas are real situations instead of app categories.
-- Duplicate an app to try a variation: the copy has the same code, history and icon on a new colour,
+- Duplicate an app to try a variation: the copy has the same code, history and icon on a new color,
   with an empty chat and its own data.
 - Your apps appear in Finder's Applications folder, and they open the files they're for: drop a file on an
   app's icon, or choose it under Open With.
@@ -439,7 +439,7 @@ plain "Lamp x.y.z" line.
 - Putting an app on a phone says what's happening and what went wrong: it waits for the phone to confirm
   the launch (quickly now), explains install failures, and offers Retry; the iPhone setup in Settings shows
   the missing step and its next action.
-- Settings is reorganised. Providers shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your
+- Settings is reorganized. Providers shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your
   Claude Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what
   it's doing. Building has one Text generation menu, the models under what runs them (Claude Code, Codex,
   OpenRouter, a model on this Mac…), and its own Image generation choice for icon artwork. Apps has Text

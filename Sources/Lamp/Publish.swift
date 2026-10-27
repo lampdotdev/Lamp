@@ -9,12 +9,12 @@ import LampSidebarKit
 ///
 /// What goes up is the game's page (Web/) as the app plays it, with a credit bar over it ("Based on Slop New York by
 /// Mr.doob", and Open in Lamp, the wish's Share Link), the wish's credits.json, a README saying what
-/// it is, what it's based on and under which licences, and the shared file itself, made by `Sharing.export` and so held
+/// it is, what it's based on and under which licenses, and the shared file itself, made by `Sharing.export` and so held
 /// to the same checks (`ShareCheck`). The page is searched for keys and secrets the same way before anything leaves.
 /// The person sees all of it on the card (`PublishCard`) and confirms before anything goes up.
 ///
 /// An experiment for now (Settings → Experimental, Lamp Dev only): the page carries Lamp's own runtime (lamp-game.js,
-/// lamp.js), which needs a licence that lets anyone pass it on before it can be published from every Lamp.
+/// lamp.js), which needs a license that lets anyone pass it on before it can be published from every Lamp.
 enum Publish {
     nonisolated static let switchKey = "experimentPublishPages"
     nonisolated static var enabled: Bool { Edition.isDev && UserDefaults.standard.bool(forKey: switchKey) }
@@ -198,7 +198,7 @@ enum Publish {
         return html + bar
     }
 
-    /// The repository's README: what the page is, where to play it, what it's based on and under which licences.
+    /// The repository's README: what the page is, where to play it, what it's based on and under which licenses.
     static func readme(for project: LampProject, credits: Credits, url: String, open: OpenInLamp) -> String {
         var text = "# \(project.name)\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }

@@ -108,7 +108,7 @@ A capability given to one engine must be given to all of them that can take it, 
   Holding those too would take filtering the network itself, per address, in the sandbox and in the app.
 - **The home network** (`HomeNetwork`, the "Devices as data" guide): only where the person is looking at what's on it
   (Your Devices, Add a New Device, `network_devices`), Lamp sends one datagram to each address of this Mac's own private
-  subnet (a /24 at most), reads the Mac's neighbour table, the maker of each hardware address from the list it ships,
+  subnet (a /24 at most), reads the Mac's neighbor table, the maker of each hardware address from the list it ships,
   and every Bonjour service's name, host and model keys; nothing more is sent to a device, and nothing needs admin.
   Bonjour names are often people's ("…'s iPhone"). They're kept in memory only, shown on this Mac, and told to the
   agent the person already uses (`network_devices`, a device's setup note, each saying to keep them out of an app and

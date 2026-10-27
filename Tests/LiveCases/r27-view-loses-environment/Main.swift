@@ -11,7 +11,7 @@ import AppKit
     settle()
     print("before:", Log.take())
     reload(1); settle()
-    print("after1 (want it live: the view no longer reads the colour scheme, and taps keeps 9):", Log.take())
+    print("after1 (want it live: the view no longer reads the color scheme, and taps keeps 9):", Log.take())
     reload(2); settle()
     print("after2 (want it live: the environment field Lamp kept is kept again):", Log.take())
     _ = window

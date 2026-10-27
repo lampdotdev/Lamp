@@ -70,7 +70,7 @@
   }
 
   function familyHTML() {
-    return head('Who’s at home?', 'Everyone gets a colour. Stars are for whoever earns them for chores, pets included.') +
+    return head('Who’s at home?', 'Everyone gets a color. Stars are for whoever earns them for chores, pets included.') +
       '<div class="ed-list">' + F.people.map(function (p, i) {
         return '<div class="ed-row" data-i="' + i + '">' +
           '<button class="ed-swatch" data-color aria-label="Colour" style="' + App.pstyle(p) + '">' + App.avatar(Object.assign({}, p, { name: p.name || '?' }), 44) + '</button>' +

@@ -4,7 +4,7 @@ import Foundation
 /// The integrations Lamp has (`Integration`), the devices found by them, and the devices on the network Lamp doesn't
 /// know yet. An integration the builder hands Lamp (`device_integration`) is kept in Lamp's folder once it's checked;
 /// those Lamp ships go in `Resources/Devices`. A device found by one is shown for the moment, and kept (with the steps
-/// done on it) only once a setup step's check has passed on it: a neighbour's device may answer a scan too.
+/// done on it) only once a setup step's check has passed on it: a neighbor's device may answer a scan too.
 enum Integrations {
     static let folder = Edition.supportFolder.appendingPathComponent("Integrations")
     private static var keptURL: URL { DeviceFolder.root.appendingPathComponent("kept.json") }

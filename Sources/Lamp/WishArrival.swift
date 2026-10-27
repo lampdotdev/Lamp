@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A wish made on the desk doesn't pop its chat up out of nowhere: the bar it was typed in lifts off the desk and
-/// grows into the chat's window, lit in the colours of the smoke an app being changed shows, with a few sparks rising
+/// grows into the chat's window, lit in the colors of the smoke an app being changed shows, with a few sparks rising
 /// off it, and the chat fades in where it lands. Drawn in a window of its own over the desk, so the chat itself is
 /// laid out once, at its real size, rather than at every step of the way.
 @MainActor
@@ -64,7 +64,7 @@ enum WishArrival {
     }
 }
 
-/// The bar on its way to becoming the chat: a white card that grows from the bar's frame to the chat's, coloured light
+/// The bar on its way to becoming the chat: a white card that grows from the bar's frame to the chat's, colored light
 /// gathering round it and a band of it rising across it, the wish's words lifting away as it opens.
 struct ArrivalView: View {
     let from: CGRect
@@ -75,7 +75,7 @@ struct ArrivalView: View {
     @State private var swept = false
     @State private var started = Date()
 
-    /// The smoke's colours (`LampTransition.Look.hues` in LampSupport.swift): blue, violet, pink, orange and teal.
+    /// The smoke's colors (`LampTransition.Look.hues` in LampSupport.swift): blue, violet, pink, orange and teal.
     static let hues: [Color] = [
         Color(red: 0.25, green: 0.5, blue: 1),
         Color(red: 0.6, green: 0.38, blue: 1),
@@ -127,7 +127,7 @@ struct ArrivalView: View {
                     .animation(.easeOut(duration: 0.22), value: landed)
             }
             .overlay {
-                // A band of the smoke's colours rising through the card as it grows.
+                // A band of the smoke's colors rising through the card as it grows.
                 GeometryReader { proxy in
                     LinearGradient(colors: Self.hues, startPoint: .leading, endPoint: .trailing)
                         .opacity(0.5)
@@ -140,14 +140,14 @@ struct ArrivalView: View {
             }
             .clipShape(shape)
             .overlay(shape.strokeBorder(Self.ring, lineWidth: 1.5).opacity(lit ? 0.8 : 0))
-            // The glow round the edge, in the smoke's colours all the way round.
+            // The glow round the edge, in the smoke's colors all the way round.
             .background(shape.fill(Self.ring).blur(radius: lit ? 30 : 6).opacity(lit ? 0.55 : 0))
             .shadow(color: .black.opacity(0.1), radius: 18, y: 8)
             .environment(\.colorScheme, .light)
     }
 }
 
-/// A few sparks in the smoke's colours rising off the bar as the wish leaves it.
+/// A few sparks in the smoke's colors rising off the bar as the wish leaves it.
 private struct Sparks: View {
     let origin: CGRect
     let started: Date

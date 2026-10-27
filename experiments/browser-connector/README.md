@@ -16,7 +16,7 @@ for everything else.
    unpacked** in Chrome's developer mode (until the extension is in the Chrome
    Web Store).
 3. On a page an app is for, Lamp's toolbar icon lights up (a dim icon gets its
-   colour and a dot). One click opens that tab's sidebar on the fitting app, whose
+   color and a dot). One click opens that tab's sidebar on the fitting app, whose
    page offers to save it.
 4. An app that isn't open is opened when it's chosen. Every installed app with a
    sidebar is listed, open or not. The sidebar works while the app is open,
@@ -38,7 +38,7 @@ for everything else.
   The extension has no host permissions at all.
 - **A right-click item**, when the builder gives an app one (`"menu": "Explain
   in Plain Words"` in `browser.json`, or whatever the app's sidebar does with a
-  page: save it, summarise or translate it, answer something about it): Chrome
+  page: save it, summarize or translate it, answer something about it): Chrome
   lists it under Lamp in the page's
   right-click menu, and choosing it opens the tab's sidebar on that app with
   `activeTab`, as the icon does. Choosing it is the person's click for that
@@ -67,12 +67,12 @@ for everything else.
   files and connections only to its app.
 - **The frame** is sandboxed (no popups, no navigating the sidebar). Above it
   the extension keeps the app's name and the consent line the page asks for
-  (`data-lamp-reads`), drawn in the page's own colours, which the page
-  sends (`look`) and the extension takes only as plain colours. The strip makes
+  (`data-lamp-reads`), drawn in the page's own colors, which the page
+  sends (`look`) and the extension takes only as plain colors. The strip makes
   no offer: the page's own offer row is the only one.
 - **The look is Apple's.** `/lamp.css` is Apple's system look for a narrow Mac
   list pane, light and dark, and the page picks one tint among Apple's system
-  colours with `<html data-tint="…">`; the app stands out through that tint and
+  colors with `<html data-tint="…">`; the app stands out through that tint and
   its own items. The `chrome-sidebar` skill (`Resources/skills`) says how a page
   is built and checked. The app serves its own pictures at `/assets/<file>` and
   SF Symbols at `/symbols/<name>.png`, drawn by the app and used as masks.

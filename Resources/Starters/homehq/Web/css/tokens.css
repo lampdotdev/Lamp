@@ -15,7 +15,7 @@
   --mute: #7A756B;
   --line: #D6CFC0;
 
-  /* signal colours */
+  /* signal colors */
   --alert: #E5261E;
   --alert-rgb: 229 38 30;
   --amber: #FF9500;
@@ -25,7 +25,7 @@
   --warm-rgb: 255 196 92;
   --night: #D8321F;
 
-  /* person colour defaults (overridden inline per element) */
+  /* person color defaults (overridden inline per element) */
   --c: var(--ink);
   --c-rgb: var(--ink-rgb);
   --c-ink: #FFFFFF;

@@ -3,13 +3,13 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// What Lamp checks before a wish leaves this Mac, as a shared file (`Sharing.export`) or a published page: that
-/// others' work in it may be passed on, with its licence and credit, and that nothing of the person's goes with it.
+/// others' work in it may be passed on, with its license and credit, and that nothing of the person's goes with it.
 ///
-/// - Work under an open licence (MIT, BSD, Apache and the like) goes, with its licence file and its credit.
-/// - Work under a share-alike licence (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) goes too, and the remix stays under it:
+/// - Work under an open license (MIT, BSD, Apache and the like) goes, with its license file and its credit.
+/// - Work under a share-alike license (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) goes too, and the remix stays under it:
 ///   a shared file carries the code anyway, and a published page says so (`notes`).
-/// - Work with no licence can be used on this Mac but not passed on: the share is refused, naming it.
-/// - A licence file the credits name has to still be in the wish.
+/// - Work with no license can be used on this Mac but not passed on: the share is refused, naming it.
+/// - A license file the credits name has to still be in the wish.
 /// - No key, token or secret Lamp keeps for the person or the app may be in what goes (`secrets`).
 enum ShareCheck {
     enum Licence: Equatable { case open, shareAlike, ownTerms, none }
@@ -17,7 +17,7 @@ enum ShareCheck {
     /// What an SPDX id or expression lets a remix do. An `OR` takes the most open choice and an `AND` the strictest, so
     /// "MIT OR GPL-3.0" is open and "MIT AND GPL-3.0" share-alike; brackets group as SPDX has them (`WITH` binds
     /// tightest, then `AND`, then `OR`), so "GPL-3.0-only AND (MIT OR Apache-2.0)" is share-alike. A `LicenseRef-` is the
-    /// work's own terms, which Lamp can't read: it goes, with its credit. An expression that doesn't parse is no licence.
+    /// work's own terms, which Lamp can't read: it goes, with its credit. An expression that doesn't parse is no license.
     static func licence(_ expression: String?) -> Licence {
         guard let expression = expression?.trimmed, !expression.isEmpty else { return .none }
         var tokens: [String] = []
@@ -47,7 +47,7 @@ enum ShareCheck {
             } else {
                 result = single(token)
             }
-            // An exception (`WITH Classpath-exception-2.0`) only loosens a licence: it's read as the licence itself.
+            // An exception (`WITH Classpath-exception-2.0`) only loosens a licence: it's read as the license itself.
             while peek()?.uppercased() == "WITH" {
                 at += 1
                 guard let exception = peek(), exception != "(", exception != ")" else { return nil }
@@ -77,7 +77,7 @@ enum ShareCheck {
         return result
     }
 
-    /// Share-alike licences for data rather than code (OpenStreetMap's ODbL, CDLA-Sharing): the data stays under them,
+    /// Share-alike licenses for data rather than code (OpenStreetMap's ODbL, CDLA-Sharing): the data stays under them,
     /// not the remix as a whole.
     static func isDataLicence(_ id: String?) -> Bool {
         guard let id = id?.uppercased() else { return false }
@@ -90,14 +90,14 @@ enum ShareCheck {
         let upper = id.uppercased()
         let shareAlike = ["GPL-", "LGPL-", "AGPL-", "MPL-", "EPL-", "EUPL-", "CC-BY-SA-", "CC-BY-NC-SA-", "ODBL-", "OSL-", "CDDL-", "CECILL-"]
         if shareAlike.contains(where: upper.hasPrefix) { return .shareAlike }
-        // Licences that don't allow passing a remix on as anyone likes (no derivatives, no commercial use) are taken
+        // Licenses that don't allow passing a remix on as anyone likes (no derivatives, no commercial use) are taken
         // as the work's own terms: credited, and named on a published page.
         if upper.hasPrefix("CC-BY-NC") || upper.hasPrefix("CC-BY-ND") { return .ownTerms }
         let open = ["MIT", "MIT-0", "0BSD", "ISC", "ZLIB", "UNLICENSE", "CC0-1.0", "WTFPL", "BSL-1.0", "PDDL-1.0", "ODC-BY-1.0",
                     "OFL-1.1", "APACHE-2.0", "APACHE-1.1", "PYTHON-2.0", "PSF-2.0", "X11", "NCSA", "UPL-1.0", "CC-BY-4.0",
                     "CC-BY-3.0", "CC-BY-2.0", "MS-PL", "ARTISTIC-2.0", "BLUEOAK-1.0.0", "POSTGRESQL"]
         if open.contains(upper) || upper.hasPrefix("BSD-") { return .open }
-        // An id Lamp doesn't know is still a licence its author chose: credited, with its own terms.
+        // An id Lamp doesn't know is still a license its author chose: credited, with its own terms.
         return .ownTerms
     }
 
@@ -107,19 +107,19 @@ enum ShareCheck {
         if !unlicensed.isEmpty {
             let names = unlicensed.map(Credits.line(for:)).joined(separator: ", ")
             return Sharing.ImportError("\(project.name) can't be shared.",
-                                       detail: "It uses \(names), which came with no licence. It can still be used on this Mac.")
+                                       detail: "It uses \(names), which came with no license. It can still be used on this Mac.")
         }
         let missing = credits.upstream.filter { source in
             source.licenseFile.map { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0).path) } ?? false
         }
         if let first = missing.first {
             return Sharing.ImportError("\(project.name) can't be shared.",
-                                       detail: "The licence of \(first.name) is missing from it. Ask Lamp to put \(first.licenseFile ?? "it") back.")
+                                       detail: "The license of \(first.name) is missing from it. Ask Lamp to put \(first.licenseFile ?? "it") back.")
         }
         return nil
     }
 
-    /// What a published page says of the licences of what it's based on: one line for each share-alike licence, and one
+    /// What a published page says of the licenses of what it's based on: one line for each share-alike licence, and one
     /// for work under its own terms.
     static func notes(for credits: Credits) -> [String] {
         var notes: [String] = []
@@ -127,7 +127,7 @@ enum ShareCheck {
             switch licence(source.license) {
             case .shareAlike where isDataLicence(source.license):
                 notes.append("\(source.name) is \(source.license ?? ""): it stays under that licence, credited, in this remix.")
-            case .shareAlike: notes.append("\(source.name) is \(source.license ?? ""), so this remix is too: anyone may share it on under the same licence.")
+            case .shareAlike: notes.append("\(source.name) is \(source.license ?? ""), so this remix is too: anyone may share it on under the same license.")
             case .ownTerms: notes.append("\(source.name) is used under its own terms (\(source.license ?? "")).")
             case .open, .none: break
             }

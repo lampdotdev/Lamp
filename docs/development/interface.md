@@ -60,7 +60,7 @@ belongs: what the app has cost, what answers its AI (from `AppAI.resolve`, so it
 how Lamp builds it, and where it lives. What doesn't: menus, switches, explanations, upgrade offers, or
 anything that's the same for every app and already in Settings.
 
-- **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its licence,
+- **Credits first.** A wish built on someone else's work starts with Credits: what it's based on and its license,
   what else it uses, and the wishes it was remixed from (`AppInfoView.creditsSection`), with one button to the page of
   the work it's based on. A wish with none has no such section.
 - **Read-only.** A thing that can be changed is changed in Settings: each section ends in one small button
@@ -69,7 +69,7 @@ anything that's the same for every app and already in Settings.
   something to undo).
 - **Facts, not notes.** A row is a label and its value. Nothing answers: `NotReadyBadge` as the value, with
   no sentence under it; the fix is in Settings, one button away. No footers or captions.
-- **Fit the width.** Rows are a grouped form's labelled values, in a chat as narrow as 320 points. Keep values
+- **Fit the width.** Rows are a grouped form's labeled values, in a chat as narrow as 320 points. Keep values
   short (`AppInfoView.short`), so most rows fit on one line there.
 - **Current.** Lamp makes the rows again with every state it sends while the panel is open, and sends one when
   Settings, a key or the app's own choices change (`SidebarServer.start`), so a value never outlives what it

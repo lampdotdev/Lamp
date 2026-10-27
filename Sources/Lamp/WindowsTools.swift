@@ -8,7 +8,7 @@ import Foundation
 /// from the setup window, `WindowsSetup`), so a game is made and played on the Mac first. Each is checked: LLVM's
 /// release and sokol-shdc against the SHA-256 their makers publish, and Microsoft's packages by xwin, which Lamp ships
 /// and which checks each against the hash in Microsoft's own manifest, after the person has accepted Microsoft's
-/// licence for them (`licenseAccepted`): they can't be passed on, so every Mac fetches its own. Of LLVM only clang,
+/// license for them (`licenseAccepted`): they can't be passed on, so every Mac fetches its own. Of LLVM only clang,
 /// lld and clang's own headers are kept. Like Android's tools they go in the developer folder every Lamp shares, which
 /// the agent's sandbox lets a build read and never write.
 enum WindowsTools {
@@ -64,7 +64,7 @@ enum WindowsTools {
         return url.path
     }
 
-    /// Microsoft's licence for what xwin downloads, which the person reads and accepts in the setup window.
+    /// Microsoft's license for what xwin downloads, which the person reads and accepts in the setup window.
     static let licenseURL = URL(string: "https://go.microsoft.com/fwlink/?LinkId=2086102")!
 
     // MARK: What's there
@@ -91,7 +91,7 @@ enum WindowsTools {
     /// What the console's build needs, all of it. `LAMP_PRETEND_MISSING=windows` makes Lamp Dev act as if it weren't here.
     static var isReady: Bool { !Pretend.isMissing("windows") && hasLLVM && hasShdc && hasSDK }
 
-    /// Whether the person accepted Microsoft's licence on this Mac: asked once, before the first download.
+    /// Whether the person accepted Microsoft's license on this Mac: asked once, before the first download.
     static var licenseAccepted: Bool {
         get { UserDefaults.standard.object(forKey: licenseKey) != nil && !Pretend.isMissing("windows") }
         set { UserDefaults.standard.set(newValue ? Date() : nil, forKey: licenseKey) }
@@ -141,7 +141,7 @@ enum WindowsTools {
     /// place and moved in whole.
     static func install(progress: @escaping @Sendable (Double, String) -> Void) async throws {
         guard supported else { throw Failure(message: "These tools run on Macs with Apple silicon only.") }
-        guard licenseAccepted else { throw Failure(message: "Microsoft's licence has to be accepted first.") }
+        guard licenseAccepted else { throw Failure(message: "Microsoft's license has to be accepted first.") }
         let fm = FileManager.default
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         if !hasShdc { try await fetchShdc(progress: progress) }
@@ -177,7 +177,7 @@ enum WindowsTools {
             progress(0.55, "Downloading Microsoft's Windows SDK…")
             let output = staging.appendingPathComponent("sdk")
             var lines: [String] = []
-            // The licence was accepted in the setup window, which is what --accept-license says. xwin checks each of
+            // The license was accepted in the setup window, which is what --accept-license says. xwin checks each of
             // Microsoft's packages against the hash in Microsoft's manifest, and the cache goes with the staging folder.
             let arguments = ["--accept-license", "--json", "--log-level", "info", "--http-retry", "3", "--timeout", "300s",
                              "--cache-dir", staging.appendingPathComponent("cache").path, "--arch", "x86_64",

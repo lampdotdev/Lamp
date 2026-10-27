@@ -2,7 +2,7 @@ import Foundation
 
 /// The scaffold of an Android app, and the rules its agent is given. An Android app is a Gradle project in the
 /// app's folder: Lamp owns what the build runs before any of the agent's code does (build.sh, the settings and
-/// top-level build files, gradle.properties and the versions catalogue, written afresh before every build like a
+/// top-level build files, gradle.properties and the versions catalog, written afresh before every build like a
 /// Mac app's Package.swift) and its building blocks (`LampSupport.kt`, AndroidSupport.swift), and the agent owns the
 /// rest of `app/`: its build file, manifest, Kotlin and resources.
 extension Template {

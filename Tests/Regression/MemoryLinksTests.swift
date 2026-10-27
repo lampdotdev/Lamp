@@ -23,9 +23,9 @@ final class MemoryLinksTests: XCTestCase {
 
     func testTheAppsOwnNotesAreRead() throws {
         let (project, _) = try project()
-        try "summary: Coin colours\n\nGold coins, not silver.".write(to: project.dir.appendingPathComponent(".lamp/notes.md"), atomically: true, encoding: .utf8)
+        try "summary: Coin colors\n\nGold coins, not silver.".write(to: project.dir.appendingPathComponent(".lamp/notes.md"), atomically: true, encoding: .utf8)
         let notes = Memory.read(.app(project))
-        XCTAssertEqual(notes.summary, "Coin colours")
+        XCTAssertEqual(notes.summary, "Coin colors")
         XCTAssertEqual(notes.text, "Gold coins, not silver.")
     }
 

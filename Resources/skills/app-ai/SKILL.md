@@ -57,7 +57,7 @@ Text the person didn't type into the app themselves is untrusted: emails, messag
 contents, the clipboard, anything read from another app. It can contain instructions aimed at the AI ("ignore the
 above and…"). Never interpolate it into a prompt: pass it as `data:` (`LampAI.ask("Summarize this email in one
 line.", data: email.body)`), and Lamp fences it off so the AI works on it without obeying it. In decisions it goes in
-`about:`, with the question in your own words. Don't write regexes, keyword filters or "sanitising" code to defend
+`about:`, with the question in your own words. Don't write regexes, keyword filters or "sanitizing" code to defend
 against it; `data:` is the defense.
 
 ## Dates and times

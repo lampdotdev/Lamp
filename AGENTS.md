@@ -55,6 +55,9 @@ Renaming any of those needs a migration, not a find-and-replace.
 ## Conventions
 
 - Comments explain why, in plain prose; user-facing text never names files, types or frameworks.
+- Write American spelling (color, center, license, favorite) in everything: on-screen words, prompts and skills, docs and
+  comments. The agent picks up whatever spelling surrounds it. Names in code that existing apps or saved data depend on
+  (`LampNetwork.neighbours`) stay as they are.
 - Files committed to the repo (README, docs, code comments, tests) must never name a person, personal device or hostname, or narrate a particular session or test run; put those details in the PR description.
 - Verify in an isolated harness app rather than in the user's apps, without taking over the screen others are using:
   see "Checking a change beside other work" in [Lamp Dev and instances](docs/development/lamp-dev-and-instances.md).

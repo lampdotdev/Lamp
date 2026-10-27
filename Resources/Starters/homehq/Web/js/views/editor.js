@@ -36,7 +36,7 @@
           '</div>';
       }).join('') + '</div>' +
       (D.people.length < 8 ? '<button class="btn btn--ghost ed-add" data-add>' + App.icon('plus', 22) + 'Add someone</button>' : '') +
-      '<p class="ed-note">A colour each; Stars for someone who earns them for chores. A pet has no day of its own in the calendar; tap its picture for another.</p>' +
+      '<p class="ed-note">A color each; Stars for someone who earns them for chores. A pet has no day of its own in the calendar; tap its picture for another.</p>' +
       '</div>';
   }
 

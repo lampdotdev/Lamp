@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// The wedding's stationery: cream paper, maiolica-blue ink, lemons washed in yellow, and a script for the
-/// words a card would write by hand. Every colour, typeface and drawing the pages use is here, so another
+/// words a card would write by hand. Every color, typeface and drawing the pages use is here, so another
 /// occasion changes this file.
 enum Look {
     static let paper = dynamic(light: 0xFAF5EA, dark: 0x1A1E28)

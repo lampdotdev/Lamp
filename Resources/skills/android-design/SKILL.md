@@ -52,7 +52,7 @@ upright), 600 to 840 medium (a foldable open, a small tablet, a phone on its sid
 - Medium and expanded: a `NavigationRail` at the start edge in place of the bottom bar, and a list beside its detail
   (the list about 360 dp wide, the detail filling the rest) where a phone would go from one to the other. Selecting
   in the list changes the pane beside it, not the screen.
-- Content never stretches across a wide window: reading text and forms stay within about 640 dp, centred or beside
+- Content never stretches across a wide window: reading text and forms stay within about 640 dp, centered or beside
   something else. Grids use `LazyVerticalGrid(GridCells.Adaptive(minSize = 160.dp))` so columns follow the width.
 - Never lock the orientation, and don't assume the window is the screen.
 
@@ -102,7 +102,7 @@ upright), 600 to 840 medium (a foldable open, a small tablet, a phone on its sid
 Design each screen in every state it can be in, since the person will see all of them:
 
 - Empty: an icon (48 to 64 dp, `onSurfaceVariant`), a short headline, one sentence and the one action that fills it,
-  centred in the space. Not a blank list.
+  centered in the space. Not a blank list.
 - Loading: a `CircularProgressIndicator` in the space the content will take, or a `LinearProgressIndicator` under the
   top bar while what's on screen is refreshed; for a list, a few placeholder rows in `surfaceContainerHigh` shapes
   reads calmer than a spinner. An AI call shows what it's doing ("Writing a summary…"), and its result arrives with
@@ -130,7 +130,7 @@ Motion says where something came from and where it went, quickly and with a litt
 
 ## Touch and accessibility
 
-- Every touch target at least 48 by 48 dp (an `IconButton` already is), with 8 dp between neighbours.
+- Every touch target at least 48 by 48 dp (an `IconButton` already is), with 8 dp between neighbors.
 - Icon-only buttons have a `contentDescription` saying what they do ("Delete note"), decorative images `null`.
   Headings are marked `Modifier.semantics { heading() }`; a row that's one thing to tap is one element
   (`Modifier.clickable` on the row, `mergeDescendants`).

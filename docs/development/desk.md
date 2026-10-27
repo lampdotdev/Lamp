@@ -13,7 +13,7 @@ be made of an app, a widget, a menu bar item, a watch app, so "app" stays where 
 typed in the bar, or said with the talk button beside it (`TalkButton`, moving with `Dictation.level`); either
 way it goes to a new wish's chat and is sent from there (`Store.wish`, `sendWhenShown`), so it passes the same
 setup checks as anything typed in a chat. Its chat doesn't pop up out of nowhere: the bar lifts off the desk and
-grows into the chat's window, lit in the colours of the smoke an app being changed shows (`LampTransition.Look.hues`),
+grows into the chat's window, lit in the colors of the smoke an app being changed shows (`LampTransition.Look.hues`),
 with a few sparks rising off it, and the chat fades in where it lands (`WishArrival`, drawn in a window of its own
 over the desk, so the chat is laid out once, at its real size). Where the person asked for less motion, or the chat
 opens on another screen than the bar's, it opens at once. A click on a wish (or Return, or Open on its menu) opens it to use and
@@ -78,7 +78,7 @@ given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's t
 the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
 Android or the Xbox too. It builds its whole city before the first frame, about half a minute out of sight, which is
 why the preview waits up to two minutes and keeps a page in no window running (`WebGamePreview`). Its credits.json
-names Slop New York at the commit the starter is on, with its licence file, and the map, terrain and city data it uses;
+names Slop New York at the commit the starter is on, with its license file, and the map, terrain and city data it uses;
 a starter built on someone else's work ships one, and bringing in a newer upstream updates its commit in the same
 change. Every starter's copy starts its wish's chain with the starter itself (`Starters.copy`, "Credit" in the wishes
 guide).
@@ -86,7 +86,7 @@ A starter may be a screen: Home HQ is Wes Bos's photo-frame-dashboard (MIT) as a
 scripts with no build step, at home on the Mac, and its changes put it where a screen goes (an iPad, a TV, an Android
 photo frame). Its `Sources/Native.swift` reads the person's calendars and photos only once they turn them on in the
 page's settings, so nothing asks for access as the starter opens; elsewhere the page keeps its examples. Its credits.json
-names the upstream repository at its commit and the two fonts it ships, each with its licence file. A game's or a
+names the upstream repository at its commit and the two fonts it ships, each with its license file. A game's or a
 screen's starter has no App.swift: `StartersTests` looks for its `Web/index.html`, and check-starters.sh type-checks its
 Native.swift against Lamp's LampPage.swift. `StartersBuildTests` can't build one (the screen and game kits are in
 Lamp's bundle): build it in a Lamp Dev instance.

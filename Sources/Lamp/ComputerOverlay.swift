@@ -113,7 +113,7 @@ final class ComputerOverlay {
         pill.contentView = host
         pill.setContentSize(host.fittingSize)
         if let id = glowTarget, let frame = Self.frame(of: id) { placeStop(above: frame) }
-        // With no window to sit over any more (it was handed back), it stays centred where it was.
+        // With no window to sit over any more (it was handed back), it stays centered where it was.
         else if let middle { pill.setFrameOrigin(CGPoint(x: middle - pill.frame.width / 2, y: pill.frame.minY)) }
         if !pill.isVisible {
             pill.alphaValue = 0
@@ -533,7 +533,7 @@ final class ComputerOverlay {
         return container
     }
 
-    /// A fingertip on glass: a disc in lamplight with a white rim, centred on the layer's position.
+    /// A fingertip on glass: a disc in lamplight with a white rim, centered on the layer's position.
     private static func fingertip() -> CALayer {
         let container = CALayer()
         container.bounds = CGRect(x: 0, y: 0, width: 1, height: 1)

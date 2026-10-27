@@ -358,12 +358,12 @@ enum AppInfoView {
     }
 
     /// Where the wish came from, first, since it's the one thing here that's about someone else: the work it's based on
-    /// and its licence, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
+    /// and its license, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
     static func creditsSection(_ credits: Credits) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
-        // The work it's based on and its licence, each a row; anything else it uses a row of its own, named after it, with
-        // who made it and its licence when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
+        // The work it's based on and its license, each a row; anything else it uses a row of its own, named after it, with
+        // who made it and its license when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
         // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
         // by their labels.
         var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from"]
@@ -375,7 +375,7 @@ enum AppInfoView {
             }
             var label = source.name
             while !labels.insert(label).inserted { label += " " }
-            let license = source.license.map { $0.hasPrefix("LicenseRef-") ? nil : $0 } ?? "no licence"
+            let license = source.license.map { $0.hasPrefix("LicenseRef-") ? nil : $0 } ?? "no license"
             rows.append(SidebarInfoRow(label: label, value: [source.author, license].compactMap { $0 }.joined(separator: " · ")))
         }
         if !credits.generated.isEmpty {

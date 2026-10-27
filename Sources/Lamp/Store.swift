@@ -2344,7 +2344,7 @@ final class Store: ObservableObject {
     /// show what Lamp already knows (`showKnownDevices`).
     ///
     /// `everything` is for where the person is looking at what's on the network (Your Devices, Add a New Device,
-    /// `network_devices`): it also sweeps this Mac's subnet, reads the neighbour table and browses every Bonjour service
+    /// `network_devices`): it also sweeps this Mac's subnet, reads the neighbor table and browses every Bonjour service
     /// (`HomeNetwork.look`), for the hosts nothing of Lamp's knows. Any other look leaves the last of those as they are.
     func refreshDevices(everything: Bool = false) {
         guard !lookingForDevices else { lookAgain = true; lookAgainEverywhere = lookAgainEverywhere || everything; return }

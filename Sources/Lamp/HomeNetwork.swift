@@ -5,7 +5,7 @@ import dnssd
 /// Everything on the person's home network, one record per address, for when the person is looking for devices (Your
 /// Devices, Add a New Device, `network_devices`): never at launch or on a timer. SSDP and the integrations find what
 /// Lamp can work with; this finds the rest, so the list can say what else is there and the agent can work out what
-/// each one is. It only reads: one small datagram to each address of this Mac's own subnet, so the Mac's neighbour
+/// each one is. It only reads: one small datagram to each address of this Mac's own subnet, so the Mac's neighbor
 /// table fills (a phone that ignores everything else still answers the Mac's ARP), that table, the maker of each
 /// hardware address from the IEEE's registry (`Vendors`), and every Bonjour service on the network. Nothing is kept on
 /// disk: the names a network holds are often people's ("…'s iPhone"), so they're shown on this Mac and told to the
@@ -13,7 +13,7 @@ import dnssd
 struct NetworkHost: Hashable, Identifiable {
     var id: String { address }
     let address: String
-    /// Its hardware address, "38:b4:d3:31:25:e0", from this Mac's neighbour table.
+    /// Its hardware address, "38:b4:d3:31:25:e0", from this Mac's neighbor table.
     var mac: String?
     /// The maker of its network hardware, from the address's prefix ("Espressif", "BSH Hausgeräte").
     var vendor: String?
@@ -112,7 +112,7 @@ enum HomeNetwork {
         var swept: Subnet?
     }
 
-    /// Sweeps this Mac's subnet, browses Bonjour meanwhile, then reads the neighbour table. Sends nothing anywhere else.
+    /// Sweeps this Mac's subnet, browses Bonjour meanwhile, then reads the neighbor table. Sends nothing anywhere else.
     static func look() async -> Look {
         async let services = Bonjour.everything()
         let subnet = Subnet.current()
@@ -158,7 +158,7 @@ enum HomeNetwork {
     }
 
     /// Whether this Mac is still on the network a whole look swept: the same subnet, and the same router at its gateway.
-    /// The hosts of the last whole look still at their address now, by the neighbour table (read, nothing sent): one
+    /// The hosts of the last whole look still at their address now, by the neighbor table (read, nothing sent): one
     /// gone, or another device at its address, is left out.
     static func stillHere(_ hosts: [NetworkHost]) -> [NetworkHost] {
         let table = Neighbours.table()
@@ -380,12 +380,12 @@ struct Subnet: Hashable {
     }
 }
 
-/// One datagram to each address of the subnet, so the Mac asks who has it (ARP) and its neighbour table fills. The
+/// One datagram to each address of the subnet, so the Mac asks who has it (ARP) and its neighbor table fills. The
 /// datagram is one byte to the discard port (9), which nothing answers; it's sent a few addresses at a time, paced.
 enum Sweep {
     static let batch = 16
     static let pause: Duration = .milliseconds(25)
-    /// How long the neighbours have to answer the Mac's ARP after the last datagram.
+    /// How long the neighbors have to answer the Mac's ARP after the last datagram.
     static let settle: Duration = .milliseconds(1500)
 
     static func run(_ subnet: Subnet) async {
@@ -414,12 +414,12 @@ enum Sweep {
     }
 }
 
-// MARK: - The neighbour table
+// MARK: - The neighbor table
 
-/// This Mac's neighbour table and default route, read from the kernel's routing table (what `arp -a` and `route` read),
+/// This Mac's neighbor table and default route, read from the kernel's routing table (what `arp -a` and `route` read),
 /// with no program run and nothing sent.
 enum Neighbours {
-    /// Each neighbour's IPv4 address and hardware address, for those that answered; never multicast or broadcast.
+    /// Each neighbor's IPv4 address and hardware address, for those that answered; never multicast or broadcast.
     static func table() -> [String: String] {
         var table: [String: String] = [:]
         for route in routes(flags: 0x400 /* RTF_LLINFO */) {
@@ -447,7 +447,7 @@ enum Neighbours {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, flags]
         var size = 0
         guard sysctl(&mib, 6, nil, &size, nil, 0) == 0, size > 0 else { return [] }
-        size += size / 4   // room for a neighbour added between the two calls
+        size += size / 4   // room for a neighbor added between the two calls
         var buffer = [UInt8](repeating: 0, count: size)
         guard sysctl(&mib, 6, &buffer, &size, nil, 0) == 0 else { return [] }
         var routes: [Route] = []

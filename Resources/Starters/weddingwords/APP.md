@@ -2,7 +2,7 @@ Kind: dashboard
 Look: an Italian wedding's stationery. Cream paper, maiolica-blue ink, hand-drawn lemons washed in yellow, a
 script for the words a card would write by hand ("save the date", "a tavola", "il brindisi"), all in `Look.swift`;
 the warm, slightly funny tone, Marco's mother as the one the AI plays, the toast, and the champagne glasses icon.
-Another place or occasion gets colours, drawings and words of its own.
+Another place or occasion gets colors, drawings and words of its own.
 
 # Wedding Words
 
@@ -35,7 +35,7 @@ model not to claim it heard an accent.
 
 - `App.swift`: the window and the Settings scene; one `WeddingCoach` shared by both.
 - `ContentView.swift`: the sidebar and the home page (countdown, milestones, today's phrase).
-- `Look.swift`: the colours (`Look.paper`, `card`, `ink`, `lemon`, `wash`, each with a dark version), the script
+- `Look.swift`: the colors (`Look.paper`, `card`, `ink`, `lemon`, `wash`, each with a dark version), the script
   and serif type, `Engraved` capitals, `invitationCard`, `PageHeading`, and the drawings, made in code:
   `LemonBranch`, `LemonMark` and `LemonScore`, `MaiolicaTile`, `MaiolicaPlate`, `LemonRule`.
 - `Coach.swift`: `WeddingState` (everything kept), `WeddingCoach` (milestones, scores, the weakest one, the daily
@@ -67,5 +67,5 @@ weakest milestone.
   headline words in `ContentView.home`, and who the AI plays in `TableTalk.ask`.
 - How hard the coach is: the scoring and correction instructions in the prompts.
 - Notification wording and rhythm: `WeddingCoach.scheduleNotifications`.
-- The look: `Look.swift`. The colours are at its top; the lemons and leaves are drawn by `Sketch` (another fruit
+- The look: `Look.swift`. The colors are at its top; the lemons and leaves are drawn by `Sketch` (another fruit
   or flower is a new outline there), and the script face is `Look.script`.

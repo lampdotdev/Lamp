@@ -2,7 +2,7 @@ import AppKit
 // swift scripts/phone-frame.swift <out.png> <deviceHeight> <screenCornerFraction> <shot.png>...
 // For the website's carousel (see RELEASING.md).
 // Each screenshot (simctl --mask alpha) gets a black bezel and a soft shadow; devices sit side by side,
-// centred on a transparent 2304×1664 canvas like the Mac slides.
+// centered on a transparent 2304×1664 canvas like the Mac slides.
 let args = Array(CommandLine.arguments.dropFirst())
 let out = args[0], deviceHeight = CGFloat(Double(args[1])!), cornerFraction = CGFloat(Double(args[2])!)
 let shots = args.dropFirst(3).map { NSImage(contentsOfFile: $0)! }

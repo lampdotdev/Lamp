@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Getting ready to put games on an Xbox: one window, like Android's (`AndroidSetup`), with the one download Lamp makes
-/// (`WindowsTools.install`). Microsoft's part can't be passed on, so the person reads and accepts its licence here
+/// (`WindowsTools.install`). Microsoft's part can't be passed on, so the person reads and accepts its license here
 /// before anything of Microsoft's is fetched; the box is theirs to check, and nothing downloads until they do. What
 /// asked for the tools (the first time a game goes on an Xbox) waits until they're here, or is let go when the window
 /// closes. The preview on the Mac never needs it.

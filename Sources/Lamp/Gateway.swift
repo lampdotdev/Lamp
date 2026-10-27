@@ -448,7 +448,7 @@ enum AppAI {
     }
 
     /// The OpenRouter model for those tasks when a key is all there is. Chosen by running one task in TextEdit
-    /// (a new document, a sentence, its font and colour) through Lamp's own loop: this one did it in 38
+    /// (a new document, a sentence, its font and color) through Lamp's own loop: this one did it in 38
     /// seconds for 5 cents, Opus in 93 seconds for 96 cents, Gemini Flash in 156 seconds for 22 cents, and
     /// Sonnet, the text default, not at all. It isn't one of the models offered for apps' text.
     static let computerOpenRouterModel = (id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol")

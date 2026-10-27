@@ -1,5 +1,5 @@
 Kind: tool.
-Look: system colours, a sunburst drawn in Canvas, each first-ring slice hued by its place round the circle (blue to pink, `SunburstLayout.color`), lighter in outer rings, white gaps between slices; the free-space slice eases in and out (`freeAmount`, Animatable); it zooms in when going into a folder and out when coming back (`DiskModel.zoomingIn`).
+Look: system colors, a sunburst drawn in Canvas, each first-ring slice hued by its place round the circle (blue to pink, `SunburstLayout.color`), lighter in outer rings, white gaps between slices; the free-space slice eases in and out (`freeAmount`, Animatable); it zooms in when going into a folder and out when coming back (`DiskModel.zoomingIn`).
 
 # Disk Map
 
@@ -38,8 +38,8 @@ added with Add Folder… or by dropping them on it), then the shown folder's con
   scanner: `getattrlistbulk`, which hands back many entries' name, type, device and allocated size in one call
   (a few times faster than `readdir` and a `stat` per file), parallel for the upper levels, staying on one volume,
   skipping links, counting allocated size.
-- `Sources/Sunburst.swift`: `SunburstLayout` (slices per ring, colours) and `SunburstView` (Canvas drawing,
-  hover, clicks, labels along the first ring, the centre, the free-space slice), `formatBytes`.
+- `Sources/Sunburst.swift`: `SunburstLayout` (slices per ring, colors) and `SunburstView` (Canvas drawing,
+  hover, clicks, labels along the first ring, the center, the free-space slice), `formatBytes`.
 - `Sources/ContentView.swift`: the two panes, the left one (`SidebarView`, `LocationRow`), the toolbar and the Move to Trash confirmation.
 - `Sources/ItemList.swift`: the contents list in the left pane (rows captured as `ItemRow` so it updates while measuring).
 - `Sources/BrowserView.swift`: the path bar, the chart with the status line, the right-click menu (`ItemMenu`, for one item or several),
@@ -52,7 +52,7 @@ the gap) and "measuresAsking". Nothing else is kept.
 
 ## Easy to change
 
-- Colours of the slices: `SunburstLayout.color` and the hue range in `add`. Rings: `SunburstLayout.rings`; thinnest slice drawn: `minSpan`.
+- Colors of the slices: `SunburstLayout.color` and the hue range in `add`. Rings: `SunburstLayout.rings`; thinnest slice drawn: `minSpan`.
 - What counts as a small file: `Scanner.smallFileLimit`. What the scanner records per file (dates, kinds): more
   attributes asked of `getattrlistbulk` in `Scanner.scanFolder` (read back in the order of their bits, ATTR_CMN_ERROR first), kept on
   `Node`.
