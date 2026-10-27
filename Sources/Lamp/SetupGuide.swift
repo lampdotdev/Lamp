@@ -495,7 +495,7 @@ final class GuidedSetup: ObservableObject {
                 return
             } catch where sending && step.changes > 1 {
                 guard !Task.isCancelled else { return }
-                return unsure(step, connection: connection)
+                return unsure(step, error: error, connection: connection)
             } catch SetupConnectionError.failed(let words) where step.continueOnFailure {
                 guard !Task.isCancelled else { return }
                 // The device couldn't do this one (a store that isn't there): the person is told how to do it
@@ -589,10 +589,15 @@ final class GuidedSetup: ObservableObject {
     }
 
     /// A request of several changes failed part way: Lamp can't tell which reached the device, so it sends none of them
-    /// again. The step goes back to the person, with what it was for, and the setup checks its own step itself.
-    private func unsure(_ step: SetupSteps.Step, connection: SetupConnection) {
+    /// again. The step goes back to the person, with what it was for, and the setup checks its own step itself. A device
+    /// that turned Lamp away says why (its certificate, the sign-in), since that's what the person has to fix.
+    private func unsure(_ step: SetupSteps.Step, error: Error, connection: SetupConnection) {
         if lines.last?.state == .doing { lines.removeLast() }
-        failure = fill(step.failed) ?? "Lamp can't tell how much of that reached \(name), so it won't send it again. Finish this step on \(name) yourself."
+        if case .rejected(let words)? = error as? SetupConnectionError {
+            failure = words
+        } else {
+            failure = fill(step.failed) ?? "Lamp can't tell how much of that reached \(name), so it won't send it again. Finish this step on \(name) yourself."
+        }
         canRetry = false
         ask = nil
         button = nil

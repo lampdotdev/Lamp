@@ -51,6 +51,8 @@ final class DeviceSetupModel: ObservableObject {
     private var watching: Task<Void, Never>?
     /// Counts the watch's stops: a look begun before one is dropped when it answers.
     private var looks = 0
+    /// Counts the checks the person asked for, so one that's dropped puts the card back only while it's the latest.
+    private var asked = 0
     /// What asked for the setup, run once the device is ready.
     var then: (() -> Void)?
     /// Do It for Me: the steps of the skill that says it does the device's next step, run for this device. While they
@@ -196,6 +198,20 @@ final class DeviceSetupModel: ObservableObject {
         }
     }
 
+    /// The setup window closed: its watch and guide stop, and a command waiting for the person's yes is turned down.
+    /// Opened again, it watches afresh (`DeviceSetupWindow.show`).
+    func windowClosed() {
+        stopWatching()
+        // A check the person asked for is dropped with the window (`looks`): the card goes back to its button now,
+        // rather than checking for good, and a check asked for later is its own.
+        if state == .checking {
+            state = .idle
+            asked += 1
+        }
+        guided.cancel()
+        if approval != nil { decide(false) }
+    }
+
     func stopWatching() {
         watching?.cancel()
         watching = nil
@@ -205,12 +221,21 @@ final class DeviceSetupModel: ObservableObject {
     private func checkOnce(_ step: Integration.Step, runner: IntegrationRunner, keepWatching: Bool, quietly: Bool = false) async {
         // The watch's look every few seconds leaves the card as it is: only a check the person asked for shows as
         // checking, so nothing on the card blinks while they're at the device.
-        if !quietly, !state.isBusy || state == .checking { state = .checking }
+        var mine: Int?
+        if !quietly, !state.isBusy || state == .checking {
+            state = .checking
+            asked += 1
+            mine = asked
+        }
         let look = looks
         let (ok, why, read, failed) = await runner.check(step)
-        // A look the watch began before it was stopped (a guide took the device) answers too late to count: the step
-        // may have moved on, and what it found isn't the guide's to have overwritten.
-        guard next == step, look == looks, !guided.holdsDevice else { return }
+        // A look the watch began before it was stopped (a guide took the device, the window closed) answers too late to
+        // count: the step may have moved on, and what it found isn't the guide's to have overwritten. A check the person
+        // asked for that's still showing as checking goes back to the step's button; a newer one is left alone.
+        guard next == step, look == looks, !guided.holdsDevice else {
+            if let mine, mine == asked, state == .checking { state = .idle }
+            return
+        }
         if ok {
             runner.passed(step, read: read)
             passed = Integrations.kept(device.id)?.passed ?? passed + [step.id]
@@ -306,9 +331,7 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
     static func close(_ deviceID: String) { windows[deviceID]?.close() }
 
     func windowWillClose(_ notification: Notification) {
-        model.stopWatching()
-        model.guided.cancel()
-        if model.approval != nil { model.decide(false) }
+        model.windowClosed()
         Self.windows[model.device.id] = nil
         Self.delegates[model.device.id] = nil
     }

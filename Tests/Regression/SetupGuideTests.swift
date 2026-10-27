@@ -493,6 +493,65 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertTrue(guided.handedBack)
     }
 
+    /// A check the person asked for, under way when the window closes: its answer is dropped, and the card isn't left
+    /// checking, so the step's button works when the window opens again; a check asked for after that is left alone.
+    func testACheckDroppedByClosingTheWindowDoesntLeaveTheStepBusy() async throws {
+        let integration = try JSONDecoder().decode(Integration.self, from: Data("""
+        {"id": "simulated", "name": "Simulated", "maker": "Lamp", "find": [{"ssdp": "lamp:simulated"}],
+         "identity": {"os": "Simulated OS", "id": {"http": {"port": 8060, "path": "/info"}, "xml": "serial"},
+                      "model": {"http": {"port": 8060, "path": "/info"}, "xml": "model"}},
+         "steps": [{"id": "reachable", "title": "Let Lamp reach it", "check": [{"http": {"port": 8060, "path": "/info"}}]}]}
+        """.utf8))
+        var device = Device(id: "simulated:CLOSE", kind: .other, maker: "Lamp", model: "Simulated", modelID: "SIM-1",
+                            name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
+        device.address = "192.168.1.20"
+        let gate = Gate()
+        // Every check is held until the test lets it go, and then finds the device not ready (nothing is kept).
+        let model = DeviceSetupModel(testing: device, integration: integration, skills: [:]) { _, _, _, _ in
+            await gate.waits()
+            return DeviceHTTP.Answer(status: 503, body: Data())
+        }
+        model.act()
+        try await until { gate.count == 1 }
+        XCTAssertEqual(model.state, .checking)
+        model.windowClosed()
+        model.watch()
+        XCTAssertEqual(model.state, .idle, "the step was left checking after its window closed")
+        // Opened again, the person checks again; the first check's late answer leaves this one as it is.
+        model.act()
+        try await until { gate.count == 2 }
+        gate.open()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.state, .checking, "the dropped check's answer touched the newer one")
+        gate.open()
+        try await until { model.state != .checking }
+        XCTAssertEqual(model.state, .waiting("Waiting for Simulated Device…"))
+    }
+
+    /// Key presses turned away part way through: still sent only once and handed back, with the device's own reason.
+    func testARejectionPartWayThroughKeyPressesSaysWhy() async throws {
+        let steps = try SetupSteps.parse(skill: """
+        ```lamp-setup
+        {"connection": "http", "reach": [{"tcp": 8060}], "steps": [
+          {"do": "request", "doing": "Pressing keys…", "done": "Pressed",
+           "run": [{"http": {"method": "POST", "port": 8060, "path": "/keypress/Home"}}, {"http": {"method": "POST", "port": 8060, "path": "/keypress/Up"}}],
+           "unless": [{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "developer-enabled", "equals": "true"}]},
+          {"do": "handoff", "ask": "Finish on the device."}
+        ]}
+        ```
+        """).get()
+        let device = RejectingSequenceDevice()
+        let guided = GuidedSetup()
+        guided.start(steps, name: "Den TV", step: "developer-mode", connect: { device }, onFinish: {})
+        await guided.finished()
+        XCTAssertEqual(guided.failure, "The device rejected the sign-in. Check the user name and password, then try again.")
+        XCTAssertFalse(guided.state.canRetry)
+        XCTAssertTrue(guided.handedBack)
+        guided.retry()
+        await guided.finished()
+        XCTAssertEqual(device.sequences, 1)
+    }
+
     private func assertThrows(_ expected: SetupConnectionError, _ body: () async throws -> Void, line: UInt = #line) async {
         do { try await body(); XCTFail("didn't throw", line: line) } catch { XCTAssertEqual(error as? SetupConnectionError, expected, line: line) }
     }
@@ -516,18 +575,33 @@ private final class SequenceDevice: SetupConnection {
     func close() {}
 }
 
-/// Holds the first request until opened.
+/// Holds requests until opened, in the order they came: the first only (`firstWaits`), or each (`waits`).
 @MainActor
 private final class Gate {
-    private(set) var waiting = false
-    private var held: CheckedContinuation<Void, Never>?
+    private var held: [CheckedContinuation<Void, Never>] = []
+    private(set) var count = 0
     private var first = true
+    var waiting: Bool { !held.isEmpty }
     func firstWaits() async {
         guard first else { return }
         first = false
-        await withCheckedContinuation { held = $0; waiting = true }
+        await waits()
     }
-    func open() { held?.resume(); held = nil }
+    func waits() async { await withCheckedContinuation { held.append($0); count += 1 } }
+    /// Lets the oldest held request go on.
+    func open() { if !held.isEmpty { held.removeFirst().resume() } }
+}
+
+/// An HTTP-like device whose key presses are turned away part way through: the device answers, but not to Lamp.
+private final class RejectingSequenceDevice: SetupConnection {
+    var sequences = 0
+    func connect() async throws {}
+    func send(_ step: SetupSteps.Step) async throws {
+        sequences += 1
+        throw SetupConnectionError.rejected("The device rejected the sign-in. Check the user name and password, then try again.")
+    }
+    func holds(_ check: SetupSteps.Check) async throws -> Bool { false }
+    func close() {}
 }
 
 private final class FakeDevice: SocketSetupConnection {
