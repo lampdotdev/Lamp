@@ -97,7 +97,8 @@ or offered at all (`Starters.runsHere`), and it's offered once the Mac is update
 Starters not on the desk (never added, or deleted since; `Starters.missing`) are offered at its end as one dashed
 tile, Starter wishes (`MoreFromLamp`): up to four of their icons and how many there are, and a click lists them with
 an Add each. Add puts that one back (`Store.put(starter:)`, through `Store.add(starter:)`, the one way a starter is put
-on the desk, which the first launch uses too), saved and built out of sight like the first launch's. The tile goes
+on the desk, which the first launch uses too), saved and built out of sight like the first launch's, and opens it
+at once as a click on the desk would (`open(fromDesk:)`: one not built yet spins and opens when it's ready). The tile goes
 once every one is there.
 
 **A starter added or changed in how it looks ships a new preview.png in the same change** (`StartersTests` fails
