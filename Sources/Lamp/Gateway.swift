@@ -926,7 +926,8 @@ enum AppAI {
             case "noul":
                 answers[id] = object(["noul": number])
             case "choice":
-                let options = ((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
+                // Each option once: an app may list one twice, and the schema's properties can't hold it twice.
+                let options = Set((question["criteria"] as? [String: Any]).map { Array($0.keys) } ?? (question["criteria"] as? [String] ?? [])).sorted()
                 answers[id] = object(["choice": ["type": "string", "enum": options] as [String: Any],
                                       "probabilities": object(Dictionary(uniqueKeysWithValues: options.map { ($0, number as Any) })),
                                       "confidence": number])
