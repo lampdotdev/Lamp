@@ -122,7 +122,7 @@ public struct RepoCard: View {
                     if let credit { row("Credit", credit) }
                     if let openInLamp {
                         row("Remix link", openInLamp)
-                    } else if stage == .ready || isDone {
+                    } else if stage == .ready {
                         // Without a Share Link the README offers the shared file and Lamp's site; the link is what lets someone without Lamp make it.
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("Remix link").foregroundStyle(.secondary).frame(width: 92, alignment: .leading)

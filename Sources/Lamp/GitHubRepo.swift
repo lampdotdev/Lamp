@@ -85,9 +85,11 @@ enum GitHubRepo {
             try fm.copyItem(at: project.dir.appendingPathComponent(path), to: to)
         }
         try Data(".build/\nbuild/\n.lamp/\n".utf8).write(to: tree.appendingPathComponent(".gitignore"))
+        // The file's credits.json ends the chain with this wish, for whoever opens it; the README is this wish's own, so it
+        // names what the wish was remixed from, not itself.
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
-        try Data(readme(for: project, credits: chain, open: open).utf8).write(to: tree.appendingPathComponent("README.md"))
+        try Data(readme(for: project, credits: credits, open: open).utf8).write(to: tree.appendingPathComponent("README.md"))
 
         let leaks = ShareCheck.secrets(in: tree, known: Sharing.knownSecrets(project))
         if let first = leaks.first {
