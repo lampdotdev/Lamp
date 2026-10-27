@@ -43,16 +43,15 @@ between buttons, links, fields and anything marked `data-focus`, to the nearest 
 has it, so most apps need no key code of their own:
 
 - give the first thing to focus with `Lamp.focus(...)` when a screen opens;
-- make what has focus unmistakable (a large outline, or a scale and a glow), and lay things out so focus moves the way
-  the layout looks;
 - Back goes back a screen with `Lamp.onBack(fn)` (return true when handled); unhandled on the first screen, it leaves
   the app;
 - other keys (play, pause, the colour keys, numbers) come by name through `Lamp.onKey(fn)`;
 - keep the arrows inside a dialog with `Lamp.scope` while it's open; a game takes them over with
   `Lamp.navigation = false`.
 
-Typing with a remote is slow: avoid text fields unless the app needs them. On a phone or a Mac the same page is
-tapped or clicked, so a page that works with the remote works there too.
+On a phone or a Mac the same page is tapped or clicked, so a page that works with the remote works there too. How to
+design for the remote and for a TV across the room (what focus looks like, layouts it moves through, typing) is the
+tv-design skill's.
 
 ## What each device's browser runs
 
@@ -61,14 +60,13 @@ tapped or clicked, so a page that works with the remote works there too.
 | Mac, iPhone, iPad | Lamp's app around the page (WebKit) | Modern; LampNative reaches the person's things |
 | Android phone or tablet | Lamp's app around the page (Android's WebView, Chromium) | Modern on recent devices |
 | Samsung and LG TVs | The TV's own browser engine | Chromium 108 to 132 on recent models, older on older ones; WebGL 2 not on every Samsung |
+| Android TV, Google TV, Fire TV | Lamp's app around the page (Android's WebView), on the TV's home screen | As on Android phones |
 | Xbox | Lamp's web host (Edge WebView2) | Modern |
 
-An Apple TV, an Android TV, an Apple Watch and a Vision Pro have no host for a page: an app for one of them is native.
+An Apple TV, an Apple Watch and a Vision Pro have no host for a page: an app for one of them is native.
 
-A TV keeps the page's syntax to what its older browsers run, as the TV rules say when the app is for one. A page at
-1920x1080 with a margin of about 5% on every side (a TV may cut its edges) is shown well everywhere: Lamp scales it to
-each screen. What's seen from across a room (large type, high contrast, one or two numbers that matter) is the
-app-kinds skill's dashboard.
+A TV keeps the page's syntax to what its older browsers run, as the TV rules say when the app is for one. Designing
+what a TV shows, seen from across a room, is the tv-design skill's.
 
 ## Speed
 

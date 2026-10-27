@@ -156,11 +156,20 @@ enum GameKit {
     static let webFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampWebGame.swift"),
                                                                  ("\(webFolder)/lamp-game.js", "web/lamp-game.js")])
 
-    /// The bridge between a page and the app around it (a three.js game's and a screen's: LampAI through the app, and
-    /// `LampNative` calls of the device), Lamp's; and where those calls are answered, the app's own Swift, written only
+    /// Lamp's common host for a page on Apple's devices (a three.js game's and a screen's: serving and showing it, LampAI
+    /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
     /// when the app has none yet.
     static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first
     static let native: (path: String, text: String)? = read([("Sources/Native.swift", "apple/Native.swift")]).first
+
+    /// Lamp's common app around a page (apple/LampWebApp.swift), for a page served at `scheme`://app/, which is where
+    /// what it saves is kept, laid out at `canvas` and zoomed to the window, or at the window's own size without one.
+    static func webApp(scheme: String, canvas: (width: Int, height: Int)?) -> String? {
+        read([("", "apple/LampWebApp.swift")]).first.map { file in
+            file.text.replacingOccurrences(of: "{{PAGE_SCHEME}}", with: scheme)
+                .replacingOccurrences(of: "{{PAGE_CANVAS}}", with: canvas.map { "CGSize(width: \($0.width), height: \($0.height))" } ?? "nil")
+        }
+    }
 
     /// Writes the page's bridge, and the app's `Native` when it has none.
     static func writePage(for project: LampProject) throws {

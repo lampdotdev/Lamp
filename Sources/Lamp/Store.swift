@@ -5185,8 +5185,8 @@ final class Store: ObservableObject {
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
         if GameKit.isGame(project) { return await useOnGame(project, actions: actions) }
-        // A screen is used in the TV preview, wherever it's shown.
-        if ScreenKit.isScreen(project) { return await useOnTV(project, actions: actions, json: json) }
+        // A page with the remote's focus and keys (a screen) is used in the TV preview, wherever it's shown.
+        if project.platform.target.looksInTVPreview { return await useOnTV(project, actions: actions, json: json) }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
@@ -5799,6 +5799,7 @@ final class Store: ObservableObject {
         var said: [String] = []
         if kind.addsPlaces, let now = current(part) { said.append(kind == .screen ? Agent.Rules.screenPlaces(now) : Agent.Rules.gamePlaces(now)) }
         said.append(watchLine(for: part, wanted: target.rows.contains("watch"), had: false))
+        said.append(Skills.forNewDevices(target.rows))
         said.append("Done: the wish has \(Parts.name(of: part)) now, in \(part.dir.lastPathComponent)/, with its scaffold written. Build it in this "
                     + "request, made to work with the rest. `look_at_app` and `use_app` reach it with `part` \"\(Parts.word(of: part))\". "
                     + "Its rules, for the files in \(part.dir.lastPathComponent)/:\n\n"
@@ -5812,6 +5813,7 @@ final class Store: ObservableObject {
         let kind = target.kind
         // Asked before the change: once an app isn't for the iPhone, its Watch/ no longer counts as a watch app.
         let hadWatch = current(app).map(Template.hasWatch) ?? false
+        let hadRows = current(app).map { AppKinds.member(of: $0).target.rows } ?? []
         // What this says replaces what Lamp still had to tell about the app since it made it from the wish's list.
         if let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }) { Parts.forgetMade(about: app, in: wish) }
         var said: [String] = []
@@ -5836,6 +5838,7 @@ final class Store: ObservableObject {
             said.append("Try On opens it on the \(family.name) simulator from now on.")
         }
         if let now = current(app) { said.append(watchLine(for: now, wanted: target.rows.contains("watch"), had: hadWatch)) }
+        said.append(Skills.forNewDevices(target.rows, had: hadRows))
         said = said.filter { !$0.isEmpty }
         return (200, ["text": said.isEmpty ? "It's already made for these devices." : said.joined(separator: "\n\n")])
     }
@@ -7563,8 +7566,8 @@ final class Store: ObservableObject {
         // A device app's preview may show an older build than the last one: a look on the device builds without opening it here.
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
-            // A screen not pointed at a TV opens in the preview by itself; its install is its Mac or iPad app's.
-            let problem = ScreenKit.isScreen(project) && !project.onTV ? await openDevicePreview(project, folder: TVTemplate.webFolder)
+            // A page looked at in the preview (a screen) not pointed at a TV opens there by itself; its install is its Mac or iPad app's.
+            let problem = project.platform.target.looksInTVPreview && !project.onTV ? await openDevicePreview(project, folder: TVTemplate.webFolder)
                 : await install(project, inFront: false, early: true)
             turn.look.installed[project.id] = true
             if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
@@ -7694,7 +7697,7 @@ final class Store: ObservableObject {
 
     /// What a preview on this Mac stands in for, as the person calls it: a TV, or a device app's device ("Xbox").
     private func previewDevice(_ project: LampProject) -> String {
-        project.onTV || ScreenKit.isScreen(project) ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
+        project.onTV || project.platform.target.looksInTVPreview ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
     }
 
     /// Ends every app's run on a device (and this app's anywhere): what replaces it there is something else, so a look
@@ -10159,7 +10162,7 @@ final class Store: ObservableObject {
             let host = (request.headers["host"] ?? "127.0.0.1").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
             // A screen is looked at in the TV preview wherever it's shown: only when it's shown there is the preview the
             // screen among the wish's apps, so it never takes the place of the screen's own window or TV.
-            if request.fromPreview, project.platform == .screen, !(project.onTV && project.device == nil) {
+            if request.fromPreview, project.platform.target.looksInTVPreview, !(project.onTV && project.device == nil) {
                 return (409, ["error": "This is Lamp's preview of the screen: the screen where it's shown is the one the wish's other apps reach."])
             }
             return await WishRooms.answer(for: project, wish: wish, apps: apps, host: host, preview: request.fromPreview)
@@ -10948,9 +10951,10 @@ final class Store: ObservableObject {
         try? await writeOwnFiles(project, all: false)
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
         if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
-        // A screen is looked at in the TV preview, wherever it's shown, with no build of the app around it. Pointed at a TV
-        // it goes the TV app's way below, which stages the page before it opens the preview.
-        if ScreenKit.isScreen(project), !onDevice, !project.onTV {
+        // A page with the remote's focus and keys (a screen) is looked at in the TV preview, wherever it's shown, with no
+        // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
+        // the preview.
+        if project.platform.target.looksInTVPreview, !onDevice, !project.onTV {
             return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen)
         }
         let changed = Runtime.sourcesChanged(project)

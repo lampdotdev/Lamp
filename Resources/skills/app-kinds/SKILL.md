@@ -1,6 +1,6 @@
 ---
 name: app-kinds
-description: How each kind of app (tool, companion, collection, dashboard, canvas, utility, game or toy) is laid out, looks and talks on a Mac, on iPhone and on a screen seen from across a room, and on a Mac where the app works - a window, or a utility that works where the person already is. Read before writing a new app or changing an app's kind.
+description: How each kind of app (tool, companion, collection, dashboard, canvas, utility, game or toy) is laid out, looks and talks on a Mac and on iPhone, and on a Mac where the app works - a window, or a utility that works where the person already is. Read before writing a new app or changing an app's kind.
 ---
 
 # The kinds of app
@@ -78,11 +78,8 @@ values labeled where they matter. Color means good, warning or bad and nothing e
 behind the main number is the only decoration. No art. On a Mac, when it's checked often, a menu bar icon shows the
 main number.
 
-A dashboard shown full screen, glanced at from across a room (a family calendar or chore board on a TV, a photo frame,
-a scoreboard, the day's weather on an iPad on a stand), reads at a distance: a fixed 1920x1080 page that never scrolls
-as a whole, a margin of about 5% on every side a TV may cut off, text at least 28 px and headings much larger, high
-contrast on a dark background by default, and few animations. Nothing on it needs a pointer: whatever can be chosen is
-reached with arrows and OK (the web-app skill), and most of it needs nothing chosen at all.
+A dashboard on a TV, glanced at from across a room (a family calendar or chore board, a scoreboard, a photo frame), is
+designed as the tv-design skill says.
 
 ## Canvas
 

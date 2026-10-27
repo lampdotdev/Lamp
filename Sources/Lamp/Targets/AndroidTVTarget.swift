@@ -172,16 +172,14 @@ extension Agent.Rules {
     """
 
     static let androidTVDesign = """
-    - It's watched from across the room on a 1920x1080 TV (960x540dp) and driven by the remote's D-pad: up, down, \
-    left, right, select, back and home; there's no touch and no pointer. Use Compose for TV (androidx.tv.material3, \
-    already in app/build.gradle.kts) for what the person moves between: its Button, Card, ListItem, Carousel, Tab \
-    and NavigationDrawer show focus by themselves, and anything else clickable needs a focused look of its own \
-    (larger, a border or a glow). Something has focus as each screen opens (a FocusRequester on its first item), \
-    focus moves where the eye expects, and Back goes back a screen and leaves the app from the first. Keep everything \
-    48dp in from the sides and 27dp from the top and bottom, body text 16sp and up with larger titles, a dark \
-    background, and rows or a grid of large cards rather than long lists. Typing on a TV is slow: offer choices, and \
-    a text field brings up the TV's keyboard. Keep the manifest's leanback launcher and banner, and never edit \
-    app/src/main/res/drawable-xhdpi/lamp_banner.png, which Lamp draws from the app's icon.
+    - It's on a 1920x1080 TV (960x540dp), driven by the remote's D-pad: up, down, left, right, select, back and home; \
+    there's no touch and no pointer. Use Compose for TV (androidx.tv.material3, already in app/build.gradle.kts) for \
+    what the person moves between: its Button, Card, ListItem, Carousel, Tab and NavigationDrawer show focus by \
+    themselves, and anything else clickable needs a focused look of its own. Give each screen's first item focus as it \
+    opens (a FocusRequester), and Back goes back a screen and leaves the app from the first. A text field brings up \
+    the TV's keyboard. How to design what a TV shows, seen from across the room, is the tv-design skill's: open it \
+    with `read_skill` before designing or restyling the app's screens. Keep the manifest's leanback launcher and \
+    banner, and never edit app/src/main/res/drawable-xhdpi/lamp_banner.png, which Lamp draws from the app's icon.
     """
 
     static let androidTVTry = """

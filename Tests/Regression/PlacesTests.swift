@@ -28,6 +28,18 @@ final class PlacesTests: XCTestCase {
         }
     }
 
+    /// Designing for a TV is offered by the rows that are TVs, built in or an integration's (the Roku's JSON), once
+    /// however many of them an app is on; a row that isn't a TV offers nothing for it.
+    func testTheTVRowsOfferTheirDesignSkill() throws {
+        let roku = try XCTUnwrap(Places.row(for: try shipped("roku").integration))
+        let table = Places.builtIn + [roku]
+        XCTAssertEqual(Places.skills(rows: ["tv", "android-tv", "apple-tv", "roku"], in: table), ["tv-design"])
+        for rows: Set<String> in [["mac"], ["iphone", "android"], ["watch"], ["vision-pro"]] {
+            XCTAssertEqual(Places.skills(rows: rows, in: table), [], "\(rows) isn't a TV")
+        }
+        XCTAssertEqual(Set(table.filter { !$0.skills.isEmpty }.map(\.id)), ["apple-tv", "android-tv", "tv", "roku"])
+    }
+
     func testEveryMakeARowDoesntClaimIsRefusedWithItsReason() {
         for place in Places.builtIn {
             for make in Place.Make.allCases {

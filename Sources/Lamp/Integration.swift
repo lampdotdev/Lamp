@@ -29,6 +29,9 @@ struct Integration: Codable, Hashable {
     /// What the device runs, in a plain sentence the person would follow ("Roku channels written in BrightScript…"),
     /// which Lamp gives as the reason when something it can't run is asked of it (`Places.row`), in place of its own.
     var runs: String?
+    /// Lamp's skills for designing what the device shows, offered to every app on it as a built-in row offers its own
+    /// (`Place.skills`): ["tv-design"] for a device watched from across a room.
+    var skills: [String]?
     /// What a game's page on the device is told about its input, as a built-in row says it (`Place.Input`): its
     /// keyboard's names for keys, the controller that comes with it, the one layout its controllers have. `{}` is a web
     /// view with a PC keyboard and no controller of its own; left out, Lamp can't put a game's page there.
@@ -505,7 +508,7 @@ enum IntegrationCheck {
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
                                "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
-            "kinds": .map, "supports": .array(.leaf), "runs": .leaf, "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
+            "kinds": .map, "supports": .array(.leaf), "runs": .leaf, "skills": .array(.leaf), "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
         ])
     }
 
@@ -712,6 +715,9 @@ enum IntegrationCheck {
         }
         if let runs = integration.runs, runs.trimmed.isEmpty || runs.count > 300 {
             say("runs says what the device runs in one plain sentence, 300 characters at most.")
+        }
+        for skill in integration.skills ?? [] where Skills.all[skill] == nil {
+            say("skills: \"\(skill)\" isn't one of Lamp's skills (\(Skills.all.keys.sorted().joined(separator: ", "))).")
         }
         if let input = integration.input, let problem = Controllers.problem(in: input) { say(problem) }
         if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
