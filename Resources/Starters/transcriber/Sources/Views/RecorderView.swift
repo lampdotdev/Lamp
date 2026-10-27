@@ -189,11 +189,16 @@ private struct LiveTranscript: View {
 /// macOS 26's Liquid Glass, clear with a light gray tint so the disc reads on white, in a circle; a frosted material on earlier macOS.
 private struct LiquidGlass: ViewModifier {
     func body(content: Content) -> some View {
+        // Glass is named only in Xcode 26's SDK: an older toolchain builds the frosted material on every macOS.
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             content.glassEffect(.clear.tint(Color.gray.opacity(0.22)).interactive(), in: Circle())
         } else {
             content.background(.ultraThinMaterial, in: Circle())
         }
+        #else
+        content.background(.ultraThinMaterial, in: Circle())
+        #endif
     }
 }
 
