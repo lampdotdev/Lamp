@@ -52,6 +52,9 @@ struct Place: Equatable {
     /// Lamp's skills for designing what the device shows, offered to every app on it, whatever it is and however it's
     /// made (`Places.skills`): a TV's across-the-room design is the TV rows'.
     var skills: [String] = []
+    /// Whether its `noWeb` is a gap of Lamp's own (the device shows pages, but Lamp has no host for one there yet) rather
+    /// than something the device can't do, so "not yet" is never said as "can't".
+    var noHostYet = false
     /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
     /// own does; nil when Lamp doesn't know, which a page there can't be built without.
     let input: Input?
@@ -119,7 +122,8 @@ enum Places {
               skills: ["tv-design"], input: nil),
         Place(id: "vision-pro", name: "Vision Pro", words: ["vision-pro"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Vision Pro simulator on this Mac; Lamp can't put it on a real Vision Pro yet"),
-              noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version", wordFamilies: ["vision-pro": .vision], input: .apple),
+              noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version", wordFamilies: ["vision-pro": .vision],
+              noHostYet: true, input: .apple),
         Place(id: "android", name: "Android phone / tablet", words: ["android"], destination: .android,
               web: .init(host: .androidWebView, reach: "in an app of Lamp's around the page, the same way as a native app"),
               native: .init(code: .android, reach: "in the Android emulator on this Mac, or on the person's own device with USB debugging, one device at a time"),
@@ -142,18 +146,9 @@ enum Places {
         return places + [.device]
     }()
 
-    /// The words a page's places are given by (`make_app_for`'s `places`, the naming call's), each with where it opens:
-    /// every row with a host, and the Xbox's words, whose integration hosts it.
-    static var pageWords: [String: Destination] {
-        var words: [String: Destination] = [:]
-        for place in builtIn where place.web != nil { for word in place.words { words[word] = place.destination } }
-        for word in [GameKit.xbox, GameKit.xboxKind, "xbox"] { words[word] = .device }
-        return words
-    }
-
-    /// The screens across a room that have no web engine Lamp can reach (the Apple TV, and a device such as a Roku whose
-    /// integration makes only native apps), said where a page's places are offered: a page there needs a native version.
-    static var noPage: [Place] { all.filter { !$0.runs(.web) && ($0.id == "apple-tv" || $0.destination == .device) } }
+    /// The rows a page can't go to, each with its own reason (`noWeb`, `noHostYet`): every row with no web host, built in
+    /// or an integration's, said where a page's places are offered.
+    static func noPage(in table: [Place] = all) -> [Place] { table.filter { !$0.runs(.web) } }
 
     /// Every row: the built-in devices, then each integration that declares apps, as its JSON says.
     static var all: [Place] { builtIn + Integrations.all().compactMap(row(for:)) }

@@ -103,12 +103,13 @@ struct TryOnMenu: Equatable {
         var missing = Store.placesToAdd(project).map { place in
             Item(id: "add:\(place.rawValue)", title: "\(verb) on \(place == .ios ? "iPhone and iPad" : GameKit.placeName(place)) Too", symbol: "plus")
         }
-        // Where a page can't go, said where the places are: the Apple TV, and a device of the person's with no web engine.
-        if !missing.isEmpty {
-            let mine = Set(store.devices.compactMap(\.integration))
-            missing += Places.noPage.filter { $0.destination != .device || mine.contains($0.id) }.map { place in
-                Item(id: "native:\(place.id)", title: "\(place.name): Needs a Native Version", symbol: "nosign", disabled: true)
-            }
+        // Where a page can't go, said under the places it can, whether or not one is left to add: every built-in row
+        // with no host, and an integration's only once the person has one of its devices. Lamp's own gap is told apart
+        // from the device's.
+        let mine = Set(store.devices.compactMap(\.integration))
+        missing += Places.noPage().filter { Places.builtIn.contains($0) || mine.contains($0.id) }.map { place in
+            Item(id: "native:\(place.id)", title: "\(place.name): \(place.noHostYet ? "Native Only for Now" : "Needs a Native Version")",
+                 symbol: "nosign", disabled: true)
         }
         if !missing.isEmpty { sections.append(Section(title: nil, items: missing)) }
         sections.append(look(store))

@@ -109,6 +109,37 @@ final class PlacesTests: XCTestCase {
         XCTAssertTrue(roku.noWeb?.contains("BrightScript") == true)
     }
 
+    /// Every row with no web host is one a page can't go to, each said with its own reason, whichever device it is: none
+    /// is singled out by name, and a gap of Lamp's own is told apart from what the device itself can't do.
+    func testEveryRowWithNoHostIsOneAPageCantGoTo() throws {
+        let roku = try XCTUnwrap(Places.row(for: try shipped("roku").integration))
+        let table = Places.builtIn + [roku]
+        let none = Places.noPage(in: table)
+        XCTAssertEqual(none.map(\.id), table.filter { !$0.runs(.web) }.map(\.id))
+        XCTAssertEqual(Set(none.map(\.id)), ["watch", "apple-tv", "vision-pro", "roku"])
+        for place in none { XCTAssertNotNil(place.noWeb, "\(place.name) says why") }
+        XCTAssertEqual(none.filter(\.noHostYet).map(\.id), ["vision-pro"], "only Vision Pro's is Lamp's own gap")
+    }
+
+    /// A page for several devices goes onto an integration only through the integration Lamp packages pages for: another
+    /// integration's device that runs web apps isn't taken for an Xbox.
+    func testAPageForSeveralDevicesIsntSentToAnotherIntegrationsHost() throws {
+        let xbox = try XCTUnwrap(Places.row(for: try shipped("xbox-one").integration))
+        let frame = Place(id: "test-frame", name: "Test Frame", words: ["test-frame"], destination: .device,
+                          web: .init(host: .integration, reach: "Lamp installs it"), native: nil, input: .generic)
+        let table = Places.builtIn + [xbox, frame]
+        let both = ["mac", "test-frame"].compactMap { DeviceWord($0, in: table) }
+        guard case .failure(let refusal) = AppKinds.target(.web, on: both, in: table) else {
+            return XCTFail("a page for the Mac and Test Frame was made as one for the Xbox")
+        }
+        XCTAssertTrue(refusal.reason.contains("Test Frame"), refusal.reason)
+        // Alone, it's the integration's own web app; with the Xbox, a page that goes there.
+        guard case .success(let own) = AppKinds.target(.web, on: [try XCTUnwrap(DeviceWord("test-frame", in: table))], in: table) else { return XCTFail() }
+        XCTAssertEqual(own.integration, "test-frame")
+        guard case .success(let page) = AppKinds.target(.web, on: ["mac", "xbox-one"].compactMap { DeviceWord($0, in: table) }, in: table) else { return XCTFail() }
+        XCTAssertEqual(page.places, [.mac, .device])
+    }
+
     func testAnIntegrationCantSupportWhatItHasNoFilesFor() throws {
         let (data, _) = try shipped("roku")
         XCTAssertTrue(IntegrationCheck.problems(data, submitted: false).filter { $0.hasPrefix("supports") }.isEmpty)
