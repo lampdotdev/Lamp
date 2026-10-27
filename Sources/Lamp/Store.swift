@@ -6502,7 +6502,9 @@ final class Store: ObservableObject {
             for app in apps(of: wish) {
                 for place in placesToUpdate(of: app) where placesFailed[app.id + "/" + place.rawValue] != Runtime.fingerprint(app.at(place)) {
                     guard placesIdle(wish), let now = current(app) else { stopped = true; break }
-                    if await reaches(now, place) { await update(now, at: place) } else { unreached[app.id, default: []].insert(place) }
+                    // An install that didn't get there (the simulator shut down meanwhile, adb refused it) counts as out of reach.
+                    if await reaches(now, place), await update(now, at: place) { continue }
+                    unreached[app.id, default: []].insert(place)
                 }
                 if stopped { break }
             }
@@ -6527,7 +6529,12 @@ final class Store: ObservableObject {
     /// A place never built for has nothing old on it.
     private func placesToUpdate(of app: LampProject) -> [Destination] {
         guard app.platform.choosesPlace, app.holdsApp, app.scaffolded else { return [] }
-        return app.openPlaces.filter { $0 != app.destination && Runtime.builtFingerprint(app.at($0)) != nil && Runtime.behind(app, at: $0) }
+        // A build from before each place had its own record has only its built copy to show for it.
+        return app.openPlaces.filter { place in
+            let there = app.at(place)
+            return place != app.destination && (Runtime.builtFingerprint(there) != nil || FileManager.default.fileExists(atPath: there.builtURL.path))
+                && Runtime.behind(app, at: place)
+        }
     }
 
     private func refreshPlacesBehind(_ wish: LampProject) {
@@ -6558,8 +6565,9 @@ final class Store: ObservableObject {
 
     /// One place built and put where it's reached, under a hold of its own, saying nothing in the chat but what went wrong
     /// in putting it there.
-    private func update(_ app: LampProject, at place: Destination) async {
-        guard let turn = begin(app) else { return }
+    /// False when the build was made but didn't reach the place: its record is taken back, so the place stays behind.
+    @discardableResult private func update(_ app: LampProject, at place: Destination) async -> Bool {
+        guard let turn = begin(app) else { return true }
         turn.updatingPlaces = true
         defer { finish(app) }
         let there = app.at(place)
@@ -6568,17 +6576,28 @@ final class Store: ObservableObject {
         // (`placesIdle`, and a request sent ends it first), so taking them away again takes nobody else's.
         let before = Set(chats.flatMap { (logs[$0] ?? []).map(\.id) })
         let fingerprint = Runtime.fingerprint(there)
+        var reached = true
+        // A failed build's details stay, under Agent Details, saying why the place is still behind.
+        var built = true
         if await build(there, inPlace: false) == nil, !turn.stopped {
             placesFailed[app.id + "/" + place.rawValue] = nil
-            _ = await install(there, inFront: false, saysReady: false, quiet: true)
+            let problem = await install(there, inFront: false, saysReady: false, quiet: true)
+            // The record says what the place has, not what was built for it: a build that didn't reach it is taken back.
+            if !turn.stopped, problem != nil || turn.didNotOpen {
+                Runtime.forgetBuilt(there)
+                reached = false
+            }
         } else if !turn.stopped {
             placesFailed[app.id + "/" + place.rawValue] = fingerprint
+            built = false
         }
         for chat in chats {
-            guard let lines = logs[chat], lines.contains(where: { !before.contains($0.id) && ($0.kind == .status || $0.kind == .detail) }) else { continue }
-            logs[chat] = lines.filter { before.contains($0.id) || ($0.kind != .status && $0.kind != .detail) }
+            func routine(_ line: LogLine) -> Bool { line.kind == .status || line.kind == .detail && built }
+            guard let lines = logs[chat], lines.contains(where: { !before.contains($0.id) && routine($0) }) else { continue }
+            logs[chat] = lines.filter { before.contains($0.id) || !routine($0) }
             if let owner = projects.first(where: { $0.id == chat }) { saveChat(owner) }
         }
+        return reached
     }
 
     /// The one line on the places a change couldn't reach, said when they differ from what the chat was last told.
