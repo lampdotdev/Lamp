@@ -185,14 +185,14 @@ enum Parts {
     static func isOwnFolder(_ folder: String) -> Bool { Set(Targets.all.compactMap(\.part).flatMap(\.folders)).contains(folder) }
 
     /// Whether a Lamp from before this one reads this wish's apps as they are: each in one of its kind's own folders, at
-    /// most one of each code but devices' apps. One that wouldn't is laid out as `NewerWish.layout` says, so that Lamp
-    /// leaves it alone rather than taking it for one app, or a draft to write a new app into.
+    /// most one of each family, a device's app among them (that Lamp kept one per wish and lists them by family). One
+    /// that wouldn't is laid out as `NewerWish.layout` says, so that Lamp leaves it alone rather than taking it for one
+    /// app, or a draft to write a new app into.
     static func readByEarlierLamp(_ wish: URL) -> Bool {
         var families: Set<String> = []
         for folder in folders(in: wish) {
             guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish), let part = kind.target.part else { return false }
-            if part.folderFor != nil { continue }
-            guard self.folder(folder, canHold: kind), families.insert(part.family).inserted else { return false }
+            guard part.folderFor != nil || self.folder(folder, canHold: kind), families.insert(part.family).inserted else { return false }
         }
         return true
     }
@@ -207,8 +207,7 @@ enum Parts {
         var families: Set<String> = []
         for app in wanted(in: wish, parts: load(wish)) {
             guard let part = app.kind.target.part else { continue }
-            if part.folderFor != nil { continue }
-            if let folder = app.folder, folder != ".", !self.folder(folder, canHold: app.kind) { return false }
+            if let folder = app.folder, folder != ".", part.folderFor == nil, !self.folder(folder, canHold: app.kind) { return false }
             guard families.insert(part.family).inserted else { return false }
         }
         return true
@@ -225,6 +224,17 @@ enum Parts {
         changed.integration = kind.reaches(.device) && !kind.addsPlaces ? integration : nil
         changed.places = kind.addsPlaces ? places : nil
         let peer = WishRooms.peer(changed, in: wish)
+        // An app still to be made counts as the app it will be, in the folder kept for it.
+        let waiting = Parts.waiting(in: wish, parts: apps.filter(\.isPart)).compactMap { entry -> LampProject? in
+            let folder = entry.folder ?? self.folder(waiting: entry, in: wish.dir)
+            guard folder != "." else { return nil }
+            var app = LampProject(id: id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: wish.dir.appendingPathComponent(folder),
+                                  platform: entry.kind, partOf: wish.id)
+            app.places = entry.places
+            app.integration = entry.integration
+            return app
+        }
+        let apps = apps + waiting
         return apps.first { other in
             other.id != app.id && (WishRooms.peer(other, in: wish) == peer
                                    || other.hasMac && changed.hasMac && other.installedURL == changed.installedURL)

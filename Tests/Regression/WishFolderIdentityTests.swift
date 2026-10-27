@@ -185,6 +185,10 @@ final class WishFolderIdentityTests: XCTestCase {
         // An app waiting in its kind's own folder beside apps of other families is one an earlier Lamp reads.
         wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .android, needs: "Android Studio", folder: "Android")]
         XCTAssertNil(Template.layout(of: wish))
+        // Two device apps, which an earlier Lamp lists by family as one.
+        wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .device, needs: "a TV", integration: "roku", folder: "Roku"),
+                     WishApp(kind: .device, needs: "a TV", integration: "roku", folder: "Roku2")]
+        XCTAssertEqual(Template.layout(of: wish), NewerWish.layout)
     }
 
     /// The app in the wish's own folder made a Mac app beside a Mac app in Mac/ would be "mac" and installed under the
@@ -196,6 +200,10 @@ final class WishFolderIdentityTests: XCTestCase {
         XCTAssertEqual(Parts.clash(changing: wish, to: .mac, integration: nil, places: nil, among: apps, in: wish)?.id, mac.id)
         XCTAssertNil(Parts.clash(changing: wish, to: .android, integration: nil, places: nil, among: apps, in: wish))
         XCTAssertNil(Parts.clash(changing: other, to: .universal, integration: nil, places: nil, among: apps, in: wish))
+        // An app still to be made in Mac/ is the app it will be.
+        var waiting = wish
+        waiting.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .mac, needs: "Xcode", folder: "Mac")]
+        XCTAssertEqual(Parts.clash(changing: waiting, to: .mac, integration: nil, places: nil, among: [waiting], in: waiting)?.dir.lastPathComponent, "Mac")
     }
 
     /// Only folders of the wish's own are its apps': a link to another folder holding an app, and the source folders of

@@ -3342,7 +3342,7 @@ final class Store: ObservableObject {
     func makeWaitingParts(of wish: LampProject) async {
         guard let wish = current(wish), !wish.isPart else { return }
         for app in Parts.waiting(in: wish, parts: parts(of: wish)) where app.needs == nil {
-            let said = await add(AppKinds.member(waiting: app).target, to: wish, folder: app.folder)
+            let said = await add(AppKinds.member(waiting: app).target, to: wish, folder: app.folder, claimsKept: app.folder == nil)
             if let part = parts(of: current(wish) ?? wish).first(where: { Parts.lists(app, $0) }) {
                 Parts.rememberMade(said, about: part, in: wish)
             }
@@ -5828,9 +5828,15 @@ final class Store: ObservableObject {
     /// A new app of the wish, in a folder of its own, made as the plan says. Its folder is found and kept for it first
     /// (`folder`, else `Parts.newFolder`), so an app this Mac can't build yet is the same app, with the same name among
     /// the wish's apps, whenever it's made, and another asked for meanwhile gets a folder of its own.
-    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil) async -> [String] {
+    /// `claimsKept`: it's an app from a list from before folders were kept, so files an earlier Lamp kept for its family
+    /// alone are its.
+    private func add(_ target: AppTarget, to wish: LampProject, folder kept: String? = nil, claimsKept: Bool = false) async -> [String] {
         let kind = target.kind
-        let folder = kept ?? Parts.newFolder(Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish)
+        // An app on a list from before folders were kept, whose shared files an earlier Lamp kept under its family alone,
+        // gets the folder those files had where it's free, and the files are moved to it, so they still go in.
+        let legacy = claimsKept ? Sharing.keptFolder(in: wish.dir, for: kind) : nil
+        let folder = kept ?? Parts.newFolder(legacy ?? Parts.folder(for: kind, integration: kind == .device ? target.integration : nil), in: current(wish) ?? wish)
+        if claimsKept { Sharing.claimKept(in: wish.dir, for: kind, slot: folder) }
         var waiting = target.waiting
         waiting.folder = folder
         let (part, problem, setup) = await addPart(kind, to: wish, family: target.family, folder: folder, places: target.places,

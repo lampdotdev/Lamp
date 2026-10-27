@@ -658,6 +658,15 @@ enum Sharing {
         return folder
     }
 
+    /// Moves what an earlier Lamp kept for this kind's family alone to the place of the folder now kept for its app, so a
+    /// retry finds it there whatever that folder is called. Nothing when nothing's kept so, or the slot has its own.
+    static func claimKept(in wish: URL, for kind: Platform, slot: String) {
+        let family = waitingFolder(in: wish, for: kind), own = waitingFolder(in: wish, for: kind, slot: slot)
+        let fm = FileManager.default
+        guard family != own, fm.fileExists(atPath: family.appendingPathComponent("lamp-part.json").path), !fm.fileExists(atPath: own.path) else { return }
+        try? fm.moveItem(at: family, to: own)
+    }
+
     static func forgetKept(in wish: URL, for kind: Platform, slot: String? = nil) {
         try? FileManager.default.removeItem(at: keptPlace(in: wish, for: kind, slot: slot))
     }
