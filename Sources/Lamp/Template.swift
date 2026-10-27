@@ -7238,13 +7238,10 @@ enum Template {
             let seen = capturable()
             let shots = front.map { seen ? shot(of: $0) : nil }
             let previewShot = previewWindow.flatMap { seen ? shot(of: $0) : nil }
-            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name.
-            let text = folder.appendingPathComponent("screen.txt")
-            if let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item)) {
-                try? words.write(to: text, atomically: true, encoding: .utf8)
-            } else {
-                try? FileManager.default.removeItem(at: text)
-            }
+            // The front window as text, beside its picture (LampScreen), for the builder to read and act on by name: read
+            // now, with the window as it's pictured, and written with the pictures, so a later snapshot's text never
+            // lands beside this one's pictures.
+            let words = LampScreen.text(for: LampDriver.elements(in: windows[0]).map(\.item))
             // The window server's pictures are taken off the main thread: the first after a build has the system check
             // the app's signature before it answers, which can take seconds, and the app froze (a spinning cursor) meanwhile.
             pictures.async {
@@ -7260,6 +7257,12 @@ enum Template {
                             } else {
                                 previewTaken = false
                             }
+                        }
+                        let text = folder.appendingPathComponent("screen.txt")
+                        if let words {
+                            try? words.write(to: text, atomically: true, encoding: .utf8)
+                        } else {
+                            try? FileManager.default.removeItem(at: text)
                         }
                         for index in 0..<3 {
                             let url = folder.appendingPathComponent(index == 0 ? "screenshot.png" : "screenshot-\(index + 1).png")
