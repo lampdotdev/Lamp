@@ -1,5 +1,6 @@
-// One Home HQ on every screen: the copies of this screen (the Mac, the kitchen tablet, the TV, the photo frame) keep the
-// family's own data the same through Lamp's shared collections (LampStore.shared in Web/lamp.js), merged item by item,
+// One Home HQ on every screen: the copies of this screen (the Mac, the kitchen tablet, the TV, the photo frame), and any
+// other app of the wish (an iPhone app beside it, say), keep the family's own data the same through the wish's own
+// shared collections (LampStore.shared(name, { wish: true }) in Web/lamp.js), merged item by item,
 // so two devices changing different things never lose either. What's here is only the family's own: the examples are
 // made on each device and never shared, so a copy opened for the first time can't put them over real data.
 //
@@ -12,7 +13,7 @@
 //   favs                photos marked as favorites
 //   calendar, photos    what a copy that can read them (LampNative: the Mac, an iPhone or iPad) publishes for the
 //                       others: the chosen calendars' events, and the album's pictures (their bytes in
-//                       LampStore.sharedFiles('photos'))
+//                       LampStore.sharedFiles('photos', { wish: true }))
 //
 // The views change DATA as they always have and say so with App.emit('data'); this works out which items changed and
 // puts just those. What another copy changes comes in through onChange and is drawn again.
@@ -22,9 +23,9 @@
   if (!window.LampStore || !LampStore.shared) return;
   var S = {};
   ['people', 'chores', 'groceries', 'events', 'ticks', 'stars', 'settings', 'favs', 'calendar', 'photos'].forEach(function (n) {
-    S[n] = LampStore.shared(n);
+    S[n] = LampStore.shared(n, { wish: true });
   });
-  var pictures = LampStore.sharedFiles('photos');
+  var pictures = LampStore.sharedFiles('photos', { wish: true });
   var known = {};          // collection -> id -> the item as JSON, as last put here or taken from another copy
   var taking = false;
 
