@@ -70,7 +70,7 @@ certificates and keys, what was typed for it and its approvals (`Integrations.fo
 
 An integration whose `app` is declared makes its device a kind of app (`Platform.device`, with the integration's id in
 `LampProject.integration` and meta.json; DeviceApps.swift), with no Swift of its own for that device: Roku, the first,
-is all data. The naming call is told each such integration as a device a wish may name (`AppName.deviceKinds`), and
+is all data. Each such integration is a row of the table of devices, which the naming call names devices by, and
 `make_app_for` takes its id alone. The scaffold is the declared `files` (`DeviceApps.fill`, `{{NAME}}` filled, and
 `.lamp/device-app` marking it made), the builder's rules are the declared `rules` inside the usual ones
 (`Agent.devicePrompt`), and the build is the declared `package` command run in the app's sandbox like every build, its
@@ -89,7 +89,9 @@ chat instead. `look_at_app` is the bridge's `look` picture with what the device 
 `bridge.keys`, each pressed with `use`), `type` (the bridge's `type`, once per character as `{text}`, which in a path
 Lamp encodes down to letters and digits; a Roku's `Lit_`) and `wait`. Stop runs the bridge's `stop` (a Roku's
 `/exit-app/dev`), and presses `home` when there's none or the device refuses it. Lamp can't tell whether the
-app is still open on the device, so Play always puts it there again. Such apps aren't shared yet. Lamp ships the Roku's
+app is still open on the device, so Play always puts it there again. Such an app can be one of a wish's apps, in a
+folder named for its device (Roku/, the "Wishes" guide), where all of this works in its folder as it does at a wish's
+root. Such apps aren't shared yet. Lamp ships the Roku's
 integration (`Resources/Devices/roku.json`): a channel in BrightScript with Lamp's building blocks, its icon and splash
 screens, and a bridge whose `remove` is the developer installer's Delete, so deleting a wish takes the channel off the
 Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere` removes the device's one copy, and only
@@ -144,8 +146,45 @@ integration share: an integration's `find.ssdp` target and the description its i
 answers (`Scan.answers(for:)`, `describedAt`), never a search of their own, the integrations look at once, and a
 device's answers are waited for a few seconds (`Integrations.lookTimeout`), not an install's thirty. A recheck of the
 phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
-Settings → Your Devices lists what integrations find (`Integrations.devices`, after the kits' own) and the devices
-that answered Lamp's SSDP scan that nothing knows, read from their UPnP description (routers left out). Set Up… on one
+**The whole network** (`HomeNetwork`, HomeNetwork.swift). Where the person is looking at what's there (Your Devices,
+Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
+SSDP and the integrations don't, and every other look leaves the last of it as it was. Never at launch or on a timer.
+It sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet, sixteen at a time,
+paced, so the Mac asks who has each one and its neighbour table fills (`Sweep`); no nmap, raw socket or admin. The
+subnet is the default route's interface's (`Subnet.current`): the whole of a /24 or smaller, and on a bigger network
+only the 256 addresses around this Mac's (`Subnet.widest`), which the agent is told. Then it reads the neighbour table
+and the default route from the kernel's routing table by sysctl (`Neighbours`, what `arp -a` reads; macOS hides the
+table from a process without Local Network access, `swift test`'s helper included, so check it in Lamp or with
+`xctest` from a shell), marks a locally administered hardware address as randomised (`Vendors.isRandomised`: a phone's,
+tablet's or computer's private Wi‑Fi address), and looks up each other one's maker by its prefix (`Vendors`, the
+longest of nine, seven and six hex digits) in `Resources/vendors.xz`, made from the IEEE's MA-L, MA-M and MA-S
+registries by `scripts/update-vendors.sh` (names with their legal endings taken off, xz-compressed, about 375 KB; not
+nmap's list, which is under nmap's licence). Meanwhile it browses every Bonjour type (`_services._dns-sd._udp`), then
+each type's services, resolving each with `dns_sd` to its host, IPv4 address and the record's model keys only
+(`Bonjour`, `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no connection to the
+device. Each address is one `NetworkHost`: hardware address and maker, randomised or not, this Mac, the gateway, its
+Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
+Hosts are kept in memory only (`Store.hosts`).
+
+Settings → Your Devices lists, in this order (`HomeNetwork.List`): what Lamp makes apps for or controls (the kits'
+devices, what integrations find, `Integrations.devices`, and what a starter controls, `HomeNetwork.controlled`, a Sonos
+now, "Apps can control it"); then the devices Lamp could learn, with "Lamp could learn to work with this" and Set Up…:
+those that answered the SSDP scan that nothing knows, read from their UPnP description (routers left out), and hosts
+that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `device(for:)`, named by maker and model,
+never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this
+Mac's other addresses, printers, Apple's devices (by the model their records give, `NetworkHost.apple`: an app can't
+reach them the way it reaches others), appliances and hosts that said nothing but their maker, each with the names it
+goes by on this Mac only and Set Up… (but the router and this Mac; a device found this way is known by
+`found:<address>#<hardware address>`, read from the neighbour table as Set Up… is pressed, so a conversation is reopened,
+linked to an integration's device and given a host's facts only for the same hardware, and one that began without a
+hardware address never is), whose setup note asks the agent to work out what it
+is and to say so plainly when nothing on the home network can reach it; and the hosts with randomised addresses that
+said nothing, counted and never named, since nothing tells one such phone from another. Bonjour also browses a few types
+whether the meta-query names them or not (`Bonjour.alwaysBrowse`: Cast, printers, a gadget's web page), since a
+sleeping device often misses that one answer. What each host is isn't worked out by a list of rules: `network_devices`
+gives the agent every host's facts (`HomeNetwork.facts`), with a few anchors (the gateway is the router, this Mac, a
+randomised address is a phone, tablet or computer, counted), and the agent labels them when the person asks, or when
+Set Up… asks it to learn one (`deviceSetupNote` adds that host's facts). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
 per device, whose first request is `Agent.deviceSetupRequest` (what the device said of itself). That conversation is
 no wish (`LampProject.deviceSetup`, `makesNoApp`): it's never on the desk, never named, scaffolded, built or saved, and
@@ -240,12 +279,36 @@ reads the person's devices starts from what's there, not from a question about w
 fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first; a look still going after 45 s is said to be, never answered with the last one's list) and
 answers with each device on the network: its name, maker, model and address, what it said to the SSDP search, and what
 Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing). Phones,
-the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits and the
-integrations, so a device that answers only Bonjour isn't in it, and the answer says so. Kept devices not on the network
+the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits, the
+integrations and the whole network (above): after the devices come every other host's facts, how much of the subnet
+was swept, how to tell what each is, and that the names a network holds are often people's, to be said to the person
+and never written into an app, its files or an integration. Kept devices not on the network
 now are listed apart. When macOS keeps Lamp off the local network (`Store.localNetworkRefused`), the
 answer says where the person turns it on rather than that nothing answered. A rule in `deviceRules` names the tool, the
 `device-control` skill (also named with the request once an app's code reaches devices, `Skills.applying`) and
 `device_permission`, which the agent asks with before changing a real device ("Approvals and privacy"); it's every engine's (pi's extension, the MCP endpoint, `/agent/network`).
+
+## Pages and their hosts
+
+A three.js game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
+`Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (`LampPage.swift` with `LampWebGame.swift` or
+`LampScreen.swift`); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
+and Fire TV (`GameAndroid`, in the page's `Lamp/Android`); the TV's own browser on a Samsung or LG (`TVs`); and the
+integration's own host on the Xbox (WebView2, `WebHost`). A row of the table of devices names its host in its `web`;
+the kinds' places are `Places.pagePlaces`, the destinations of every row with one, and the words they're given by are
+`Places.pageWords`, so a host added to a row is a place for every page at once, with no list per kind to keep. The
+Android host is one APK for every Android place: its manifest has the phone's launcher and the TV's (the leanback
+launcher, a banner Lamp draws from the icon, no touch screen required), Android TV is its own `Destination`
+(`.androidTV`, opened in Lamp's TV emulator: `Destination.emulator`), and the remote reaches the page as a TV's does: the
+d-pad, OK and play/pause are a game's controller (`lampNativePad`), and for a screen Back, the media, colour and channel
+keys are sent as the key codes Web/lamp.js reads on a TV, with Back on the first view leaving the app
+(`lampAndroid.exit`). The page's LampAI is answered by the Android app as the Mac's app answers it: Web/lamp.js
+finds `lampGatewayHost` (an AndroidX WebKit message listener for the page's own origin in its main frame,
+`LampPageGateway.kt`), and the app sends LampAI's routes to Lamp with the token Lamp wrote into its storage at install
+(`Adb.tellApp`), so the page never holds it. On a Samsung or LG, `lamp-game.js` reads the remote's numbered keys as the keyboard's. A device
+with no web engine Lamp reaches (the Apple TV, a Roku) has no host: a page asked to go there is refused with the row's
+reason, that it needs a native version (`AppKinds.target`, `Places.refusal`), and Try On lists it under the places to
+add as "Needs a Native Version" (`Places.noPage`); `make_app_for`'s table says the same (`Places.forAgent`).
 
 ## Games
 
@@ -254,19 +317,20 @@ call gives "game" for a 3D game or one played with a controller or on an Xbox (a
 tapping stays a Mac or iPhone app), with the devices it's played on beside the Mac in its `places`. Its home is the Mac, and the places it's
 played are given one at a time (`LampProject.places`, kept in meta.json; `Target.startsAt`, `Platform.addsPlaces`,
 `LampProject.openPlaces`, which `destination` goes by): the Mac always, an iPhone and iPad (`.ios`, the simulator or
-the person's own, whose Xcode project carries `Web/`), Android (`.android`: Lamp's Android app in the game's
+the person's own, whose Xcode project carries `Web/`), a Samsung or LG TV (`.tv`, staged and installed as a TV app's page
+is), Android and Android TV (`.android`, `.androidTV`: Lamp's Android app in the game's
 `Lamp/Android` (never `Android/`, which `Parts.folders` reads as a wish's Android app), `GameAndroid`, built and installed
 like any Android app of Lamp's: a WebView serving `Web/` from the app's assets, the controllers read natively and handed
 to the page's `lampNativePad`; in a wish of several apps it also carries Lamp's Kotlin blocks and answers the page's
 `Lamp.wish` with `LampWish`, the "Wishes" guide) and the Xbox (`.device`, with `LampProject.integration` "xbox-one", the integration's web
 app, installed as a game). `make_app_for` on
-a game sets its places (`Store.kindPlaces`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
-given as its entry's `places` in `make_app_for`'s `apps`, and a list without the game takes it away like any app of a wish (the "Wishes" guide; a game
+a game sets its places (`Store.change`, `setPlaces`: every place listed, the Mac kept) and never changes its kind,
+given as `make_app_for`'s `devices` with `made` "web", and only `remove_app` takes it away (the "Wishes" guide; a game
 can also be added beside a wish's other apps, in Game/);
-Try On's "Play on iPhone and iPad Too" and "Play on Xbox Too" do the same (`addPlace`), and a place given is where it
+Try On's "Play on … Too" for each place it hasn't got does the same (`addPlace`), and a place given is where it
 opens next. What each place needs (Xcode and a simulator, the console's tools and the Xbox) is asked for when the game
-first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (an Xbox
-One's, a mid-range Android phone's, an iPhone's, an Xbox Series S's, an Xbox Series X's, this Mac's) ride with the request in
+first goes there, never up front: the kind's `setup` is `.none`. The places and the budget of the slowest (a Samsung or
+LG TV's, a Google TV streamer's, an Xbox One's, a mid-range Android phone's, an iPhone's, an Xbox Series S's, an Xbox Series X's, this Mac's) ride with the request in
 the device line (`DeviceNote`, `Rules.gamePlaces`), not in the prompt, since a place may be given at any time. The Xbox's is
 the console chosen under Try On, else the slowest of the person's (`GameKit.xboxModel`), as Device Portal names it: the
 integration's description says Xbox One on every console, so its `device-portal` step is the model step (`"model": true`,
@@ -372,16 +436,16 @@ such build).
 
 A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is something shown full screen and glanced at
 from across a room: a family calendar, a photo album, a dashboard, a clock. It's a page in `Web/` with the TV app's
-`Web/lamp.js` (`TVTemplate`), and it takes places as a game does (`addsPlaces`, the Mac always first). **The page fills
+`Web/lamp.js` (`TVTemplate`), and it takes places as a game does (`addsPlaces`, the Mac always first, then any place a page goes). **The page fills
 whatever it's shown on**, as a web page fills a browser: a TV, a Mac window of any size, a photo frame, an iPad either
 way up, a phone. It's laid out as a responsive page (`Rules.screenDesign`: grid and flexbox, sizes from the screen,
 media queries for its shape; the scaffold, `ScreenKit.indexHTML` and `styleCSS`, sizes everything from `--u`, a
 hundredth of the screen's shorter side), and every place hands it the real viewport: on the Mac, the iPhone and the
 iPad it's a Swift app of Lamp's own around the page (`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift,
-so it has the wand and the chat beside it), whose web view takes the window's size; on Android (a tablet, or a photo
-frame the person has reached with adb) it's the Android app of Lamp's own a three.js game has there (`GameAndroid`),
-which for a screen isn't a game to the system, lays the page out at its viewport and keeps the display awake
-(`screenActivity`, `screenManifest`), with Try On's emulator and devices as any Android app's; on a Samsung or LG TV
+so it has the wand and the chat beside it), whose web view takes the window's size; on Android and Android TV (a
+tablet, a photo frame the person has reached with adb, a Google TV) it's Lamp's Android app around the page, as a
+game's is (`GameAndroid`), which for a screen isn't a game to the system, lays the page out at its viewport and keeps
+the display awake (`screenActivity`, `screenManifest`), with Try On's emulators and devices as any Android app's; on a Samsung or LG TV
 it goes as a TV app does, and on the Xbox as the integration's web app. A screen made before screens filled any shape
 says `width=1920` in its viewport meta (`ScreenKit.isFixed`, and `LampScreenPage.fixed` in the app around it): it's
 still laid out at 1920x1080 and zoomed whole, and the rule tells the agent to change its viewport first when it's to
@@ -409,7 +473,7 @@ which has every building block in LampSupport.swift: the person's mail, calendar
 So a game made of the person's unanswered emails, or a family calendar on the kitchen iPad, is a game or a screen and not
 a Mac app. `Native.swift` is the app's own: Lamp writes it only when it isn't there and takes it away with the kind only
 while it's still Lamp's scaffold, and the two Package.swift files compile all of `Sources/`. Everywhere else (a TV, the
-Xbox, Android, Lamp's preview of either) `LampNative.available` is false and its calls reject, so the rule
+Xbox, Android, Lamp's preview of either; LampAI still answers on Android and the Xbox) `LampNative.available` is false and its calls reject, so the rule
 (`Rules.pageNative`) has the page show example content then, which also keeps the game preview's replay exact; a C++
 game has no such bridge. In a wish of several apps the same app answers the page's `Lamp.wish` with its own `LampWish`
 (`LampPageWish`, written only for such an app, as `LampWish` is), so a game or a screen on the Mac, the iPhone or the

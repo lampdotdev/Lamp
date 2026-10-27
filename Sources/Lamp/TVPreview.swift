@@ -52,10 +52,16 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     @discardableResult
     static func forget(_ project: LampProject) -> Task<Void, Never> {
         close(project)
-        let store = store(for: project.instance)
+        return forget(instance: project.instance)
+    }
+
+    /// What an app saved in the preview, by its instance: one already closed, or gone from Lamp's lists.
+    @discardableResult
+    static func forget(instance: String) -> Task<Void, Never> {
+        let store = store(for: instance)
         return Task { @MainActor in
             guard let store else { return }
-            if await !PreviewStores.remove(store) { print("TV preview: what \(project.name) saved couldn't be removed") }
+            if await !PreviewStores.remove(store) { print("TV preview: what \(instance) saved couldn't be removed") }
         }
     }
 

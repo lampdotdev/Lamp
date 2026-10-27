@@ -1,6 +1,6 @@
 ---
 name: app-kinds
-description: How each kind of app (tool, companion, collection, dashboard, canvas, utility, game or toy) is laid out, looks and talks on a Mac and on iPhone, and on a Mac where the app works - a window, or a utility that works where the person already is. Read before writing a new app or changing an app's kind.
+description: How each kind of app (tool, companion, collection, dashboard, canvas, utility, game or toy) is laid out, looks and talks on a Mac, on iPhone and on a screen seen from across a room, and on a Mac where the app works - a window, or a utility that works where the person already is. Read before writing a new app or changing an app's kind.
 ---
 
 # The kinds of app
@@ -78,6 +78,12 @@ values labeled where they matter. Color means good, warning or bad and nothing e
 behind the main number is the only decoration. No art. On a Mac, when it's checked often, a menu bar icon shows the
 main number.
 
+A dashboard shown full screen, glanced at from across a room (a family calendar or chore board on a TV, a photo frame,
+a scoreboard, the day's weather on an iPad on a stand), reads at a distance: a fixed 1920x1080 page that never scrolls
+as a whole, a margin of about 5% on every side a TV may cut off, text at least 28 px and headings much larger, high
+contrast on a dark background by default, and few animations. Nothing on it needs a pointer: whatever can be chosen is
+reached with arrows and OK (the web-app skill), and most of it needs nothing chosen at all.
+
 ## Canvas
 
 Drawing, diagrams, layout, long writing: making a thing. A minimal interface with the content front and center.
@@ -108,14 +114,5 @@ something needs the user.
 ## Game or toy
 
 Played rather than used: fully custom, with no standard chrome while playing; pause, settings and scores are standard
-SwiftUI. 2D games as the 2D rule says, 3D ones in a Mac app with the scene-3d skill where it's offered, SwiftUI
-animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with sound
-(and haptics on iPhone). Scores are kept on the device.
-
-Sound: a short effect (under a second) for each thing the player does or meets, and music only when it suits, quiet
-(0.3 to 0.4) under effects at 0.6 to 0.8. Files the person gave go in Assets/ (.wav, .m4a or .mp3) and play with an
-`AVAudioPlayer(contentsOf: LampAssets.url(name)!)` made once and `prepareToPlay()`ed, a few of them for an effect that
-overlaps itself; music is one looping (`numberOfLoops = -1`). With no files, make effects in code: one `AVAudioEngine`
-started at launch with an `AVAudioPlayerNode`, and each effect a few hundredths of a second of a wave written once into
-an `AVAudioPCMBuffer`, with soft ends so it doesn't click. On iPhone set the session to `.ambient`, so the silent switch
-mutes the game and the person's own music keeps playing. Settings or the pause menu turn sound and music on and off.
+and large. SwiftUI animation for the simplest toy. Anything played in real time is a game: open the game skill, which
+has its controls, sound, saves and smoothness for each way it's made.

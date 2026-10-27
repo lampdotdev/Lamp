@@ -26,6 +26,9 @@ struct Integration: Codable, Hashable {
     /// What the device can run, of "web" (a page in a host) and "native" (the device's own code): its row in the table of
     /// devices (`Places`). Unsaid, it's what `app` declares. Each one named must be one its `app` or `kinds` has files for.
     var supports: [String]?
+    /// What the device runs, in a plain sentence the person would follow ("Roku channels written in BrightScript…"),
+    /// which Lamp gives as the reason when something it can't run is asked of it (`Places.row`), in place of its own.
+    var runs: String?
     /// What a game's page on the device is told about its input, as a built-in row says it (`Place.Input`): its
     /// keyboard's names for keys, the controller that comes with it, the one layout its controllers have. `{}` is a web
     /// view with a PC keyboard and no controller of its own; left out, Lamp can't put a game's page there.
@@ -502,7 +505,7 @@ enum IntegrationCheck {
                                "use": .array(action), "logs": .array(action), "stop": .array(action), "log": .array(action), "remove": .array(action), "type": .array(action), "keys": .map,
                                "lacks": .array(.leaf), "known": .object(["how": .leaf, "source": .leaf, "model": .leaf, "version": .leaf])]),
             "app": appKind,
-            "kinds": .map, "supports": .array(.leaf), "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
+            "kinds": .map, "supports": .array(.leaf), "runs": .leaf, "input": .object(["keys": .map, "controller": .leaf, "layout": .leaf]), "certificateRoot": .leaf,
         ])
     }
 
@@ -706,6 +709,9 @@ enum IntegrationCheck {
                     say("supports: \"\(word)\" must be \"web\" or \"native\".")
                 }
             }
+        }
+        if let runs = integration.runs, runs.trimmed.isEmpty || runs.count > 300 {
+            say("runs says what the device runs in one plain sentence, 300 characters at most.")
         }
         if let input = integration.input, let problem = Controllers.problem(in: input) { say(problem) }
         if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {

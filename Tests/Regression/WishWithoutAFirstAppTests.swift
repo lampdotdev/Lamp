@@ -149,7 +149,7 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         XCTAssertTrue(try String(contentsOf: support, encoding: .utf8).contains("MARK: - The wish's other apps"))
 
         let versions = await Versions.list(wish)
-        XCTAssertEqual(versions.map(\.apps), [[.mac, .android], [.mac]])
+        XCTAssertEqual(versions.map { $0.apps?.map(\.kind) }, [[.mac, .android], [.mac]])
         let target = try XCTUnwrap(versions.last)
         let restored = await Versions.restore(wish, to: target, message: "Undid “Put it on my Android phone too”")
         XCTAssertTrue(restored)
@@ -159,7 +159,7 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         XCTAssertFalse(unsaved, "the restore's own version holds everything it wrote")
         // And the Undo's own version carries the list it brought back.
         let after = await Versions.list(wish)
-        XCTAssertEqual(after.first?.apps, [.mac])
+        XCTAssertEqual(after.first?.apps?.map(\.kind), [.mac])
     }
 
     /// The same, as a turn that only asks for the Android app leaves it: no file changes, only the list. That's a version
@@ -267,7 +267,7 @@ final class WishListThroughTheStoreTests: XCTestCase {
         let saved = await store.initRepo(try XCTUnwrap(store.current(wish)), message: "Imported from a shared file")
         XCTAssertTrue(saved)
         let first = await Versions.list(wish)
-        XCTAssertEqual(first.first?.apps, [.mac, .android])
+        XCTAssertEqual(first.first?.apps?.map(\.kind), [.mac, .android])
 
         try "// counts up\n".write(to: wish.dir.appendingPathComponent("Sources/Count.swift"), atomically: true, encoding: .utf8)
         let changed = await Versions.commitAll("-qm \"$LAMP_PROMPT\"", in: wish.dir, env: ["LAMP_PROMPT": "Count up"])

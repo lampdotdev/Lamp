@@ -15,6 +15,8 @@ struct WishDesk: View {
     /// desk opened so typing starts at once: only then do the wishes recede behind it.
     @State private var barEngaged = false
     @State private var dropTargeted = false
+    /// The bar's frame in the window, for the chat of a wish sent from it to grow out of.
+    @State private var barFrame = CGRect.zero
     /// Set while Lamp itself moves the focus to the bar, so that move doesn't count as the person's.
     @State private var lampFocusing = false
     /// Drawn once, so they don't change under the reader.
@@ -315,6 +317,8 @@ struct WishDesk: View {
         })
         // A click into a bar Lamp already focused is the person's too.
         .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
+        // Where the bar is, for the wish's chat to grow out of (`WishArrival`).
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { barFrame = $0 }
     }
 
     private var barRow: some View {
@@ -409,6 +413,10 @@ struct WishDesk: View {
         guard !wish.isEmpty || !attachments.isEmpty else { return }
         let spoken = dictation.isListening
         dictation.cancel()
+        if let window = NSApp.keyWindow, let content = window.contentView {
+            let inWindow = NSRect(x: barFrame.minX, y: content.frame.height - barFrame.maxY, width: barFrame.width, height: barFrame.height)
+            WishArrival.wished(wish, from: window.convertToScreen(inWindow))
+        }
         store.deskDraft = ""
         store.deskAttachments = []
         store.wish(wish, attachments: attachments, spoken: spoken)

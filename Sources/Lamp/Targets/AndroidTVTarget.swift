@@ -9,7 +9,7 @@ extension Platform {
 
 extension Target {
     static let androidTV = Target(
-        platform: .androidTV, places: [.android],
+        platform: .androidTV, places: [.androidTV],
         identity: Identity(name: "the Android TV app", phrase: "an Android TV app", analytics: "android-tv", made: { _, _ in "Android TV" },
                            devices: Words(words: [("android-tv", "\"android-tv\" for Google TV, Android TV and Fire TV",
                                                      "\"android-tv\" for a Google TV, an Android TV, a Fire TV, a Chromecast with Google TV or an NVIDIA Shield")],
@@ -35,8 +35,7 @@ extension Target {
                    rules: { Agent.androidPrompt(part: $0, alone: $1, tv: true) }) { dir, wish in
             AppFile.read(dir.appendingPathComponent(Template.androidTVMarker), inFolder: wish, last: 1) != nil
         },
-        setup: Target.android.setup,
-        androidEmulator: .tv)
+        setup: Target.android.setup)
 }
 
 extension Template {

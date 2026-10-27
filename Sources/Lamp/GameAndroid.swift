@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// A three.js game on Android: a small Android app of Lamp's own in the game's `Lamp/Android` folder, none of it the agent's
 /// (never a folder of its own at the top, where Lamp would take it for another app of the wish's: `Parts.folders`),
@@ -8,7 +8,11 @@ import Foundation
 /// motion events), handing them to Lamp's runtime in the page (`lampNativePad`), since a WebView doesn't promise the
 /// Gamepad API. The touch controls are the runtime's own. The build is Lamp's Android build (Gradle from Lamp's tools,
 /// in the app's sandbox), and the app is installed, launched, looked at and used like any Android app of Lamp's
-/// (`Store.installOnAndroid`, its package and `.MainActivity`). A screen on Android is the same app around its page
+/// (`Store.installOnAndroid`, its package and `.MainActivity`). It's Lamp's one host for a page on Android
+/// (`PageHost.androidWebView`): the same app goes on a phone, a tablet and a Google TV, Android TV or Fire TV, where it's on
+/// the TV's home screen with a banner (the leanback launcher, no touch screen needed) and the remote's keys reach the
+/// page as a TV's do (the d-pad as the controller's for a game; Back, OK and the media keys as Web/lamp.js reads them for
+/// a screen). A screen on Android is the same app around its page
 /// (`ScreenKit`), not a game to the system, laid out as its viewport asks (filling the screen, or a fixed 1920x1080 page
 /// fitted to it), and kept awake, as a photo frame's own app would be.
 enum GameAndroid {
@@ -31,13 +35,17 @@ enum GameAndroid {
         try Template.write(talks ? Template.androidRootBuildGradle : rootBuildGradle, to: "\(folder)/build.gradle.kts", for: project)
         try Template.write(Template.androidGradleProperties, to: "\(folder)/gradle.properties", for: project)
         try Template.write(Template.androidVersionsCatalogue, to: "\(folder)/gradle/libs.versions.toml", for: project)
-        try Template.write(talks ? wishBuildGradle : appBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
+        try Template.write(talks ? wishBuildGradle : aloneBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
         let screen = project.platform == .screen
         try Template.write(screen ? screenManifest : manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
         let activity = screen ? screenActivity : gameActivity
         try Template.write((talks ? activity : withoutWish(activity: activity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),
                            to: kotlin + "/MainActivity.kt", for: project)
+        try Template.write(pageGateway.replacingOccurrences(of: "{{PACKAGE}}", with: package), to: kotlin + "/LampPageGateway.kt", for: project)
         try Template.write(".gradle/\n.kotlin/\nlocal.properties\n", to: "\(folder)/.gitignore", for: project)
+        // The banner a TV's home screen shows: the app's icon on a dark tile, or the tile alone until it has one.
+        let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
+        try Template.put(DeviceSupport.iconPNG(icon, width: 320, height: 180), at: project.dir.appendingPathComponent("\(folder)/\(banner)"), for: project)
         let wish = [(kotlin + "/" + Template.androidSupportFile, Template.androidSupportKotlin(for: project)),
                     (kotlin + "/LampPageWish.kt", pageWish),
                     ("\(folder)/" + Template.androidDebugManifest, Template.androidDebugManifestXML)]
@@ -52,17 +60,24 @@ enum GameAndroid {
     static func paths(for project: LampProject) -> [String] {
         let package = Template.androidPackage(for: project).replacingOccurrences(of: ".", with: "/")
         return [".gitignore", "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml", "app/build.gradle.kts",
-                "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt",
+                "app/src/main/AndroidManifest.xml", "app/src/main/kotlin/\(package)/MainActivity.kt", "app/src/main/kotlin/\(package)/LampPageGateway.kt",
                 "app/src/main/kotlin/\(package)/\(Template.androidSupportFile)", "app/src/main/kotlin/\(package)/LampPageWish.kt",
-                Template.androidDebugManifest].map { "\(folder)/\($0)" }
+                Template.androidDebugManifest, banner].map { "\(folder)/\($0)" }
     }
 
-    /// The activity for a game, without a screen's lines, and for a screen, with them unmarked.
+    /// Where the banner goes, in the app's own resources (the icon is the game's build/, drawn by build.sh).
+    static let banner = "app/src/main/res/drawable-xhdpi/lamp_banner.png"
+
+    /// The activity for a game, without a screen's lines, and for a screen, without a game's; each kind's own unmarked.
     static var gameActivity: String {
         mainActivity.components(separatedBy: "\n").filter { !$0.hasSuffix(screenLine) }.joined(separator: "\n")
+            .replacingOccurrences(of: " " + gameLine, with: "")
     }
-    static var screenActivity: String { mainActivity.replacingOccurrences(of: " " + screenLine, with: "") }
-    private static let screenLine = "// a screen"
+    static var screenActivity: String {
+        mainActivity.components(separatedBy: "\n").filter { !$0.hasSuffix(gameLine) }.joined(separator: "\n")
+            .replacingOccurrences(of: " " + screenLine, with: "")
+    }
+    private static let screenLine = "// a screen", gameLine = "// a game"
 
     /// A screen's manifest: no game to the system.
     static var screenManifest: String { manifest.replacingOccurrences(of: "        android:isGame=\"true\"\n", with: "") }
@@ -138,6 +153,108 @@ enum GameAndroid {
 
     """
 
+    /// The build of a page on its own: AndroidX's WebKit alone, whose message listener lets only the page's own origin in
+    /// its main frame reach Lamp (`pageGateway`).
+    static let aloneBuildGradle = appBuildGradle + """
+
+    dependencies {
+        implementation(libs.androidx.webkit)
+    }
+
+    """
+
+    /// What a new Lamp's Android host is made of, for the builds it changes (`Target.Recipe.inputs`): its folder isn't
+    /// among a page's sources.
+    static var stamp: String { manifest + mainActivity + pageGateway + aloneBuildGradle + wishBuildGradle }
+
+    /// The page's LampAI (Web/lamp.js's `lampGatewayHost`), answered by the app with its own token, which Lamp writes
+    /// into the app's storage as it installs it (`Adb.tellApp`), as the app around the page answers it on the Mac
+    /// (`lampGateway`, LampPage.swift): only LampAI's routes, only from the page's own origin in its main frame. The page
+    /// never sees the token.
+    static let pageGateway = #"""
+    // Written by Lamp before every build; don't edit. The page's LampAI (Web/lamp.js), answered through this app.
+    package {{PACKAGE}}
+
+    import android.webkit.WebView
+    import androidx.webkit.WebViewCompat
+    import androidx.webkit.WebViewFeature
+    import java.io.File
+    import java.net.InetSocketAddress
+    import java.net.Socket
+    import org.json.JSONObject
+    import kotlin.concurrent.thread
+
+    object LampPageGateway {
+        private val routes = setOf("/ai", "/ai/status", "/ai/image", "/ai/decide")
+
+        /** Answers the page at `origin`, the page's own, in its main frame: no other page or frame reaches Lamp. */
+        fun attach(web: WebView, origin: String) {
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+            val files = web.context.filesDir
+            WebViewCompat.addWebMessageListener(web, "lampGatewayHost", setOf(origin)) { _, message, _, isMainFrame, reply ->
+                val call = try { JSONObject(message.data ?: "") } catch (e: Exception) { null }
+                if (!isMainFrame || call == null) return@addWebMessageListener
+                val id = call.optInt("id")
+                val path = call.optString("path")
+                val body = call.optString("body", "{}")
+                // The page's own wait for an answer (a status check's few seconds, a question's minutes).
+                val timeout = call.optInt("timeout", 240_000).coerceIn(1_000, 240_000)
+                thread {
+                    val (status, text) = if (path in routes) post(files, path, body, timeout) else 404 to JSONObject().put("error", "Not found").toString()
+                    val answer = JSONObject().put("id", id).put("status", status).put("body", text).toString()
+                    web.post { reply.postMessage(answer) }
+                }
+            }
+        }
+
+        private fun failure(message: String) = 503 to JSONObject().put("error", message).toString()
+
+        /** Plain HTTP on the Mac's own network, on a socket, as the Kotlin building blocks speak it: each way to the Mac
+         *  Lamp wrote down in turn, and all of them once more after a moment, in case Lamp is just starting. */
+        private fun post(files: File, path: String, body: String, timeout: Int): Pair<Int, String> {
+            val deadline = System.currentTimeMillis() + timeout
+            val install = try { JSONObject(File(files, "lamp-install.json").readText()) } catch (e: Exception) {
+                return failure("This copy of the app wasn't opened from Lamp, so it can't use AI. Open it from Lamp on your Mac.")
+            }
+            val token = install.optString("token")
+            val list = install.optJSONArray("routes") ?: return failure("Couldn't reach Lamp. Open Lamp on your Mac and try again.")
+            val bytes = body.toByteArray(Charsets.UTF_8)
+            for (attempt in 0 until 2) {
+                for (i in 0 until list.length()) {
+                    val route = list.optJSONObject(i) ?: continue
+                    val left = (deadline - System.currentTimeMillis()).toInt()
+                    if (left <= 0) break
+                    try {
+                        return exchange(route, path, token, bytes, left)
+                    } catch (e: Exception) {
+                        continue
+                    }
+                }
+                if (attempt == 0 && deadline - System.currentTimeMillis() > 3000) Thread.sleep(3000) else break
+            }
+            return failure(if (install.optBoolean("device")) "Couldn't reach Lamp on your Mac. Keep this device on the same Wi‑Fi as the Mac, with Lamp open, and try again."
+                           else "Couldn't reach Lamp. Open Lamp on your Mac and try again.")
+        }
+
+        private fun exchange(route: JSONObject, path: String, token: String, body: ByteArray, timeout: Int): Pair<Int, String> {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(route.getString("address"), route.getInt("port")), minOf(4000, timeout))
+                socket.soTimeout = timeout
+                val head = "POST $path HTTP/1.1\r\nHost: ${route.getString("host")}\r\nAuthorization: Bearer $token\r\n" +
+                    "Content-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+                socket.getOutputStream().apply { write(head.toByteArray()); write(body); flush() }
+                val all = socket.getInputStream().readBytes()
+                val split = (0..all.size - 4).firstOrNull { all[it] == '\r'.code.toByte() && all[it + 1] == '\n'.code.toByte() && all[it + 2] == '\r'.code.toByte() && all[it + 3] == '\n'.code.toByte() }
+                    ?: throw java.io.IOException("Lamp's answer was cut short.")
+                val status = String(all, 0, split).split("\r\n").first().split(" ").getOrNull(1)?.toIntOrNull()
+                    ?: throw java.io.IOException("Lamp's answer couldn't be read.")
+                return status to String(all, split + 4, all.size - split - 4)
+            }
+        }
+    }
+
+    """#
+
     /// The build of a game with other apps in its wish: an Android app's plugins and libraries, which Lamp's Kotlin
     /// building blocks are written against, and AndroidX's WebKit, whose message listener lets only the game's own page
     /// in its main frame reach `LampWish`.
@@ -179,10 +296,18 @@ enum GameAndroid {
     <?xml version="1.0" encoding="utf-8"?>
     <!-- Written by Lamp before every build; don't edit. -->
     <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <!-- Back reaches the page as a key (the game's B, a TV page's Back), not Android's predictive back, which would
+             leave the app before the page says what going back means. -->
+        <!-- One app for phones and TVs: no touch screen needed, and on a TV's home screen through the leanback launcher. -->
         <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
         <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+        <uses-feature android:name="android.software.leanback" android:required="false" />
+        <!-- A page may read the web (a screen's weather, a game's scores), as it does in every other place. -->
+        <uses-permission android:name="android.permission.INTERNET" />
         <application
             android:allowBackup="true"
+            android:banner="@drawable/lamp_banner"
+            android:enableOnBackInvokedCallback="false"
             android:icon="@mipmap/ic_launcher"
             android:label="{{NAME}}"
             android:hardwareAccelerated="true"
@@ -196,6 +321,7 @@ enum GameAndroid {
                 <intent-filter>
                     <action android:name="android.intent.action.MAIN" />
                     <category android:name="android.intent.category.LAUNCHER" />
+                    <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                 </intent-filter>
             </activity>
         </application>
@@ -219,6 +345,7 @@ enum GameAndroid {
     import android.view.WindowInsets
     import android.view.WindowInsetsController
     import android.webkit.ConsoleMessage
+    import android.webkit.JavascriptInterface // a screen
     import android.webkit.WebChromeClient
     import android.webkit.WebResourceRequest
     import android.webkit.WebResourceResponse
@@ -249,6 +376,8 @@ enum GameAndroid {
             web.settings.useWideViewPort = true // a screen
             web.settings.loadWithOverviewMode = true // a screen
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) // a screen
+            // Back on the page's first view leaves the app, as on a TV (Web/lamp.js's exit). // a screen
+            web.addJavascriptInterface(object { @JavascriptInterface fun exit() { runOnUiThread { finish() } } }, "lampAndroid") // a screen
             web.webViewClient = object : WebViewClient() {
                 // The page's files, from the app's own assets, at an address of the game's own.
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -269,6 +398,7 @@ enum GameAndroid {
                 }
             }
             setContentView(web)
+            LampPageGateway.attach(web, "https://$HOST")
             LampPageWish.attach(web, "https://$HOST") // the wish's other apps
             (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
             immerse()
@@ -320,20 +450,40 @@ enum GameAndroid {
             else -> 0
         }
 
+        // A TV remote's d-pad is a controller's to a game: its arrows the d-pad, OK the A button, play/pause Start.
         private fun fromController(event: KeyEvent) =
             event.isFromSource(InputDevice.SOURCE_GAMEPAD) || event.isFromSource(InputDevice.SOURCE_JOYSTICK) || KeyEvent.isGamepadButton(event.keyCode)
+                || event.isFromSource(InputDevice.SOURCE_DPAD) || event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE // a game
+        private fun remote(code: Int) = when (code) { // a game
+            KeyEvent.KEYCODE_DPAD_CENTER -> KeyEvent.KEYCODE_BUTTON_A; KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> KeyEvent.KEYCODE_BUTTON_START; else -> code // a game
+        } // a game
+
+        // The keys of a TV's remote a WebView passes on as nothing, as the page reads them on a TV (Web/lamp.js's // a screen
+        // key codes): Back, the media, colour and channel keys. The arrows, OK and the digits reach the page by themselves. // a screen
+        private fun tvKey(code: Int) = when (code) { // a screen
+            KeyEvent.KEYCODE_BACK -> 27; KeyEvent.KEYCODE_MEDIA_PLAY -> 415; KeyEvent.KEYCODE_MEDIA_PAUSE -> 19 // a screen
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> 10252; KeyEvent.KEYCODE_MEDIA_STOP -> 413 // a screen
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> 417; KeyEvent.KEYCODE_MEDIA_REWIND -> 412 // a screen
+            KeyEvent.KEYCODE_PROG_RED -> 403; KeyEvent.KEYCODE_PROG_GREEN -> 404; KeyEvent.KEYCODE_PROG_YELLOW -> 405; KeyEvent.KEYCODE_PROG_BLUE -> 406 // a screen
+            KeyEvent.KEYCODE_CHANNEL_UP -> 427; KeyEvent.KEYCODE_CHANNEL_DOWN -> 428; KeyEvent.KEYCODE_INFO -> 457 // a screen
+            else -> 0 // a screen
+        } // a screen
 
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-            // Back is the game's B, as on a console: the game says what going back means, and stays open.
-            val code = if (event.keyCode == KeyEvent.KEYCODE_BACK) KeyEvent.KEYCODE_BUTTON_B else event.keyCode
-            val b = bit(code)
-            if (b != 0 && (fromController(event) || event.keyCode == KeyEvent.KEYCODE_BACK)) {
-                if (fromController(event)) vendor = event.device?.vendorId ?: 0
-                down = if (event.action == KeyEvent.ACTION_DOWN) down or b else down and b.inv()
-                send()
-                return true
-            }
-            return super.dispatchKeyEvent(event)
+            val key = tvKey(event.keyCode) // a screen
+            if (key == 0) return super.dispatchKeyEvent(event) // a screen
+            if (event.action == KeyEvent.ACTION_DOWN) web.evaluateJavascript(PRESS.replace("KEY", "$key"), null) // a screen
+            return true // a screen
+            // Back is the game's B, as on a console: the game says what going back means, and stays open. // a game
+            val code = if (event.keyCode == KeyEvent.KEYCODE_BACK) KeyEvent.KEYCODE_BUTTON_B else remote(event.keyCode) // a game
+            val b = bit(code) // a game
+            if (b != 0 && (fromController(event) || event.keyCode == KeyEvent.KEYCODE_BACK)) { // a game
+                if (fromController(event)) vendor = event.device?.vendorId ?: 0 // a game
+                down = if (event.action == KeyEvent.ACTION_DOWN) down or b else down and b.inv() // a game
+                send() // a game
+                return true // a game
+            } // a game
+            return super.dispatchKeyEvent(event) // a game
         }
 
         private fun dead(v: Float) = if (abs(v) < 0.15f) 0f else (v - Math.signum(v) * 0.15f) / 0.85f
@@ -370,7 +520,13 @@ enum GameAndroid {
 
         private fun notFound() = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), "".byteInputStream())
 
-        companion object { const val HOST = "lamp.game" }
+        companion object {
+            const val HOST = "lamp.game"
+            // A key pressed on the page where it has focus, with the code a TV's browser gives it. // a screen
+            const val PRESS = "(function(){var e=new KeyboardEvent('keydown',{bubbles:true,cancelable:true});" + // a screen
+                "Object.defineProperty(e,'keyCode',{get:function(){return KEY}});Object.defineProperty(e,'which',{get:function(){return KEY}});" + // a screen
+                "(document.activeElement||document.body).dispatchEvent(e)})()" // a screen
+        }
     }
 
     """#
@@ -440,7 +596,48 @@ enum GameAndroid {
                     watching[id] = scope.launch { transfer.sent.combine(transfer.state) { _, _ -> }.collect { tellTransfer(id) } }
                 }
                 "cancel" -> transfers[call.optInt("id")]?.cancel()
+                // The shared collections the page uses (LampStore.shared in lamp.js), which this app keeps: told whole once,
+                // then as they change.
+                "shared" -> {
+                    val name = call.optString("s")
+                    if (!LampWish.isCollection(name)) return
+                    hearItems(name)
+                    tellItems(name, LampWish.items(name).map { it.first to (it.second as Any?) }, true, LampWish.me)
+                }
+                "put", "publish" -> {
+                    val list = json(call.optString("items")) as? JSONArray ?: return
+                    val given = (0 until list.length()).mapNotNull { i ->
+                        val pair = list.optJSONArray(i)?.takeIf { it.length() == 2 } ?: return@mapNotNull null
+                        val id = pair.opt(0) as? String ?: return@mapNotNull null
+                        id to pair.opt(1)?.takeIf { it != JSONObject.NULL }
+                    }
+                    val name = call.optString("s")
+                    val kept = if (call.optString("op") == "put") LampWish.putItems(name, given)
+                        else LampWish.publishItems(name, given.mapNotNull { (id, value) -> value?.let { id to it } })
+                    // Turned down (past a limit): the page, which showed it at once, is told the collection as it really is.
+                    if (!kept) tellItems(name, LampWish.items(name).map { it.first to (it.second as Any?) }, true, LampWish.me)
+                }
+                "putFile" -> {
+                    val bytes = try { Base64.decode(call.optString("data"), Base64.DEFAULT) } catch (e: Exception) { return }
+                    val kept = LampWish.putFile(call.optString("s"), call.optString("id"), bytes, call.optString("type"))
+                    if (call.has("ask")) tell(JSONObject().put("t", "fileDone").put("ask", call.optInt("ask")).put("ok", kept))
+                }
+                "fileBytes" -> {
+                    val file = LampWish.fileOf(call.optString("s"), call.optString("id"))
+                    val bytes = try { file?.readBytes() } catch (e: Exception) { null }
+                    tell(JSONObject().put("t", "fileBytes").put("ask", call.optInt("ask")).put("data", bytes?.let { Base64.encodeToString(it, Base64.NO_WRAP) } ?: JSONObject.NULL))
+                }
             }
+        }
+
+        private fun tellItems(name: String, items: List<Pair<String, Any?>>, whole: Boolean, from: String) {
+            val said = JSONObject()
+            val here = JSONObject()
+            for ((id, value) in items) {
+                said.put(id, value ?: JSONObject.NULL)
+                if (name.startsWith("files:")) here.put(id, LampWish.fileOf(name, id) != null)
+            }
+            tell(JSONObject().put("t", "items").put("s", name).put("items", said).put("whole", whole).put("from", from).put("here", here))
         }
 
         private fun listen() {
@@ -510,6 +707,12 @@ enum GameAndroid {
             private var current: WeakReference<LampPageWish>? = null
             private var heardWish = false
             private var heardFiles = false
+            private val heardItems = mutableSetOf<String>()
+
+            private fun hearItems(name: String) {
+                if (!heardItems.add(name)) return
+                LampWish.onItems(name) { changed, from -> current?.get()?.tellItems(name, changed, false, from) }
+            }
 
             /** Answers the page at `origin`, the game's own, in its main frame: no other page or frame reaches the wish. */
             fun attach(web: WebView, origin: String) {

@@ -16,10 +16,13 @@ stand alone after the rest and the Mac's hint last; a folder or a list of device
 another's files (`recipe.refines`) before that one and the Swift kinds last, since a Package.swift says less than another
 kind's own mark.
 
-Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, a TV or a device through its
-integration. Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
+Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, Android TV, a Samsung or LG TV
+or a device through its integration. A kind whose app is a page (a three.js game, a screen) doesn't list its own: its
+places are wherever Lamp has a host for a web engine (`Places.pagePlaces`, "Pages and their hosts" in the devices
+guide). Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
 destination (`onIOS`, `onAndroid`, `onTV`, `onDevice`), so a kind that opens where another does (an Android TV app on
-Android's emulator and devices) gets all of that from its file and a line in `Targets.all`. A new place to open is a new
+Android's devices, in the TV emulator: `onAndroid` holds for Android TV too, and `Destination.emulator` says which
+emulator) gets all of that from its file and a line in `Targets.all`. A new place to open is a new
 `Destination` and its paths in `Store`.
 
 
@@ -28,20 +31,25 @@ Android's emulator and devices) gets all of that from its file and a line in `Ta
 What each device can run is one table of facts, `Places` (`Sources/Lamp/Places/Places.swift`): a row per device
 (this Mac, iPhone and iPad, Apple Watch, Apple TV, Vision Pro, Android phones and tablets, Android TV, Samsung and LG
 TVs), then a row per device integration that declares apps, read from its JSON's `supports` ("web", "native") or, when
-it says nothing, from what its `app` declares. Each row says whether a **web** build (a page in a host of Lamp's) and a
+it says nothing, from what its `app` declares. Each row says whether a **web** build (a page in a host of Lamp's, and which: `PageHost`) and a
 **native** build (the device's own code: `apple`, `android`, `android-tv` or the integration's) can exist there, and how
 each gets onto the device, or why it can't. It holds facts only, never a preference: which make and which devices an
 app gets is the agent's choice. `IntegrationCheck.problems` refuses a `supports` that names a make the integration has
-no files for.
+no files for. Its reason for a make it can't run is its own `runs` (what the device runs, in a sentence the person
+would follow: a Roku's says BrightScript channels and the remote, no pages, no 3D), so a game or a screen given a Roku as
+a place is refused with that (`Places.refusal`, in `AppKinds.target`), and the agent's rules (`deviceRules`) have it say so in its own
+words and offer what works: a simple version for the device as one of the wish's apps, or another place.
 
-A row claims a make only once a kind builds it there (`Places.kinds`, checked by `PlacesTests`): turning on a make
+A row claims a make only once a kind builds it there (`AppKinds.target`, checked by `PlacesTests`): turning on a make
 before its host or recipe exists is refused by the test, not discovered by the person. The table reaches the agent as
 text generated from the rows, `{{PLACES}}` in `make_app_for`'s description (`Places.forAgent`), and the person's own
 devices Lamp knows of are named with their rows in the device line (`Places.known`, in `DeviceNote.brief`), so a new
-row needs no prompt edit. `make_app_for` reads each app it's given as a make and devices (`Places.model`) and refuses
-one on a device that can't run that make, quoting the row (`Places.refusal`, in `Parts.asked`). Every stored kind
-reads as a make and devices that lead back to it (`Places.kinds`); a game and a screen, both web at home on the Mac,
-are still told apart by their folder's mark.
+row needs no prompt edit. `make_app_for` refuses an app on a device that can't run its make, quoting the row (`Places.refusal`, in
+`AppKinds.target`). Every stored kind reads back as devices that, asked for again, plan the same kind (`AppKinds.member`);
+a game and a screen, both web at home on the Mac, are still told apart by their folder's mark. `AppKinds` is the one place
+today's kinds meet these terms (the "Wishes" guide); the table itself holds facts only. A row whose words name different
+families of Apple's devices says which word is which (`Place.wordFamilies`: "iphone" an iPhone, "ipad" an iPad), and a
+row whose native app only comes with another's names that row (`Place.comesWith`: the watch, with the iPhone).
 
 A row also says what a game's page is told about the device (`Place.input`, an integration's `input` in its JSON): what
 its keyboard prints on the keys keyboards name differently (`.apple`: Return, Delete, Option and ⌘), the controller that

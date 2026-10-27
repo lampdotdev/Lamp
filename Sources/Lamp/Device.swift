@@ -171,9 +171,29 @@ struct Device: Identifiable, Hashable {
         case .lgTV:
             return developerMode ? .ready : .needs("Turn on Developer Mode on it")
         case .other:
-            guard integration != nil else { return .needs("Lamp doesn't know it yet") }
+            guard integration != nil else { return .needs("Lamp could learn to work with this") }
             return Integrations.next(for: self).map { .needs($0.title) } ?? .ready
         }
+    }
+
+    /// The address in the id of a device found on the network that Lamp doesn't know yet ("found:<address>", with
+    /// "#<hardware address>" after it when the look knew that), and the hardware address.
+    static func foundAddress(_ id: String) -> String? {
+        guard id.hasPrefix("found:") else { return nil }
+        return String(id.dropFirst("found:".count)).components(separatedBy: "#").first
+    }
+
+    static func foundHardware(_ id: String) -> String? {
+        guard id.hasPrefix("found:"), let mark = id.firstIndex(of: "#") else { return nil }
+        return String(id[id.index(after: mark)...])
+    }
+
+    /// What it is rather than what it's called, for one found on the network that Lamp doesn't know yet: the name a
+    /// device gives itself there is often a person's, and this one is written into its setup conversation's folder.
+    var plainName: String {
+        guard id.hasPrefix("found:") else { return name }
+        if maker.isEmpty || model.localizedCaseInsensitiveContains(maker) { return model.nilIfEmpty ?? "Device" }
+        return model.isEmpty || model == maker ? maker : "\(maker) \(model)"
     }
 
     /// The model and software, in one line for a list: "iPhone 16 Pro Max · iOS 27".
@@ -336,6 +356,8 @@ enum DeviceNote {
                 line = androids.first(where: { $0.udid == serial }).map { "Try On points at the person's \($0.name): \($0.forAgent)." }
                     ?? (store.androidListed ? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
                         : "Try On points at one of the person's Android devices, which Lamp hasn't looked for yet; Play puts it there once it's connected.")
+            } else if project.destination == .androidTV {
+                line = "Try On points at the Android TV emulator on this Mac (\(AndroidTools.tvAVDName), a 1080p Google TV driven by a remote's keys): that is where the app opens and what the person sees."
             } else {
                 line = "Try On points at the Android emulator on this Mac (\(AndroidTools.avdName), Android \(AndroidTools.platformLevel == 36 ? "16" : "\(AndroidTools.platformLevel)"), a Pixel-sized phone): that is where the app opens and what the person sees."
             }
@@ -414,7 +436,7 @@ enum DeviceNote {
         // folder has: they change with its places and with Try On, which no note of the wish's says.
         let own = project.holdsApp ? [line(for: project, store: .shared)] : []
         let placed = project.isPart ? [] : Store.shared.parts(of: project).filter(\.platform.addsPlaces).map { part in
-            "\(Parts.name(of: part.platform).prefix(1).uppercased() + Parts.name(of: part.platform).dropFirst()) in \(part.dir.lastPathComponent)/: "
+            "\(Parts.name(of: part).prefix(1).uppercased() + Parts.name(of: part).dropFirst()) in \(part.dir.lastPathComponent)/: "
                 + line(for: part, store: .shared)
         }
         // And every device of the person's Lamp knows, with what each can run, so an app is made for the ones they have:

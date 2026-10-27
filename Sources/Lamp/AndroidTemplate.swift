@@ -477,7 +477,10 @@ extension Agent.Rules {
     for settings and small state, `LampStore.collection<Note>("notes") { it.id }` with put, get, delete and all \
     for lists of things, each a @Serializable class. People rely on their data through every change you make, so \
     once a type is saved, only ever add to it: new properties get defaults, and never rename, remove or retype a \
-    saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets.
+    saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets. Data that \
+    should be the same wherever the app is open (one list on a phone, a tablet and the Mac): \
+    `LampStore.shared<Grocery>("groceries") { it.id }` (items, put, delete, publish, onChange), merged item by item \
+    between the app's copies, and `LampStore.sharedFiles("photos")` for files; open the `wish-links` skill first.
     """
 
     static let androidPermissions = """

@@ -8,7 +8,7 @@ and which apps it should have is its list (`LampProject.apps`, `WishApp`, in its
 its main one: any of them, the first included, is added, replaced or taken away on the person's word, and the wish keeps
 its name, chat and history. A wish's first app is made in the wish's own folder, as every wish made so far has it, until
 it's taken away or replaced; each other app is an app of its own kind in a folder of the wish's
-(`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
+(`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`, a device's app in its device's: `Roku/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. A wish whose folder holds no app of its own (its apps all in
 folders, `LampProject.holdsApp` false, read off its files each time so an Undo that brings the first app back has it
 again) is only the wish: it's no draft (`scaffolded`), and nothing builds, installs, opens or writes Lamp's own
@@ -61,23 +61,45 @@ is worked on under the wish's turn (`Store.asPartOf`, and a part's look through 
 found it). Undo and every restore rebuild each part whose files changed, and a copy builds every app, each under a hold of
 its own so its crash is fixed through the wish (`Store.rebuildParts`); a rename puts the new name in every app's code and
 APP.md. Each app's own menu (Open, Rebuild & Open) is still for that app alone. A copy is found by its install place only
-for an app with a Mac copy there, since a TV wish's Mac app is installed under the wish's name. Which kinds a list
-of devices makes is `Parts.kinds`: the devices of one part family are one kind between them (Apple's), in `Targets.all`'s
-order. No kind leads: what a wish does with the list is `Parts.plan`, below. A wish keeps
-its first app in its own folder until it's taken away, and a new wish's first app is the first of its kinds this Mac can
-build now (`Store.firstKind`: a TV app with an iPhone app, on a Mac without Xcode, starts as the TV app with the iPhone app
-waiting), else the first; one read as a kind this Mac can't build yet is made a Mac app and still keeps its other apps on
-its list, so a missing tool holds back only the app that needs it.
+for an app with a Mac copy there, since a TV wish's Mac app is installed under the wish's name. No app leads. A wish keeps
+its first app in its own folder until it's taken away; what this Mac can't build yet waits on the wish's list with its
+setup, so a missing tool holds back only the app that needs it. A waiting app is kept whole on the list (`WishApp`: its
+kind, the devices as they were named, its places and integration, `AppTarget.waiting`): a failure changes only what
+stops it (`WishApp.needing`), and a retry or the next turn makes what the list keeps (`AppKinds.member(waiting:)`),
+never what its kind alone would be, by the path an app made at once takes (`Store.add`), so what it says to do (a watch
+app, a game's places, its rules) goes with the requests until one carrying it has reached the agent (`Parts.madeNote`, kept in `.lamp/made-notes.json` and cleared by `Store.told`, as the note about going back is), so a turn whose engine never started leaves it for the next. Each note is kept with its app as it was made (`Parts.Made.App`: who it is and what it was made for, its kind, places and integration, never where Try On opens it) and sent only while that app is one of the wish's: a version restored without it, or an app made for something else since, drops it, a Try On choice keeps it, and a `make_app_for` on the app replaces it with what that says. A request that reaches the agent counts as telling only the notes it carried.
 The TV app of a wish takes the wish's other apps as players from the wish's own folder or from TV/ alike (`Store.takesPlayers`,
-`controllerSession`, which find the wish's TV app wherever it is). A device whose integration declares its apps still
-stands alone. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
-its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). `make_app_for` sets the
-wish's apps as the list keeps them (`Parts.asked(apps:)`, `AppAsked`): one entry per app, its `kind` (what it is) and its
-`places` (where it runs beyond its kind's own device: a Mac app's "iphone" makes it the app for both, an iPhone app's
-"watch" gives it a watch app, a game's or a screen's are where it's played or shown beside the Mac), so a word is never at
-once an app and a place, and a game and a screen of one wish each have their own. An entry is an object so it can say
-more of its app later. An app left out is taken away like any other. The naming call answers with its `devices` (the
-apps) and `places` by app apart (`{"game": ["iphone"]}`, `Parts.places`, `Parts.asked`). A game's own wish told its conversations to
+`controllerSession`, which find the wish's TV app wherever it is). A device's app made through its integration (a Roku
+channel) is one of a wish's apps like any other (family "device", one per wish), in a folder named for its device
+(`DeviceApps.folder(for:)`: the integration's name in letters and digits, Roku/, which `Part.folderFor` gives a new
+one), found by its folder's marker whatever the folder is called (`Part.marked`, `DeviceApps.markedFolders`), so an
+integration renamed since never loses its app, read as that integration's from the marker (`Parts.load`), and kept on
+the wish's list with its integration (`WishApp.integration`, and in versions as "device:roku" in `Lamp-Apps`), so one
+that waits, or comes back with a restore, is made for the right device (`addPart`'s `integration`). Its rules as a part are `Agent.devicePrompt(part:)` (the integration's
+rules for the files in its folder), its word in `look_at_app` and `use_app` is its folder's ("roku", `Parts.word(of:)`),
+and the chat names it by its device ("the Roku app", `Parts.name(of:)`, `Parts.menu(of:)`). Another device's app is never made out of
+it (its code is its integration's, `AppKinds.code`), and `make_app_for` refuses a second device's app while the wish has
+one: the agent takes the old one away with `remove_app`, which takes only its own entry off the list (`Parts.lists`),
+and asks for the new one, which gets its own device's folder; each folder is found by its mark meanwhile. It isn't shared yet (its kind's `shareRefusal`), so a wish with one isn't either. A game and a screen are apps of a wish like any other (Game/, Screen/), each with its places of its own in
+its meta.json (`Parts.load` reads them), and on the wish's list until it's made (`WishApp.places`). `make_app_for` and `remove_app` are plans
+(`Places/AppPlan.swift`): the request is typed (`DeviceWord`: the word as asked, "ipad", its row, "iphone", and the
+family that word names in its row's `wordFamilies`; the first device asked for that names a family is where Try On
+opens the app, and a request naming none leaves that as it is), checked
+against the table and the wish's apps (`WishMember`: each made one with its id and folder, and each still waiting, with
+what it is: `AppTarget`, its kind, devices, integration, Try On family and places, and `code`, the key of what it's
+written in), planned (`AppPlanner`: `AppPlan.add`, `.update`, `.remove` or `.cancel`) and carried out as planned by
+`Store.agentKind` and `agentRemove`. `make_app_for` gives one app, the `devices` it's to be on and whether it's `made` "web"
+or "native": it updates the wish's app of the same code (changed in place by `convert`, its code and data kept) or adds
+one beside the others, and never takes an app away. A device's own app is a code of its own per integration, one of the wish's apps beside the others, one per wish
+for now. `remove_app` finds an app by its folder or own word, then by any device it's on through the table (unique,
+several or none, each said as such), takes a made one away reversibly, takes one still waiting off the list, and never
+takes the wish's only made app. Today's kinds are read in these terms in one place, `AppKinds`, which holds only the
+translation from rows to today's recipes: a native app is the kind of its rows' one `native.code` (Apple's a Mac app,
+an iPhone app or one for both by where its rows open), built with any row it comes with (`Place.comesWith`: the watch
+with the iPhone); until Lamp has one host for every page, a web app is the kind of page whose places reach every row,
+the wish's own when it has one that does, else the one that reaches the fewest other places, and a device's own app on
+one integration's device alone; what no kind reaches is refused, saying why. Which device is which, which family a
+word means and which code a row is are the table's alone, so a row added to it needs nothing in `AppKinds`. A game's own wish told its conversations to
 list places among the devices, and then in a `places` of their own, before, so its prompt is recorded as "app apps"
 (`followPromptShape`), and one begun
 before is started again. `look_at_app` and `use_app` find an app by its own word or folder before reading "mac" or
@@ -221,25 +243,32 @@ iPhone/), named with the request while the wish has that app (`Skills.applying`,
 again), and given whole in `make_app_for`'s reply when the app is added. So a conversation never carries the rules of a
 kind its wish doesn't have. Claude Code and Codex keep the prompt a conversation began with, so once the app in a wish's own folder goes or comes back (a restore), the wish's conversations are forgotten as its next request starts, and it starts one with the prompt that fits, told the chat so far (`Store.followPromptShape`, `.lamp/prompt-for`). `look_at_app` and `use_app` take `part` ("iphone", "tv", "mac"; `Parts.pick`), which may be
 left out only when the wish has one app (`Store.target`: no app is the one meant by naming none; `make_art` takes it too, for which app's Assets/ a picture goes in), and run under the
-wish's turn (`Store.underTurn`). `make_app_for` takes the whole list and treats every app alike (`Parts.plan`): one whose
-family is listed stays, changed by `convert` only inside its family (an iPhone app that's to be for the Mac too); a
-family it has no app of is added in its own folder (`Store.addPart`); one left out is taken away, the app in the wish's
-own folder as much as any other (`takeAway`, one path for every app: quit as any app is, forgotten by `forget`, and its
+wish's turn (`Store.underTurn`). `make_app_for` treats every app alike: one of the code asked for is changed by `convert` only inside its code (an
+iPhone app that's to be for the Mac too); a code it has no app of is added in its own folder (`Store.addPart`, with the
+family and places asked). `remove_app` takes one away, the app in the wish's
+own folder as much as any other (`takeAway`, one path for every app: quit as any app is, forgotten by `forget(_, .reversibly)`,
+which keeps everything it saved, here and on the person's devices, so Undo or a restore brings it back as it was, and its
 files removed, for the app in the wish's own folder its files only, keeping the wish's: `.lamp/` but the app's runtime, the history, icon.json, about.json, Attachments/ and the other apps'
-folders). A restore to a version without that app quits and forgets it the same way. Whether another app shares an
+folders). A restore to a version without that app quits and forgets it the same way, reversibly. Only deleting the wish forgets
+its apps for good (`forget(_, .forGood)`: their copies on devices, build and signing folders, sign-ins and TV preview
+stores), those taken away before included: each app taken away is recorded as it was when it went (`RemovedApp`, in the
+wish's `.lamp/removed-apps.json`: its id, instance, folder, kind, family, places and integration), one record per
+identity and never dropped, and deleting the wish disposes of its present apps and each recorded identity none of them
+is, once each, whether or not an app of the same folder is there now (`RemovedApp.disposals`: a game taken off an Xbox's
+wish and made again for the Mac alone still has its Xbox copy taken off). Whether another app shares an
 installed copy (a wish's Mac apps are installed under its name) is read from the apps the wish has now (`Store.everyApp`),
-never from the kind a wish whose first app went still names. So "tv" added to a Mac wish keeps the Mac app's code and adds the TV app in TV/, and "tv" alone replaces the
-Mac app with a TV app in TV/. What this Mac can't build yet holds back only that app: the others are made, and it waits
-on the list with its setup; an app is never taken away while nothing would be left, so it stays until what replaces it
-is made. A wish still to be told what it's for has nothing written, so its first app is the first kind listed this Mac
-can build now (`Store.firstKind`), in its own folder, and the rest wait as parts. So a wish read as an Android app and
-made as a Mac app while Google's tools were missing gets, once they're set up, the Android app beside its Mac app
-(`Target.android.setup.later.request`), not in its place, unless the person asks for that. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the Try On of the one in the wish's own folder included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
+never from the kind a wish whose first app went still names. So a TV app asked for in a Mac wish keeps the Mac app's code and adds the TV app in TV/; the Mac app goes only with
+`remove_app`. What this Mac can't build yet holds back only that app: the others are made, and it waits
+on the list with its setup, and `remove_app` takes it off the list if the person no longer wants it. A wish still to be
+told what it's for has nothing written, so the first app its agent gives it goes in its own folder. Play and Stop are for the whole wish: Play opens each of its apps not open yet, each on the device chosen for it, and Stop quits them all, shown while any of them is open (`Store.openWish`, `quitWish`, `isWishOpen`, and the desk's Use the same way). Each app has its own menu in the toolbar, the Try On of the one in the wish's own folder included, with Use or Quit for that app alone and where it opens; a line about where a part opens names the part ("The iPhone app will open on…", `Store.placeName`), since it has its wish's name.
 
-A new wish that could be for more than one kind and doesn't say which (the naming call's `candidates`) is `undecided`
-(kept in its meta.json, and through the naming that follows: `LampProject.named` carries everything a wish is): nothing is written, its prompt has no kind's rules (`Agent.undecidedPrompt`), the agent asks "TV, Mac or both?" with
-`ask`, and gives it its kinds with `make_app_for`, whose reply carries the chosen kind's whole prompt. Each engine's
-conversation began with the undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
+Every new wish is `undecided` until its agent gives it its first app (kept in its meta.json, and through the naming that
+follows: `LampProject.named` carries everything a wish is): the naming call names it and lists the devices the request
+names, in the table's words (`AppName.Suggestion.devices`), and chooses nothing else. Nothing is written, its prompt has no
+kind's rules (`Agent.undecidedPrompt`): the agent decides what it is and where it runs from the request, the table of
+devices and the person's own devices, asks with `ask` only when the answer changes what's made, and gives it its first app
+with `make_app_for`, whose reply carries the chosen kind's whole prompt. Each engine's conversation began with the
+undecided prompt, so it's ended as that turn ends (`Store.decided`), and the next request
 starts one with the wish's own prompt, told the chat so far (`CatchUp`).
 
 The apps of a wish see each other and talk through a **room** for the wish at the controllers' relay (`WishRooms`,
@@ -343,8 +372,22 @@ It says nothing about who should talk to whom. A stranger on the
 network can reach none of it: `/app/wish` and the proxy routes take an app's own token, the relay and every app's own
 listener (below) take a proof only the wish's key makes, and Lamp's routes and relay run only while Lamp does. What one app
 of a wish says is readable by the wish's other apps and by Lamp's relay, which holds the key Lamp made and opens and seals
-again what it passes on, and by nothing else: on the network it's sealed, each link with keys of its own. A device app made
-through an integration has no `LampWish` yet.
+again what it passes on, and by nothing else: on the network it's sealed, each link with keys of its own.
+
+A device's app made through its integration (a Roku's) doesn't join the room yet (`Part.joinsWish`, `WishRooms.joins`):
+it's left out of the room's list (`WishRooms.described`), so the others never wait for it or show it as closed, it isn't
+counted among the apps that give an app `LampWish` (`Template.talksToOtherApps`: an iPhone app beside only a Roku app
+has none), and the builder's note says it can't reach the others (`WishNote`). Its own building blocks carry
+`LampWish.brs` while its wish has other apps (`Template.hasOtherApps`, `DeviceSupport.wishFile`): `LampWish_status()`
+always `away` with the reason, the peers empty, and `LampWish_send` and `LampWish_set` sending nothing, the shape the
+link will have, and the rules say to keep each app whole without it (`Agent.Rules.deviceAmongApps`, the `wish-links`
+skill), with `LampRoku` for steering it from a Mac or iPhone app meanwhile. What the link needs on a Roku: it has no
+WebSocket before Roku OS 16 (`roWebSocket`), so it would speak through Lamp's proxy routes as an Android app does
+(`/app/wish/open`, `send`, `poll`); HMAC-SHA256 is native (`roHMAC`), but `roEVPCipher`'s GCM is AES-128 only (Roku OS
+15.2 and later) where the room seals with AES-256-GCM, so the seal would be AES-256 in ECB (native) for the counter blocks
+with GHASH in BrightScript; and the key's claim seals to an X25519 key pair, which BrightScript lacks, so X25519 would be
+written in BrightScript (as lamp.js has it in ES5), in a Task node, held to CryptoKit by `WishChannelTests` like the others.
+The other way, Lamp holding the seal for the Roku over its token, would leave what the Roku says in clear on the network.
 
 Lamp's room is one way between a wish's apps; the other is straight between them (**direct links**), so they go on
 talking with Lamp closed, the Mac asleep or Lamp updating, as long as they're on the same network. A Mac, iPhone or Android
@@ -413,6 +456,36 @@ being kept when nothing older can make room, and only a value that doesn't fit b
 first knew its own name takes the name once it does. Nothing here decides what goes in values or who talks to whom: that's
 the agent's, from the `wish-links` skill.
 
+Values suit a few small things; what every **copy** of one app shows (a shopping list, chores, a calendar, photos on a
+screen open on a Mac, a kitchen iPad, a TV and an Android frame) goes in the app's **shared collections**, built on the
+same block and kept the same on every copy of it: `LampStore.shared(name)` (`items`/`all`, `put`, `get`, `delete`,
+`publish`, `onChange`; `LampStore.Shared` in Swift, `LampShared` in Kotlin, an object in lamp.js) and
+`LampStore.sharedFiles(name)`. A collection is the app's own, never another app's of the wish. Each copy keeps every
+item with its setting's time, as a value is kept (`c: [ms, n, peer]`, on the values' clock, a deletion kept a month
+without its value), and copies merge item by item, so two copies that changed different items while apart keep both.
+What they say is one sealed message, `{"t":"store", op, …}`, through the room with `to` and `from` as `values`
+(`Relay.fromMember` passes it only to a member that speaks 5) or straight: `items` (a collection's settings, a few at a
+time within 12 KB), `sum` (as copies meet and once a minute, what each sixteenth of each collection adds up to: the
+bucket is FNV-1a 32 of the id's UTF-8, low four bits; its number the XOR of FNV-1a 32 of `id\0ms\0n\0peer`; 128 hex
+digits a collection), `ask` (the sixteenths that differ where the other has something, answered with their items) and
+`file`. So two copies that meet send only what differs, and a setting lost on the way is made up within a minute.
+Settings taken from one copy are passed on as values are (`pass`). Limits are sized for real lists: an item 8 KB as
+JSON, everything an app sets 1 MB (each id and its value or 32 bytes, deletions included), what it holds from others
+twice that times the wish's apps, the oldest deletions let go first, and 32 collections. `publish(items)` is for what one
+copy can read and the others can't (a Mac's or an iPad's calendars through `LampNative`): this copy's items become
+exactly these, an unchanged one setting nothing and an item another copy set last left alone. A shared file is an item
+of the collection `files:<name>` saying its size, type and checksum (SHA-256, the first 16 bytes in hex); its bytes are
+kept beside what the app keeps of the wish (Swift: Application Support, by the wish's tag and the copy; Kotlin: beside
+the kept file; lamp.js: in memory, so a TV asks again each time it opens), and a copy without them asks one other copy
+that has them (`file`: the one that set it first, then each in turn, two at a time of each, again after a minute
+without them or when that copy closes), which sends them as a wish's file with `ch: "store:<collection>"`, taken by the
+store rather than the app's `onFile` and kept only when the checksum matches. 64 MB a file, 256 MB in all. Swift keeps
+the collections in UserDefaults by the wish's tag, Kotlin in a file beside the kept one, lamp.js in localStorage. A page
+hosted by an app of Lamp's own (`hosted`) mirrors the app's collections: it asks for one (`shared`), is told it whole and
+then as it changes (`items`), and puts, publishes and fetches a file's bytes through the app (`LampPageWish`,
+`GameAndroid.pageWish`). `WishSharedStoreTests` has a Swift app and a TV page, copies of one app, each change different
+items before they meet, then end with both and with the Swift copy's file on the page.
+
 Besides messages and values, a wish's apps send each other **files** (`LampWish.sendFile`, `onFile` in Swift and Kotlin;
 `Lamp.wish.sendFile`, `onFile` in lamp.js): up to 64 MB to one app open now, in pieces under the controllers' flow
 (`ControllerWire`: 64 KB a piece, never more than 512 KB past what the receiver has acknowledged, two at a time each way
@@ -436,13 +509,14 @@ On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow th
 two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
 them.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 4 since copies, 3 brought files and a game's
-controls, 2 values; an app from before says none,
+What a wish's apps say to each other is numbered (`wire` in each library: 5 since shared collections, 4 brought copies,
+3 files and a game's controls, 2 values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
 newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
-an app that speaks 2 or more, files and a game's controls only to one that speaks 3. The builder's note says when an app in the room was built by an earlier Lamp
+an app that speaks 2 or more, files and a game's controls only to one that speaks 3, shared collections only to one
+that speaks 5 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
 (`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
 fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`

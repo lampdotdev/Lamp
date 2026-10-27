@@ -102,7 +102,7 @@ enum AppName {
     static let exampleNames = ["Lucide Picker", "Build Tally", "Brew Log", "Notes", "Stopwatch", "Calendar", "Photo Booth", "Night Shift"]
     static let exampleParts = ["Your habits, ticked off daily", "A reminder in the evening"]
 
-    /// Made when asked: the devices it lists are each kind's own (`Targets.namingDevices`).
+    /// Made when asked: the devices it lists are the table's (`Places`), so a new row is named with no edit here.
     private static var prompt: String { """
     Name a small app from what its user asked for.
 
@@ -119,117 +119,63 @@ enum AppName {
     its user would ("\(exampleParts[0])", "\(exampleParts[1])"). No file, type or framework \
     names.
 
-    Last, list the devices it runs on: \(Targets.namingDevices) Set "devices_by_user" to true only when they said \
-    where it runs. A wish \
-    can be for more than one kind at once, apps made to work together: ["tv", "mac"] for a TV app and a Mac app \
-    together, ["iphone", "android"] when they want it on both kinds of phone. Phones that steer a TV app or show a \
-    second screen for it can join it without apps of their own, and how they do is the builder's choice: list the \
-    devices the wish's own apps are for. For a game or a screen, give where else it's played or shown, beside this Mac, \
-    in "places", by that app ({"game": ["iphone"]}, {"screen": ["tv"]}), never in "devices": "mac" in "devices" is a Mac app.
-
-    Only when the wish is for something people do as much on a TV as on another of these devices, and nothing in \
-    it points to one (a slideshow of family photos, a dashboard for the whole household, a game for the family), \
-    also give "candidates": the two or three devices it could be for, likeliest first (["tv", "mac"]). Leave \
-    "candidates" out for everything else, and always when they said where it runs: most wishes are plainly for \
-    this Mac.
+    Last, list the devices the request names or plainly means, in these words: \(namingDevices) "My phone" is \
+    ["iphone"] unless they say it's an Android; [] when it names none. Never choose how it's made or add a device it \
+    doesn't mention: the builder decides the rest. A request for something to run on a device of theirs Lamp can't \
+    put apps on yet is ["other"].
 
     And the color of its icon's background, one of: \(Icons.backgrounds.map(\.name).joined(separator: ", ")). Pick \
     what suits its mood, like Apple's own icons: mostly one vivid color, sometimes white or graphite.
 
     Respond with JSON: {"named_by_user": true or false, "name": "...", "parts": ["...", "..."], \
-    "devices": ["..."], "places": {"game": ["..."]} or left out, "devices_by_user": true or false, "candidates": ["..."] or left out, "color": "..."}
+    "devices": ["..."], "color": "..."}
     """ }
+
+    /// The table's words for each device (`Places`), as the naming call answers with them.
+    private static var namingDevices: String {
+        Places.all.map { place in place.words.map { "\"\($0)\"" }.joined(separator: " or ") + " for " + place.name }.joined(separator: ", ") + "."
+    }
 
     struct Suggestion {
         var name: String?
         /// A guess at the app's main parts, shown until the agent gives its own plan.
         var sketch: [String]
-        /// What it runs on, from the request (`Store.chooseKind`): the kinds the wish is made of, in Lamp's order
-        /// (`Parts.kinds`), and whether the person said so.
-        var kinds: [Platform] = []
-        var kindSaid = false
-        /// For a device app (`Platform.device`), the integration it's for.
-        var integration: String?
-        /// For a game or a screen, the places it's played or shown from the start: the Mac, and any other device the wish
-        /// names for it. Kept for each such kind of the wish, the first or one made beside it (`WishApp.places`).
-        var places: [Platform: [Destination]] = [:]
-        /// For a game, what it's written for: three.js, or C++ on the kit when the wish needs an Xbox's whole power.
-        var engine: GameKit.Engine?
+        /// The devices the request names, in the table's words (`Places`): what the agent is told it named. What the
+        /// wish's apps are and where they run is the agent's to decide (`Agent.undecidedPrompt`).
+        var devices: [String] = []
         /// For one of the person's devices Lamp can't make apps for yet (`seen`): nothing is made until the agent has
         /// set the device up and given the wish its kind.
         var forOtherDevice = false
-        /// The person wants an Apple Watch app too (the agent writes it; `chooseKind` says so in the chat).
-        var watch = false
-        /// A wish that could be for more than one kind of device and didn't say which: the devices it could be for,
-        /// likeliest first. Nothing is made until the agent has asked (`LampProject.undecided`).
-        var undecided: [String]?
         /// The icon's background (`Icons.backgrounds`), chosen here so the blueprint shows it from the start and the
         /// icon keeps it.
         var color: String?
 
-        /// The wish is for a phone or tablet, Apple's or Android's: what makes Lamp look for the person's phones.
-        var forPhone: Bool {
-            kinds.contains { kind in
-                let places = kind.addsPlaces ? (self.places[kind] ?? []) : kind.target.places
-                return places.contains(.ios) || places.contains(.android)
-            }
-        }
+        private var rows: [Place] { devices.compactMap { Places.named($0) } }
 
-        /// The wish is for a TV or another device Lamp reaches over the network (a TV app, a device's app, a game or a
-        /// screen given a TV or a device, one Lamp can't make apps for yet): what makes Lamp look on the network for it.
-        var forDevice: Bool {
-            if forOtherDevice || integration != nil { return true }
-            return kinds.contains { kind in
-                let places = kind.addsPlaces ? (self.places[kind] ?? []) : kind.target.places
-                return places.contains(.tv) || places.contains(.device)
-            }
-        }
+        /// The wish names a phone or tablet, Apple's or Android's: what makes Lamp look for the person's phones.
+        var forPhone: Bool { rows.contains { $0.destination == .ios || $0.destination.isAndroid } }
+
+        /// The wish names a TV or another device Lamp reaches over the network (one Lamp can't make apps for yet too):
+        /// what makes Lamp look on the network for it.
+        var forDevice: Bool { forOtherDevice || rows.contains { $0.destination == .tv || $0.destination == .androidTV || $0.destination == .device } }
     }
 
     static func suggest(for brief: String, devices: [Device] = []) async -> Suggestion? {
-        let request = "\(prompt)\(deviceKinds())\(seen(devices))\n\nThe user asked for:\n\(brief.prefix(4000))"
+        let request = "\(prompt)\(seen(devices))\n\nThe user asked for:\n\(brief.prefix(4000))"
         guard let (text, _) = try? await AppAI.complete(prompt: request, images: [], system: "", json: true,
                                                          model: await AppAI.helperModel()),
               let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
         else { return nil }
         let sketch = (object["parts"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmed }
             .filter { !$0.isEmpty && $0.count <= 60 && !AppAI.parrots($0, examples: exampleParts, asked: brief) }.prefix(5)
-        let devices = Set(object["devices"] as? [String] ?? [])
-        let said = object["devices_by_user"] as? Bool ?? false
-        let asked = Parts.places(object["places"], devices: devices).flatMap { Parts.asked(devices, places: $0) } ?? Parts.asked(devices)
-        let kinds = asked?.kinds ?? []
-        return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
-                          kinds: kinds, kindSaid: said,
-                          integration: kinds == [.device] ? devices.first : nil,
-                          places: (asked?.places ?? [:]).reduce(into: [:]) { $0[$1.key] = GameKit.places(for: $1.value, of: $1.key) },
-                          engine: kinds == [.game] ? GameKit.engine(for: devices) : nil,
-                          forOtherDevice: devices == ["other"], watch: devices.contains("watch"),
-                          undecided: said ? nil : candidates(object["candidates"]),
-                          color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
-    }
-
-    /// The devices an unclear wish could be for, as the naming call gave them: only Lamp's own kinds, at least two.
-    static func candidates(_ value: Any?) -> [String]? {
-        var seen: [String] = []
-        for word in value as? [String] ?? [] {
-            let word = word.trimmed.lowercased()
-            if Targets.askedWords.contains(word), !seen.contains(word) { seen.append(word) }
+        var named: [String] = []
+        for word in (object["devices"] as? [String] ?? []).map({ $0.trimmed.lowercased() }) {
+            guard let id = word == "other" ? "other" : Places.named(word)?.id, !named.contains(id) else { continue }
+            named.append(id)
         }
-        return seen.count >= 2 ? seen : nil
-    }
-
-    /// The devices whose integrations declare their apps, as more names the devices may be: each stands alone. A device
-    /// that takes more than one kind of app has each named with what it's for ("xbox-one:game" for a 3D game), so the
-    /// kind is chosen from the wish as the device is, never by a setting.
-    static func deviceKinds() -> String {
-        let kinds = DeviceApps.kinds()
-        guard !kinds.isEmpty else { return "" }
-        return "\n\nThese devices of the person's take apps too; each stands alone, for a request that names it or its maker: "
-            + kinds.map { entry in
-                let what = "their \(entry.integration.name) (\(entry.integration.kind ?? "device") by \(entry.integration.maker))"
-                return "[\"\(entry.id)\"] for " + (entry.kind.purpose.map { "\($0) on \(what)" } ?? what)
-            }.joined(separator: ", ") + ". Only for what runs on the device itself: an app on a phone or this Mac that controls one "
-            + "(a remote, buttons that open its apps or shows) is answered by the rules above."
+        return Suggestion(name: name(object, asked: brief), sketch: sketch.count >= 2 ? Array(sketch) : [],
+                          devices: named.filter { $0 != "other" }, forOtherDevice: named == ["other"],
+                          color: (object["color"] as? String).flatMap { name in Icons.backgrounds.first { $0.name == name.trimmed.lowercased() }?.name })
     }
 
     /// The person's devices Lamp found just now, each with what to answer for a wish that's for it, so "my TV" or
@@ -243,11 +189,7 @@ enum AppName {
             guard let answer = answer(for: device) else { return nil }
             let what = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
             let name = device.name.isEmpty || device.name == device.model ? what : "\(device.name) (\(what))"
-            // A device that takes more than one kind of app is answered by what the wish is for (a 3D game, or an app).
-            let kinds = DeviceApps.kinds().filter { DeviceApps.split($0.id).integration == answer }
-            let answers = kinds.count > 1 ? kinds.map { "[\"\($0.id)\"]" + ($0.kind.purpose.map { " for \($0)" } ?? "") }.joined(separator: ", or ")
-                : "[\"\(answer)\"]"
-            return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): \(answers)"
+            return "- \(name.replacingOccurrences(of: "\n", with: " ").prefix(80)): [\"\(answer)\"]"
         }
         guard !listed.isEmpty else { return "" }
         return "\n\nThe person's devices, found just now, with what to answer when the request is for one of them (by its name, "

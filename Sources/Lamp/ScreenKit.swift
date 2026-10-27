@@ -69,6 +69,8 @@ enum ScreenKit {
         try Template.write(GameKit.webBuildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
         try Template.write("A screen made with Lamp: a page in Web/, shown full screen.\n", to: marker, for: project)
+        // On Android: Lamp's Android app around the page, as a game's.
+        if project.hasAndroid { try GameAndroid.write(for: project) }
     }
 
     /// The scaffold: a page that shows the app's name filling whatever it's shown on.
@@ -171,7 +173,7 @@ enum ScreenKit {
     /// Names what Lamp writes into a screen, so a new Lamp's builds it again (`Target.Recipe.inputs`).
     static var stamp: String {
         (host ?? "") + (GameKit.page?.text ?? "") + GameKit.webBuildSh + packageSwift + TVTemplate.lampJS
-            + GameAndroid.screenActivity + GameAndroid.screenManifest
+            + GameAndroid.stamp
     }
 }
 
@@ -183,7 +185,7 @@ extension Agent {
     static func screenPrompt(for project: LampProject) -> String {
         let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
-                     Rules.begin, Rules.finish]
+                     Skills.index(Skills.offered(.screen)), Rules.begin, Rules.finish]
         return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -194,8 +196,9 @@ extension Agent {
     /// there, without those about the wish as a whole.
     static func screenPrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.screenDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
-                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk]
-        return (Rules.partHeader("a screen, a page in Web/ shown full screen and glanced at from across a room, at home on the Mac and shown on an iPhone or iPad, an Android tablet or photo frame, a TV and an Xbox too once it's put there", folder: folder)
+                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
+                     Skills.index(Skills.offered(.screen))]
+        return (Rules.partHeader("a screen, a page in Web/ shown full screen and glanced at from across a room, at home on the Mac and shown anywhere else a page goes (an iPhone or iPad, an Android tablet or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -207,23 +210,24 @@ extension Agent.Rules {
     static let screenHeader = """
     You are Lamp's builder agent. The current directory is a screen: a page (HTML, CSS and JavaScript in Web/) shown \
     full screen and glanced at from across a room, the same page wherever it's shown, filling the screen it's on. Its \
-    home is the person's Mac, where it's an app in its own window; it's shown on an iPhone or iPad, an Android tablet or \
-    photo frame, a Samsung or LG TV and the person's Xbox too once it's put there. You try it in the TV preview on this \
-    Mac, the same page with a remote's keys, at any shape. The request's device line says where it's shown: never say \
-    it's on a device it isn't on. Read APP.md first for context.
+    home is the person's Mac, where it's an app in its own window; it's shown anywhere else a page goes (an iPhone or \
+    iPad, an Android tablet or photo frame, a Google TV, Android TV or Fire TV, a Samsung or LG TV, the person's Xbox) \
+    once it's put there. You try it in the TV preview on this Mac, the same page with a remote's keys, at any shape. \
+    The request's device line says where it's shown: never say it's on a device it isn't on. Read APP.md first for \
+    context.
     """
 
-    static let screenEdit = """
+    static var screenEdit: String { """
     - Make the change the user asks for by editing the page's files in Web/ (index.html, style.css, app.js and any \
     others), and what it shows beside them, and Sources/Native.swift for what the page asks of the device. Web/lamp.js, \
     the rest of Sources/, build.sh and Package.swift are Lamp's (the page's building blocks and the app around it): read lamp.js, never edit or delete any of them. Lamp builds by itself and, \
-    at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, the Android \
-    emulator or tablet, a TV or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. \
-    Where else it's shown is the person's to ask for: when they \
-    want it on their iPad, TV or Xbox, call make_app_for with the screen as {"kind": "screen", "places": [every place \
-    beside the Mac it's to be on: "ipad", "android", "tv"…]} and every other app the wish keeps beside it in `apps`; it stays the \
-    same screen.
-    """
+    at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, an Android \
+    emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. \
+    The page fills the screen it's on, whatever its shape (the design rule below). Where else it's shown is the \
+    person's to ask for: when they want it somewhere else, call make_app_for with `devices` every device it's to be on \
+    ("mac", "ipad", "android", "android-tv", "tv"…: a page goes wherever the table of devices gives a web host) and \
+    `made` "web"; it stays the same screen, and the wish's other apps stay as they are.
+    """ }
 
     /// How a screen looks: like a TV app's page (`tvDesign`), but filling whatever it's shown on rather than a fixed
     /// 1920x1080, and looked at in several shapes.
