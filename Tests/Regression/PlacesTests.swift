@@ -15,7 +15,7 @@ final class PlacesTests: XCTestCase {
         for place in Places.builtIn {
             for make in Place.Make.allCases where place.runs(make) {
                 let device = try XCTUnwrap(DeviceWord(place.words[0], in: Places.builtIn))
-                guard case .success(let target) = AppKinds.target(make, on: [device], in: Places.builtIn) else {
+                guard case .success(let target) = AppKinds.target(make, kind: .app, on: [device], in: Places.builtIn) else {
                     return XCTFail("\(place.name) claims \(make) but no kind builds it")
                 }
                 XCTAssertTrue(target.kind.target.places.contains(place.destination), "\(target.kind.rawValue) doesn't open on \(place.name)")
@@ -23,7 +23,7 @@ final class PlacesTests: XCTestCase {
         }
         // The Apple TV and Vision Pro are the Apple kinds' own builds for another system.
         for id in ["apple-tv", "vision-pro"] {
-            guard case .success(let target) = AppKinds.target(.native, on: [try XCTUnwrap(DeviceWord(id, in: Places.builtIn))], in: Places.builtIn) else { return XCTFail() }
+            guard case .success(let target) = AppKinds.target(.native, kind: .app, on: [try XCTUnwrap(DeviceWord(id, in: Places.builtIn))], in: Places.builtIn) else { return XCTFail() }
             XCTAssertTrue(target.kind.target.otherSystems)
         }
     }
@@ -69,11 +69,12 @@ final class PlacesTests: XCTestCase {
             LampProject(id: "f", name: "F", exe: "F", dir: dir, platform: .tv),
             LampProject(id: "g", name: "G", exe: "G", dir: dir, platform: .game, places: [.mac, .ios, .android]),
             LampProject(id: "h", name: "H", exe: "H", dir: dir, platform: .screen, places: [.mac, .tv]),
+            LampProject(id: "i", name: "I", exe: "I", dir: dir, platform: .webApp, places: [.mac, .android]),
         ]
         for app in apps {
             let member = AppKinds.member(of: app)
-            let make: Place.Make = [Platform.game, .screen, .tv].contains(app.platform) ? .web : .native
-            guard case .success(let again) = AppKinds.target(make, on: member.target.devices, existing: [member], in: Places.builtIn) else {
+            let make: Place.Make = [Platform.game, .webApp, .screen, .tv].contains(app.platform) ? .web : .native
+            guard case .success(let again) = AppKinds.target(make, kind: AppIntent.of(app.platform), on: member.target.devices, keeping: member.target.kind, in: Places.builtIn) else {
                 return XCTFail("\(app.platform.rawValue) reads back as devices it can't be made on")
             }
             XCTAssertEqual(again.kind, app.platform)
@@ -89,10 +90,10 @@ final class PlacesTests: XCTestCase {
         XCTAssertEqual(Platform.screen.target.places, Places.pagePlaces)
         XCTAssertEqual(Places.named("android-tv")?.web?.host, Places.named("android")?.web?.host, "one Android host for phones and TVs")
         let devices = ["mac", "android-tv", "android", "ipad"].compactMap { DeviceWord($0, in: Places.builtIn) }
-        guard case .success(let page) = AppKinds.target(.web, on: devices, in: Places.builtIn) else { return XCTFail("a page on Android TV") }
+        guard case .success(let page) = AppKinds.target(.web, kind: .game, on: devices, in: Places.builtIn) else { return XCTFail("a page on Android TV") }
         XCTAssertTrue(page.kind.addsPlaces && page.places?.contains(.androidTV) == true)
         let appleTV = ["mac", "apple-tv"].compactMap { DeviceWord($0, in: Places.builtIn) }
-        guard case .failure(let refusal) = AppKinds.target(.web, on: appleTV, in: Places.builtIn) else { return XCTFail("a page on an Apple TV") }
+        guard case .failure(let refusal) = AppKinds.target(.web, kind: .app, on: appleTV, in: Places.builtIn) else { return XCTFail("a page on an Apple TV") }
         XCTAssertTrue(refusal.reason.contains("needs a native version"), refusal.reason)
     }
 
@@ -129,14 +130,14 @@ final class PlacesTests: XCTestCase {
                           web: .init(host: .integration, reach: "Lamp installs it"), native: nil, input: .generic)
         let table = Places.builtIn + [xbox, frame]
         let both = ["mac", "test-frame"].compactMap { DeviceWord($0, in: table) }
-        guard case .failure(let refusal) = AppKinds.target(.web, on: both, in: table) else {
+        guard case .failure(let refusal) = AppKinds.target(.web, kind: .app, on: both, in: table) else {
             return XCTFail("a page for the Mac and Test Frame was made as one for the Xbox")
         }
         XCTAssertTrue(refusal.reason.contains("Test Frame"), refusal.reason)
         // Alone, it's the integration's own web app; with the Xbox, a page that goes there.
-        guard case .success(let own) = AppKinds.target(.web, on: [try XCTUnwrap(DeviceWord("test-frame", in: table))], in: table) else { return XCTFail() }
+        guard case .success(let own) = AppKinds.target(.web, kind: .app, on: [try XCTUnwrap(DeviceWord("test-frame", in: table))], in: table) else { return XCTFail() }
         XCTAssertEqual(own.integration, "test-frame")
-        guard case .success(let page) = AppKinds.target(.web, on: ["mac", "xbox-one"].compactMap { DeviceWord($0, in: table) }, in: table) else { return XCTFail() }
+        guard case .success(let page) = AppKinds.target(.web, kind: .game, on: ["mac", "xbox-one"].compactMap { DeviceWord($0, in: table) }, in: table) else { return XCTFail() }
         XCTAssertEqual(page.places, [.mac, .device])
     }
 

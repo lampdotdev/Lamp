@@ -8,8 +8,8 @@ struct NewerWish: Identifiable, Hashable {
     /// How wish folders are laid out in this Lamp. A wish from before meta.json said so is layout 1, as is every wish
     /// whose own folder still holds an app; 2 is a wish whose apps are all in folders of their own; 3 is a wish with
     /// apps a Lamp of layout 2 wouldn't find as they are: two of one code, or one in a folder of another name than its
-    /// kind's (Mac2/), which that Lamp would leave out, or take the wish for a draft and write a new app into it
-    /// (`Template.layout`, `Parts.readByEarlierLamp`).
+    /// kind's (Mac2/), a web app (a kind it doesn't know) or none at all, which that Lamp would leave out, or take the
+    /// wish for a draft and write a new app into it (`Template.layout`, `Parts.readByEarlierLamp`).
     static let layout = 3
     /// A wish whose apps are all in folders of their own, each of them one a Lamp of this layout finds.
     static let foldersLayout = 2

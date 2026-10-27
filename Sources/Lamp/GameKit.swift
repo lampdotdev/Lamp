@@ -69,7 +69,7 @@ enum GameKit {
     static func integration(for project: LampProject) -> String? {
         guard project.openPlaces.contains(.device) else { return nil }
         // A screen goes on the Xbox as its web app; a game as the kind its engine makes.
-        return project.platform == .screen ? xbox : xboxKind(for: engine(project))
+        return ScreenKit.isScreen(project) ? xbox : xboxKind(for: engine(project))
     }
 
     /// What a place is called to the person and to the agent.
@@ -714,7 +714,7 @@ extension Agent.Rules {
         """
 
         - This wish has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
-        with `made` "web"; the wish's other apps stay as they are, and one is taken away only with remove_app.
+        with its folder in `app` and `made` "web"; the wish's other apps stay as they are, and one is taken away only with remove_app.
         """
     }
 
@@ -760,9 +760,9 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
     and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it somewhere else, call \
-    make_app_for with `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", \
-    "xbox-one"…: a page goes wherever the table of devices gives a web host) and `made` "web"; it stays the same game, \
-    and the wish's other apps stay as they are.
+    make_app_for with the game's folder in `app` ("." when it's the wish's own folder), `kind` "game", `made` "web" and \
+    `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", "xbox-one"…: a page \
+    goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
     """ }
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

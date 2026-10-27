@@ -24,7 +24,7 @@ final class WaitingAppTests: XCTestCase {
             throw XCTSkip("this Mac can't build iPhone apps")
         }
         var wish = try Template.scaffold(name: "Steps", platform: .android, in: root)
-        guard case .another(let target) = try AppPlanner.make(.native, devices: ["iphone", "watch"], another: true,
+        guard case .another(let target) = try AppPlanner.make(.native, kind: .app, devices: ["iphone", "watch"], another: true,
                                                           in: [AppKinds.member(of: wish, in: Places.builtIn)], table: Places.builtIn).get()
         else { return XCTFail("an iPhone app beside an Android one is a new app") }
         wish.apps = [WishApp(kind: .android), target.waiting]
@@ -58,7 +58,7 @@ final class WaitingAppTests: XCTestCase {
             throw XCTSkip("this Mac can't build iPhone apps")
         }
         var wish = try Template.scaffold(name: "Steps", platform: .android, in: root)
-        guard case .another(let target) = try AppPlanner.make(.native, devices: ["iphone", "watch"], another: true,
+        guard case .another(let target) = try AppPlanner.make(.native, kind: .app, devices: ["iphone", "watch"], another: true,
                                                           in: [AppKinds.member(of: wish, in: Places.builtIn)], table: Places.builtIn).get()
         else { return XCTFail("an iPhone app beside an Android one is a new app") }
         wish.apps = [WishApp(kind: .android), target.waiting]
@@ -87,7 +87,7 @@ final class WaitingAppTests: XCTestCase {
             throw XCTSkip("this Mac can't build iPhone apps")
         }
         var wish = try Template.scaffold(name: "Steps", platform: .android, in: root)
-        guard case .another(let target) = try AppPlanner.make(.native, devices: ["iphone", "watch"], another: true,
+        guard case .another(let target) = try AppPlanner.make(.native, kind: .app, devices: ["iphone", "watch"], another: true,
                                                           in: [AppKinds.member(of: wish, in: Places.builtIn)], table: Places.builtIn).get()
         else { return XCTFail("an iPhone app beside an Android one is a new app") }
         wish.apps = [WishApp(kind: .android), target.waiting]

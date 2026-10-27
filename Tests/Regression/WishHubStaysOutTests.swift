@@ -7,7 +7,7 @@ import XCTest
 /// and the line about them with each request.
 @MainActor
 final class WishHubStaysOutTests: XCTestCase {
-    private let kinds: [Platform] = [.mac, .iphone, .universal, .android, .tv, .game, .screen]
+    private let kinds: [Platform] = [.mac, .iphone, .universal, .android, .tv, .game, .webApp, .screen]
 
     private func project(_ kind: Platform, partOf wish: String? = nil) -> LampProject {
         LampProject(id: wish.map { "\($0).\(kind.rawValue)" } ?? "solo\(kind.rawValue)", name: "Solo", exe: "Solo",

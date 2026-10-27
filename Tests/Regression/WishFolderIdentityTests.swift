@@ -158,21 +158,21 @@ final class WishFolderIdentityTests: XCTestCase {
         let mac = AppKinds.member(of: LampProject(id: "tally", name: "Tally", exe: "Tally", dir: root, platform: .mac))
         let other = AppKinds.member(of: LampProject(id: "tally.mac2", name: "Tally", exe: "Tally", dir: root.appendingPathComponent("Mac2"),
                                                      platform: .mac, partOf: "tally"))
-        XCTAssertThrowsError(try AppPlanner.make(.native, devices: ["mac"], another: true, in: [mac, other]).get(), "two apps of one code")
-        XCTAssertThrowsError(try AppPlanner.make(.native, devices: ["mac"], in: [mac, other]).get(), "naming no app, a wish that has one gets none")
-        guard case .another(let added) = try AppPlanner.make(.native, devices: ["android"], another: true, in: [mac, other]).get() else { return XCTFail() }
+        XCTAssertThrowsError(try AppPlanner.make(.native, kind: .app, devices: ["mac"], another: true, in: [mac, other]).get(), "two apps of one code")
+        XCTAssertThrowsError(try AppPlanner.make(.native, kind: .app, devices: ["mac"], in: [mac, other]).get(), "naming no app, a wish that has one gets none")
+        guard case .another(let added) = try AppPlanner.make(.native, kind: .app, devices: ["android"], another: true, in: [mac, other]).get() else { return XCTFail() }
         XCTAssertEqual(added.kind, .android)
-        guard case .update(let changed, let target) = try AppPlanner.make(.native, devices: ["mac", "iphone"], app: "mac2", in: [mac, other]).get()
+        guard case .update(let changed, let target) = try AppPlanner.make(.native, kind: .app, devices: ["mac", "iphone"], app: "mac2", in: [mac, other]).get()
         else { return XCTFail() }
         XCTAssertEqual(changed, other)
         XCTAssertEqual(target.kind, .universal)
-        guard case .update(let rootApp, _) = try AppPlanner.make(.native, devices: ["mac"], app: ".", in: [mac, other]).get() else { return XCTFail() }
+        guard case .update(let rootApp, _) = try AppPlanner.make(.native, kind: .app, devices: ["mac"], app: ".", in: [mac, other]).get() else { return XCTFail() }
         XCTAssertEqual(rootApp, mac)
         for selector in ["Mac3", "../Mac2", "mac", "/tmp"] {
-            guard case .failure = AppPlanner.make(.native, devices: ["mac"], app: selector, in: [mac, other]) else { return XCTFail(selector) }
+            guard case .failure = AppPlanner.make(.native, kind: .app, devices: ["mac"], app: selector, in: [mac, other]) else { return XCTFail(selector) }
         }
         let waiting = AppKinds.member(waiting: WishApp(kind: .mac, needs: "Xcode", folder: "Mac3"))
-        guard case .update(let pending, _) = try AppPlanner.make(.native, devices: ["mac", "ipad"], app: "Mac3", in: [mac, waiting]).get()
+        guard case .update(let pending, _) = try AppPlanner.make(.native, kind: .app, devices: ["mac", "ipad"], app: "Mac3", in: [mac, waiting]).get()
         else { return XCTFail() }
         XCTAssertEqual(pending.slot, "Mac3")
     }

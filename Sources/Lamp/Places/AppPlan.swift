@@ -20,6 +20,16 @@ struct DeviceWord: Hashable {
     }
 }
 
+/// What an app is for, as `make_app_for`'s `kind` says it: a game, or any other app. It's the agent's to say, never read
+/// off the devices; how it's made (`Place.Make`) is said apart, so a game and an app may each be web or native.
+enum AppIntent: String, CaseIterable {
+    case game, app
+
+    /// What an app of a wish is for, from what it's made as: a game is a game, any other kind (a screen made before
+    /// included) an app.
+    static func of(_ kind: Platform) -> AppIntent { kind == .game ? .game : .app }
+}
+
 /// What an app of a wish is to be, in the terms Lamp builds it in today: the kind, the devices it's for (as they were
 /// asked for), the integration of a device's own app, the family of Apple's devices Try On opens it on, and for a game
 /// or a screen the places it's played or shown. `code` is the key of what it's written in: two apps of one key are one
@@ -29,6 +39,9 @@ struct AppTarget: Equatable {
     let devices: [DeviceWord]
     var integration: String? = nil
     var places: [Destination]? = nil
+    /// Asked for as a game (`make_app_for`'s `kind`), which a game made natively is only by this: its kind is the
+    /// devices' own code, as any app's is.
+    var game = false
 
     var code: String { AppKinds.code(of: kind, integration: integration) }
     var rows: Set<String> { Set(devices.map(\.row)) }
@@ -38,7 +51,7 @@ struct AppTarget: Equatable {
 
     /// As the wish's list keeps it while it waits, whole.
     var waiting: WishApp {
-        WishApp(kind: kind, places: places, devices: devices.map(\.word), integration: integration)
+        WishApp(kind: kind, places: places, devices: devices.map(\.word), integration: integration, game: game && kind != .game ? true : nil)
     }
 }
 
@@ -117,13 +130,13 @@ enum AppKinds {
         }
     }
 
-    /// The kinds that show a page today, most particular first where two reach the same devices.
-    private static let pageKinds: [Platform] = [.tv, .device, .game, .screen]
-
-    /// What an app of this make on these devices is today, or why there's no such app. A native app is the kind of its
-    /// rows' one code. A web app is the kind of page whose places reach every row: the wish's own when it has one that
-    /// does, else the one that reaches the fewest other places, the first listed where two tie.
-    static func target(_ make: Place.Make, on devices: [DeviceWord], existing: [WishMember] = [],
+    /// What an app of this make and intent on these devices is today, or why there's no such app. A native app is the
+    /// kind of its rows' one code, whichever intent it has: a game and an app are written in the same code. A web game is
+    /// a game (three.js, Lamp's game runtime); a web app is a web app at home on the Mac that goes wherever a page goes,
+    /// or a TV app where only Samsung or LG TVs are asked for, whose package is the TVs' own. `keeping` is the kind of the
+    /// app being changed (`make_app_for`'s `app`), kept when it's a web app that still reaches every row: a screen made
+    /// before stays one, with its origin and saves. The devices never choose between a game and an app.
+    static func target(_ make: Place.Make, kind intent: AppIntent, on devices: [DeviceWord], keeping: Platform? = nil,
                        in table: [Place] = Places.all) -> Result<AppTarget, Refusal> {
         let ids = Set(devices.map(\.row))
         guard !ids.isEmpty else { return .failure(Refusal("`devices` lists every device the app is to be on: at least one.")) }
@@ -148,22 +161,30 @@ enum AppKinds {
             let opening = reached.union(table.filter { with.contains($0.id) }.map(\.destination))
             return .success(AppTarget(kind: nativeKind(code, opening: opening), devices: devices, integration: integration))
         case .web:
-            if let integration { return .success(AppTarget(kind: .device, devices: devices, integration: integration)) }
+            // An integration's device alone is its own web app, but for a game on one Lamp packages games' pages for.
+            if let integration, !(intent == .game && GameKit.pageIntegrations.contains(integration)) {
+                return .success(AppTarget(kind: .device, devices: devices, integration: integration))
+            }
             // A page among other devices reaches an integration's only where Lamp packages it for that integration's host:
             // another integration's device, though it runs web apps of its own, isn't one of the page's places yet.
             if let other = rows.first(where: { $0.destination == .device && !GameKit.pageIntegrations.contains($0.id) }) {
                 return .failure(Refusal("Lamp can't put a web app made for other devices on \(other.name) yet: its own web app is asked for "
                     + "with \(other.name) alone. Give the other devices without it, and call again for \(other.name)'s app."))
             }
-            let fits = pageKinds.filter { $0 != .device && reached.isSubset(of: Set($0.target.places)) }
-            let kept = existing.map(\.target.kind).first(where: fits.contains)
-            guard let kind = kept ?? fits.filter({ $0 != .screen }).min(by: { $0.target.places.count < $1.target.places.count }) else { // a screen is only ever kept
-                let reach = { (kind: Platform) in table.filter { $0.runs(.web) && kind.target.places.contains($0.destination) }.map(\.name).joined(separator: ", ") }
-                return .failure(Refusal("Lamp can't put one web app on all of these yet: \(rows.map(\.name).joined(separator: ", ")). "
-                    + pageKinds.filter { $0 != .device && $0.target.places.count > 1 }.map { "One web app goes on \(reach($0))" }.joined(separator: "; ")
-                    + ". Give the devices one of them covers, and another app for the rest."))
+            let kind: Platform
+            switch intent {
+            case .game: kind = .game
+            case .app:
+                if let keeping, [.webApp, .screen, .tv].contains(keeping), reached.isSubset(of: Set(keeping.target.places)) { kind = keeping }
+                else if reached.isSubset(of: Set(Platform.tv.target.places)) { kind = .tv }
+                else { kind = .webApp }
             }
-            // A page with places (a game, a screen) is at home on the Mac, and goes wherever else it's asked for.
+            guard reached.isSubset(of: Set(kind.target.places)) else {
+                let reach = table.filter { $0.runs(.web) && kind.target.places.contains($0.destination) }.map(\.name).joined(separator: ", ")
+                return .failure(Refusal("Lamp can't put one web \(intent.rawValue) on all of these yet: \(rows.map(\.name).joined(separator: ", ")). "
+                    + "One goes on \(reach)."))
+            }
+            // A page with places (a game, a web app) is at home on the Mac, and goes wherever else it's asked for.
             let places = kind.addsPlaces ? kind.target.places.filter { $0 == .mac || reached.contains($0) } : nil
             return .success(AppTarget(kind: kind, devices: devices, places: places))
         }
@@ -180,7 +201,7 @@ enum AppKinds {
         let asked = (app.devices ?? []).compactMap { DeviceWord($0, in: table) }
         let target = asked.isEmpty ? self.target(kind: app.kind, opening: app.places ?? app.kind.target.places, family: nil, integration: app.integration,
                                                 companions: [], in: table)
-            : AppTarget(kind: app.kind, devices: asked, integration: app.integration, places: app.places)
+            : AppTarget(kind: app.kind, devices: asked, integration: app.integration, places: app.places, game: app.game == true || app.kind == .game)
         return WishMember(state: .waiting(folder: app.folder), target: target)
     }
 
@@ -282,8 +303,8 @@ enum AppPlanner {
     /// `make_app_for`: what `decide` reads from `app` and `another`, as a plan over the wish's apps: the first app, the
     /// app `app` names changed, or one more beside the others (two apps of one code, two Mac apps, are two apps, each in
     /// its own folder). Never a removal. `table` is the table of devices, every row Lamp has unless said.
-    static func make(_ made: Place.Make, devices words: [String], app: Any? = nil, another: Any? = nil, in members: [WishMember],
-                     table: [Place] = Places.all) -> Result<AppPlan, Refusal> {
+    static func make(_ made: Place.Make, kind intent: AppIntent, devices words: [String], app: Any? = nil, another: Any? = nil,
+                     in members: [WishMember], table: [Place] = Places.all) -> Result<AppPlan, Refusal> {
         // Which app is to change, if any, is found before anything else is read, so a call that names none changes nothing.
         let mode: Mode
         switch decide(app: app, another: another, in: members) {
@@ -300,11 +321,12 @@ enum AppPlanner {
             }
             if !devices.contains(device) { devices.append(device) }
         }
-        let target: AppTarget
-        switch AppKinds.target(made, on: devices, existing: chosen.map { [$0] } ?? [], in: table) {
+        var target: AppTarget
+        switch AppKinds.target(made, kind: intent, on: devices, keeping: chosen?.target.kind, in: table) {
         case .success(let found): target = found
         case .failure(let refusal): return .failure(refusal)
         }
+        target.game = intent == .game
         // One more app is of a code the wish has none of, made or still to be made: two apps of one code (two Mac apps)
         // can't be in one wish yet, as sharing a wish and a request's repeated call can't tell them apart. A device's
         // own app is one per wish for now, whichever device's. Refused here, before any folder is found or anything
@@ -353,7 +375,8 @@ enum AppPlanner {
     static func find(_ named: String, in members: [WishMember], table: [Place] = Places.all) -> Found {
         let name = named.trimmed.lowercased()
         guard !name.isEmpty else { return .none }
-        if case .one(let member) = select(name, in: members.filter { $0.slot != "." }) { return .one(member) }
+        // "." too: the app in the wish's own folder can be the last one taken away, by the name `make_app_for` gives it.
+        if case .one(let member) = select(name, in: members) { return .one(member) }
         let own = members.filter { member in
             member.folder?.lowercased() == name || Parts.word(for: member.target.kind) == name
                 || Parts.folder(for: member.target.kind).lowercased() == name || member.target.kind.rawValue == name
@@ -369,7 +392,8 @@ enum AppPlanner {
         }
     }
 
-    /// `remove_app`: a made app taken away, or a waiting one taken off the list. Never the wish's only made app.
+    /// `remove_app`: a made app taken away, or a waiting one taken off the list. The wish's last app too: the wish stays,
+    /// with its name, chat and history, and no app until `make_app_for` gives it its first again.
     static func remove(_ named: String, in members: [WishMember], table: [Place] = Places.all,
                        describe: (WishMember) -> String) -> Result<AppPlan, Refusal> {
         let listed = members.map(describe).joined(separator: ", ")
@@ -379,11 +403,7 @@ enum AppPlanner {
         case .several(let found):
             return .failure(Refusal("\"\(named)\" is more than one of the wish's apps: \(found.map(describe).joined(separator: ", ")). Name one by its folder."))
         case .one(let member):
-            guard member.isMade else { return .success(.cancel(member)) }
-            guard members.filter(\.isMade).count > 1 else {
-                return .failure(Refusal("\(describe(member)) is the wish's only app, so it stays. To make it something else, use make_app_for."))
-            }
-            return .success(.remove(member))
+            return .success(member.isMade ? .remove(member) : .cancel(member))
         }
     }
 }

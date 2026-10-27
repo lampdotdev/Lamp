@@ -416,6 +416,7 @@ enum Agent {
     /// that app's rules here, for the files in its folder; a wish of several has each app's as a skill, as any wish's
     /// other apps have (`Parts.rule`), so no app of it comes first.
     static func wishPrompt(for wish: LampProject, parts: [LampProject]) -> String {
+        guard !parts.isEmpty else { return emptyWishPrompt }
         let apps = parts.map { "\(Parts.name(of: $0)) in \($0.dir.lastPathComponent)/" }
         let header = """
         You are Lamp's builder agent. The current directory is a wish: \(apps.joined(separator: " and ")), each app in a \
@@ -434,6 +435,23 @@ enum Agent {
         // Each app's devices offer their skills (a TV's design) in the wish's prompt, which is every app's.
         let devices = Skills.forDevices(of: parts)
         return header + "\n\nRules:\n" + rules + each + devices
+    }
+
+    /// The prompt of a wish with no app at all (its last one taken away): only what holds for the wish as a whole, and
+    /// how it gets an app, with nothing of any kind's rules or files that are gone.
+    static var emptyWishPrompt: String {
+        let header = """
+        You are Lamp's builder agent. The current directory is a wish that has no apps now: it keeps its name, its chat, \
+        its history, its icon and the person's attachments, and nothing in it is built, opened or tried. When the person \
+        wants something made, give the wish an app with `make_app_for`: what it is (`kind`, a game or an app), how it's \
+        made (`made`) and the devices it's for; its reply carries that app's rules, which you then follow in the same \
+        request. Undo in the chat's toolbar, or restore_version, brings back an app the wish had.
+        """
+        let rules = [Rules.ask, Rules.shell, Rules.icon, Rules.about, Rules.wishAttachments, Rules.audience, Rules.begin, Rules.finish]
+            .joined()
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds each app you changed and opens it")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
+        return header + "\n\nRules:\n" + rules + Skills.index(Skills.everywhere)
     }
 
     static func kindPrompt(for project: LampProject) -> String { project.platform.target.guidance.prompt(project) }

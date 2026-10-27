@@ -441,6 +441,14 @@ against Microsoft's manifest. Microsoft's license is the person's to accept, in 
 nothing of Microsoft's is passed on. Intel Macs make and play games, but can't put them on an Xbox (LLVM publishes no
 such build).
 
+## Web apps
+
+A web app (`Platform.webApp`, `Targets/WebAppTarget.swift`) is what `make_app_for` makes of an app made with web: the
+screen's recipe (`ScreenKit`, with `ScreenKit.webAppPage`: its own mark `.lamp-web-app`, its own page address
+lamp-web-app://app/ and so its own saved data, `Sources/LampWebApp.swift`, its page laid out at the window's size with
+no fixed canvas, and Web Apps/ to install in), going wherever a page goes and looked at in the TV preview. A screen is
+never made into a web app or back: each keeps its own address and saves.
+
 ## Screens
 
 A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is a web app as Lamp once made them: the TV
