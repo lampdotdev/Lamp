@@ -1047,11 +1047,11 @@ final class Store: ObservableObject {
     }
 
     /// Whether a wish's requests wait for Apple's Command Line Tools: anything Lamp compiles on this Mac does. A game or
-    /// a screen made from Lamp's player doesn't (`GameKit.usesPlayer`), nor does a wish not yet told what it is, whose
-    /// naming call needs none: its turn waits once it's named, if what it names needs them (`waitForAppleTools`).
+    /// a screen made from Lamp's player doesn't (`GameKit.usesPlayer`), nor does a wish whose kind the agent is still to
+    /// choose: its turn goes ahead, and a build of something compiled waits for them (`waitForAppleTools`).
     func needsAppleTools(_ project: LampProject) -> Bool {
         let wish = wish(of: project)
-        guard !wish.untitled, !wish.makesNoApp else { return false }
+        guard !wish.untitled, !wish.makesNoApp, wish.undecided == nil else { return false }
         return apps(of: wish).contains { !GameKit.usesPlayer($0) }
     }
 
@@ -1063,6 +1063,18 @@ final class Store: ObservableObject {
     /// Some request waits for Apple's tools to arrive.
     var waitsForAppleTools: Bool {
         !setup.hasBuildTools && projects.contains { !(queued[$0.id] ?? []).isEmpty && needsAppleTools($0) }
+    }
+
+    /// Waits for Apple's tools, asking for them if nobody has yet, while the turn that builds goes on; false once it
+    /// was stopped or the app went away meanwhile.
+    private func waitForAppleTools(_ project: LampProject, in turn: Turn?) async -> Bool {
+        if !setup.installRequested { requestBuildTools() }
+        log(project, .status, "Waiting for Apple's app-building tools…")
+        while !setup.hasBuildTools {
+            if turn?.stopped == true || !exists(project) { return false }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        return true
     }
 
     func requestBuildTools() {
@@ -3748,14 +3760,6 @@ final class Store: ObservableObject {
                 // Lamp's own request waiting for Reload starts nothing by itself: the person is told as after any turn.
                 if !owner.stopped, !result.watched, (queued[project.id] ?? []).allSatisfy(\.afterReload) { notify(project, after: result.end) }
                 finish(project)
-            }
-            // Named now as something Lamp compiles, on a Mac whose Apple tools are still to come: the turn waits for them,
-            // as the request would have before it was named. A game or a screen goes on: Lamp's player needs none.
-            if first, needsAppleTools(project), !setup.hasBuildTools {
-                if !setup.installRequested { requestBuildTools() }
-                log(project, .status, "Waiting for Apple's app-building tools…")
-                while !setup.hasBuildTools, !owner.stopped, exists(project) { try? await Task.sleep(for: .seconds(2)) }
-                guard !owner.stopped, exists(project) else { return }
             }
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
             // Not while a wish is still being found: the agent only asks, and the wish it finds may be for the
@@ -7336,6 +7340,11 @@ final class Store: ObservableObject {
             let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
             if !said { log(project, .error, problem) }
             return problem
+        }
+        // Something compiled, on a Mac whose Apple tools are still to come (a wish the agent made a Mac app of before they
+        // arrived): the build waits for them, as a request for it would have. Lamp's player needs none.
+        if !project.onAndroid, !GameKit.usesPlayer(project), !setup.hasBuildTools {
+            guard await waitForAppleTools(project, in: owner) else { return "Stopped." }
         }
         let game = GameKit.isGame(project)
         // A game's shaders are compiled with a tool Lamp fetches the first time, a small download with nothing to accept.
