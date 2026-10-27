@@ -592,9 +592,48 @@ enum Sharing {
     /// `.lamp`, which goes with the wish and isn't versioned, until the part is made and the files go in (`Store.addPart`).
     /// Kept by the part's family (`Parts.group`), since the folder the file had it in may not be the one it's made in
     /// here (an app for both exported from the Mac/ it was changed in place in is made in Apple/).
+    /// A part kept for a folder (`slot`: the one kept for it on the wish's list, `WishApp.folder`) is kept under its
+    /// family and that folder, so two apps of one family waiting at once (an iPhone app and a Mac app, two Mac apps)
+    /// keep their files apart; one with no folder named, under its family alone, where a Lamp from before kept it.
     static let waitingFolder = ".lamp/waiting"
-    static func waitingFolder(in wish: URL, for kind: Platform) -> URL {
-        wish.appendingPathComponent(waitingFolder).appendingPathComponent(Parts.group(kind))
+    static func waitingFolder(in wish: URL, for kind: Platform, slot: String? = nil) -> URL {
+        let key = slot.flatMap { Parts.isFolderName($0) ? Parts.group(kind) + "-" + $0.lowercased() : nil } ?? Parts.group(kind)
+        return wish.appendingPathComponent(waitingFolder).appendingPathComponent(key)
+    }
+
+    /// Where the part kept for this slot is: its own place, else what a Lamp from before kept under the family alone,
+    /// when that was kept for this same folder (its note says which), so no other slot of the family takes it.
+    private static func keptPlace(in wish: URL, for kind: Platform, slot: String?) -> URL {
+        let own = waitingFolder(in: wish, for: kind, slot: slot)
+        guard let slot, !FileManager.default.fileExists(atPath: own.path) else { return own }
+        let family = waitingFolder(in: wish, for: kind)
+        guard let data = try? Data(contentsOf: family.appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data),
+              (note.slot ?? note.folder ?? Parts.folder(for: note.platform)).lowercased() == slot.lowercased() else { return own }
+        return family
+    }
+
+    /// The folder files an earlier Lamp kept for this kind's family alone were claimed for, if they were.
+    static func claimedSlot(in wish: URL, for kind: Platform) -> String? {
+        let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
+        guard let data = try? Data(contentsOf: note), let kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind else { return nil }
+        return kept.slot
+    }
+
+    /// Notes in files an earlier Lamp kept for this kind's family alone that they're for `slot`, before the wish's list
+    /// says so and before they move (`claimKept`): from then on they're found from that slot, whichever step comes next.
+    enum Marked { case nothingKept, marked, failed }
+
+    /// `nothingKept` when no files are kept so for this kind; `failed` when there are and their note couldn't be written,
+    /// so nothing else may move them.
+    @discardableResult
+    static func markKept(in wish: URL, for kind: Platform, slot: String) -> Marked {
+        let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
+        guard let data = try? Data(contentsOf: note), var kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind
+        else { return .nothingKept }
+        kept.slot = slot
+        guard let encoded = try? JSONEncoder().encode(kept), (try? encoded.write(to: note, options: .atomic)) != nil else { return .failed }
+        return .marked
     }
 
     /// What a kept part was made for, beside its files.
@@ -605,12 +644,15 @@ enum Sharing {
         var folder: String?
         /// The licence texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
         var licences: [String]?
+        /// For files an earlier Lamp kept for the family alone: the folder on the wish's list they're now for
+        /// (`claimKept`), written before anything else moves, so they're found from it at every step of the way.
+        var slot: String?
     }
 
     /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
-    static func keep(_ part: Package.Part, in wish: URL) throws {
+    static func keep(_ part: Package.Part, in wish: URL, slot: String? = nil) throws {
         let fm = FileManager.default
-        let folder = waitingFolder(in: wish, for: part.package.platform)
+        let folder = waitingFolder(in: wish, for: part.package.platform, slot: slot)
         try? fm.removeItem(at: folder)
         try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.copyItem(at: part.package.folder, to: folder)
@@ -621,8 +663,8 @@ enum Sharing {
 
     /// The part a wish kept for this kind's family, read as a shared app is: nil when none is kept, or what's there can't
     /// be read as an app of the kind it was kept as. The folder stays until `forgetKept`.
-    static func kept(in wish: URL, for kind: Platform) -> Package.Part? {
-        let kept = waitingFolder(in: wish, for: kind)
+    static func kept(in wish: URL, for kind: Platform, slot: String? = nil) -> Package.Part? {
+        let kept = keptPlace(in: wish, for: kind, slot: slot)
         guard let data = try? Data(contentsOf: kept.appendingPathComponent("lamp-part.json")),
               let note = try? JSONDecoder().decode(Waiting.self, from: data),
               let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
@@ -635,15 +677,24 @@ enum Sharing {
     }
 
     /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
-    static func keptFolder(in wish: URL, for kind: Platform) -> String? {
-        guard let data = try? Data(contentsOf: waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")),
+    static func keptFolder(in wish: URL, for kind: Platform, slot: String? = nil) -> String? {
+        guard let data = try? Data(contentsOf: keptPlace(in: wish, for: kind, slot: slot).appendingPathComponent("lamp-part.json")),
               let note = try? JSONDecoder().decode(Waiting.self, from: data), note.platform == kind,
               let folder = note.folder, Parts.folder(folder, canHold: kind) else { return nil }
         return folder
     }
 
-    static func forgetKept(in wish: URL, for kind: Platform) {
-        try? FileManager.default.removeItem(at: waitingFolder(in: wish, for: kind))
+    /// Moves what an earlier Lamp kept for this kind's family alone to the place of the folder now kept for its app, so a
+    /// retry finds it there whatever that folder is called. Nothing when nothing's kept so, or the slot has its own.
+    static func claimKept(in wish: URL, for kind: Platform, slot: String) {
+        let family = waitingFolder(in: wish, for: kind), own = waitingFolder(in: wish, for: kind, slot: slot)
+        let fm = FileManager.default
+        guard family != own, fm.fileExists(atPath: family.appendingPathComponent("lamp-part.json").path), !fm.fileExists(atPath: own.path) else { return }
+        try? fm.moveItem(at: family, to: own)
+    }
+
+    static func forgetKept(in wish: URL, for kind: Platform, slot: String? = nil) {
+        try? FileManager.default.removeItem(at: keptPlace(in: wish, for: kind, slot: slot))
     }
 
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its

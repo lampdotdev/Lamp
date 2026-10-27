@@ -154,7 +154,7 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         let restored = await Versions.restore(wish, to: target, message: "Undid “Put it on my Android phone too”")
         XCTAssertTrue(restored)
 
-        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac)])
+        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac, folder: ".")])
         let unsaved = await Versions.hasUnsavedChanges(wish)
         XCTAssertFalse(unsaved, "the restore's own version holds everything it wrote")
         // And the Undo's own version carries the list it brought back.
@@ -185,7 +185,7 @@ final class WishWithoutAFirstAppTests: XCTestCase {
         let (undoing, target) = try XCTUnwrap(Versions.undoTarget(in: versions))
         let undone = await Versions.restore(wish, to: target, message: "Undid “\(undoing.label)”", trailer: "Lamp-Undid: \(undoing.id)")
         XCTAssertTrue(undone)
-        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac)])
+        XCTAssertEqual(try XCTUnwrap(Store.readWish(at: wish.dir)).apps, [WishApp(kind: .mac, folder: ".")])
     }
 }
 
@@ -277,6 +277,6 @@ final class WishListThroughTheStoreTests: XCTestCase {
         let undone = await Versions.restore(wish, to: target, message: "Undid “\(undoing.label)”", trailer: "Lamp-Undid: \(undoing.id)")
         XCTAssertTrue(undone)
         let after = await store.followRestored(try XCTUnwrap(store.current(wish)))
-        XCTAssertEqual(after.apps, [WishApp(kind: .mac), waiting], "still waiting, with what stops it")
+        XCTAssertEqual(after.apps, [WishApp(kind: .mac, folder: "."), waiting], "still waiting, with what stops it")
     }
 }

@@ -99,7 +99,7 @@ enum Skills {
     /// The skills every prompt offers, whatever the app is now: how an app is made (web or native) and on which
     /// devices, games of every kind, 3D in a page, web apps, and phones as controllers are the agent's to choose for
     /// any request, so their guidance can't wait for the app to be of a kind that has them.
-    static let everywhere = ["web-or-native", "game", "3d-game", "web-app", "phone-controllers"]
+    static let everywhere = ["web-or-native", "game", "3d-game", "web-app", "phone-controllers", "more-apps"]
 
     /// The skills a prompt names in its own short rules rather than in its list, so each costs the prompt one rule
     /// and not a rule and a line: the building blocks, AI in the app, the person's accounts, App Intents, share
@@ -136,7 +136,7 @@ enum Skills {
     static func applying(to project: LampProject, parts: [LampProject] = []) -> [(name: String, because: String)] {
         let offered = offered(project.platform, sidebar: BrowserBridge.enabled && project.hasMac) + named(project.platform)
         var found: [(name: String, because: String)] = parts.map { part in
-            (Parts.skill(for: part.platform), "this wish has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.word(of: part))\" in look_at_app and use_app)")
+            (Parts.skill(of: part), "this wish has \(Parts.name(of: part)) in \(part.dir.lastPathComponent)/: its rules, for the files there (part \"\(Parts.address(of: part, among: (project.holdsApp ? [project] : []) + parts))\" in look_at_app and use_app)")
         }
         if Template.talksToOtherApps(project) { found.append(("wish-links", "this wish is more than one app: the ways its apps can share data")) }
         else if appSwift(of: project, matches: #"\bLampWish\b|\bLampStore\.shared"#) { found.append(("wish-links", "its code uses LampWish or LampStore.shared")) }

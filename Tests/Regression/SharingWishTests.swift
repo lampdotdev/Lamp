@@ -116,6 +116,35 @@ final class SharingWishTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: Sharing.waitingFolder(in: receiver.dir, for: .iphone).path))
     }
 
+    /// Two apps of one family that can't be made yet (a Mac app in Mac/ and an iPhone app in iPhone/, from one file) keep
+    /// their files apart, each under the folder kept for it: the second kept never takes the place of the first.
+    func testTwoWaitingAppsOfOneFamilyKeepTheirFilesApart() throws {
+        let package = try opened(try exported(try tvWishWithPhone()))
+        let receiver = try Template.scaffold(name: "Remote 4", platform: .tv, in: root)
+        let part = try XCTUnwrap(package.parts.first)
+        try Sharing.keep(Sharing.Package.Part(folder: "Mac", package: part.package), in: receiver.dir, slot: "Mac")
+        try Sharing.keep(Sharing.Package.Part(folder: "iPhone", package: part.package), in: receiver.dir, slot: "iPhone")
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: "Mac")?.folder, "Mac")
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: "iPhone")?.folder, "iPhone")
+        Sharing.forgetKept(in: receiver.dir, for: .iphone, slot: "Mac")
+        XCTAssertNil(Sharing.kept(in: receiver.dir, for: .iphone, slot: "Mac"))
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: "iPhone")?.folder, "iPhone")
+    }
+
+    /// Files an earlier Lamp kept for a family alone, for an app on a list from before folders were kept, go to the
+    /// folder their app is then given: the one they had in their file, so the retry still finds them.
+    func testFilesKeptForAFamilyByAnEarlierLampFollowTheirApp() throws {
+        let package = try opened(try exported(try tvWishWithPhone()))
+        let receiver = try Template.scaffold(name: "Remote 5", platform: .tv, in: root)
+        let part = try XCTUnwrap(package.parts.first)
+        try Sharing.keep(part, in: receiver.dir)
+        let folder = try XCTUnwrap(Sharing.keptFolder(in: receiver.dir, for: .iphone))
+        XCTAssertEqual(folder, part.folder)
+        Sharing.claimKept(in: receiver.dir, for: .iphone, slot: folder)
+        XCTAssertNil(Sharing.kept(in: receiver.dir, for: .iphone))
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: folder)?.package.platform, .iphone)
+    }
+
     /// A part's notes go to the reviewer held to the root's limit, and count against what's sent.
     func testAPartsNotesAreBoundedInTheReview() throws {
         let wish = try tvWishWithPhone()

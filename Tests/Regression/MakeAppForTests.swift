@@ -24,19 +24,19 @@ final class MakeAppForTests: XCTestCase {
         return AppKinds.member(of: app, in: table)
     }
 
-    private func make(_ made: Place.Make, _ devices: [String], in members: [WishMember]) throws -> AppPlan {
-        try AppPlanner.make(made, devices: devices, in: members, table: table).get()
+    private func make(_ made: Place.Make, _ devices: [String], app: String? = nil, another: Bool? = nil, in members: [WishMember]) throws -> AppPlan {
+        try AppPlanner.make(made, devices: devices, app: app, another: another, in: members, table: table).get()
     }
 
-    private func refused(_ made: Place.Make, _ devices: [String], in members: [WishMember] = []) -> String? {
-        guard case .failure(let refusal) = AppPlanner.make(made, devices: devices, in: members, table: table) else { return nil }
+    private func refused(_ made: Place.Make, _ devices: [String], app: String? = nil, another: Bool? = nil, in members: [WishMember] = []) -> String? {
+        guard case .failure(let refusal) = AppPlanner.make(made, devices: devices, app: app, another: another, in: members, table: table) else { return nil }
         return refusal.reason
     }
 
     /// A Mac wish with a game beside it: putting the game on the iPhone too changes the game, and only the game.
     func testAnAppLeftOutOfARequestStays() throws {
         let mac = app("party", .mac), game = app("party.game", .game, folder: "Game", places: [.mac])
-        guard case .update(let changed, let target) = try make(.web, ["mac", "iphone"], in: [mac, game]) else { return XCTFail() }
+        guard case .update(let changed, let target) = try make(.web, ["mac", "iphone"], app: "Game", in: [mac, game]) else { return XCTFail() }
         XCTAssertEqual(changed, game)
         XCTAssertEqual(target.kind, .game)
         XCTAssertEqual(target.places, [.mac, .ios])
@@ -45,7 +45,7 @@ final class MakeAppForTests: XCTestCase {
     /// The Mac app made for the iPhone and its watch too is one app, changed in place.
     func testAnAppOfTheSameCodeChangesInPlace() throws {
         let mac = app("notes", .mac)
-        guard case .update(let changed, let target) = try make(.native, ["mac", "iphone", "watch"], in: [mac]) else { return XCTFail() }
+        guard case .update(let changed, let target) = try make(.native, ["mac", "iphone", "watch"], app: ".", in: [mac]) else { return XCTFail() }
         XCTAssertEqual(changed, mac)
         XCTAssertEqual(target.kind, .universal)
         XCTAssertTrue(target.rows.contains("watch"))
@@ -55,7 +55,7 @@ final class MakeAppForTests: XCTestCase {
     func testTheMacWithAnAppleTVOrVisionProStaysAnAppForBoth() throws {
         let mac = app("notes", .mac)
         for (word, family) in [("apple-tv", DeviceFamily.appletv), ("vision-pro", .vision)] {
-            guard case .update(_, let target) = try make(.native, ["mac", word], in: [mac]) else { return XCTFail() }
+            guard case .update(_, let target) = try make(.native, ["mac", word], app: ".", in: [mac]) else { return XCTFail() }
             XCTAssertEqual(target.kind, .universal)
             XCTAssertEqual(target.family, family)
             XCTAssertTrue(target.kind.target.otherSystems)
@@ -65,7 +65,7 @@ final class MakeAppForTests: XCTestCase {
     /// An iPad asked for is an iPad: the family Try On opens a game or a screen on, kept apart from the iPhone row it runs as.
     func testTheIPadIsKeptAsAsked() throws {
         let screen = app("board", .screen, places: [.mac])
-        guard case .update(_, let target) = try make(.web, ["mac", "ipad"], in: [screen]) else { return XCTFail() }
+        guard case .update(_, let target) = try make(.web, ["mac", "ipad"], app: ".", in: [screen]) else { return XCTFail() }
         XCTAssertEqual(target.kind, .screen)
         XCTAssertEqual(target.places, [.mac, .ios])
         XCTAssertEqual(target.family, .ipad)
@@ -83,11 +83,11 @@ final class MakeAppForTests: XCTestCase {
         let pad = app("pad", .iphone, family: .ipad)
         for (devices, family) in [(["iphone"], DeviceFamily.iphone), (["ipad", "iphone"], .ipad), (["iphone", "ipad"], .iphone),
                                   (["mac", "apple-tv", "iphone"], .appletv)] {
-            guard case .update(_, let target) = try make(.native, devices, in: [pad]) else { return XCTFail() }
+            guard case .update(_, let target) = try make(.native, devices, app: ".", in: [pad]) else { return XCTFail() }
             XCTAssertEqual(target.family, family, "\(devices)")
         }
         for devices in [["mac"], ["watch"]] {
-            guard case .update(_, let target) = try make(.native, devices, in: [pad]) else { return XCTFail() }
+            guard case .update(_, let target) = try make(.native, devices, app: ".", in: [pad]) else { return XCTFail() }
             XCTAssertNil(target.family, "\(devices) names no family, so the app keeps its own")
         }
     }
@@ -118,10 +118,16 @@ final class MakeAppForTests: XCTestCase {
         XCTAssertEqual(AppKinds.member(waiting: target.waiting, in: table).target, target)
     }
 
-    /// A change of make adds the new app beside the old one; whether it takes the old one's place is the person's.
-    func testAChangeOfMakeGoesBesideTheOldApp() throws {
-        guard case .add(let target) = try make(.web, ["mac"], in: [app("racer", .mac)]) else { return XCTFail() }
+    /// A change of make is a change to the app the wish has, named by its folder; with nothing named it's refused, never
+    /// read as a new app beside it, and one more app is `another` alone.
+    func testAChangeOfMakeChangesTheAppNamed() throws {
+        let racer = app("racer", .mac)
+        guard case .update(let changed, let target) = try make(.web, ["mac"], app: ".", in: [racer]) else { return XCTFail() }
+        XCTAssertEqual(changed, racer)
         XCTAssertEqual(target.kind, .game)
+        XCTAssertThrowsError(try make(.web, ["mac"], in: [racer]))
+        guard case .another(let beside) = try make(.web, ["mac"], another: true, in: [racer]) else { return XCTFail() }
+        XCTAssertEqual(beside.kind, .game)
     }
 
     /// Web apps are today's kinds by their devices, the wish's own web app keeping its kind; what no kind reaches, and
@@ -146,19 +152,20 @@ final class MakeAppForTests: XCTestCase {
         XCTAssertNotNil(refused(.web, ["toaster"]))
     }
 
-    /// A device's own app is one of the wish's apps beside the others: a Mac app asked for in a Roku app's wish, or a
-    /// Roku app in a Mac app's, is added beside it. Two devices' own apps are two codes, one per wish for now: an Xbox's
-    /// web app asked for in a Roku app's wish is refused, never made out of the Roku app.
+    /// A device's own app is one of the wish's apps beside the others: a Mac app asked for as another app in a Roku app's
+    /// wish, or a Roku app in a Mac app's, goes beside it. A device's own app is one per wish for now: an Xbox's asked for
+    /// in a Roku app's wish is refused, never made out of the Roku app. Only the app `app` names is changed.
     func testADevicesOwnAppGoesBesideTheOthersAndIsNeverMadeIntoAnother() throws {
         let roku = app("channel", .device, integration: "roku")
         XCTAssertNotEqual(roku.target.code, AppKinds.code(of: .device, integration: "xbox-one"))
-        guard case .add(let mac) = try make(.native, ["mac"], in: [roku]) else { return XCTFail("a Mac app goes beside the Roku app") }
+        guard case .another(let mac) = try make(.native, ["mac"], another: true, in: [roku]) else { return XCTFail("a Mac app goes beside the Roku app") }
         XCTAssertEqual(mac.kind, .mac)
-        guard case .add(let channel) = try make(.native, ["roku"], in: [app("notes", .mac)]) else { return XCTFail("a Roku app goes beside the Mac app") }
+        guard case .another(let channel) = try make(.native, ["roku"], another: true, in: [app("notes", .mac)]) else { return XCTFail("a Roku app goes beside the Mac app") }
         XCTAssertEqual(channel.kind, .device)
         XCTAssertEqual(channel.integration, "roku")
-        XCTAssertTrue(refused(.web, ["xbox-one"], in: [roku])?.contains("remove_app") == true)
-        guard case .update(let same, _) = try make(.native, ["roku"], in: [roku]) else { return XCTFail() }
+        XCTAssertTrue(refused(.web, ["xbox-one"], another: true, in: [roku])?.contains("remove_app") == true)
+        XCTAssertNotNil(refused(.native, ["roku"], another: true, in: [roku]), "a second Roku app")
+        guard case .update(let same, _) = try make(.native, ["roku"], app: ".", in: [roku]) else { return XCTFail() }
         XCTAssertEqual(same, roku)
     }
 

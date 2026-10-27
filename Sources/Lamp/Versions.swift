@@ -251,18 +251,25 @@ enum Versions {
     }
 
     /// The `Lamp-Apps` trailer as a version carries it: the kinds, by name, between spaces, a device's app with its
-    /// integration after a colon ("device:roku"), so one restored while it waits is made for that device. One the version
-    /// names that this Lamp doesn't know is passed over (as an earlier Lamp passes over "device:roku").
+    /// integration after a colon ("device:roku"), so one restored while it waits is made for that device, and an app in a
+    /// folder other than its kind's own with that folder after an at sign ("mac@Mac2"), so two apps of one kind come
+    /// back as two. One the version names that this Lamp doesn't know is passed over (as an earlier Lamp passes over
+    /// "device:roku", and "mac@Mac2", whose wish it leaves alone: `NewerWish`).
     static func apps(from trailer: String) -> [WishApp]? {
         guard let said = trailer.split(separator: ",").first.map({ String($0).trimmed }), !said.isEmpty else { return nil }
         return said.split(separator: " ").compactMap { word in
-            let parts = word.split(separator: ":", maxSplits: 1).map(String.init)
-            return Platform(rawValue: parts[0]).map { WishApp(kind: $0, integration: parts.count > 1 ? parts[1] : nil) }
+            let at = word.split(separator: "@", maxSplits: 1).map(String.init)
+            let folder = at.count > 1 && Parts.isFolderName(at[1]) ? at[1] : nil
+            let parts = at[0].split(separator: ":", maxSplits: 1).map(String.init)
+            return Platform(rawValue: parts[0]).map { WishApp(kind: $0, integration: parts.count > 1 ? parts[1] : nil, folder: folder) }
         }
     }
 
-    /// One app as the trailer says it.
-    nonisolated static func trailerWord(_ app: WishApp) -> String { app.kind.rawValue + (app.integration.map { ":" + $0 } ?? "") }
+    /// One app as the trailer says it: its folder only when it isn't its kind's own, which a Lamp from before reads.
+    nonisolated static func trailerWord(_ app: WishApp) -> String {
+        let folder = app.folder.flatMap { $0 == "." || $0 == Parts.folder(for: app.kind, integration: app.integration) ? nil : $0 }
+        return app.kind.rawValue + (app.integration.map { ":" + $0 } ?? "") + (folder.map { "@" + $0 } ?? "")
+    }
 
     /// What every version Lamp saves of a wish carries: the kinds of app it asks for then, whether made or waiting
     /// (`Parts.wanted`), since the list is kept in meta.json, which no version holds. Going back to a version brings
@@ -277,7 +284,7 @@ enum Versions {
     private nonisolated static func listedKinds(in dir: URL) -> [WishApp]? {
         guard var wish = Store.readWish(at: dir) else { return nil }
         wish.partFolders = Parts.folders(in: dir)
-        return Parts.wanted(in: wish, parts: Parts.load(wish)).map { WishApp(kind: $0.kind, integration: $0.integration) }
+        return Parts.wanted(in: wish, parts: Parts.load(wish)).map { WishApp(kind: $0.kind, integration: $0.integration, folder: $0.folder) }
     }
 
     /// Whether going back to the latest version would give the wish another list of apps than it has, its files being
@@ -345,10 +352,15 @@ enum Versions {
                 // A device's app is for the device the version names, else the one the list has now. An app the list
                 // has now is kept whole (what it was asked for, what stops it, where a game goes) only for the same app:
                 // a device's app for another device keeps none of the one the list has now.
+                // An app the version names by its folder is the one in that folder; one it names by its kind alone (its
+                // kind's own folder, or a version from before versions named folders) is matched as that version's list was.
                 listed.apps = asked.map { app in
-                    let now = project.apps.first { $0.kind == app.kind && (app.integration == nil || $0.integration == nil || $0.integration == app.integration) }
-                    var kept = now ?? WishApp(kind: app.kind)
+                    let now = app.folder.map { folder in project.apps.first { $0.folder?.lowercased() == folder.lowercased() } }
+                        ?? project.apps.first { $0.kind == app.kind && (app.integration == nil || $0.integration == nil || $0.integration == app.integration)
+                                                && ($0.folder == nil || $0.folder == "." || $0.folder == Parts.folder(for: $0.kind, integration: $0.integration)) }
+                    var kept = now.flatMap { $0.kind == app.kind ? $0 : nil } ?? WishApp(kind: app.kind)
                     kept.integration = app.integration ?? now?.integration
+                    kept.folder = app.folder ?? (kept.folder == "." ? nil : kept.folder)
                     return kept
                 }
                 let apps = Parts.wanted(in: listed, parts: parts)

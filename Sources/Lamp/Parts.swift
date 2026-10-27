@@ -27,6 +27,11 @@ struct WishApp: Codable, Hashable {
     var devices: [String]? = nil
     /// For a device's app, the integration it's for (`LampProject.integration`), which names its folder (Roku/).
     var integration: String? = nil
+    /// The folder it's in, or for one still to be made the folder kept for it from the moment it was asked for
+    /// (`Parts.newFolder`): who it is, since its id, instance and name among the wish's apps come from it (`Parts.id`).
+    /// "." for the app in the wish's own folder. Nil in a list from before the list kept folders, whose entries are
+    /// matched to the wish's apps by their code, as that list was (`Parts.lists`).
+    var folder: String? = nil
 
     /// The same app, now stopped by this (or no longer, for nil), and nothing else changed.
     func needing(_ problem: String?) -> WishApp {
@@ -53,11 +58,13 @@ enum Parts {
     /// Every folder a part can be in.
     static var folders: Set<String> { Set(Targets.all.compactMap(\.part).flatMap(\.folders)) }
 
-    /// The folder an app the wish asks for and doesn't have yet will be made in (`Store.addPart`): the one a shared file
-    /// had it in, for one whose files are kept for it, else the one its kind gets. It's that app's name among the wish's
-    /// apps from the start (`WishRooms.peer`), so what the others say to it while it waits still reaches it once made.
+    /// The folder an app the wish asks for and doesn't have yet will be made in (`Store.addPart`): the one kept for it
+    /// when it was asked for (`WishApp.folder`), else (a list from before it kept folders) the one a shared file had it
+    /// in, for one whose files are kept for it, or the one its kind gets. It's that app's name among the wish's apps from
+    /// the start (`WishRooms.peer`), so what the others say to it while it waits still reaches it once made.
     static func folder(waiting app: WishApp, in wish: URL) -> String {
-        Sharing.keptFolder(in: wish, for: app.kind) ?? folder(for: app.kind, integration: app.integration)
+        if let folder = app.folder, folder != "." { return folder }
+        return Sharing.keptFolder(in: wish, for: app.kind) ?? folder(for: app.kind, integration: app.integration)
     }
     static func folder(waiting kind: Platform, in wish: URL) -> String { folder(waiting: WishApp(kind: kind), in: wish) }
 
@@ -86,41 +93,164 @@ enum Parts {
     static func name(of app: WishApp) -> String { name(of: app.kind, integration: app.integration) }
 
     /// An app's own menu in the chat's bar: "TV App", and a device's app by its device ("Roku App").
+    /// One of several apps of a kind is told apart by what its folder adds to its kind's or device's ("Mac App 2" in
+    /// Mac2/, "Roku App 2" in Roku2/), or by its folder when that's another name altogether.
     static func menu(of app: LampProject) -> (name: String, symbol: String) {
-        let menu: (name: String, symbol: String) = app.platform.target.part?.menu ?? ("App", "app")
-        guard app.platform.target.part?.folderFor != nil, let device = DeviceApps.integration(for: app)?.name else { return menu }
-        return (device + " App", menu.symbol)
+        var menu: (name: String, symbol: String) = app.platform.target.part?.menu ?? ("App", "app")
+        let device = app.platform.target.part?.folderFor != nil ? DeviceApps.integration(for: app)?.name : nil
+        if let device { menu.name = device + " App" }
+        guard app.isPart else { return menu }
+        let folder = app.dir.lastPathComponent
+        let own = device != nil ? self.folder(for: app.platform, integration: listedIntegration(of: app)) : self.folder(for: app.platform)
+        // An app in one of Lamp's own folders is named as it always was (an iPhone app made for the Mac too, in iPhone/).
+        guard folder != own, !isOwnFolder(folder) else { return menu }
+        let rest = folder.hasPrefix(own) ? String(folder.dropFirst(own.count)) : ""
+        return (!rest.isEmpty && rest.allSatisfy(\.isNumber) ? menu.name + " " + rest : folder, menu.symbol)
     }
 
     /// `part` in `look_at_app` and `use_app` for one app of a wish: a device's app goes by its folder ("roku"), since
     /// "device" says nothing of which.
     static func word(of app: LampProject) -> String {
-        if app.isPart, app.platform.target.part?.folderFor != nil { return app.dir.lastPathComponent.lowercased() }
+        if app.isPart, app.platform.target.part?.folderFor != nil || app.dir.lastPathComponent != folder(for: app.platform) {
+            return app.dir.lastPathComponent.lowercased()
+        }
         return listedIntegration(of: app).map { folder(for: app.platform, integration: $0).lowercased() } ?? word(for: app.platform)
     }
 
-    /// The folders of a wish's other parts, found in its folder: one of Lamp's own part folders holding the scaffold of
-    /// a kind that folder can hold (any kind of the same code: any of Apple's kinds in an Apple folder, since a part made
-    /// for more devices is changed in place and keeps its folder; a TV app in TV/), at most one of each code. They're
-    /// found from what the wish's versions keep (the scaffold), never from a list kept beside them, so a rename, an Undo
-    /// or a restored version can't leave the two telling different stories: a part comes and goes with its files.
+    /// The folders of a wish's other apps, found in its folder: each folder directly in it, by any name, that holds the
+    /// scaffold of a kind that can be one of a wish's apps, read off the folder's own files (a Mac app in Mac2/ as in
+    /// Mac/), as many of a kind as there are. The folder is the app: its id, instance and name among the wish's apps
+    /// come from it. They're found from what the wish's versions keep (the scaffold), never from a list kept beside
+    /// them, so a rename, an Undo or a restored version can't leave the two telling different stories: a part comes and
+    /// goes with its files. A link is never followed, and what's the wish's own (its attachments, the source folders of
+    /// the app in its own folder) is never an app's folder. Lamp's own folders come first, in the order its kinds are
+    /// listed, then the rest by name.
     static func folders(in wish: URL) -> [String] {
-        var found: [String] = [], families: Set<String> = []
-        for part in Targets.all.compactMap(\.part) {
-            if let marked = part.marked {
-                for folder in marked(wish) where !found.contains(folder) {
-                    guard kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish)?.target.part?.family == part.family else { continue }
-                    found.append(folder)
-                }
-                continue
-            }
-            for folder in part.folders {
-                guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish),
-                      kind.target.part?.family == part.family, families.insert(part.family).inserted else { continue }
-                found.append(folder)
-            }
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: wish.path)) ?? []).filter { name in
+            guard !name.hasPrefix("."), !notAppFolders(in: wish).contains(name) else { return false }
+            let values = try? wish.appendingPathComponent(name).resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            return values?.isDirectory == true && values?.isSymbolicLink != true
+        }
+        let own = Targets.all.compactMap(\.part).flatMap(\.folders)
+        let ordered = own.filter(names.contains) + names.filter { !own.contains($0) }.sorted()
+        var found: [String] = []
+        for folder in ordered where !found.contains(folder) {
+            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish), partKinds.contains(kind) else { continue }
+            found.append(folder)
         }
         return found
+    }
+
+    /// What in a wish's folder is never one of its apps' folders: its attachments, and the folders the code of an app in
+    /// the wish's own folder is in (Sources/, Watch/, web/…), which aren't Lamp's part folders.
+    private static func notAppFolders(in wish: URL) -> Set<String> {
+        let parts = Set(Targets.all.compactMap(\.part).flatMap(\.folders))
+        // Each kind's fixed source folders, asked of no folder at all: a kind whose sources are whatever its folder holds
+        // (a device's app) names none, so the folders beside its code that hold apps of their own are still those apps'.
+        let nowhere = URL(fileURLWithPath: "/var/empty/lamp-no-app")
+        let sources = Targets.all.flatMap { kind in kind.recipe.sources(LampProject(id: "", name: "", exe: "", dir: nowhere, platform: kind.platform)) }
+            .filter { !parts.contains($0) }
+        return Set(sources + [Attachments.folder, "Lamp"])
+    }
+
+    /// Whether a name can be a new app's folder: letters and digits only (no dot, space or slash), starting with a letter,
+    /// and short, since it's the app's name among the wish's apps (`WishRooms.peer`) and part of its ids.
+    static func isFolderName(_ name: String) -> Bool {
+        guard let first = name.unicodeScalars.first, CharacterSet.letters.contains(first), name.count <= 32 else { return false }
+        return name.unicodeScalars.allSatisfy { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
+    }
+
+    /// The folder a new app of the wish is made in: `base` (its kind's, "Mac", or its device's, "Roku"), else the first
+    /// of "Mac2", "Mac3"… that no app of the wish has, has had or is still to have, compared whatever the case, as the
+    /// Mac's disks and a part's id (`id`) do. A folder that's there already, with an app or anything else in it, is never
+    /// given: what's there would be written over. Nor is one an app was taken away from (`RemovedApp`), even for an app
+    /// of the same kind: its id, data and devices' copies are that app's, and Undo puts it back there. Nor one kept for an
+    /// app still to be made (`apps`), nor `skipping` (a shared wish's other apps on their way in). `base` itself is passed
+    /// over while an app in the wish's own folder is, or was, of the same family, since that app is installed under the
+    /// wish's name as the one in `base` would be (`LampProject.installedURL`).
+    static func newFolder(_ base: String, in wish: LampProject, skipping: [String] = []) -> String {
+        let base = isFolderName(base) ? base : "App"
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: wish.dir.path)) ?? []) + notAppFolders(in: wish.dir)
+        let removed = RemovedApp.list(in: wish.dir)
+        let taken = Set((names + wish.apps.compactMap(\.folder) + removed.compactMap(\.folder) + skipping).map { $0.lowercased() })
+        // The app in the wish's own folder, now or taken away, installed where an app in its family's own folder would be.
+        let family = Targets.all.first { $0.part?.folders.contains(base) == true }?.part?.family
+        let root = Set((wish.hasScaffold ? [group(wish.platform)] : []) + removed.filter { $0.folder == nil }.map { group($0.platform) })
+        if !(family.map(root.contains) ?? false), !taken.contains(base.lowercased()) { return base }
+        return (2...).lazy.map { base + String($0) }.first { !taken.contains($0.lowercased()) }!
+    }
+
+    /// The folder an app still to be made from a list kept before folders were (`WishApp.folder` nil) is made in, and
+    /// named by meanwhile: the one its shared files had, kept by an earlier Lamp, else its kind's, where free.
+    static func legacySlot(for app: WishApp, in wish: LampProject) -> String {
+        newFolder(Sharing.keptFolder(in: wish.dir, for: app.kind) ?? folder(for: app.kind, integration: app.integration), in: wish)
+    }
+
+    /// Whether this folder is one Lamp's kinds have always made apps in (Mac/, iPhone/, a device's Roku/): what a Lamp
+    /// from before finds, and what an app's installed name doesn't need (`LampProject.installedURL`).
+    static func isOwnFolder(_ folder: String) -> Bool { Set(Targets.all.compactMap(\.part).flatMap(\.folders)).contains(folder) }
+
+    /// Whether a Lamp from before this one reads this wish's apps as they are: each in one of its kind's own folders, at
+    /// most one of each family, a device's app among them (that Lamp kept one per wish and lists them by family). One
+    /// that wouldn't is laid out as `NewerWish.layout` says, so that Lamp leaves it alone rather than taking it for one
+    /// app, or a draft to write a new app into.
+    static func readByEarlierLamp(_ wish: URL) -> Bool {
+        var families: Set<String> = []
+        for folder in folders(in: wish) {
+            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish), let part = kind.target.part else { return false }
+            guard part.folderFor != nil || self.folder(folder, canHold: kind), families.insert(part.family).inserted else { return false }
+        }
+        return true
+    }
+
+    /// The same for a wish as Lamp holds it: its folders, and also every app on its list, made or still to be made,
+    /// since a Lamp from before reads the list by code and would fold two entries of one family into one, or make an
+    /// app waiting for Mac2/ in Mac/.
+    static func readByEarlierLamp(_ wish: LampProject) -> Bool {
+        guard readByEarlierLamp(wish.dir) else { return false }
+        var wish = wish
+        wish.partFolders = folders(in: wish.dir)
+        var families: Set<String> = []
+        for app in wanted(in: wish, parts: load(wish)) {
+            guard let part = app.kind.target.part else { continue }
+            if let folder = app.folder, folder != "." {
+                // A made device's app is found by its mark wherever it is; one still to be made, that Lamp makes in its
+                // device's own folder, so it must be waiting for that one.
+                if part.folderFor == nil, !self.folder(folder, canHold: app.kind) { return false }
+                if part.folderFor != nil, !wish.partFolders.contains(folder),
+                   folder != self.folder(for: app.kind, integration: app.integration) { return false }
+            }
+            guard families.insert(part.family).inserted else { return false }
+        }
+        return true
+    }
+
+    /// The app of the wish an app would be the same as if it were made `kind` in place: one with the same name among the
+    /// wish's apps (`WishRooms.peer`), or installed in the same place while both are on the Mac. Only the app in the
+    /// wish's own folder, or one in a folder of Lamp's own, can come to that, since their names follow their kind: a TV
+    /// app in the wish's own folder made a Mac app beside a Mac app in Mac/ would be "mac" and the wish's name twice.
+    @MainActor static func clash(changing app: LampProject, to kind: Platform, integration: String?, places: [Destination]?,
+                      among apps: [LampProject], in wish: LampProject) -> LampProject? {
+        var changed = app
+        changed.platform = kind
+        changed.integration = kind.reaches(.device) && !kind.addsPlaces ? integration : nil
+        changed.places = kind.addsPlaces ? places : nil
+        let peer = WishRooms.peer(changed, in: wish)
+        // An app still to be made counts as the app it will be, in the folder kept for it.
+        let waiting = Parts.waiting(in: wish, parts: apps.filter(\.isPart)).compactMap { entry -> LampProject? in
+            let folder = entry.folder ?? self.folder(waiting: entry, in: wish.dir)
+            guard folder != "." else { return nil }
+            var app = LampProject(id: id(wish: wish.id, folder: folder), name: wish.name, exe: wish.exe, dir: wish.dir.appendingPathComponent(folder),
+                                  platform: entry.kind, partOf: wish.id)
+            app.places = entry.places
+            app.integration = entry.integration
+            return app
+        }
+        let apps = apps + waiting
+        return apps.first { other in
+            other.id != app.id && (WishRooms.peer(other, in: wish) == peer
+                                   || other.hasMac && changed.hasMac && other.installedURL == changed.installedURL)
+        }
     }
 
     /// The kind of app the scaffold in a part's folder is, read without following a link (`AppFile`): the folder is the
@@ -166,16 +296,26 @@ enum Parts {
     /// What a wish has one of: a part family, or for a kind that's no part the kind itself.
     static func group(_ kind: Platform) -> String { kind.target.part?.family ?? kind.rawValue }
 
-    /// The part of a wish (or the wish itself) a device word names: "iphone" is whichever has an iPhone, "mac" whichever
-    /// runs on the Mac. Nil when none does.
-    /// An app's own word or folder comes first: beside a Mac app, a game also runs on the Mac, and "mac" is the Mac app.
+    /// The part of a wish (or the wish itself) a word names, when it names one: nil when it names none or several
+    /// (`picks` has them all, so a word that fits several is asked about, never read as the first).
     static func pick(_ word: String, among apps: [LampProject]) -> LampProject? {
+        let found = picks(word, among: apps)
+        return found.count == 1 ? found[0] : nil
+    }
+
+    /// Every app a word could mean, most particular first, stopping at the first way of naming that names any: an app's
+    /// own folder ("mac2", "roku"), whatever its kind, and "." for the app in the wish's own folder; then a device's app
+    /// by its device ("roku", wherever it is); then a kind's word or folder ("mac", "game"); then a device an app runs on
+    /// ("iphone" is whichever has an iPhone). Beside a Mac app, a game also runs on the Mac, and "mac" is the Mac app.
+    static func picks(_ word: String, among apps: [LampProject]) -> [LampProject] {
         let word = word.trimmingCharacters(in: .whitespaces).lowercased()
-        if let named = apps.first(where: { Parts.word(for: $0.platform) == word || folder(for: $0.platform).lowercased() == word
-                                            || $0.isPart && $0.dir.lastPathComponent.lowercased() == word
-                                            // A device's app by its device: "roku", wherever it is.
-                                            || listedIntegration(of: $0).map { DeviceApps.split($0).integration == word || folder(for: .device, integration: $0).lowercased() == word } == true })
-        { return named }
+        let folder = apps.filter { $0.isPart ? $0.dir.lastPathComponent.lowercased() == word : word == "." }
+        if !folder.isEmpty { return folder }
+        let device = apps.filter { listedIntegration(of: $0).map { DeviceApps.split($0).integration == word } == true }
+        if !device.isEmpty { return device }
+        let named = apps.filter { Parts.word(for: $0.platform) == word || self.folder(for: $0.platform).lowercased() == word
+                                  || listedIntegration(of: $0).map { self.folder(for: .device, integration: $0).lowercased() == word } == true }
+        if !named.isEmpty { return named }
         let runsThere = { (app: LampProject) in
             switch word {
             case "mac": app.hasMac
@@ -184,8 +324,21 @@ enum Parts {
             }
         }
         // An app made for the device before a game or a screen that's also been put there (an app for both and a game).
-        return apps.first { runsThere($0) && !$0.platform.addsPlaces } ?? apps.first(where: runsThere)
+        let made = apps.filter { runsThere($0) && !$0.platform.addsPlaces }
+        return made.isEmpty ? apps.filter(runsThere) : made
     }
+
+    /// The word that names this app alone among the wish's apps in `part`: its own (`word(of:)`) when that names no other,
+    /// else its folder, or "." for the one in the wish's own folder.
+    static func address(of app: LampProject, among apps: [LampProject]) -> String {
+        let word = word(of: app)
+        if picks(word, among: apps).map(\.id) == [app.id] { return word }
+        return app.isPart ? app.dir.lastPathComponent.lowercased() : "."
+    }
+
+    /// Which app of a wish an app is on the wish's list (`WishApp.folder`): its folder, or "." for the one in the wish's
+    /// own folder.
+    static func listedFolder(of app: LampProject) -> String { app.isPart ? app.dir.lastPathComponent : "." }
 
     // MARK: The apps a wish should have
 
@@ -196,9 +349,7 @@ enum Parts {
     static func wanted(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
         var apps = wish.apps
         for made in madeApps(in: wish, parts: parts) {
-            let listed = WishApp(kind: made.platform, integration: listedIntegration(of: made))
-            if let index = apps.firstIndex(where: { group($0.kind) == group(made.platform) }) { apps[index] = listed }
-            else { apps.append(listed) }
+            apps = setting(WishApp(kind: made.platform, integration: listedIntegration(of: made), folder: listedFolder(of: made)), in: apps)
         }
         return apps
     }
@@ -217,28 +368,40 @@ enum Parts {
     /// The apps a wish should have and doesn't yet: each with what stops it (`needs`), or nothing when it's only not
     /// made yet (its turn hasn't started, or what stopped it was cleared for another try).
     static func waiting(in wish: LampProject, parts: [LampProject]) -> [WishApp] {
-        let made = Set(made(in: wish, parts: parts).map(group))
-        return wish.apps.filter { !made.contains(group($0.kind)) }
+        let made = madeApps(in: wish, parts: parts)
+        return wish.apps.filter { entry in !made.contains { lists(entry, $0) } }
     }
 
-    /// The list once a part of this kind is made: every app the wish has, the one in its own folder included (a wish from
-    /// before the list has none written), with this one in place of any of its family.
-    static func listing(_ kind: Platform, integration: String? = nil, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
-        setting(WishApp(kind: kind, integration: integration), in: wanted(in: wish, parts: parts))
+    /// The list once a part is made in `folder`: every app the wish has, the one in its own folder included (a wish from
+    /// before the list has none written), with this one in place of the entry for its folder.
+    static func listing(_ kind: Platform, integration: String? = nil, folder: String, madeFor wish: LampProject, parts: [LampProject]) -> [WishApp] {
+        setting(WishApp(kind: kind, integration: integration, folder: folder), in: wanted(in: wish, parts: parts))
     }
 
-    /// Whether a list entry is this app: of its family and, for a device's app, for its device, so taking away the Roku
-    /// app that the Xbox's app replaces leaves the Xbox's on the list.
+    /// Whether a list entry is this app: the entry for its folder. An entry from before the list kept folders is the app
+    /// of its code, as that list had it: of its family and, for a device's app, for its device.
     static func lists(_ entry: WishApp, _ app: LampProject) -> Bool {
-        guard group(entry.kind) == group(app.platform) else { return false }
-        guard let mine = listedIntegration(of: app), let theirs = entry.integration else { return true }
+        if let folder = entry.folder { return folder.lowercased() == listedFolder(of: app).lowercased() }
+        return listsByCode(entry, app.platform, integration: listedIntegration(of: app))
+    }
+
+    /// Whether an entry from before the list kept folders is an app of this kind and device.
+    private static func listsByCode(_ entry: WishApp, _ kind: Platform, integration: String?) -> Bool {
+        guard group(entry.kind) == group(kind) else { return false }
+        guard let mine = integration, let theirs = entry.integration else { return true }
         return DeviceApps.split(theirs).integration == DeviceApps.split(mine).integration
     }
 
-    /// The list with one app set: in place of the one of its family, or added.
+    /// The list with one app set: in place of the entry for its folder, or of one from before the list kept folders that
+    /// was this app (`lists`), or added beside the others. An entry with no folder (a caller that names none) goes in
+    /// place of the one of its code, as the list did before.
     static func setting(_ app: WishApp, in apps: [WishApp]) -> [WishApp] {
         var apps = apps
-        if let index = apps.firstIndex(where: { group($0.kind) == group(app.kind) }) { apps[index] = app } else { apps.append(app) }
+        let index = app.folder.map { folder in
+            apps.firstIndex { $0.folder?.lowercased() == folder.lowercased() }
+                ?? apps.firstIndex { $0.folder == nil && listsByCode($0, app.kind, integration: app.integration) }
+        } ?? apps.firstIndex { listsByCode($0, app.kind, integration: app.integration) && $0.folder == nil }
+        if let index { apps[index] = app } else { apps.append(app) }
         return apps
     }
 
@@ -261,6 +424,14 @@ enum Parts {
     /// The skill holding a kind's rules for a part of that kind.
     static func skill(for kind: Platform) -> String { "target-" + folder(for: kind).lowercased() }
 
+    /// The skill holding one app's rules: its kind's while it's in its kind's own folder, else one of its own named for
+    /// its folder ("target-mac-mac2", "target-device-roku"), since a wish can have several apps of a kind, each with its
+    /// folder (and a device's app its device) in its rules.
+    static func skill(of app: LampProject) -> String {
+        guard app.isPart, app.dir.lastPathComponent != folder(for: app.platform) else { return skill(for: app.platform) }
+        return skill(for: app.platform) + "-" + app.dir.lastPathComponent.lowercased()
+    }
+
     /// Every kind a part can be, each with its rules as a skill (`Skills.read` answers from these).
     static var partKinds: [Platform] { Targets.all.filter { $0.part != nil }.map(\.platform) }
 
@@ -270,12 +441,28 @@ enum Parts {
     /// not in the Apple/ an app for both is added in.
     static func packs(for parts: [LampProject] = []) -> [String: Skills.Skill] {
         var skills: [String: Skills.Skill] = [:]
-        for kind in partKinds {
-            let skill = skill(for: kind)
-            let part = parts.first { $0.platform == kind }
+        func add(_ skill: String, _ kind: Platform, _ part: LampProject?) {
             let folder = part?.dir.lastPathComponent ?? folder(for: kind)
             skills[skill] = Skills.Skill(name: skill, description: "The rules for \(part.map { name(of: $0) } ?? name(of: kind)) of a wish, in \(folder)/: how it's written, built, tried and how it talks to the rest.",
                                         body: pack(for: kind, in: folder, integration: part.flatMap(listedIntegration(of:))))
+        }
+        for kind in partKinds {
+            let skill = skill(for: kind)
+            let mine = parts.filter { $0.platform == kind }
+            // Each app outside its kind's own folder has a skill of its own. The kind's is the app's in its kind's folder,
+            // or the only app's (a conversation from before may still ask for it by the kind's name), and with several
+            // and none in the kind's folder, says which skill is whose.
+            for part in mine where self.skill(of: part) != skill { add(self.skill(of: part), kind, part) }
+            if let own = mine.first(where: { self.skill(of: $0) == skill }) ?? (mine.count == 1 ? mine.first : nil) {
+                add(skill, kind, own)
+            } else if mine.count > 1 {
+                let each = mine.map { "\(name(of: $0)) in \($0.dir.lastPathComponent)/: the \(self.skill(of: $0)) skill" }
+                skills[skill] = Skills.Skill(name: skill, description: "Which skill has the rules for each of the wish's \(mine.count) apps of this kind.",
+                                            body: "This wish has \(mine.count) apps of this kind, each with rules of its own: " + each.joined(separator: "; ")
+                                                + ". Open the one for the app you're changing.")
+            } else {
+                add(skill, kind, nil)
+            }
         }
         return skills
     }
@@ -297,8 +484,8 @@ enum Parts {
         let apps = (wish.holdsApp ? [wish] : []) + parts
         guard apps.count > 1 else { return Template.talksToOtherApps(wish) ? Agent.Rules.wishTalk : "" }
         let listed = apps.map { app in
-            app.isPart ? "\(name(of: app)) in \(app.dir.lastPathComponent)/ (part \"\(word(of: app))\", its rules in the \(skill(for: app.platform)) skill)"
-                : "\(name(of: app)) in the wish's own folder (part \"\(word(of: app))\", the rules above)"
+            app.isPart ? "\(name(of: app)) in \(app.dir.lastPathComponent)/ (part \"\(address(of: app, among: apps))\", its rules in the \(skill(of: app)) skill)"
+                : "\(name(of: app)) in the wish's own folder (part \"\(address(of: app, among: apps))\", the rules above)"
         }
         return """
 
@@ -307,8 +494,10 @@ enum Parts {
         added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks. Before you write or change one in a folder of \
         its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
         `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing.
-        """ + (Set(apps.map(\.platform).filter(WishRooms.joins).map(group)).count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.compactMap { kind in
-            apps.first { $0.platform == kind.platform }.flatMap { app in kind.part?.wishRule.map { deviceNamed($0, for: app) } }
+        """ + (apps.filter { WishRooms.joins($0.platform) }.count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.flatMap { kind in
+            // A rule naming its device is said for each device's app; any other once for its kind.
+            let rules = apps.filter { $0.platform == kind.platform }.compactMap { app in kind.part?.wishRule.map { deviceNamed($0, for: app) } }
+            return rules.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         }.joined()
     }
 }

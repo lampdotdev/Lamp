@@ -9,17 +9,42 @@ its main one: any of them, the first included, is added, replaced or taken away 
 its name, chat and history. A wish's first app is made in the wish's own folder, as every wish made so far has it, until
 it's taken away or replaced; each other app is an app of its own kind in a folder of the wish's
 (`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`, a device's app in its device's: `Roku/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
-opened, looked at and used as any app of its kind is. A wish whose folder holds no app of its own (its apps all in
+opened, looked at and used as any app of its kind is. The folder is the app: its id, instance, name among the wish's
+apps (`WishRooms.peer`), bundle and data ids, installed copy and skill all come from it, so Lamp finds, addresses and
+changes each app of a wish by its folder, whatever it's called and however many of a kind a wish's files hold (two
+Mac apps in `Mac/` and `Mac2/` included); the app in the wish's own folder, from before, is the one exception, and keeps the ids it has. A new app's
+folder is found before anything can stop it being made (`Parts.newFolder`: its kind's or device's name, else `Mac2`,
+`Mac3`…), letters and digits only, never one that's there already whatever's in it, that differs only in case from
+one, that's kept for an app still to be made (`WishApp.folder`), or that an app was taken away from
+(`RemovedApp`), even for an app of the same kind: that folder's id and data stay the app's that left, so Undo
+brings it back into its own. Which app `make_app_for` is about is read before anything is written (`AppPlanner.decide`,
+the one place every caller decides it): a wish with no app, made or still to be made, gets its first; `app` names one
+to change by its folder exactly ("." for the app in the wish's own folder; `AppPlanner.select`), and nothing else (no
+kind, device or code) picks an existing app; `another` asks for one more beside them. A wish with an app never gets
+another by default: a call with neither is refused, as is one with both, a blank `app` or one that names no app, so a
+change of mind changes the app the wish has. Whether a request is for one more app or a change to the one the wish
+has is the person's to say: the agent asks them with its own `ask` before adding one (the `more-apps` skill,
+which every kind of app is offered, with a line in every engine's prompt pointing to it). A call with `another` adds the
+app in a folder of its own, only of a code the wish has none of, made or still to be made: two apps of one code (two Mac
+apps) can't be added to one wish yet, since sharing a wish (`Sharing.open` keeps only Lamp's own part folders) and a
+request's repeated call couldn't tell them apart, and a device's own app is one per wish. Such a call is refused in
+`AppPlanner.make`, before any folder is found or anything written, so the same call repeated is refused too. An app Lamp makes later from the wish's list
+(`makeWaitingParts`) reuses the folder kept for it and isn't asked about again. `part` in `look_at_app` and `use_app` names an app by its folder before anything else (`Parts.picks`), and
+a word that fits several ("mac" beside two Mac apps) is asked about, each app then offered by a word that reaches it
+alone (`Parts.address`). A wish whose folder holds no app of its own (its apps all in
 folders, `LampProject.holdsApp` false, read off its files each time so an Undo that brings the first app back has it
 again) is only the wish: it's no draft (`scaffolded`), and nothing builds, installs, opens or writes Lamp's own
 files for it (`Template.writeOwnedFiles`, `fill`, `writeSupport`, `Runtime.sourcesChanged`, `buildNow`, `installNow`,
 `run`), so nothing puts an app back in its folder. Quitting it (`quit`) finds only a copy of the app it held by that
 app's own id (`macCopies`, never by the install place its name shares with a Mac app of the wish), so a restore past
 that app quits it as any app is quit. A wish's apps are installed under its name, and where each is installed follows from that
-name and its kind alone, with nothing kept beside it (`LampProject.installedURL`): a game or a screen goes in a folder
+name, its kind and its folder alone, with nothing kept beside it (`LampProject.installedURL`): a game or a screen goes in a folder
 of its kind's in the apps folder (`Target.installFolder`: Games/, Screens/), every other kind in the apps folder
-itself. Wishes' names are unique and a wish has one app of each kind, so no two apps share a place, and a copy of the
-wish, a restore, or its other apps coming and going never move one. A game or a screen installed before those folders
+itself, and an app in a folder none of Lamp's kinds has always made apps in has the folder in its name ("Tally
+Mac2.app"). Wishes' names are unique, an app in one of Lamp's own folders is one of its kind's family there (a new
+app is never given its family's own folder while the app in the wish's own folder is, or was, of that family), and
+folders are unique, so no two apps share a place, and a copy of the wish, a restore, or its other apps coming and
+going never move one. A game or a screen installed before those folders
 is moved into its kind's once, by its own bundle id (`Store.reload`). A rename moves every app's installed copy
 (`Store.giveName`); Play, Open and Use open its apps (`openWish`),
 the desk captions it with where they are (`WishPlace.of`), and `Store.everyApp` is every app without it. Moving existing
@@ -27,15 +52,19 @@ first apps into folders of their own, and a shared file's layout for such a wish
 carries one app in the file's root (`Sharing.export`), and opening it makes a new wish rather than an update. A Lamp from
 before such wishes would read one as an empty draft and write a new app into it, so its meta.json says `layout` 2 while
 its own folder holds no app (`Template.layout`, written with every save of it and set right whenever it's read), which
-such a Lamp leaves alone and shows as made by a newer Lamp (`NewerWish`); once an app is back in its folder it says none. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
+such a Lamp leaves alone and shows as made by a newer Lamp (`NewerWish`); once an app is back in its folder it says none.
+A wish with an app that a Lamp of layout 2 wouldn't find as it is (two of one code, or one in a folder of another
+name than its kind's: `Parts.readByEarlierLamp`) says `layout` 3 whatever its own folder holds, so that Lamp leaves it
+alone rather than lose the app or write over it. An app in a folder of its own is a `LampProject` in `Store.projects` with `partOf` set (id: the
 wish's, a dot, the folder), never on the desk (`Store.wishes`), with no chat or versions of its own: what's logged
 for it goes to its wish's chat (`Store.log`), and the wish's history keeps its folder. No app of a wish comes first
 beyond that: each carries the wish's icon. Its design and artwork are the wish's (`Icons.home`), drawn into each app's
 own `.lamp/` (its build and finishing run in its sandbox, which opens only its folder), and new artwork or a new design
 reaches every app of the wish (`Store.iconToParts`). Its `realDir` takes the wish's folder by name too, since the agent can put a link in its place, and it's
 told where its folder is when it's installed (`folder` in `Template.installValues`, read by `LampInstall.app`), since its
-id is no folder's name. A wish's parts are found from its files (`Parts.folders`: one of Lamp's part folders holding a
-scaffold it can hold, any of Apple's kinds in an Apple folder, since a part made for more devices is changed in place),
+id is no folder's name. A wish's parts are found from its files (`Parts.folders`: every folder directly in the wish's,
+by any name, holding the scaffold of a kind that can be one of a wish's apps, read off its own files, never through a
+link and never one of the source folders of the app in the wish's own folder),
 never from the wish's list, so a rename, an Undo or a restored version can't part a wish from its
 apps, and every restore takes them in again at once (`Store.followRestored`, comparing folders and kinds,
 `Parts.match`: a part the version doesn't have is quit and then forgotten, one the person keeps open over unsaved work
@@ -137,10 +166,11 @@ the one its kind gets, since the app at a file's root comes out named by its kin
 wish is of its own family, so only a wish's one app can lack one) as any app travels, and each other app under its folder in the file, as an app of its kind (`Manifest.parts`,
 `Package.parts`); the review reads every app's code, each part's files named with its folder first, and the Mac that
 opens it makes each part as `make_app_for` does, in the folder the file had it in when that's one for its family, as it's
-its name among the wish's apps (`Store.installParts`, `addPart`'s `folder`, `Parts.folder(_:canHold:)`, with the file's
-family for an iPhone part); one it
-can't build yet is kept on the wish's list with its files beside the wish (`Sharing.keep`, `.lamp/waiting/<family>`,
-by the part's family since the file's folder for it may not be this Mac's, unversioned, gone with the wish), which go in
+its name among the wish's apps while that folder is free (`Store.installParts`, `addPart`'s `given`, with the file's
+family for an iPhone part), and an update goes into the app in that folder; one it
+can't build yet is kept on the wish's list, in the folder kept for it, with its files beside the wish (`Sharing.keep`,
+`.lamp/waiting/<family>`, or `<family>-<folder>` for one in a folder other than its kind's own, so two apps of one
+family waiting keep their files apart; unversioned, gone with the wish), which go in
 over the scaffold, with the family and folder the file gave them, once the part is made (`addPart`, `Sharing.kept`); while
 it waits, the others know it by that folder too (`Parts.folder(waiting:in:)`). An update from a
 file replaces each part the file carries, changes one of another kind of the same family in place (`convert`, so it
@@ -216,7 +246,8 @@ place.
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp
-saves of a wish carries its kinds (`Lamp-Apps`, `Versions.appsTrailer`), its first one too (`Store.initRepo`: a new wish, an
+saves of a wish carries its kinds (`Lamp-Apps`, `Versions.appsTrailer`; an app in a folder other than its kind's own
+with its folder, "mac@Mac2", so two apps of one kind come back as two), its first one too (`Store.initRepo`: a new wish, an
 import, a copy), a request that changed only the list is a
 version of its own (an empty one, titled by the request), and Undo or going back to a version gives back the list it had
 (`Versions.apps(at:in:)`, in `restoreFiles` before any app's own files are written), each app its files have on it and
