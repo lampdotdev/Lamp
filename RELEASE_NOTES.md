@@ -5,6 +5,33 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.25.0
+
+- Apps build again with Xcode 26. Since 0.24.0 they only built with the Xcode 27 preview.
+- Two new starter wishes. Home HQ is a family dashboard for the kitchen: calendar, chores, shopping and photos, on a
+  tablet, a TV or an unlocked photo frame. It's based on Wes Bos's photo-frame-dashboard. Universal Remote controls
+  whatever your house has from your Mac or phone.
+- Your Devices finds everything on your home network, sorted by what Lamp can do with it. Lamp asks about the local
+  network only once you do something with a device, and the agent asks before it changes one.
+- Do It for Me sets up developer mode on a Roku or an LG TV. A Roku app can now be one of a wish's apps, and Lamp
+  says plainly what a Roku can't run.
+- Games:
+  - 2D games, made with Phaser so they go everywhere a game goes.
+  - Real physics in 3D games.
+  - Buttons named the way your controller, keyboard or touch screen names them.
+  - Smoother frame rates on slower devices.
+  - Old Xbox games now live on your Mac too, with the Xbox as one of their places, and Try On always offers another
+    device.
+- One app can be open on several devices in a wish, and lists like a calendar or chores stay the same on all of
+  them, and between a wish's different apps.
+- Share a 3D game as a file, publish it as a page anyone can play (experimental), or put a wish on GitHub. A wish
+  carries where it came from, shown in its info and About window. Lamp checks licences and keys before anything is
+  shared, and marks pictures made with AI.
+- A Share Link can carry the wish itself.
+- Wish chats are listed in the Window and Dock menus, wishes open into their chat from the desk, and an app on a Mac
+  without Lamp has a way back to it.
+- Apps that use AI just after they open wait for Lamp to find Claude Code, instead of asking for an OpenRouter key.
+
 ## 0.24.0
 
 - Make apps for Google TV, Android TV and Fire TV: wish for one, try it in a TV emulator on your Mac, and put it on
