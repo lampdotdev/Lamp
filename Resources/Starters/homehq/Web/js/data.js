@@ -253,7 +253,7 @@ window.DATA = (function () {
     stores: stores, catOrder: catOrder, groceries: groceries, catalog: catalog, usuals: usuals,
     weather: weather, photos: photos,
     // The settings sheet's choices: the weather's place, the family's own calendars and photos.
-    settings: { place: null, calendars: null, album: null },
+    settings: { place: null, calendars: null, calendarsBy: null, album: null, albumBy: null },
     cleared: false,
     edited: { people: false, chores: false },
     _gid: function () { return 'u' + Date.now().toString(36) + (++gid); },

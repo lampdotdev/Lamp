@@ -66,7 +66,7 @@ enum ScreenKit {
         // On Android: Lamp's Android app around the page, as a game's.
         if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
         try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
-        try Template.write(GameKit.webBuildSh, to: "build.sh", for: project, executable: true)
+        try Template.write(buildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
         try Template.write("A screen made with Lamp: a page in Web/, shown full screen.\n", to: marker, for: project)
         // On Android: Lamp's Android app around the page, as a game's.
@@ -171,8 +171,16 @@ enum ScreenKit {
     """
 
     /// Names what Lamp writes into a screen, so a new Lamp's builds it again (`Target.Recipe.inputs`).
+    /// A page's build (`GameKit.webBuildSh`), turning every way on an iPhone or iPad: a screen fills an iPad upright as
+    /// well as on its side, where a game keeps to landscape.
+    static var buildSh: String {
+        let landscape = "<string>UIInterfaceOrientationLandscapeRight</string><string>UIInterfaceOrientationLandscapeLeft</string>"
+        let any = "<string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string>" + landscape
+        return GameKit.webBuildSh.replacingOccurrences(of: landscape, with: any)
+    }
+
     static var stamp: String {
-        (host ?? "") + (GameKit.page?.text ?? "") + GameKit.webBuildSh + packageSwift + TVTemplate.lampJS
+        (host ?? "") + (GameKit.page?.text ?? "") + buildSh + packageSwift + TVTemplate.lampJS
             + GameAndroid.stamp
     }
 }

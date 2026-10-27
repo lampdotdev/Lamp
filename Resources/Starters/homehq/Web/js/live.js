@@ -61,10 +61,19 @@
     var p = D.people.filter(function (x) { return name.indexOf(x.name.toLowerCase()) > -1; })[0];
     return p ? [p.id] : D.ALL.slice();
   }
+  // Which copy of the screen reads the family's calendars and album: the one where they were turned on. The others
+  // (another Mac, the iPad, the TV) show what it publishes (js/sync.js) and never read their own, so turning them on
+  // once never has every device asking for the person's calendars or photos.
+  App.me = function () { return window.Lamp && Lamp.wish && Lamp.wish.copy ? (Lamp.wish.copy() || 'here') : 'here'; };
+  function native() { return !!(window.LampNative && LampNative.available); }
+  App.readsCalendars = function () { return native() && !!D.settings.calendars && D.settings.calendarsBy === App.me(); };
+  App.readsAlbum = function () { return native() && D.settings.album != null && D.settings.albumBy === App.me(); };
+
   App.loadCalendars = function () {
     var chosen = D.settings.calendars;
+    if (chosen && !App.readsCalendars()) return;   // another copy reads them
     D.events = D.events.filter(function (e) { return !e.cal; });
-    if (!chosen || !window.LampNative || !LampNative.available) { App.emit('data'); return; }
+    if (!chosen || !native()) { App.emit('data'); return; }
     LampNative.call('events', { calendars: chosen, days: 45 }).then(function (list) {
       D.events = D.events.filter(function (e) { return !e.cal; }).concat(list.map(function (e) {
         return { id: 'k' + e.id, cal: true, title: e.title, start: new Date(e.start), end: new Date(e.end), allDay: !!e.allDay,
@@ -78,7 +87,8 @@
   var examples = D.photos.slice();
   App.loadPhotos = function () {
     var album = D.settings.album;
-    if (album == null || !window.LampNative || !LampNative.available) {
+    if (album != null && !App.readsAlbum()) return;   // another copy reads it
+    if (album == null || !native()) {
       D.photos = D.cleared ? [] : examples.filter(function (p) { return !D.cleared || !p.ex; });
       App.emit('data');
       return;

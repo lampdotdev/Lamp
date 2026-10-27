@@ -17,4 +17,14 @@ final class ScreenShapeTests: XCTestCase {
         XCTAssertNil(ScreenKit.shape("phone"))
         XCTAssertNil(ScreenKit.shape("100x100"))
     }
+
+    /// iOS ends an app on the spot when its page asks for photos or calendars without the reason in its Info.plist; a
+    /// screen also turns upright, where a game keeps to landscape.
+    func testPageBuildsCarryReasonsAndScreensTurn() {
+        for script in [GameKit.webBuildSh, ScreenKit.buildSh] {
+            XCTAssertTrue(script.contains("{{USAGE}}") && script.contains("{{MAC_USAGE}}"))
+        }
+        XCTAssertTrue(ScreenKit.buildSh.contains("UIInterfaceOrientationPortrait"))
+        XCTAssertFalse(GameKit.webBuildSh.contains("UIInterfaceOrientationPortrait"))
+    }
 }

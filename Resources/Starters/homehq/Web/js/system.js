@@ -87,6 +87,8 @@
   function calendarsSec() {
     if (!native()) return '';
     var chosen = D.settings.calendars;
+    // Turned on at another screen: this one shows what that one reads.
+    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-on', 'Read them here'), btn('data-cal-off', 'Stop showing them')]));
     var body = chosen ? '' : grid([btn('data-cal-on', 'Show my calendars')]);
     if (chosen && S.calendars) {
       body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !chosen.length || chosen.indexOf(c) > -1); }));
@@ -100,7 +102,7 @@
   function photosSec() {
     if (!native()) return '';
     var album = D.settings.album;
-    var body = '';
+    var body = album != null && !App.readsAlbum() ? '<p class="demo-line">From another screen</p>' : '';
     if (S.albums) body += grid(S.albums.map(function (a) { return btn('data-album="' + App.esc(a.id) + '"', a.title, album === a.id); }));
     else body += grid([btn('data-albums', album != null ? 'Change album' : 'Show my photos')]);
     if (album != null) body += grid([btn('data-album-off', 'Stop showing them')]);
@@ -157,7 +159,7 @@
     if (b.hasAttribute('data-place-clear')) { D.settings.place = null; App.exampleWeather(); App.emit('data'); return App.openSettings(); }
     if (b.hasAttribute('data-cal-on')) {
       LampNative.call('calendars', {}).then(function (names) {
-        S.calendars = names; D.settings.calendars = []; App.emit('data'); App.loadCalendars(); App.openSettings();
+        S.calendars = names; D.settings.calendars = []; D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); App.openSettings();
       }, function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
       return;
     }
@@ -175,7 +177,7 @@
         function () { App.toast('Photos aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'photo' }); });
       return;
     }
-    if (d.album != null) { D.settings.album = d.album; S.albums = null; App.emit('data'); App.loadPhotos(); return App.openSettings(); }
+    if (d.album != null) { D.settings.album = d.album; D.settings.albumBy = App.me(); S.albums = null; App.emit('data'); App.loadPhotos(); return App.openSettings(); }
     if (b.hasAttribute('data-album-off')) { D.settings.album = null; App.loadPhotos(); App.emit('data'); return App.openSettings(); }
     if (b.hasAttribute('data-family')) { closeSettings(); return App.editFamily(); }
     if (b.hasAttribute('data-chores')) { closeSettings(); return App.editChores(); }

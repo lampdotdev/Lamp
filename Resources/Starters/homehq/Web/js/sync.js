@@ -29,7 +29,6 @@
   var taking = false;
 
   function json(v) { return JSON.stringify(v); }
-  function native() { return !!(window.LampNative && LampNative.available); }
   function today() { var d = App.now(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
   function mine(name) { return known[name] || (known[name] = {}); }
 
@@ -76,13 +75,14 @@
     sync('ticks', D.chores.filter(function (c) { return c.done; }).map(function (c) { return { id: day + ':' + c.id, day: day, chore: c.id, by: c.doneBy || '' }; }), ALL_GONE, dry);
     sync('stars', Object.keys(D.stars).map(function (k) { return { id: k, stars: D.stars[k], week: D.week[k] || [0, 0, 0, 0, 0, 0, 0] }; }), null, dry);
     sync('settings', [{ id: 'place', value: D.settings.place }, { id: 'calendars', value: D.settings.calendars },
-                      { id: 'album', value: D.settings.album }, { id: 'cleared', value: D.cleared }], null, dry);
+                      { id: 'calendarsBy', value: D.settings.calendarsBy || null }, { id: 'album', value: D.settings.album },
+                      { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'cleared', value: D.cleared }], null, dry);
     sync('favs', D.photos.filter(function (p) { return p.fav; }).map(function (p) { return { id: p.id || p.seed }; }), null, dry);
-    if (native() && !dry) publishCalendar();
+    if (App.readsCalendars() && !dry) publishCalendar();
   }
 
   function publishCalendar() {
-    if (!D.settings.calendars) return;
+    if (!App.readsCalendars()) return;
     var items = D.events.filter(function (e) { return e.cal; }).map(function (e) {
       return { id: e.id, title: e.title, start: +e.start, end: +e.end, allDay: !!e.allDay, people: e.people, loc: e.loc || '' };
     });
@@ -94,7 +94,7 @@
 
   // The album's pictures, for the copies that can't read it: each one's bytes once, and the list in the album's order.
   function publishPhotos() {
-    if (!native() || D.settings.album == null) return;
+    if (!App.readsAlbum()) return;
     var list = D.photos.filter(function (p) { return p.src && p.id; });
     if (!list.length) return;
     var have = {};
@@ -114,7 +114,7 @@
     try {
       var settings = {};
       S.settings.all().forEach(function (s) { settings[s.id] = s.value; });
-      ['place', 'calendars', 'album'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
+      ['place', 'calendars', 'calendarsBy', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
       if (settings.cleared && !D.cleared) D.clearExamples();
 
       var people = S.people.all().sort(function (a, b) { return a.order - b.order; });
@@ -139,7 +139,7 @@
       D.events = D.events.filter(function (e) { return e.ex || e.cal; }).concat(S.events.all().map(function (e) {
         return Object.assign({}, e, { start: new Date(e.start), end: new Date(e.end) });
       }));
-      if (!(native() && D.settings.calendars)) {
+      if (!App.readsCalendars()) {
         D.events = D.events.filter(function (e) { return !e.cal; }).concat(S.calendar.all().map(function (e) {
           return Object.assign({}, e, { cal: true, start: new Date(e.start), end: new Date(e.end) });
         }));
@@ -149,7 +149,7 @@
       var favs = {};
       S.favs.all().forEach(function (f) { favs[f.id] = true; });
       D.photos.forEach(function (p) { p.fav = !!favs[p.id || p.seed]; });
-      if (!(native() && D.settings.album != null)) takePhotos();
+      if (!App.readsAlbum()) takePhotos();
 
       D.save();
     } finally { taking = false; }
@@ -183,6 +183,6 @@
   Object.keys(S).forEach(function (n) { S[n].onChange(soon); });
   pictures.onChange(soon);
   App.on('data', share);
-  App.on('data', function () { if (native() && !taking) publishPhotos(); });
+  App.on('data', function () { if (!taking) publishPhotos(); });
   App.on('ready', take);
 })();
