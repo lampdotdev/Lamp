@@ -6532,6 +6532,13 @@ final class Store: ObservableObject {
         // A build from before each place had its own record has only its built copy to show for it, which says which place
         // it was for only where no other place shares it: Android's phone and TV places build one APK.
         let androids = app.openPlaces.filter(\.isAndroid).count
+        // Which of the two that APK was built for can't be told, so both are given a record that matches no code, once,
+        // before either has one of its own: each is then behind, and kept current like any place built before.
+        let android = app.openPlaces.filter(\.isAndroid).map(app.at)
+        if androids > 1, android.allSatisfy({ Runtime.builtFingerprint($0) == nil }),
+           let first = android.first, FileManager.default.fileExists(atPath: first.builtURL.path) {
+            for there in android { Runtime.markBuilt(there, from: "built before places had records of their own") }
+        }
         return app.openPlaces.filter { place in
             let there = app.at(place)
             let copy = !(place.isAndroid && androids > 1) && FileManager.default.fileExists(atPath: there.builtURL.path)
