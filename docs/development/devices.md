@@ -291,8 +291,9 @@ answer says where the person turns it on rather than that nothing answered. A ru
 ## Pages and their hosts
 
 A three.js game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
-`Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (`LampPage.swift` with `LampWebGame.swift` or
-`LampScreen.swift`); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
+`Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (Lamp's common host for a page, `LampPage.swift`:
+`LampPageFiles` serves `Web/` at the app's own address and `LampPageView` shows it, at the window's size or zoomed from a
+fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
 and Fire TV (`GameAndroid`, in the page's `Lamp/Android`); the TV's own browser on a Samsung or LG (`TVs`); and the
 integration's own host on the Xbox (WebView2, `WebHost`). A row of the table of devices names its host in its `web`;
 the kinds' places are `Places.pagePlaces`, the destinations of every row with one, and the words they're given by are
@@ -434,28 +435,34 @@ such build).
 
 ## Screens
 
-A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is something shown full screen and glanced at
-from across a room: a family calendar, a photo album, a dashboard, a clock. It's the TV app's page in `Web/`, with the
-same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, and it takes places as a game does (`addsPlaces`, the Mac
-always first, then any place a page goes): on the Mac, the iPhone and the iPad it's a Swift app of Lamp's own around the page
-(`Resources/GameKit/apple/LampScreen.swift` with LampSupport.swift, so it has the wand and the chat beside it), which
-zooms the page to the window; on Android and Android TV it's Lamp's Android app around the page, as a game's is, kept
+A screen (`Platform.screen`, `ScreenKit`, `Targets/ScreenTarget.swift`) is a web app as Lamp once made them: the TV
+app's page in `Web/`, with the same `Web/lamp.js` (`TVTemplate`), laid out at 1920x1080, taking places as a game does
+(`addsPlaces`, the Mac always first, then any place a page goes). No new app is made one: it has no device words, and
+`AppKinds.target` only keeps a wish's own screen. What's kept is everything a screen already made relies on: its folder
+and mark (`.lamp-screen`, refining the TV's recipe), its identity and install in Screens/, and its page's address,
+lamp-screen://app/, where what it saved is. On the Mac, the iPhone and the iPad it's Lamp's common app around a page
+(`LampWebApp.swift` filled in by `GameKit.webApp` with the screen's address and its 1920x1080 canvas, written as
+`Sources/LampScreen.swift`); on Android and Android TV it's Lamp's Android app around the page, as a game's is, kept
 awake and not a game to the system (`GameAndroid.screenActivity`, `screenManifest`); on a Samsung or LG TV it goes as a
-TV app does, and on the Xbox as the integration's web app. A TV app (`Platform.tv`) stays what it was, the TV its one place: a screen is its own kind, whose recipe refines
-the TV's (a screen's folder holds a TV app's page as well as its mark, `.lamp-screen`). On the person's own iPhone or
-iPad the phone's Xcode project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as
-it does for a three.js game. Wherever it's shown the agent looks at it in the TV preview on the Mac
-(`openDevicePreview`), the same page at the same size, so a change is seen without a build of the Mac app; pointed at a
-TV it's staged and looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`),
-and the request's device line says where it's shown (`Rules.screenPlaces`).
+TV app does, and on the Xbox as the integration's web app. On the person's own iPhone or iPad the phone's Xcode project
+carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a three.js game.
+Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`, `openDevicePreview`),
+the same page at the same size, so a change is seen without a build of the Mac app; pointed at a TV it's staged and
+looked at as a TV app is. `make_app_for` with the places it's to be on sets them (`Store.setPlaces`), and the request's
+device line says where it's shown (`Rules.screenPlaces`).
+
+Designing for a TV seen from across the room is the `tv-design` skill, offered by the rows of the table that are TVs
+(`Place.skills`, an integration's `skills` in its JSON: the Apple TV, Android TV, Samsung and LG, the Roku) to any app on
+one, game or app, web or native, in its prompt (`Skills.forDevices`) and in `make_app_for`'s answer when it goes on one
+(`Skills.forNewDevices`). The TV prompts keep only what their host does (the page's 1920x1080, the remote's keys).
 
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
 `hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team. A game's or a screen's Mac copy is installed in Games/ or Screens/ of the apps folder (`Target.installFolder`), apart from a Mac app of its wish, which has the wish's name.
 
 **What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
-app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's, shared by `LampWebGame.swift`
-and `LampScreen.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
+app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's common host, shared by
+`LampWebGame.swift` and `LampWebApp.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
 routes, only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
 `Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
 which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.

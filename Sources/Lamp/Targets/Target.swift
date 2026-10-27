@@ -79,6 +79,10 @@ struct Target {
     var otherSystems = false
     /// Its Mac half is built by Xcode for the person's Apple team, so it can't be built without one.
     var macSignedForTeam = false
+    /// A page Lamp's host shows with the remote's focus and keys (the TV app's lamp.js), which the agent looks at and
+    /// uses in the TV preview on the Mac wherever it's shown, with no build of the app around it, unless Try On points
+    /// at a TV, where it's the TV app's (`Store.lookAtApp`, `Store.useApp`).
+    var looksInTVPreview = false
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {

@@ -3301,12 +3301,13 @@ extension Agent.Rules {
     The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
     """
 
+    /// What the page's host lays it out at, a fact of the TV app's and a screen's; how to design for a TV is the
+    /// tv-design skill's, which the TV rows offer (`Place.skills`), so it isn't a rule every page must follow.
     static let tvDesign = """
-    - Design for a TV seen from across the room: the page is exactly 1920×1080 and never scrolls as a whole (lists \
-    scroll inside their own box), with a margin of about 5% on every side the TV may cut off; text at least 28px, \
-    headings much larger, high contrast, a dark background by default. Everything is reached with the remote's arrows \
-    and OK: what has focus must be unmistakable (a large outline or a scale and glow), and focus moves the way the \
-    layout looks. No hover, no tiny targets, no text fields unless the app needs them (typing with a remote is slow).
+    - The page is laid out at 1920×1080 and scaled to the screen it's on, so it never scrolls as a whole: a list longer \
+    than the screen scrolls inside its own box. How to design what a TV shows, seen from across the room (type, \
+    contrast, the edges a TV may cut off, focus the remote moves), is the tv-design skill's: open it with `read_skill` \
+    before designing or restyling the page.
     """
 
     static let tvKeys = """

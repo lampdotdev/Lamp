@@ -3,11 +3,9 @@
 //
 // On the Mac it's one window with the game filling it, under a title bar with nothing in it, so Lamp's wand floats at
 // its top right and the chat opens beside it like any app's. On an iPhone or iPad it's the whole screen, on its side.
-// The page is served from the app's bundle at an address of its own (lamp-game://app/), never as a file, so it reads its
-// own files with fetch and loads its modules; what it logs goes to the app's log. Its sound plays without a tap first.
-// Its LampAI calls and its calls of this device go through LampPage.swift.
+// The page is served and shown by Lamp's common host for a page (LampPage.swift), at the game's own address
+// (lamp-game://app/); what it logs goes to the app's log, and its sound plays without a tap first.
 import SwiftUI
-import UniformTypeIdentifiers
 import WebKit
 #if os(macOS)
 import AppKit
@@ -47,66 +45,11 @@ struct LampGameScreen: View {
     }
 }
 
-/// The page's files, from the app's bundle (Web/), each a plain file inside it.
-final class LampGameFiles: NSObject, WKURLSchemeHandler {
-    static let scheme = "lamp-game"
-    private let folder = Bundle.main.resourceURL?.appendingPathComponent("Web")
-
-    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
-        guard let data = file(at: url) else {
-            task.didReceive(HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!)
-            task.didFinish()
-            return
-        }
-        let ext = url.pathExtension.lowercased()
-        let type = ["js": "text/javascript", "mjs": "text/javascript", "html": "text/html", "css": "text/css", "json": "application/json",
-                    "wasm": "application/wasm"][ext] ?? UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
-        task.didReceive(HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
-                                        headerFields: ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": "no-store"])!)
-        task.didReceive(data)
-        task.didFinish()
-    }
-
-    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
-
-    private func file(at url: URL) -> Data? {
-        guard let folder, url.host == "app" else { return nil }
-        let root = folder.standardizedFileURL.path + "/"
-        let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
-        let file = folder.appendingPathComponent(path).standardizedFileURL
-        guard file.path.hasPrefix(root), let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
-        return try? Data(contentsOf: file)
-    }
-}
-
-/// The page that is the game: its sound and pictures without a tap first, nothing to scroll, zoom or select.
+/// The page that is the game, served by Lamp's common host (LampPage.swift): it logs its own errors.
 @MainActor enum LampGamePage {
-    static let files = LampGameFiles()
+    static let files = LampPageFiles(scheme: "lamp-game")
 
-    static func make() -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.setURLSchemeHandler(files, forURLScheme: LampGameFiles.scheme)
-        // LampAI and the page's calls of this device (LampPage.swift), and its console into the app's log.
-        LampPage.attach(to: configuration, scheme: LampGameFiles.scheme, catchErrors: false)
-        configuration.mediaTypesRequiringUserActionForPlayback = []
-        #if os(iOS)
-        configuration.allowsInlineMediaPlayback = true
-        #endif
-        let view = WKWebView(frame: .zero, configuration: configuration)
-        #if os(macOS)
-        view.setValue(false, forKey: "drawsBackground")
-        #else
-        view.isOpaque = false
-        view.backgroundColor = .black
-        view.scrollView.isScrollEnabled = false
-        view.scrollView.bounces = false
-        view.scrollView.contentInsetAdjustmentBehavior = .never
-        #endif
-        view.load(URLRequest(url: URL(string: "\(LampGameFiles.scheme)://app/index.html")!))
-        return view
-    }
+    static func make() -> WKWebView { LampPageView.make(files, catchErrors: false) }
 }
 
 #if os(macOS)
