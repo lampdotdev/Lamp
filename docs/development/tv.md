@@ -60,8 +60,9 @@ network description; the first scan brings macOS's firewall and local network qu
 reads, pictures and sounds as data), never Lamp's lamp.js, which the Mac that opens it writes back as it installs them.
 
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
-`Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-controllers`
-skill, which only the TV prompt offers). The page is one way for phones to steer a TV app; apps of the wish's own on the
+`Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-pages`
+skill, which the `phone-controllers` skill, offered to every prompt, points to once the agent has weighed whose phones
+and what the game's device can take). The page is one way for phones to steer a TV app; apps of the wish's own on the
 phones are another. `Rules.tvPhone`, `make_app_for`'s description and the naming call set them side by side with what each
 suits, and map no request to either: the agent chooses, and when one way can't be built on this Mac (no Xcode, no Android
 tools) `make_app_for`'s answer leaves it free to take another rather than stop. Lamp serves it, so the agent never starts a server or a login item that would outlive the app: it's

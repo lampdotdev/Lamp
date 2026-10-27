@@ -50,8 +50,9 @@ Bonjour type.
 
 ## Putting it on the iPhone
 
-The iPhone remote is this app made for both the Mac and the iPhone (`make_app_for` with this Mac app given the place
-"iphone"), one code: the views already keep what's the Mac's (`.commands`, `onKeyPress`, the window's size, opening
+The iPhone remote is this app made for both the Mac and the iPhone (`make_app_for` with
+`{"devices": ["mac", "iphone"], "made": "native"}`; the TVs, Rokus and speakers it controls aren't devices it's put
+on), one code: the views already keep what's the Mac's (`.commands`, `onKeyPress`, the window's size, opening
 the chat) under `#if os(macOS)`. It talks to the devices itself, without the Mac. On an iPhone, LampNetwork finds
 devices with SSDP sent to each address (a Samsung TV and a Roku answer it) and with the Bonjour types in
 capabilities.json (a Sonos answers only that), so a new kind of device that's found by Bonjour adds its type there.

@@ -159,7 +159,7 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
             guard !filesHeard else { return }
             filesHeard = true
             wish.onFile { [weak self] from, file in
-                self?.tell(["t": "file", "from": from, "name": file.name, "type": file.type, "data": file.data.base64EncodedString()])
+                self?.tell(["t": "file", "from": from, "copy": file.copy, "name": file.name, "type": file.type, "data": file.data.base64EncodedString()])
             }
         case "sendFile":
             guard let id = call["id"] as? Int, let to = call["to"] as? String,
@@ -185,7 +185,7 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
         watching = wish.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.tellState() } }
         }
-        wish.onMessage { [weak self] from, data in self?.tell(["t": "message", "from": from, "data": data]) }
+        wish.onMessage { [weak self] from, data, copy in self?.tell(["t": "message", "from": from, "copy": copy, "data": data]) }
         // Who made each change; the page says to its onChange every value that differs from its copy.
         wish.onChange { [weak self] key, value, from in
             let said: Any = value ?? NSNull()
@@ -197,10 +197,11 @@ final class LampPageNative: NSObject, WKScriptMessageHandlerWithReply {
         let wish = LampWish.shared
         let apps: [[String: Any]] = wish.apps.map { peer in
             let lastSeen: Any = peer.status.lastSeen.map { ($0.timeIntervalSince1970 * 1000).rounded() } ?? NSNull()
-            return ["peer": peer.id, "kind": peer.kind, "name": peer.name, "device": peer.device, "open": peer.isOpen,
+            let copies: [[String: Any]] = peer.copies.map { ["id": $0.id, "device": $0.device, "since": ($0.since.timeIntervalSince1970 * 1000).rounded()] }
+            return ["peer": peer.id, "kind": peer.kind, "name": peer.name, "device": peer.device, "open": peer.isOpen, "copies": copies,
                     "status": ["state": peer.status.state.rawValue, "reason": peer.status.reason, "lastSeen": lastSeen]]
         }
-        tell(["t": "state", "me": wish.me, "apps": apps, "status": ["state": wish.status.state.rawValue, "reason": wish.status.reason]])
+        tell(["t": "state", "me": wish.me, "copy": wish.copy, "apps": apps, "status": ["state": wish.status.state.rawValue, "reason": wish.status.reason]])
     }
 
     private func tellValues(_ changed: [[String: Any]]) {

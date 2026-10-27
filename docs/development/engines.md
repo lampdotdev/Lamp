@@ -19,22 +19,20 @@ anywhere else. `updates/api/engines.js` can hold Lamp's own copy back to a versi
 
 A capability given to one engine must be given to all of them that can take it, in the same change:
 
-- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
+- **Tools the agent calls** (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools, the notes tools): their
   names, descriptions and schemas live once, in `Resources/lamp-tools.json`. pi's extension
   (`Resources/lamp-tools.ts`) reads it for its definitions and holds only the `execute` bodies; Lamp's MCP
   endpoint (`Store.mcpTools`, `/mcp` on the gateway) serves it to Claude Code and Codex. A new tool is an
   entry there, an `execute` in the extension, its name in pi's `--tools` list (`Agent.tools`) and Claude Code's
-  allowed tools (`Agent.run`), and a `case` in `Store.mcp`. The devices `make_app_for` takes are each kind's own:
-  `{{DEVICES}}` in its description is filled once from `Targets.toolDevices`, and `{{PLACES}}`, what each device can run,
-  from the table of devices (`Places.forAgent`), and `{{PAGE_PLACES}}`, where a game or a screen goes and where it
-  needs a native version (`Places.pageList`) (`Store.toolsJSON`), which the endpoint
-  serves and pi's extension reads from `Store.toolsFile`.
+  allowed tools (`Agent.run`), and a `case` in `Store.mcp`. The devices `make_app_for` takes are the table's words:
+  `{{PLACES}}` in its description, what each device can run, is filled from the table of devices (`Places.forAgent`)
+  as the tools are served (`Store.toolsJSON`), which the endpoint serves and pi's extension reads from `Store.toolsFile`.
   Codex has no file tools of its own, so the endpoint also gives it `read`, `ls`, `find` and `grep`
   (`FileTools`, listed when the URL carries `files=1`): they mirror pi's built-in ones, and each call is
   checked by `Privacy.verdict` like pi's. Don't let a Codex shell command skip approval because it looks
   like a read.
 - **Rules in the system prompt** (`Agent.systemPrompt`, `Agent.tryRules`): every tool is available to every
-  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
+  engine (`look_at_app`, `use_app`, `plan`, `delete_file`, `offer_setup`, `make_app_for`, `remove_app`, `connectors`, `network_devices`, `device_integration`, `device_permission`, `ask`, `progress`, `write_wish`, `read_skill`, the version tools and the notes tools), so their rules all live in
   `tryRules`. The file tools only Codex is given have theirs in `Agent.codexNote`.
 - **What Lamp remembers** (`Memory`): two short sets of notes, about the person (`about-you.md` in the
   support folder) and about each app (`.lamp/notes.md`), each with a one-line summary. They must cost the
@@ -62,9 +60,11 @@ A capability given to one engine must be given to all of them that can take it, 
   prompt, so the prompt keeps what nearly every request uses. A skill is a folder with a `SKILL.md` in the Agent
   Skills format (a one-line `name` and `description` between `---` lines, then the instructions), copied into
   the bundle by build.sh. The prompt lists the skills it offers by name and description (`Skills.index`, offered
-  by `Skills.offered` from each kind's `guidance.skills`, the way a rule is given only to the prompts it fits), or names it in the one short rule that
+  by `Skills.offered` from each kind's `guidance.skills`, the way a rule is given only to the prompts it fits, after
+  `Skills.everywhere`, which every prompt offers: how an app is made and on which devices, games, 3D in a page, web
+  apps and phones as controllers are the agent's choice on any request, whatever the app is now), or names it in the one short rule that
   stands for it (`Skills.named`, each kind's `guidance.named`: the building blocks' calls, AI in the app, the person's accounts, App Intents, share
-  extensions, Finder, scripting, 2D games, iCloud), which costs the
+  extensions, Finder, scripting, iCloud), which costs the
   prompt a line instead of a rule and a line; and the agent opens one with
   `read_skill`, a tool like any other, so every engine reads skills the same way. Lamp answers from its own bundle,
   so a skill changed in an update reaches a conversation that began before it. Each engine can load skills of its own,
@@ -72,16 +72,17 @@ A capability given to one engine must be given to all of them that can take it, 
   it loads its own skills for coding work; Codex's `skills.bundled.enabled=false` its own. Codex runs outside Lamp's sandbox, and
   it reads the person's own skills in `~/.agents/skills` at every start, which no setting of Codex's turns off): those are for other
   work, and the same file for every engine is one place to keep up to date. When an app's own code
-  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
+  shows a skill applies (`Skills.applying`: it's new and still to be given its kind, it imports RealityKit, it uses OpenStreetMap data, it has a Chrome sidebar page, a menu bar icon, a widget or a watch app, it uses the phone's hardware or Health, a TV app has a page for phones, its page runs on the game runtime or draws with three.js, it imports SpriteKit, it uses one of those named skills' blocks or frameworks, or has a share extension), Lamp names it at
   the end of the request (`Skills.brief`), sent like `AIStatus.brief` through `RequestNote`: once per
   conversation, again when it changes or the conversation was compacted. What's remembered as told carries each
   skill's revision (`Skills.revision`, a hash of its instructions), so a conversation told of a skill before an
   update changed it is asked to open it again. A new skill is a folder there, its name
   in the `skills` or `named` of each kind whose prompt offers or names it, and, when an app's code can show it applies, a check in `Skills.applying`.
   So guidance that only matters for some apps (a game genre, a device feature, 3D design, phone controllers) goes
-  in a skill, the way `phone-controllers`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
+  in a skill, the way `phone-pages`, `iphone-hardware` and `apple-watch` did, never into the system prompt:
   every turn of every request reads the prompt, whether its app needs that or not. The prompt keeps at most a
-  short rule that names the skill.
+  short rule that names the skill. A skill gives the agent reasons and examples to choose with, never a rule that
+  chooses for it: what can't be judgment (what a device can run) is Lamp's to check, in code.
 - **Pictures the agent is shown** (`look_at_app`, `use_app`, `make_art`): the conversation is sent whole with
   every request, so its pictures add up until the provider refuses the request (Anthropic takes 30 MB of images
   in one; OpenRouter drops the connection at about 5 MB of body). Every engine is handed a JPEG copy

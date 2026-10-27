@@ -280,21 +280,46 @@ enum Template {
     /// use. A wish that comes to ask for a second app has its blocks written again before its next turn and build, as
     /// they always are.
     /// The apps counted are the wish's, whichever folder each is in: a wish whose only app is in a folder of its own (the
-    /// app it began with replaced) is one app, and gets none of it either.
+    /// app it began with replaced) is one app, and gets none of it either. An app that can't join the wish's room yet (a
+    /// Roku's, `WishRooms.joins`) isn't counted: there's nothing to reach it with, so an iPhone app beside only a Roku app
+    /// is on its own as far as the link goes.
     static func talksToOtherApps(_ project: LampProject) -> Bool {
-        // A part whose wish can't be read is taken as one of several, as every part was before a wish could lose its first app.
-        guard let wish = project.isPart ? Store.readWish(at: project.dir.deletingLastPathComponent()) : project else { return true }
-        var groups = Set(wish.apps.map { Parts.group($0.kind) })
-        for app in [project, wish] where app.holdsApp { groups.insert(Parts.group(app.platform)) }
-        for folder in wish.partFolders {
-            if let kind = Parts.kindOfScaffold(in: wish.dir.appendingPathComponent(folder), wish: wish.dir) { groups.insert(Parts.group(kind)) }
-        }
-        return groups.count >= 2
+        guard WishRooms.joins(project.platform) else { return false }
+        guard let kinds = kindsInWish(of: project) else { return true }
+        return Set(kinds.filter(WishRooms.joins).map(Parts.group)).count >= 2
     }
 
-    /// LampSupport.swift as an app is given it: with `LampWish` only for an app with others in its wish.
+    /// Whether the wish an app is of has other apps at all, linked or not: what gives a device's app its `LampWish`
+    /// saying it can't reach them yet (`DeviceSupport`).
+    static func hasOtherApps(_ project: LampProject) -> Bool {
+        guard let kinds = kindsInWish(of: project) else { return true }
+        return Set(kinds.map(Parts.group)).count >= 2
+    }
+
+    /// The kinds of the apps of an app's wish, asked for or made, whichever folder each is in; nil when its wish can't be
+    /// read (a part whose wish is gone), which is taken as one of several, as every part was before a wish could lose its
+    /// first app.
+    private static func kindsInWish(of project: LampProject) -> [Platform]? {
+        guard let wish = project.isPart ? Store.readWish(at: project.dir.deletingLastPathComponent()) : project else { return nil }
+        var kinds = wish.apps.map(\.kind)
+        for app in [project, wish] where app.holdsApp { kinds.append(app.platform) }
+        for folder in wish.partFolders {
+            if let kind = Parts.kindOfScaffold(in: wish.dir.appendingPathComponent(folder), wish: wish.dir) { kinds.append(kind) }
+        }
+        return kinds
+    }
+
+    /// Whether an app carries `LampWish`, the block for reaching its wish's other apps and its own other copies: every
+    /// app does, since any app may be open on several devices at once (two iPhones, a screen on an iPad and a TV), and
+    /// its copies share values through it. What's for a wish of several apps alone (the rule in the prompt that points
+    /// to the `wish-links` skill, the builder's note of where each app is) still goes by `talksToOtherApps`. An app on
+    /// its own looks for its copies on the network only once Lamp's room has shown it one, so an app on one device
+    /// never asks for Local Network.
+    static func carriesWish(_ project: LampProject) -> Bool { project.holdsApp || talksToOtherApps(project) }
+
+    /// LampSupport.swift as an app is given it: with `LampWish` for an app that carries it (`carriesWish`).
     static func lampSupportSwift(for project: LampProject) -> String {
-        talksToOtherApps(project) ? lampSupportSwift : withoutWish(lampSupportSwift)
+        carriesWish(project) ? lampSupportSwift : withoutWish(lampSupportSwift)
     }
 
     /// The Swift building blocks without `LampWish` (and `LampController`, files and all, which ride on it): what an app
@@ -14404,26 +14429,34 @@ enum Template {
     ///     wish.peer("tv")?.status.reason                // why not, in words to show as they are: "Open the TV app on your TV.",
     ///                                                   // "The TV app was last open 5 min ago. Open it on your TV."
     ///     wish.peer("tv")?.status.lastSeen              // when it was last open on this device, or since when while it is
-    ///     wish.send(["score": 3], to: "tv")             // JSON to one app; false (with why in the app's log) when it wasn't sent
+    ///     wish.peer("screen")?.copies                   // where it's open now, one copy for each device: .id, .device, .since
+    ///     wish.send(["score": 3], to: "tv")             // JSON to one app (to each copy of it that's open); false (with why
+    ///                                                   // in the app's log) when it wasn't sent
+    ///     wish.send(["score": 3], to: copy.id)          // to one copy of an app: "screen.k3j9x0ab"
     ///     wish.send(["round": 2])                       // to every other app of the wish
     ///     wish.onMessage { from, data in … }           // what another app sent: who, and its JSON
+    ///     wish.onMessage { from, data, copy in … }     // and which copy of it, to answer that one alone
     ///     wish.state                                    // this app's link: .connecting, .connected, .alone, .away (Lamp isn't reachable),
     ///                                                   // .localNetworkDenied (the person turned off Local Network for this app), .ended
     ///     wish.status.reason                            // what to show about it: "" while all is well
     ///     wish.me                                       // this app's own peer name
+    ///     wish.copy                                     // this copy's own: the app open on this device ("screen.k3j9x0ab")
     ///     wish.values["list"]                           // a value the wish's apps share, kept on each device (@Published)
     ///     wish.set("list", ["milk", "eggs"])            // sets it here and in every other app, now or when they next meet;
     ///                                                   // nil removes it; false (with why in the app's log) when it wasn't set
     ///     wish.onChange { key, value, from in … }       // a value changed, here (from == me) or in another app
     ///     let sending = wish.sendFile(data, name: "photo.jpg", type: "image/jpeg", to: "tv")
-    ///                                                   // up to 64 MB to one app: sending.sent, .progress, .state, .cancel()
-    ///     wish.onFile { from, file in … }               // a file another app sent: who, and file.name, .type, .data
+    ///                                                   // up to 64 MB to one copy: sending.sent, .progress, .state, .cancel()
+    ///     wish.onFile { from, file in … }               // a file another app sent: who, and file.name, .type, .data, .copy
     ///     LampWishStatus()                              // a ready-made view of all that: one line for each other app
     ///     LampWishStatus("tv")                          // the TV app's line alone
     ///
     /// A `State` is one of the values above, and more may come: switch on it with a `default`. Show a `reason` as it is
     /// rather than words of your own; it changes as time goes by ("5 min ago"). An open app built by an older Lamp is
-    /// `.outOfDate`, still open, with a reason saying to open it from Lamp. Each message, as the JSON that goes out, is at
+    /// `.outOfDate`, still open, with a reason saying to open it from Lamp. An app can be open on several devices at once
+    /// (a screen on the kitchen iPad and on the TV): each is a copy of it, all reach the others and keep the same values, a
+    /// message to the app goes to every copy, and a file goes to one copy, the one opened last unless you name a copy's
+    /// `id`. Another copy of this same app is in `apps` while it's open. Each message, as the JSON that goes out, is at
     /// most `messageLimit` (16 KB); anything bigger (a picture, a recording, a document) goes with `sendFile`, to an app
     /// that's open now, two at a time to each. A message or a file is for apps open now;
     /// `values` are for what must outlast an app being closed: each is JSON of at most `valueLimit` (8 KB), all of them
@@ -14438,7 +14471,7 @@ enum Template {
             static let connecting = State(rawValue: "connecting")
             /// This app is with the others; another app is open and reachable.
             static let connected = State(rawValue: "connected")
-            /// This app's wish has no other app.
+            /// This app's wish has no other app, and no other copy of this one is open.
             static let alone = State(rawValue: "alone")
             /// This app can't reach Lamp, nor any other app of the wish.
             static let away = State(rawValue: "away")
@@ -14462,6 +14495,8 @@ enum Template {
         struct Peer: Identifiable, Equatable {
             /// The peer's name: its folder in the wish, lowercased ("tv", "iphone", "apple", "mac", "android").
             let id: String
+            /// Where it's open now, one copy for each device, the one opened first first: none while it isn't open.
+            var copies: [Copy] = []
             /// The device word the tools use for it ("iphone" for an app for iPhone and Mac too).
             let kind: String
             /// What Lamp calls it: "the TV app".
@@ -14470,6 +14505,12 @@ enum Template {
             var device: String
             var status: Status
             var isOpen: Bool { status.state == .connected || status.state == .outOfDate }
+        }
+        /// An app open on one device: messages and files can go to it alone by its `id` ("screen.k3j9x0ab").
+        struct Copy: Identifiable, Equatable {
+            let id: String
+            var device: String
+            var since: Date
         }
         static let messageLimit = 16 * 1024
         static let valueLimit = 8 * 1024
@@ -14484,11 +14525,14 @@ enum Template {
         @Published private(set) var values: [String: Any] = [:]
 
         /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-        /// 2 brought values, 3 files and a game's controls; an app from before says none, which counts as 1.
-        private static let wire = 3
+        /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices; an app from before says
+        /// none, which counts as 1.
+        private static let wire = 4
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
+        /// This copy's peer name: the app's own, then this device's id for it, which the app keeps beside the wish.
+        var copy: String { me.isEmpty ? "" : me + "." + copyID }
 
         // Two ways to the others, used together: Lamp's relay while Lamp is open on the Mac, and a link straight to each
         // app that listens (this one does too), found on the home network by an opaque Bonjour name or at the address it
@@ -14503,8 +14547,16 @@ enum Template {
         private var relayIn = false
         private var lampAway = false
         private var alone = false
-        /// The apps in Lamp's room now, by peer name: the device they said, since when, and what they speak (`wire`).
+        /// Another copy of this app has been open somewhere (Lamp's room said so), kept on the device: until then an
+        /// app with no other app in its wish doesn't look for its copies on the network, so an app on one device never
+        /// asks for Local Network.
+        private var copiesSeen = false
+        /// The copies in Lamp's room now, by peer name ("screen.k3j9x0ab"): the device they said, since when, and what
+        /// they speak (`wire`). An app built before copies is in it by its name alone.
         private var relayPresent: [String: (device: String, since: Date, wire: Int)] = [:]
+        /// This device's id for the app, made the first time it runs and kept with what it keeps of the wish, so the app
+        /// open here and on another device at once are two copies, and this one opened again is the same one.
+        private var copyID = LampWish.newCopyID()
         /// Each value as it was last set, here or by another app, and when: a removed one is kept, without its value, so
         /// an older setting from an app that was away doesn't bring it back.
         private var entries: [String: Entry] = [:]
@@ -14512,6 +14564,7 @@ enum Template {
         /// what it sets next is later than anything it knows of, whatever the device's own clock says.
         private var clock: (ms: Int64, n: Int64) = (0, 0)
         private var changeListeners: [(String, Any?, String) -> Void] = []
+        private var messageListeners: [(String, Any, String) -> Void] = []
         /// Every app of the wish, this one included, as Lamp last said: kept on the device, so it's known with Lamp closed.
         private var roster: [(id: String, kind: String, name: String)] = []
         private var directs: [String: Direct] = [:]
@@ -14524,9 +14577,11 @@ enum Template {
         private var told: [String: [String]] = [:]
         private var dialing: Set<String> = []
         private var nextDial: [String: (at: Date, tries: Int)] = [:]
+        /// Since when each copy has been open, by its peer name.
         private var openSince: [String: Date] = [:]
         /// When each app was last open, kept on the device so it's still known after this app was closed.
         private var lastSeen: [String: Date] = [:]
+        private var appsOpen: Set<String> = []
         /// The apps the wish asks for that Lamp hasn't made yet.
         private var waiting: Set<String> = []
         private var localNetworkDenied = false
@@ -14535,7 +14590,6 @@ enum Template {
         private var beats = 0
         private var devices: [String: String] = [:]
         private var monitor: NWPathMonitor?
-        private var listeners: [(String, Any) -> Void] = []
         private var closed = false
         private var retry = 0
         private var heard = Date()
@@ -14548,6 +14602,9 @@ enum Template {
         /// Started anywhere, so a file sent after a relaunch isn't taken for one from before still on its way.
         private var nextFile = Int.random(in: 1..<(1 << 30))
         private var fileListeners: [(String, LampFile) -> Void] = []
+        /// Which app a peer name is a copy of.
+        private static func app(of peer: String) -> String { peer.split(separator: ".", maxSplits: 1).first.map(String.init) ?? peer }
+        private static func newCopyID() -> String { String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }) }
         /// `LampController`s, each a player of the wish's TV app's game, by what they're held by: what the TV app sends
         /// them, and the files it sends them, which aren't the app's own `onMessage` and `onFile`.
         private var pads: [(owner: Weak, message: (String, [String: Any]) -> Void, file: (String, String, LampFile) -> Void, apps: () -> Void)] = []
@@ -14622,11 +14679,19 @@ enum Template {
             rebuild()
         }
 
-        /// The wish's app with this peer name, open or not; nil when the wish has no such app.
-        func peer(_ id: String) -> Peer? { apps.first { $0.id == id } }
+        /// The wish's app with this peer name (or the app a copy's name is of), open or not; nil when the wish has no such app.
+        func peer(_ id: String) -> Peer? { apps.first { $0.id == Self.app(of: id) } }
 
-        /// Sends `data` (anything JSON can hold) to one of the wish's apps, or with no `to` to all of them; false, with the
-        /// reason in the app's log, when it wasn't sent.
+        /// The copies a message for `peer` goes to: the one it names, or every open copy of the app it names, or with none
+        /// every open copy of every other app.
+        private func copies(for peer: String?) -> [String] {
+            guard let peer else { return peers.flatMap { $0.copies.map(\.id) } }
+            if peer.contains(".") { return self.peer(peer)?.copies.contains { $0.id == peer } == true ? [peer] : [] }
+            return self.peer(peer)?.copies.map(\.id) ?? []
+        }
+
+        /// Sends `data` (anything JSON can hold) to one of the wish's apps (each copy of it open now) or one copy, or with no
+        /// `to` to all of them; false, with the reason in the app's log, when it wasn't sent.
         @discardableResult
         func send(_ data: Any, to peer: String? = nil) -> Bool {
             let what = peer.map { "A message to \"\($0)\"" } ?? "A message to the wish's apps"
@@ -14634,12 +14699,12 @@ enum Template {
                 if !saidAway { saidAway = true; fputs("LampWish: \(what) wasn't sent: not connected (\(state.rawValue)). Check state and peers before sending.\n", stderr) }
                 return false
             }
-            if let peer, self.peer(peer)?.isOpen != true {
-                fputs("LampWish: \(what) wasn't sent: that app isn't open now (open: \(peers.map(\.id))).\n", stderr)
+            let targets = copies(for: peer)
+            if peer != nil, targets.isEmpty {
+                fputs("LampWish: \(what) wasn't sent: that app isn't open now (open: \(peers.flatMap { $0.copies.map(\.id) })).\n", stderr)
                 return false
             }
-            // Measured as it goes through Lamp's room to each app, with that app's name: the longest, when it's for all of them.
-            let targets = peer.map { [$0] } ?? peers.map(\.id)
+            // Measured as it goes through Lamp's room to each copy, with its name: the longest, when it's for several.
             let frame: [String: Any] = ["t": "send", "data": data, "to": targets.max { $0.utf8.count < $1.utf8.count } ?? ""]
             guard JSONSerialization.isValidJSONObject(frame), let text = try? JSONSerialization.data(withJSONObject: frame) else {
                 fputs("LampWish: \(what) wasn't sent: it holds something JSON can't (only text, numbers, true/false, arrays and dictionaries).\n", stderr)
@@ -14663,7 +14728,10 @@ enum Template {
         }
 
         /// Hears what the wish's other apps send: who sent it (its peer name) and the JSON they sent.
-        func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { listeners.append(handler) }
+        func onMessage(_ handler: @escaping (_ from: String, _ data: Any) -> Void) { messageListeners.append { from, data, _ in handler(from, data) } }
+
+        /// The same, with which copy of the app sent it (its `id`, "screen.k3j9x0ab"), to answer that copy alone.
+        func onMessage(_ handler: @escaping (_ from: String, _ data: Any, _ copy: String) -> Void) { messageListeners.append(handler) }
 
         /// Sets a value the wish's apps share (anything JSON can hold; nil removes it), here at once and in each other app
         /// now if it's open, else when they next meet. False, with the reason in the app's log, when it wasn't set.
@@ -14695,15 +14763,15 @@ enum Template {
             }
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
-            let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: me)
+            let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: copy)
             entries[key] = entry
-            valuesChanged([(key, kept)], from: me)
-            for app in apps where app.isOpen && wire(of: app.id) >= 2 { share([key: entry], to: app.id) }
+            valuesChanged([(key, kept)], from: copy)
+            for each in copies(for: nil) where wire(of: each) >= 2 { share([key: entry], to: each) }
             return true
         }
 
         /// Hears every change to the wish's values: its name, the new value (nil when removed), and the peer name of the
-        /// app that set it, this one's own (`me`) for a change made here.
+        /// app that set it, this one's own (`me`) for a change made here or by another copy of this app.
         func onChange(_ handler: @escaping (_ key: String, _ value: Any?, _ from: String) -> Void) { changeListeners.append(handler) }
 
         /// The words for a state of this app's link, the same in every language Lamp's apps are written in.
@@ -14781,61 +14849,88 @@ enum Template {
             var arrived: [String] = []
             // Values set before this app knew its own name take it now, so two apps' settings never tie.
             if !me.isEmpty, entries.values.contains(where: { $0.peer.isEmpty }) {
-                for (key, entry) in entries where entry.peer.isEmpty { entries[key]?.peer = me }
+                for (key, entry) in entries where entry.peer.isEmpty { entries[key]?.peer = copy }
                 keepValues()
             }
-            let list = roster.filter { $0.id != me }.map { app in
-                let direct = directs[app.id].flatMap { $0.ready ? $0 : nil }
-                let relayed = relayPresent[app.id]
-                let open = !closed && (direct != nil || relayed != nil)
-                if open {
+            // Every copy open either way, this one aside: an app is open while any copy of it is.
+            var open: Set<String> = []
+            if !closed {
+                open.formUnion(relayPresent.keys)
+                open.formUnion(directs.filter { $0.value.ready }.keys)
+                open.remove(copy)
+            }
+            for id in open where openSince[id] == nil { openSince[id] = relayPresent[id]?.since ?? now; arrived.append(id) }
+            for id in Array(openSince.keys) where !open.contains(id) { openSince[id] = nil }
+            for id in open {
+                if let device = directs[id].flatMap({ $0.ready ? $0.device : nil }) ?? relayPresent[id]?.device, !device.isEmpty { devices[id] = device }
+            }
+            // This app itself is listed only while another copy of it is open.
+            let list = roster.filter { $0.id != me || open.contains { Self.app(of: $0) == me } }.map { app in
+                let copies = open.filter { Self.app(of: $0) == app.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
+                    .sorted { ($0.since, $0.id) < ($1.since, $1.id) }
+                let isOpen = !copies.isEmpty
+                if isOpen {
                     // Open, so made, whatever a list kept from before said.
                     waiting.remove(app.id)
-                    if openSince[app.id] == nil { openSince[app.id] = relayed?.since ?? now; arrived.append(app.id) }
-                    if let device = direct?.device ?? relayed?.device, !device.isEmpty { devices[app.id] = device }
-                } else if openSince[app.id] != nil {
-                    openSince[app.id] = nil
+                    appsOpen.insert(app.id)
+                } else if appsOpen.remove(app.id) != nil {
                     lastSeen[app.id] = now
                     keep()
                 }
-                let wire = direct?.wire ?? relayed?.wire ?? Self.wire
-                let status = open && wire != Self.wire
-                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: app.name, older: wire < Self.wire), lastSeen: openSince[app.id])
-                    : open ? Status(state: .connected, reason: "", lastSeen: openSince[app.id])
+                // Out of date only when no copy speaks what this one does.
+                let wires = copies.map { wire(of: $0.id) }
+                let wire = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
+                let since = copies.first?.since
+                let status = isOpen && wire != Self.wire
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: app.name, older: wire < Self.wire), lastSeen: since)
+                    : isOpen ? Status(state: .connected, reason: "", lastSeen: since)
                     : Status(state: .notOpen, reason: Self.notOpen(name: app.name, kind: app.kind, lastSeen: lastSeen[app.id],
                                                                    waiting: waiting.contains(app.id), now: now),
                              lastSeen: lastSeen[app.id])
-                return Peer(id: app.id, kind: app.kind, name: app.name, device: devices[app.id] ?? "", status: status)
+                return Peer(id: app.id, copies: copies, kind: app.kind, name: app.name, device: copies.last?.device ?? "", status: status)
             }
-            let next: State = closed ? .ended : alone ? .alone
+            if !copiesSeen, open.contains(where: { Self.app(of: $0) == me }) {
+                copiesSeen = true
+                keep()
+                DispatchQueue.main.async { MainActor.assumeIsolated { self.lookAgain() } }
+            }
+            // Alone: nothing else to reach, as an app with no other app in its wish is while no copy of it is open, as
+            // long as none ever was; once one has been, not reaching it is said as for any other app.
+            let next: State = closed ? .ended : (alone || (roster.count == 1 && open.isEmpty && !copiesSeen)) ? .alone
                 : (relayIn || directs.values.contains { $0.ready }) ? .connected
                 : localNetworkDenied ? .localNetworkDenied : lampAway ? .away : .connecting
             // This app's own state first: code that hears an app arrive in `peers` sends to it at once, and must find
             // this one connected when it does.
             if next != status.state { status = Status(state: next, reason: Self.reason(next), lastSeen: nil) }
             if next == .connected { saidAway = false }
-            // An app no longer open takes the files on their way to it and from it with it.
-            for app in list where !app.isOpen { dropFiles("\(Self.title(app.name)) closed.") { key, _ in key.hasPrefix(app.id + "\t") } }
+            // A copy no longer open takes the files on their way to it and from it with it.
+            for app in roster {
+                dropFiles("\(Self.title(app.name)) closed.") { key, _ in
+                    let peer = String(key.prefix { $0 != "\t" })
+                    return Self.app(of: peer) == app.id && !open.contains(peer)
+                }
+            }
             // Set only when something changed, since a reason is worked out again on every beat ("5 min ago").
             if list != apps {
                 apps = list
                 for pad in pads where pad.owner.object != nil { pad.apps() }
             }
             report()
-            // An app that has just come is told every value this one has, and tells this one its own, so the two agree
+            // A copy that has just come is told every value this one has, and tells this one its own, so the two agree
             // again whichever was open meanwhile.
             for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
         }
 
-        /// What another open app speaks: 1 for an app from before values, which says nothing of it.
+        /// What another open copy speaks: 1 for an app from before values, which says nothing of it.
         private func wire(of peer: String) -> Int {
             directs[peer].flatMap { $0.ready ? $0.wire : nil } ?? relayPresent[peer]?.wire ?? 1
         }
 
         // MARK: Values
 
-        /// A value as it was last set, and when: by the clock of the app that set it, then the count within that
-        /// millisecond, then that app's name, so every app orders two settings the same way.
+        /// A value as it was last set, and when: by the clock of the copy that set it, then the count within that
+        /// millisecond, then that copy's peer name, so every copy orders two settings the same way, two copies of one app
+        /// included.
         private struct Entry {
             var value: Any?
             var ms: Int64
@@ -14955,13 +15050,30 @@ enum Template {
                 entries[key] = entry
                 changed.append((key, entry.value))
             }
-            if !changed.isEmpty { valuesChanged(changed, from: peer) }
+            if !changed.isEmpty {
+                valuesChanged(changed, from: peer)
+                pass(changed.compactMap { key, _ in entries[key].map { (key, $0) } }, from: peer)
+            }
+        }
+
+        /// Settings taken from one copy go on to the others open now that it may not reach: those this one reaches
+        /// straight, and those in Lamp's room when it isn't there itself. Two copies that only dial (two TVs) reach each
+        /// other's values through an app that listens this way when Lamp is closed. A copy that has a setting already takes
+        /// nothing from it, so it goes no further.
+        private func pass(_ list: [(String, Entry)], from peer: String) {
+            guard !list.isEmpty else { return }
+            let settings = Dictionary(list, uniquingKeysWith: { a, _ in a })
+            for each in copies(for: nil) where each != peer && wire(of: each) >= 2 {
+                let straight = directs[each]?.ready == true
+                if straight || (relayPresent[peer] == nil && relayPresent[each] != nil) { share(settings, to: each) }
+            }
         }
 
         private func valuesChanged(_ changed: [(String, Any?)], from peer: String) {
             values = entries.compactMapValues(\.value)
             keepValues()
-            for (key, value) in changed { for listener in changeListeners { listener(key, value, peer) } }
+            let from = Self.app(of: peer)
+            for (key, value) in changed { for listener in changeListeners { listener(key, value, from) } }
         }
 
         /// Sends settings to another open app, the straight way when there is one, else through Lamp's room, a few at a
@@ -15033,14 +15145,14 @@ enum Template {
 
         private func setRoster(_ list: [[String: Any]]) {
             let given = list.compactMap { app -> (id: String, kind: String, name: String)? in
-                guard let id = app["peer"] as? String, Self.isName(id) else { return nil }
+                guard let id = app["peer"] as? String, Self.isName(id), !id.contains(".") else { return nil }
                 return (id, app["kind"] as? String ?? "", app["name"] as? String ?? id)
             }
             guard !given.isEmpty else { return }
             let changed = given.map(\.id).sorted() != roster.map(\.id).sorted()
             roster = given
             waiting = Set(list.filter { $0["waiting"] as? Bool == true }.compactMap { $0["peer"] as? String })
-            for id in Array(directs.keys) where !given.contains(where: { $0.id == id }) { directs[id].map(drop) }
+            for id in Array(directs.keys) where !given.contains(where: { $0.id == Self.app(of: id) }) { directs[id].map(drop) }
             keep()
             // Where each app listens follows its place in the list: a changed list moves this one's.
             if changed { listen(again: true) }
@@ -15059,14 +15171,17 @@ enum Template {
                 return kept
             }
             let seen = lastSeen.mapValues { Int($0.timeIntervalSince1970 * 1000) }
-            let kept: [String: Any] = ["me": me, "apps": apps, "at": told, "seen": seen]
+            let kept: [String: Any] = ["me": me, "copy": copyID, "copies": copiesSeen, "apps": apps, "at": told, "seen": seen]
             UserDefaults.standard.set(try? JSONSerialization.data(withJSONObject: kept), forKey: keptKey)
         }
 
         private func restore() {
             guard let keptKey = Self.keptKey, let data = UserDefaults.standard.data(forKey: keptKey),
-                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+                  let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return keep() }
             me = kept["me"] as? String ?? ""
+            let madeNow = (kept["copy"] as? String).map { Self.isName("a." + $0) } != true
+            if !madeNow, let id = kept["copy"] as? String { copyID = id }
+            defer { if madeNow { keep() } }
             told = kept["at"] as? [String: [String]] ?? [:]
             lastSeen = (kept["seen"] as? [String: Int] ?? [:]).mapValues { Date(timeIntervalSince1970: Double($0) / 1000) }
             let apps = kept["apps"] as? [[String: Any]] ?? []
@@ -15074,13 +15189,13 @@ enum Template {
             roster = apps.compactMap { app in
                 (app["peer"] as? String).map { ($0, app["kind"] as? String ?? "", app["name"] as? String ?? $0) }
             }
-            alone = roster.count < 2 && !roster.isEmpty
+            copiesSeen = kept["copies"] as? Bool == true
             rebuild()
         }
 
-        /// Where another app was reached or said it listens, the latest first.
+        /// Where another copy was reached or said it listens, the latest first.
         private func remember(_ peer: String, at places: [String]) {
-            guard peer != me, !places.isEmpty else { return }
+            guard peer != copy, peer != me, !places.isEmpty else { return }
             var list = places.filter { !$0.isEmpty }
             for place in told[peer] ?? [] where !list.contains(place) { list.append(place) }
             told[peer] = Array(list.prefix(6))
@@ -15091,13 +15206,15 @@ enum Template {
 
         /// Sends a file (up to 64 MB) to one of the wish's apps that's open now, in pieces, the straight way when there is one,
         /// else through Lamp's room; the transfer says how far it's got, and ends failed, with why, when it didn't get there.
-        /// Two go to each app at a time: send a third once one has finished (`try await transfer.finished()`).
+        /// It goes to one copy: the one `to` names ("screen.k3j9x0ab"), or for an app open on several devices the one opened
+        /// last. Two go to each copy at a time: send a third once one has finished (`try await transfer.finished()`).
         @discardableResult
         func sendFile(_ data: Data, name: String, type: String = "application/octet-stream", to peer: String) -> LampTransfer {
             sendFile(data, name: name, type: type, to: peer, channel: "")
         }
 
-        /// Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole.
+        /// Hears the files the wish's other apps send: who sent it (its peer name), and the file, whole (`file.copy` is which
+        /// copy of the app sent it).
         func onFile(_ handler: @escaping (_ from: String, _ file: LampFile) -> Void) { fileListeners.append(handler) }
 
         /// A file on its way to another app, on the way it started on: a file's pieces and acknowledgements can't change
@@ -15128,7 +15245,9 @@ enum Template {
             }
         }
 
-        fileprivate func sendFile(_ data: Data, name: String, type: String, to peer: String, channel: String) -> LampTransfer {
+        fileprivate func sendFile(_ data: Data, name: String, type: String, to given: String, channel: String) -> LampTransfer {
+            // One copy: the one named, else the one opened last.
+            let peer = given.contains(".") ? given : self.peer(given)?.copies.last?.id ?? given
             let id = nextFile
             nextFile = nextFile >= Int(Int32.max) - 1 ? 1 : nextFile + 1
             let transfer = LampTransfer(id: id, name: name, size: data.count)
@@ -15139,8 +15258,9 @@ enum Template {
                 return transfer
             }
             guard data.count <= LampFiles.largest else { return failed("The file is too big to send: 64 MB at most.") }
-            guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(peer)\".") }
+            guard let app = self.peer(peer) else { return failed("The wish has no app called \"\(given)\".") }
             guard app.isOpen, state == .connected else { return failed(app.status.reason.isEmpty ? "\(Self.title(app.name)) isn't open now." : app.status.reason) }
+            guard app.copies.contains(where: { $0.id == peer }) else { return failed("That copy of \(app.name) isn't open now.") }
             guard wire(of: peer) >= 3 else { return failed(Self.outOfDate(name: app.name, older: true)) }
             guard outgoing.keys.filter({ $0.hasPrefix(peer + "\t") }).count < LampFiles.transfers else {
                 return failed("Another file to \(app.name) is still on its way: send this one once it's there.")
@@ -15274,15 +15394,15 @@ enum Template {
         private func finished(_ key: String, _ file: Incoming, from peer: String) {
             incoming[key] = nil
             if file.size == 0, let id = Int(key.split(separator: "\t").last ?? "") { fileMessage(["t": "file-ack", "id": id, "got": 0], to: peer, via: file.via) }
-            let done = LampFile(name: file.name, type: file.type, data: file.data)
+            let done = LampFile(name: file.name, type: file.type, data: file.data, copy: peer)
             if file.channel.hasPrefix("pad") {
                 for pad in pads where pad.owner.object != nil { pad.file(peer, file.channel, done) }
             } else {
-                for listener in fileListeners { listener(peer, done) }
+                for listener in fileListeners { listener(Self.app(of: peer), done) }
             }
         }
 
-        /// The files on their way that `gone` picks (by the other app's peer name and id, and the way each goes) end, with why.
+        /// The files on their way that `gone` picks (by the other copy's peer name and id, and the way each goes) end, with why.
         private func dropFiles(_ reason: String, where gone: (String, Direct?) -> Bool) {
             for (key, file) in outgoing where gone(key, file.via) {
                 outgoing[key] = nil
@@ -15303,11 +15423,11 @@ enum Template {
 
         fileprivate func removePad(owner: AnyObject) { pads.removeAll { $0.owner.object == nil || $0.owner.object === owner } }
 
-        /// A game's controls for another app (its `Lamp.controllers`), on the straight way when there is one, else through
-        /// Lamp's room; false when that app isn't open, or doesn't take them.
+        /// A game's controls for another copy (its `Lamp.controllers`), on the straight way when there is one, else through
+        /// Lamp's room; false when that copy isn't open, or doesn't take them.
         @discardableResult
         fileprivate func sendPad(_ message: [String: Any], to peer: String) -> Bool {
-            guard !closed, self.peer(peer)?.isOpen == true, wire(of: peer) >= 3 else { return false }
+            guard !closed, self.peer(peer)?.copies.contains(where: { $0.id == peer }) == true, wire(of: peer) >= 3 else { return false }
             if let direct = directs[peer], direct.ready, let json = Self.json(["t": "pad", "m": message]) {
                 sealed(json, on: direct)
                 return true
@@ -15317,8 +15437,8 @@ enum Template {
             return true
         }
 
-        /// Whether another app is open and takes files and a game's controls: one built before them is out of date.
-        fileprivate func takesFiles(_ peer: String) -> Bool { self.peer(peer)?.isOpen == true && wire(of: peer) >= 3 }
+        /// Whether another copy is open and takes files and a game's controls: one built before them is out of date.
+        fileprivate func takesFiles(_ peer: String) -> Bool { self.peer(peer)?.copies.contains(where: { $0.id == peer }) == true && wire(of: peer) >= 3 }
 
         private func heardPad(_ message: [String: Any], from peer: String) {
             for pad in pads where pad.owner.object != nil { pad.message(peer, message) }
@@ -15364,7 +15484,7 @@ enum Template {
                     heard = Date()
                     let nonce = Self.random(16), tag = Self.tag(of: key)
                     handshake = (nonce, tag)
-                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": me, "nonce": nonce.base64EncodedString()])
+                    let hello = try JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": copy, "nonce": nonce.base64EncodedString()])
                     try await task.send(.string(String(decoding: hello, as: UTF8.self)))
                     receive(on: task)
                 } catch {
@@ -15425,7 +15545,7 @@ enum Template {
             guard let key = Self.key, let handshake, let server = challenge["peer"] as? String, (1...32).contains(server.utf8.count),
                   let theirs = (challenge["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
                   let proof = (challenge["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) else { return false }
-            let transcript = Self.transcript(tag: handshake.tag, client: me, server: server, clientNonce: handshake.nonce, serverNonce: theirs)
+            let transcript = Self.transcript(tag: handshake.tag, client: copy, server: server, clientNonce: handshake.nonce, serverNonce: theirs)
             guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return false }
             self.handshake = nil
             let mine = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()])
@@ -15462,7 +15582,7 @@ enum Template {
                 lampAway = false
                 relayIn = true
                 reported = ""
-                if let name = m["peer"] as? String { me = name }
+                if let name = m["peer"] as? String, Self.isName(name) { me = Self.app(of: name) }
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
                 relayPresent = [:]
                 for seen in m["peers"] as? [[String: Any]] ?? [] { present(seen) }
@@ -15485,7 +15605,7 @@ enum Template {
                 setRoster(m["apps"] as? [[String: Any]] ?? [])
             case "message":
                 guard let from = m["from"] as? String, let data = m["data"] else { return }
-                for listener in listeners { listener(from, data) }
+                for listener in messageListeners { listener(Self.app(of: from), data, from) }
             case "values":
                 guard let from = m["from"] as? String, Self.isName(from) else { return }
                 heardValues(m, from: from)
@@ -15498,6 +15618,8 @@ enum Template {
             case "undelivered":
                 // Said once for each app until the room changes: the code that sent it can't tell otherwise.
                 guard let to = m["to"] as? String, undeliveredSaid.insert(to).inserted else { return }
+                // A copy gone before the room said so: it's no longer counted as there.
+                if to.contains(".") { relayPresent[to] = nil; rebuild() }
                 fputs("LampWish: a message to \"\(to)\" didn't arrive: \(m["reason"] as? String ?? "it isn't in the room").\n", stderr)
             default:
                 break
@@ -15569,8 +15691,8 @@ enum Template {
             for app in apps where app.isOpen { lastSeen[app.id] = now }
             beats += 1
             if beats % 12 == 0, !peers.isEmpty { keep() }
-            // Once a minute each open app is told what this one's values add up to, so one that missed a setting asks.
-            if beats % 12 == 0 { for app in apps where app.isOpen && wire(of: app.id) >= 2 { share([:], to: app.id, extra: ["sum": digest()]) } }
+            // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
+            if beats % 12 == 0 { for each in copies(for: nil) where wire(of: each) >= 2 { share([:], to: each, extra: ["sum": digest()]) } }
             // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
             reach()
@@ -15581,15 +15703,19 @@ enum Template {
         /// Listens, looks for the others and dials the ones it can reach: as it starts, on each beat for those whose time
         /// to try again has come, and at once whenever something changed (`lookAgain`).
         private func reach() {
-            guard !closed, !alone, Self.key != nil, !me.isEmpty, roster.count >= 2 else { return }
+            guard !closed, !alone, Self.key != nil, !me.isEmpty, roster.count >= 2 || copiesSeen else { return }
             listen()
             browse()
             let now = Date()
-            for app in roster where app.id != me && directs[app.id]?.ready != true && !dialing.contains(app.id) {
-                if let wait = nextDial[app.id], wait.at > now { continue }
-                let places = endpoints(of: app.id)
+            // Every copy known of: found on the network, in Lamp's room, or reached before. A copy of this app on another
+            // device is dialled as any other app is.
+            let known = Set(found.keys).union(told.keys).union(relayPresent.keys)
+            for peer in known.sorted() where peer != copy && peer != me && roster.contains(where: { $0.id == Self.app(of: peer) })
+                && directs[peer]?.ready != true && !dialing.contains(peer) {
+                if let wait = nextDial[peer], wait.at > now { continue }
+                let places = endpoints(of: peer)
                 guard !places.isEmpty else { continue }
-                dial(app.id, places)
+                dial(peer, places)
             }
         }
 
@@ -15609,9 +15735,10 @@ enum Template {
             return UInt16(base + rank)
         }
 
-        /// The name this app is found by on the network, which says nothing of the wish or the app to anyone without the key.
-        private static func serviceName(of peer: String) -> String? {
-            key.map { derive("lamp-wish service", $0, Data(peer.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined() }
+        /// The name an app is found by on the network, which says nothing of the wish or the app to anyone without the key.
+        /// Each copy adds its own id to it ("…-k3j9x0ab"), so the app's copies on several devices are each found.
+        private static func serviceName(of app: String) -> String? {
+            key.map { derive("lamp-wish service", $0, Data(app.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined() }
         }
 
         private static var serviceType: String { "_lampwish._tcp" }
@@ -15627,7 +15754,7 @@ enum Template {
 
         private func listen(again: Bool = false, anyPort: Bool = false) {
             if again { listener?.cancel(); listener = nil; listenerPort = nil; listenerTried = .distantPast }
-            guard listener == nil, anyPort || Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me) else { return }
+            guard listener == nil, anyPort || Date().timeIntervalSince(listenerTried) > 30, let name = Self.serviceName(of: me).map({ $0 + "-" + copyID }) else { return }
             listenerTried = Date()
             let wanted = anyPort ? nil : Self.port(for: me, among: roster.map(\.id)).flatMap { NWEndpoint.Port(rawValue: $0) }
             let made = (wanted.flatMap { try? NWListener(using: Self.socketParameters(), on: $0) }) ?? (try? NWListener(using: Self.socketParameters()))
@@ -15668,9 +15795,12 @@ enum Template {
                     guard let self else { return }
                     var seen: [String: NWEndpoint] = [:]
                     for result in results {
-                        guard case .service(let name, _, _, _) = result.endpoint,
-                              let app = self.roster.first(where: { $0.id != self.me && Self.serviceName(of: $0.id) == name }) else { continue }
-                        seen[app.id] = result.endpoint
+                        guard case .service(let name, _, _, _) = result.endpoint else { continue }
+                        let parts = name.split(separator: "-", maxSplits: 1).map(String.init)
+                        guard parts.count == 2, Self.isName("a." + parts[1]),
+                              let app = self.roster.first(where: { Self.serviceName(of: $0.id) == parts[0] }) else { continue }
+                        let peer = app.id + "." + parts[1]
+                        if peer != self.copy { seen[peer] = result.endpoint }
                     }
                     let fresh = seen.keys.filter { self.found[$0] == nil }
                     self.found = seen
@@ -15711,7 +15841,7 @@ enum Template {
             rebuild()
         }
 
-        /// Where to reach another app: found by its name now, else where it was last reached or said it listens.
+        /// Where to reach another copy: found by its name now, else where it was last reached or said it listens.
         private func endpoints(of peer: String) -> [NWEndpoint] {
             var list: [NWEndpoint] = []
             if let found = found[peer] { list.append(found) }
@@ -15752,8 +15882,9 @@ enum Template {
             return list
         }
 
-        /// Dials another app at each place in turn until one answers and proves it holds the wish's key; tried again later,
-        /// less often each time it fails, and at once when it's found anew.
+        /// Dials another copy at each place in turn until one answers and proves it holds the wish's key; tried again later,
+        /// less often each time it fails, and at once when it's found anew. Whichever copy of that app answers is taken
+        /// (an address can change hands), and kept as the copy it said it is.
         private func dial(_ peer: String, _ places: [NWEndpoint]) {
             guard !closed else { dialing.remove(peer); return }
             guard let place = places.first else {
@@ -15790,14 +15921,17 @@ enum Template {
             guard case .hostPort(let host, let port) = place, let name = Self.urlHost(host),
                   let url = URL(string: "ws://\(name):\(port.rawValue)/") else { return dial(peer, Array(places.dropFirst())) }
             let direct = Direct(connection: NWConnection(to: .url(url), using: Self.socketParameters()), dialled: true, peer: peer)
-            direct.done = { [weak self] worked in
+            direct.done = { [weak self, weak direct] worked in
                 guard let self else { return }
                 if worked {
                     self.dialing.remove(peer)
                     self.nextDial[peer] = nil
+                    // Another copy answered where this one was looked for: what was kept of the old one goes.
+                    let reached = direct?.peer ?? peer
+                    if reached != peer { self.told[peer] = nil }
                     // Kept by an address any app of the wish can dial again, an IPv4 one or a name.
                     switch host {
-                    case .ipv4, .name: self.remember(peer, at: ["\(name):\(port.rawValue)"])
+                    case .ipv4, .name: self.remember(reached, at: ["\(name):\(port.rawValue)"])
                     default: break
                     }
                 } else {
@@ -15867,7 +16001,7 @@ enum Template {
             guard let key = Self.key else { return drop(direct) }
             let nonce = Self.random(16), tag = Self.tag(of: key)
             direct.hello = (nonce, tag)
-            if let json = try? JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": me, "nonce": nonce.base64EncodedString()]) {
+            if let json = try? JSONSerialization.data(withJSONObject: ["t": "hello", "tag": tag.base64EncodedString(), "peer": copy, "nonce": nonce.base64EncodedString()]) {
                 frame(json, text: true, on: direct)
             }
         }
@@ -15896,11 +16030,12 @@ enum Template {
             let kind = said["t"] as? String
             if kind == "beat" { return }
             if direct.dialled, direct.sealer == nil, kind == "challenge", let hello = direct.hello,
-               said["peer"] as? String == direct.peer,
+               let server = said["peer"] as? String, Self.isName(server), server != copy, Self.app(of: server) == Self.app(of: direct.peer),
                let theirs = (said["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16,
                let proof = (said["proof"] as? String).flatMap({ Data(base64Encoded: $0) }) {
-                let transcript = Self.transcript(tag: hello.tag, client: me, server: direct.peer, clientNonce: hello.nonce, serverNonce: theirs)
+                let transcript = Self.transcript(tag: hello.tag, client: copy, server: server, clientNonce: hello.nonce, serverNonce: theirs)
                 guard Self.same(proof, Self.derive("lamp-wish server", key, transcript)) else { return drop(direct) }
+                direct.peer = server
                 direct.hello = nil
                 if let json = try? JSONSerialization.data(withJSONObject: ["t": "proof", "proof": Self.derive("lamp-wish client", key, transcript).base64EncodedString()]) {
                     frame(json, text: true, on: direct)
@@ -15912,13 +16047,13 @@ enum Template {
             }
             if !direct.dialled, direct.transcript == nil, kind == "hello",
                let tag = (said["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), Self.same(tag, Self.tag(of: key)),
-               let peer = said["peer"] as? String, Self.isName(peer), peer != me, roster.contains(where: { $0.id == peer }),
+               let peer = said["peer"] as? String, Self.isName(peer), peer != copy, peer != me, roster.contains(where: { $0.id == Self.app(of: peer) }),
                let theirs = (said["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), theirs.count == 16 {
                 let ours = Self.random(16)
-                let transcript = Self.transcript(tag: tag, client: peer, server: me, clientNonce: theirs, serverNonce: ours)
+                let transcript = Self.transcript(tag: tag, client: peer, server: copy, clientNonce: theirs, serverNonce: ours)
                 direct.peer = peer
                 direct.transcript = transcript
-                if let json = try? JSONSerialization.data(withJSONObject: ["t": "challenge", "peer": me, "nonce": ours.base64EncodedString(),
+                if let json = try? JSONSerialization.data(withJSONObject: ["t": "challenge", "peer": copy, "nonce": ours.base64EncodedString(),
                                                                          "proof": Self.derive("lamp-wish server", key, transcript).base64EncodedString()]) {
                     frame(json, text: true, on: direct)
                 }
@@ -15943,7 +16078,7 @@ enum Template {
             case "join" where !direct.dialled && !direct.ready:
                 direct.device = String((m["device"] as? String ?? "").prefix(40))
                 direct.wire = m["wire"] as? Int ?? 1
-                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": me, "device": Self.device, "wire": Self.wire]) { sealed(welcome, on: direct) }
+                if let welcome = try? JSONSerialization.data(withJSONObject: ["t": "welcome", "peer": copy, "device": Self.device, "wire": Self.wire]) { sealed(welcome, on: direct) }
                 ready(direct)
             case "welcome" where direct.dialled && !direct.ready:
                 direct.device = String((m["device"] as? String ?? "").prefix(40))
@@ -15951,7 +16086,7 @@ enum Template {
                 ready(direct)
             case "message" where direct.ready:
                 guard let data = m["data"] else { return }
-                for listener in listeners { listener(direct.peer, data) }
+                for listener in messageListeners { listener(Self.app(of: direct.peer), data, direct.peer) }
             case "values" where direct.ready:
                 heardValues(m, from: direct.peer)
             case "pad" where direct.ready:
@@ -15963,13 +16098,13 @@ enum Template {
             }
         }
 
-        /// A link proved both ways. Two apps that both listen may each have dialled the other: the one the app with the
-        /// earlier name dialled is kept on both sides, so they agree without saying.
+        /// A link proved both ways. Two copies that both listen may each have dialled the other: the one the copy with the
+        /// earlier peer name dialled is kept on both sides, so they agree without saying.
         private func ready(_ direct: Direct) {
             guard !closed else { return drop(direct) }
             opening[ObjectIdentifier(direct)] = nil
             if let other = directs[direct.peer], other !== direct, other.ready {
-                let keepNew = direct.dialled == (me < direct.peer)
+                let keepNew = direct.dialled == (copy < direct.peer)
                 if !keepNew { direct.done?(true); direct.done = nil; return drop(direct) }
                 other.done = nil
                 drop(other)
@@ -16028,8 +16163,12 @@ enum Template {
             return data
         }
 
+        /// A peer's name: an app's ("tv"), or a copy's, the app's then a dot and the copy's id ("tv.k3j9x0ab"), 32 bytes at most.
         private static func isName(_ name: String) -> Bool {
-            (1...32).contains(name.utf8.count) && name.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d }
+            let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+            guard (1...32).contains(name.utf8.count), (1...2).contains(parts.count), !parts.contains(where: \.isEmpty) else { return false }
+            return parts[0].utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2d }
+                && parts.dropFirst().allSatisfy { $0.utf8.allSatisfy { ($0 >= 0x61 && $0 <= 0x7a) || ($0 >= 0x30 && $0 <= 0x39) } }
         }
 
         private static func same(_ a: Data, _ b: Data) -> Bool {
@@ -16065,7 +16204,7 @@ enum Template {
 
     /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
     /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
-    /// dot of its colour. Nothing while this app is alone in its wish. Give a peer name for that app's line alone. It
+    /// dot of its colour. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
     /// takes the font and colours of where it's put, so style it as the rest of the app; or show `LampWish`'s own
     /// `status` and `peer(_:)?.status` in a view of your own.
     struct LampWishStatus: View {
@@ -16133,7 +16272,8 @@ enum Template {
         private let wish = LampWish.shared
         /// This controller among any others the app has, each a player of its own: on everything it says and is told.
         private let pad = String(UUID().uuidString.prefix(8)).lowercased()
-        /// The wish's TV app, by its peer name, once the wish's list is known.
+        /// The copy of the wish's TV app this plays with, by its peer name ("tv.k3j9x0ab"): the one open longest, kept
+        /// while it stays open.
         private var tv: String?
         private var seq = 0
         private var listeners: [(Any) -> Void] = []
@@ -16235,8 +16375,13 @@ enum Template {
         private func appsChanged() {
             guard !closed else { return }
             let app = wish.apps.first { $0.kind == "tv" }
-            tv = app?.id
-            guard let app, app.isOpen else {
+            let open = app?.copies.map(\.id) ?? []
+            if let tv, open.contains(tv) {} else if let first = open.first {
+                // Another copy of the TV app: a player of its game anew.
+                if tv != nil, state == .connected { state = .connecting; player = nil }
+                tv = first
+            }
+            guard let app, app.isOpen, let tv else {
                 // Its players went with it.
                 leaving.tv = nil
                 if state != .waiting { state = .waiting }
@@ -16244,7 +16389,7 @@ enum Template {
                 return
             }
             // Built by an earlier Lamp: it takes no players this way until it's opened from Lamp, which builds it again.
-            guard wish.takesFiles(app.id) else {
+            guard wish.takesFiles(tv) else {
                 if state != .waiting { state = .waiting; fputs("LampController: \(app.status.reason)\n", stderr) }
                 return
             }
@@ -16353,6 +16498,8 @@ enum Template {
         let name: String
         let type: String
         let data: Data
+        /// Which copy of the app sent it ("screen.k3j9x0ab"), to send one back to that copy alone.
+        var copy = ""
     }
 
     // MARK: - Mac building blocks

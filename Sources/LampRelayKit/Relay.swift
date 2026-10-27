@@ -135,6 +135,8 @@ public final class Relay: @unchecked Sendable {
             self.opener = opener
         }
         var described: [String: Any] { ["kind": kind, "name": name, "device": device, "wire": wire, "since": Int(since.timeIntervalSince1970 * 1000), "at": at] }
+        /// What a message `to` reaches: the copy it names, or every copy of the app it names.
+        func isFor(_ to: String, id: String) -> Bool { id == to || (!to.contains(".") && WishChannel.app(of: id) == to) }
         /// Everything to a member goes sealed, in the order it's said, on the relay's queue.
         func send(_ text: String) { peer.send(sealed: sealer.seal(Data(text.utf8))) }
     }
@@ -300,7 +302,7 @@ public final class Relay: @unchecked Sendable {
                     != Set(apps.map { "\($0.key)\t\($0.value.kind)\t\($0.value.name)" }) || known.waiting != waiting
                 known.apps = apps
                 known.waiting = waiting
-                for (id, member) in known.members where apps[id] == nil { member.peer.close(code: 4005); known.members[id] = nil }
+                for (id, member) in known.members where apps[WishChannel.app(of: id)] == nil { member.peer.close(code: 4005); known.members[id] = nil }
                 // An app added to the wish or taken from it, while the others are in the room: they hear the list again,
                 // so the one not open yet is known to them, and the one gone isn't.
                 if changed {
@@ -387,7 +389,7 @@ public final class Relay: @unchecked Sendable {
     private func prove(_ peer: RelayPeer, hello: [String: Any], from: String) {
         guard let tag = (hello["tag"] as? String).flatMap({ Data(base64Encoded: $0) }), tag.count == WishChannel.tagSize,
               let roomKey = tags[tag], let room = rooms[roomKey],
-              let id = hello["peer"] as? String, WishChannel.isName(id), room.apps[id] != nil,
+              let id = hello["peer"] as? String, WishChannel.isName(id), room.apps[WishChannel.app(of: id)] != nil,
               let clientNonce = (hello["nonce"] as? String).flatMap({ Data(base64Encoded: $0) }), clientNonce.count == WishChannel.nonceSize
         else { return peer.close(code: 4003) }
         let serverNonce = WishChannel.random(WishChannel.nonceSize)
@@ -411,7 +413,7 @@ public final class Relay: @unchecked Sendable {
             peer.onBinary = { [weak self, weak peer, weak room] sealed in
                 guard let self, let peer, let room else { return }
                 guard let plain = opener.open(sealed), let join = Self.parse(String(decoding: plain, as: UTF8.self)), join["t"] as? String == "join",
-                      self.rooms[roomKey] === room, let named = room.apps[id] else { return peer.close(code: 4003) }
+                      self.rooms[roomKey] === room, let named = room.apps[WishChannel.app(of: id)] else { return peer.close(code: 4003) }
                 self.proving[handle] = nil
                 self.joinRoom(peer, room: room, key: roomKey, id: id, kind: named.kind, name: named.name, device: Self.short(join["device"], 40),
                               wire: (join["wire"] as? Int).map { min(max($0, 1), 999) } ?? 1, sealer: WishChannel.Sealer(key: keys.server), opener: opener)
@@ -427,8 +429,10 @@ public final class Relay: @unchecked Sendable {
 
     private func joinRoom(_ peer: RelayPeer, room: Room, key: String, id: String, kind: String, name: String, device: String, wire: Int,
                           sealer: WishChannel.Sealer, opener: WishChannel.Sealer) {
-        // The same app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it. The others
-        // hear that it left before they hear it join, so they see it arrive again and can catch it up on what it missed.
+        // The same copy of the app back on a new socket (reopened, or its old link not yet noticed gone): the new one is it.
+        // A copy is an app on one device ("screen.k3j9x0ab"), so the same app open on another device is a member of its own.
+        // The others hear that it left before they hear it join, so they see it arrive again and can catch it up on what
+        // it missed.
         if let old = room.members[id] {
             old.peer.onClose = {}
             old.peer.close(code: 4000)
@@ -470,7 +474,7 @@ public final class Relay: @unchecked Sendable {
         let kind = message["t"] as? String ?? ""
         // How the app's link stands, for whoever builds the wish to see; said only when it changes.
         if kind == "status", member.rate.allowed(member.peer) {
-            let direct = (message["direct"] as? [String] ?? []).filter { room.apps[$0] != nil }.prefix(8)
+            let direct = (message["direct"] as? [String] ?? []).filter { WishChannel.isName($0) && room.apps[WishChannel.app(of: $0)] != nil }.prefix(8)
             member.link = ["state": Self.short(message["state"], 32), "direct": Array(direct)]
             return onRoomChanged(key, membersDescribed(room))
         }
@@ -481,26 +485,32 @@ public final class Relay: @unchecked Sendable {
             for (other, each) in room.members where other != id { each.send(said) }
             return
         }
-        // The values the wish's apps share, for one app: passed on as they are, since each app keeps and merges its own.
+        // The values the wish's apps share, for one copy (or each copy of one app): passed on as they are, since each copy
+        // keeps and merges its own.
         if kind == "values", member.rate.allowed(member.peer), let values = message["values"] as? [String: Any],
-           let to = message["to"] as? String, let target = room.members[to], target.peer.pendingText <= Self.hostBehind {
+           let to = message["to"] as? String {
             // With what the sender's values add up to, or its request for all of the other's, so a setting lost on the
             // way is made up.
             var out: [String: Any] = ["t": "values", "from": id, "values": values]
             if let sum = message["sum"] as? String, sum.utf8.count <= 64 { out["sum"] = sum }
             if message["ask"] as? Bool == true { out["ask"] = true }
-            return target.send(Self.json(out))
+            let said = Self.json(out)
+            for (other, each) in room.members where other != id && each.isFor(to, id: other) && each.peer.pendingText <= Self.hostBehind { each.send(said) }
+            return
         }
         if kind == "pad" || kind.hasPrefix("file") { return fileOrPad(room, id: id, member: member, kind: kind, message: message) }
         guard kind == "send", member.rate.allowed(member.peer), let data = message["data"] else { return }
         let to = message["to"] as? String
         let out = Self.json(["t": "message", "from": id, "data": data, "at": Self.now])
         if let to {
-            // Told when the one it's for isn't there, or has stopped reading, so the sender's library can say so.
-            guard let target = room.members[to], target.peer.pendingText <= Self.hostBehind else {
-                return member.send(Self.json(["t": "undelivered", "to": to, "reason": room.members[to] == nil ? "not in the room" : "busy"]))
+            // To one copy, or to every copy of one app. Told when none is there, or the one it's for has stopped reading,
+            // so the sender's library can say so.
+            let targets = room.members.filter { $0.key != id && $0.value.isFor(to, id: $0.key) }
+            let reading = targets.values.filter { $0.peer.pendingText <= Self.hostBehind }
+            guard !reading.isEmpty else {
+                return member.send(Self.json(["t": "undelivered", "to": to, "reason": targets.isEmpty ? "not in the room" : "busy"]))
             }
-            target.send(out)
+            for target in reading { target.send(out) }
         } else {
             for (other, each) in room.members where other != id && each.peer.pendingText <= Self.hostBehind { each.send(out) }
         }
@@ -521,7 +531,7 @@ public final class Relay: @unchecked Sendable {
             if member.padRates[player] == nil, member.padRates.count >= 64 { member.padRates = [:] }
             let rate = member.padRates[player] ?? Rate()
             member.padRates[player] = rate
-            guard room.apps[to] != nil, rate.allowed(member.peer), let m = message["m"] as? [String: Any], let target,
+            guard room.apps[WishChannel.app(of: to)] != nil, rate.allowed(member.peer), let m = message["m"] as? [String: Any], let target,
                   target.peer.pendingText <= Self.hostBehind || (m["t"] as? String == "button" && m["down"] as? Bool != true) else { return }
             target.send(Self.json(["t": "pad", "from": id, "m": m]))
         case "file":
@@ -592,9 +602,11 @@ public final class Relay: @unchecked Sendable {
         }
     }
 
+    /// A member as the others are told of it: its peer name (which copy it is), and the app it's a copy of.
     private static func described(_ id: String, _ member: Member) -> [String: Any] {
         var described = member.described
         described["peer"] = id
+        described["app"] = WishChannel.app(of: id)
         return described
     }
 

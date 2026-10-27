@@ -43,8 +43,12 @@ struct Place: Equatable {
     /// Why it has no web build or no native build, said when one is asked for.
     var noWeb: String? = nil
     var noNative: String? = nil
-    /// Which of Apple's families of device it is, where rows share a destination (`LampProject.family`).
-    var families: Set<DeviceFamily> = []
+    /// Which of Apple's families of device it is, where rows share a destination (`LampProject.family`), by the word it's
+    /// named by: "ipad" is an iPad, "iphone" an iPhone, though both are the one row that runs them.
+    var wordFamilies: [String: DeviceFamily] = [:]
+    var families: Set<DeviceFamily> { Set(wordFamilies.values) }
+    /// The row whose native app it comes with, never alone: an Apple Watch's app is the iPhone app's.
+    var comesWith: String? = nil
     /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
     /// own does; nil when Lamp doesn't know, which a page there can't be built without.
     let input: Input?
@@ -102,16 +106,16 @@ enum Places {
         Place(id: "iphone", name: "iPhone / iPad", words: ["iphone", "ipad"], destination: .ios,
               web: .init(host: .webKit, reach: "in an app of Lamp's around the page, the same way as a native app"),
               native: .init(code: .apple, reach: "in the simulator on this Mac, or on the person's own iPhone or iPad paired with this Mac, one device at a time"),
-              families: [.iphone, .ipad], input: .apple),
+              wordFamilies: ["iphone": .iphone, "ipad": .ipad], input: .apple),
         Place(id: "watch", name: "Apple Watch", words: ["watch"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "with the iPhone app, onto the watch paired with that iPhone"),
-              noWeb: "watchOS has no web view, so a page there needs a native version", input: nil),
+              noWeb: "watchOS has no web view, so a page there needs a native version", comesWith: "iphone", input: nil),
         Place(id: "apple-tv", name: "Apple TV", words: ["apple-tv"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Apple TV simulator on this Mac; Lamp can't put it on a real Apple TV yet"),
-              noWeb: "tvOS has no web view, so a page there needs a native version", families: [.appletv], input: nil),
+              noWeb: "tvOS has no web view, so a page there needs a native version", wordFamilies: ["apple-tv": .appletv], input: nil),
         Place(id: "vision-pro", name: "Vision Pro", words: ["vision-pro"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Vision Pro simulator on this Mac; Lamp can't put it on a real Vision Pro yet"),
-              noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version", families: [.vision], input: .apple),
+              noWeb: "Lamp has no host for a page on Vision Pro yet, so a page there needs a native version", wordFamilies: ["vision-pro": .vision], input: .apple),
         Place(id: "android", name: "Android phone / tablet", words: ["android"], destination: .android,
               web: .init(host: .androidWebView, reach: "in an app of Lamp's around the page, the same way as a native app"),
               native: .init(code: .android, reach: "in the Android emulator on this Mac, or on the person's own device with USB debugging, one device at a time"),
@@ -147,22 +151,6 @@ enum Places {
     /// integration makes only native apps), said where a page's places are offered: a page there needs a native version.
     static var noPage: [Place] { all.filter { !$0.runs(.web) && ($0.id == "apple-tv" || $0.destination == .device) } }
 
-    /// A page's places as the agent is told them (`make_app_for`'s `{{PAGE_PLACES}}`, a game's and a screen's rules): each
-    /// place's words and device, then the screens across a room it can't go to, and why.
-    static var pageList: String {
-        // Only the places a page can be given: an integration's web host is a page's place once Lamp sends pages there.
-        let words = all.filter { $0.web != nil && $0.id != "mac" && ($0.destination != .device || pageWords[$0.id] != nil) }.map { place in
-            place.words.map { "\"\($0)\"" }.joined(separator: " or ") + " (\(place.name))"
-        }
-        let none = noPage.map(\.name)
-        return words.joined(separator: ", ") + (none.isEmpty ? "" : ". " + sentence(none)
-            + " \(none.count == 1 ? "has" : "have") no web engine, so a game or a screen can't go there: it needs a native version, an app of its own")
-    }
-
-    private static func sentence(_ items: [String]) -> String {
-        items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " and " + items.last!
-    }
-
     /// Every row: the built-in devices, then each integration that declares apps, as its JSON says.
     static var all: [Place] { builtIn + Integrations.all().compactMap(row(for:)) }
 
@@ -174,7 +162,8 @@ enum Places {
         return Place(id: integration.id, name: integration.name, words: [integration.id], destination: .device,
                      web: makes.contains(.web) ? .init(host: .integration, reach: reach) : nil,
                      native: makes.contains(.native) ? .init(code: .integration, reach: reach) : nil,
-                     noWeb: "it has no web engine Lamp can reach, so a page there needs a native version", noNative: "its integration declares no native app",
+                     // The device's own words for what it runs, when it says, so a refusal is the real reason.
+                     noWeb: integration.runs.map { $0 + ", so a page there needs a native version" } ?? "it has no web engine Lamp can reach, so a page there needs a native version", noNative: integration.runs ?? "its integration declares no native app",
                      input: integration.input)
     }
 
@@ -191,9 +180,9 @@ enum Places {
         declared.support?["web"] != nil || declared.preview != nil || declared.host != nil ? .web : .native
     }
 
-    static func named(_ word: String) -> Place? {
+    static func named(_ word: String, in table: [Place] = all) -> Place? {
         let word = word.trimmed.lowercased()
-        return all.first { $0.id == word || $0.words.contains(word) }
+        return table.first { $0.id == word || $0.words.contains(word) }
     }
 
     // MARK: What the agent is told
@@ -232,59 +221,13 @@ enum Places {
 
     /// Why an app of this make can't be on these devices, quoting each row that refuses it; nil when every one runs it.
     /// A word no row has is left to the caller, which already says what it doesn't know.
-    static func refusal(make: Place.Make, devices: Set<String>) -> String? {
-        let refused = devices.sorted().compactMap(named).filter { !$0.runs(make) }
+    static func refusal(make: Place.Make, devices: Set<String>, in table: [Place] = all) -> String? {
+        let refused = devices.sorted().compactMap { named($0, in: table) }.filter { !$0.runs(make) }
         guard !refused.isEmpty else { return nil }
         return refused.map { place in
             let why = make == .web ? place.noWeb : place.noNative
             let other = make == .web ? place.native.map { "; it runs a native app: \($0.reach)" } : place.web.map { "; it runs a web app: \($0.reach)" }
             return "\(place.name) can't run a \(make.rawValue) app (\(why ?? "Lamp has no way to build one there"))\(other ?? "")."
         }.joined(separator: " ")
-    }
-
-    // MARK: Today's kinds in these terms
-
-    /// What an app of a stored kind is: its make and the devices (rows) it's on. A kind's places beyond its home are
-    /// given by their words (`Parts.AppAsked.places`); an integration's kind is that integration's row.
-    static func model(of kind: Platform, places: Set<String> = [], integration: String? = nil) -> (make: Place.Make, devices: Set<String>) {
-        let others = Set(places.compactMap { Places.named($0)?.id })
-        switch kind {
-        case .mac: return (.native, Set(["mac"]).union(others))
-        case .iphone: return (.native, Set(["iphone"]).union(others))
-        case .universal: return (.native, Set(["mac", "iphone"]).union(others))
-        case .android: return (.native, ["android"])
-        case .androidTV: return (.native, ["android-tv"])
-        case .tv: return (.web, ["tv"])
-        case .game, .screen: return (.web, Set(["mac"]).union(others))
-        default:
-            let id = integration.map { DeviceApps.split($0).integration }
-            let row = id.flatMap { id in all.first { $0.id == id } }
-            return (row?.runs(.web) == true ? .web : .native, Set([row?.id].compactMap { $0 }))
-        }
-    }
-
-    /// The kinds Lamp has today that build this make on these devices, the most particular first. Web on the Mac (a
-    /// game or a screen) is told apart by the folder's own mark, as it is now, not by its devices.
-    static func kinds(make: Place.Make, devices: Set<String>) -> [Platform] {
-        let apple: Set<String> = ["mac", "iphone", "watch", "apple-tv", "vision-pro"]
-        switch make {
-        case .native:
-            if devices == ["android"] { return [.android] }
-            if devices == ["android-tv"] { return [.androidTV] }
-            if !devices.isEmpty, devices.isSubset(of: apple) {
-                if devices.contains("mac") && devices.count > 1 { return [.universal] }
-                return devices.contains("mac") ? [.mac] : [.iphone]
-            }
-            if devices.count == 1, let row = all.first(where: { $0.id == devices.first }), row.destination == .device { return [.device] }
-            return []
-        case .web:
-            if devices == ["tv"] { return [.tv] }
-            let reached = Set(devices.compactMap { word in all.first { $0.id == word }?.destination })
-            return [Platform.game, .screen, .device].filter { kind in
-                guard !devices.isEmpty, reached.isSubset(of: Set(kind.target.places)) else { return false }
-                // A device app is one integration's, alone; a game and a screen are at home on the Mac.
-                return kind == .device ? reached == [.device] && devices.count == 1 : true
-            }
-        }
     }
 }

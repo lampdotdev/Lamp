@@ -45,10 +45,11 @@ final class WishHubTests: XCTestCase {
         let (_, preview) = await WishRooms.answer(for: wish, wish: wish, apps: [wish, phone, android], host: "127.0.0.1", preview: true)
         XCTAssertEqual(preview["key"] as? String, WishKeys.key(for: wish).base64EncodedString())
 
+        // A wish of one app has a room too, for the app's copies on several devices.
         let (aloneStatus, alone) = await WishRooms.answer(for: wish, wish: wish, apps: [wish], host: "127.0.0.1")
         XCTAssertEqual(aloneStatus, 200)
-        XCTAssertEqual(alone["alone"] as? Bool, true)
-        XCTAssertNil(alone["socket"])
+        XCTAssertNil(alone["alone"])
+        XCTAssertNotNil(alone["socket"], "\(alone)")
 
         // Peers are named by their folder in the wish: an app for iPhone and Mac made in Apple/ is "apple", and one made
         // for the Mac too in place keeps its iPhone/ folder and its name, while its kind stays the device word the tools

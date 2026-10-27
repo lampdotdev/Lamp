@@ -51,17 +51,16 @@ final class WishPlanTests: XCTestCase {
         XCTAssertEqual(Skills.read(["name": "wish-links"], from: shipped).0, 200, "which read_skill answers")
     }
 
-    func testAWishAskingForOneAppGetsNothingWhateverItRunsOn() async {
+    /// A wish asking for one app, whatever it runs on, gets nothing that's for a wish of several (the rule, the skill
+    /// named with each request, the builder's note), though it carries `LampWish` for its own copies.
+    func testAWishAskingForOneAppGetsNoneOfWhatsForSeveralWhateverItRunsOn() {
         for alone in [wish(.mac, asking: []), wish(.mac, asking: [WishApp(kind: .mac)]),
                       wish(.universal, asking: [WishApp(kind: .universal)]), wish(.android, asking: [WishApp(kind: .android)])] {
             XCTAssertFalse(Template.talksToOtherApps(alone), "\(alone.platform.rawValue) with \(alone.apps.count) asked")
-            XCTAssertNil(Store.shared.wishKey(for: alone))
-            XCTAssertFalse(Agent.systemPrompt(for: alone).contains("wish-links"))
+            XCTAssertTrue(Template.carriesWish(alone))
+            XCTAssertFalse(Agent.systemPrompt(for: alone).contains("`wish-links` skill"))
             XCTAssertFalse(Skills.applying(to: alone).contains { $0.name == "wish-links" })
             XCTAssertEqual(WishNote.line(for: alone, store: .shared), "")
-            let (_, answer) = await WishRooms.answer(for: alone, wish: alone, apps: [alone], host: "127.0.0.1")
-            XCTAssertEqual(answer["alone"] as? Bool, true)
         }
-        XCTAssertTrue(ControllerRelay.roomKeys.isEmpty, "no room, so nothing starts the relay")
     }
 }

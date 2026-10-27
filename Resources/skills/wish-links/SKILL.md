@@ -1,14 +1,15 @@
 ---
 name: wish-links
-description: How the apps of a wish share data and send each other messages - Lamp's LampWish block, built into every app of a wish of several, what to do while another app of the wish isn't made yet, and when another way fits better. Read before writing how a wish's apps reach each other.
+description: How the apps of a wish, and one app open on several devices at once (two iPhones, a screen on an iPad and a TV), share data and send each other messages - Lamp's LampWish block, built into every app, what to do while another app of the wish isn't made yet, and when another way fits better. Read before writing how they reach each other.
 ---
 
 # The apps of a wish, talking to each other
 
 A wish of several apps (a Mac app and an Android app, a TV app and an iPhone app, a game and the phone app that
 sends it things to play with, a screen on the wall and the app that fills it) usually needs them to share something:
-a score, a list, a "next" button. There's more than one way to do it. Lamp gives every app of such a wish
-one way built in, `LampWish`, and it's the one to use unless the wish or the person calls for another.
+a score, a list, a "next" button. So does one app open on several devices at once: the same app on two iPhones, or a
+screen shown on the kitchen iPad and the TV. There's more than one way to do it. Lamp gives every app one way built
+in, `LampWish`, and it's the one to use unless the wish or the person calls for another.
 
 ## LampWish, built in
 
@@ -38,8 +39,20 @@ own comment there before using it.
   or iPhone, `localNetworkDenied`: the person turned off Local Network for it). An open app built by an earlier Lamp is
   `outOfDate`: still open, with a reason saying to open it from Lamp. More states may come: treat any you don't name as
   not connected.
+- An app can be open on several devices at once (a screen on the kitchen iPad, the TV and a photo frame, the same app
+  on two iPhones), in a wish of one app as in a wish of several: each is a copy of it, and every copy reaches the others and keeps the same `values`. `peer("screen").copies` lists where it's
+  open now (`id`, `device`, `since`); another copy of this same app shows in `peers` while it's open. A message to an app
+  goes to every copy of it; a file goes to one copy, the one opened last unless `to` names a copy's `id`. The third
+  argument of `onMessage` (`copy`) and `file.copy` say which copy sent it, to answer that one alone. Put what every
+  screen shows in `values`, so a copy opened later catches up by itself. An app with no other app in its wish is
+  `alone` until another copy of it opens; its copies first meet through Lamp on the Mac, and after that also reach
+  each other straight with Lamp closed.
 - A game in Lamp's own preview can't reach the others: there `Lamp.wish` is `away`, with a reason saying so. Write the
   sharing the same way for every place, and keep the game or screen whole without it.
+- A Roku app (an app for a device through its integration) can't reach the others yet, nor they it: it's not in the
+  room's list, so the others don't see it at all, and its own `LampWish` (LampWish.brs) is always `away`. Don't write
+  the others to wait for it or send it anything; each keeps what it shows its own. An app on the Mac or an iPhone can
+  still steer it as a remote with `LampRoku` (keys, opening it by launching "dev"), which needs no link.
 - `LampWishStatus()` (SwiftUI, Compose) and `Lamp.wish.statusView()` (lamp.js) show all of that ready-made, a line
   for each other app, or one app's line with its peer name. Use them, restyle them, or show the statuses your own way.
 

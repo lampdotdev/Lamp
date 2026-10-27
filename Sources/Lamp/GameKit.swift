@@ -57,7 +57,7 @@ enum GameKit {
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
         // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
-        // given apart (`Parts.asked`'s places): "mac" beside "game" is a Mac app.
+        // given apart, as its places: "mac" beside "game" is a Mac app.
         devices == ["game"]
     }
 
@@ -128,7 +128,7 @@ enum GameKit {
         game.places = [.device]
         game.chosen = .device
         // Its list of apps named the device app it was: that one app is the game now, not another still to be made.
-        game.apps = game.apps.map { $0.kind == .device ? WishApp(kind: .game) : $0 }
+        game.apps = game.apps.map { $0.kind == .device && ($0.integration == nil || $0.integration == integration) ? WishApp(kind: .game) : $0 }
         return game
     }
 
@@ -172,18 +172,18 @@ enum GameKit {
     }
 
     /// lamp.js as a game is given it: Lamp's web building blocks, and `Lamp.wish`, the TV app's block for the wish's
-    /// other apps, only for a game with others in its wish (`Template.talksToOtherApps`).
+    /// other apps and its own other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.talksToOtherApps(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
+        Template.carriesWish(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
     }
 
     /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the block makes one to hang from.
     static let wishJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.wishJS
 
-    /// The page's bridge as an app is given it: with the page's way to `LampWish` only for an app with others in its
-    /// wish (`Template.talksToOtherApps`), since only such an app's LampSupport.swift has `LampWish`.
+    /// The page's bridge as an app is given it: with the page's way to `LampWish` for an app that carries it
+    /// (`Template.carriesWish`), since only such an app's LampSupport.swift has `LampWish`.
     static func pageText(_ text: String, for project: LampProject) -> String {
-        Template.talksToOtherApps(project) ? text : withoutWish(page: text)
+        Template.carriesWish(project) ? text : withoutWish(page: text)
     }
 
     static func withoutWish(page text: String) -> String {
@@ -266,7 +266,7 @@ enum GameKit {
                 try DeviceSupport.writeDeclared(for: project)
                 // The game's code is the same everywhere, so it finds `Lamp.wish` on the Xbox too, where the page is the
                 // wish's peer itself and the host opens its links.
-                if Template.talksToOtherApps(project) {
+                if Template.carriesWish(project) {
                     try Template.put(lampJS(for: project), at: project.dir.appendingPathComponent("\(webFolder)/lamp.js"), for: project)
                 }
             }
@@ -680,7 +680,8 @@ extension Agent {
         let web = GameKit.engine(project) == .web
         let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, web ? Rules.gameWebKit : Rules.gameKit,
                      web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
-                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Skills.index(Skills.offered(.game)),
+                     Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -691,7 +692,7 @@ extension Agent {
     /// without those about the wish as a whole. A game made beside other apps is three.js, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
-                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk]
+                     Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played anywhere else a page goes (an iPhone or iPad, an Android phone or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
@@ -706,9 +707,8 @@ extension Agent.Rules {
     static func placesAmongApps(_ word: String, verb: String) -> String {
         """
 
-        - This wish has other apps beside the \(word). make_app_for's `apps` are all of them, the \(word) and every \
-        other app the person keeps: one left out is taken away. Where the \(word) is \(verb) is its own entry's \
-        `places`.
+        - This wish has other apps beside the \(word). Where the \(word) is \(verb) is make_app_for's `devices` for it, \
+        with `made` "web"; the wish's other apps stay as they are, and one is taken away only with remove_app.
         """
     }
 
@@ -752,9 +752,9 @@ extension Agent.Rules {
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
     and leave .lamp/ alone. Where else it's played is the person's to ask for: when they want it somewhere else, call \
-    make_app_for with the game as {"kind": "game", "places": [every place it's to be played beside the Mac]} and every \
-    other app the wish keeps beside it in `apps`; it stays the same game. Its places are wherever a page goes: \
-    \(Places.pageList).
+    make_app_for with `devices` every device it's to be played on ("mac", "iphone", "android", "android-tv", "tv", \
+    "xbox-one"…: a page goes wherever the table of devices gives a web host) and `made` "web"; it stays the same game, \
+    and the wish's other apps stay as they are.
     """ }
 
     /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the

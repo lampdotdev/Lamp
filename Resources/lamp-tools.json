@@ -430,40 +430,54 @@
   {
     "name": "make_app_for",
     "label": "Change devices",
-    "description": "Sets the wish's apps from now on, when the person asks for it somewhere it isn't (\"make it work on my iPhone too\"), or answers which devices a new wish is for. `apps` has one entry per app, each {\"kind\": …, \"places\": […]}. `kind` is what the app is: {{DEVICES}}. `places` are where it runs beyond its kind's own device: an app for the Mac and iPhone or iPad is one app, {\"kind\": \"mac\", \"places\": [\"iphone\"]}; an iPhone app with an Apple Watch app is {\"kind\": \"iphone\", \"places\": [\"watch\"]}; a game is at home on the Mac and is played wherever else its places say; a screen, a page shown full screen, is shown on its places. Both are pages, so either goes anywhere one of Lamp's web hosts is: {{PAGE_PLACES}}. A game or a screen stays the same game or page wherever it goes. A TV app and an Android app are each an app of their own, so a wish can be several apps made to work together, each in its own folder: [{\"kind\": \"tv\"}, {\"kind\": \"iphone\"}] is a TV app and an iPhone app; [{\"kind\": \"mac\"}, {\"kind\": \"game\", \"places\": [\"iphone\"]}] is a Mac app and a game played on the Mac and the iPhone. Phones that steer a TV app (controllers, a remote, a buzzer) can do it through a page the TV app serves, which any phone opens with nothing to install, or as apps of the wish's own, or both: choose what fits the wish and what this Mac can build. A game's players use a controller, the keyboard or touch on the device it's played on; it doesn't hear the wish's other apps. An app the wish already has stays as it is, its code kept; one left out of `apps` is taken away, whichever it is, the first app included, so list every app the person keeps and leave out only what they asked to drop. The wish keeps its name, chat and history either way. What each device can run, web (a page shown by Lamp's host there) or native (the device's own code), and how a build gets onto it: {{PLACES}} An app on a device that can't run its kind's make is refused with that device's reason. Lamp checks this Mac can build each, writes their build files and keeps the data; the reply says how to adapt the code and gives each new app's rules, which you then follow in the same request. Not for a change the person didn't ask for.",
+    "description": "Adds an app to the wish, or changes the one it has in the same code: `devices` are every device that app is to be on from now on, and `made` is how it's made, \"web\" (a page shown by a host of Lamp's on each device) or \"native\" (each device's own code). Which is yours to choose for the wish: who will use it and on whose devices, how it gets onto each, and what it must do. What each device can run, and how a build gets onto it: {{PLACES}} A device that can't run what's asked is refused with its reason. Of the devices listed, the first whose word names one kind of device of several in its row (\"iphone\" or \"ipad\", \"apple-tv\", \"vision-pro\") is the one Try On opens the app on; list none of those to leave where it opens as it is. One app per code: the devices of one native code (the table gives each one's) are one native app, and a wish has one web app of each kind Lamp hosts, so an app of a code the wish already has is changed in place, its code kept, and any other is added beside the wish's apps in a folder of its own. A device's own app, made through its integration (\"roku\"), is one of the wish's apps beside the others, one such app per wish for now. The wish's other apps are never touched: take one away only with remove_app, when the person asked for that or agreed. The wish keeps its name, chat and history either way. Lamp checks this Mac can build it, writes its build files and keeps the data; the reply says how to adapt the code and gives a new app's rules, which you then follow in the same request.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "apps"
+        "devices",
+        "made"
       ],
       "properties": {
-        "apps": {
+        "devices": {
           "type": "array",
           "minItems": 1,
-          "description": "Every app the wish has from now on, one entry each",
+          "uniqueItems": true,
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "kind"
-            ],
-            "properties": {
-              "kind": {
-                "type": "string",
-                "minLength": 1,
-                "description": "What the app is"
-              },
-              "places": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "string"
-                },
-                "description": "Where it runs beyond its kind's own device; every place from now on"
-              }
-            }
-          }
+            "type": "string"
+          },
+          "description": "Every device the app is to be on from now on, by the words in the table: \"mac\", \"iphone\", \"tv\", \"xbox-one\"…"
+        },
+        "made": {
+          "type": "string",
+          "enum": [
+            "web",
+            "native"
+          ],
+          "description": "\"web\": a page in a host of Lamp's; \"native\": the devices' own code"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
+    "name": "remove_app",
+    "label": "Take an app away",
+    "description": "Takes one app away from the wish: the one in `app`, named by its folder (\"Game\", \"iPhone\") or a device it's on (\"iphone\", \"tv\"). Only when the person asked for it, or agreed when you asked (\"Keep the app as well, or replace it?\"). Lamp keeps it in the wish's versions, so Undo in the chat's toolbar or restore_version brings it back with its code; its saved data stays on this Mac. A wish's only app can't be taken away: change it with make_app_for instead.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app"
+      ],
+      "properties": {
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The app's folder or a device it's on"
         },
         "doing": {
           "type": "string",
@@ -494,7 +508,7 @@
   {
     "name": "network_devices",
     "label": "Look around the network",
-    "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network.",
+    "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it; then every other host, with its hardware's maker and Bonjour services. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network, or they ask what one is.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

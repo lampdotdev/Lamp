@@ -1,29 +1,6 @@
 import XCTest
 @testable import Lamp
 
-/// A wish is its own thing, apart from the apps it's made of: any of Lamp's kinds that can be a part can go together,
-/// and the wish remembers which apps it should have and what each one still waits for.
-final class WishAppsTests: XCTestCase {
-    /// A Mac app with an Android app, an iPhone app with an Android app, a TV app with an Android app: each is one wish of
-    /// two apps, in Lamp's order. No app leads.
-    func testAnAndroidAppCanGoWithAnyOtherKind() throws {
-        XCTAssertEqual(Parts.kinds(for: ["mac", "android"]), [.mac, .android])
-        XCTAssertEqual(Parts.kinds(for: ["iphone", "android"]), [.iphone, .android])
-        XCTAssertEqual(Parts.kinds(for: ["tv", "android"]), [.android, .tv])
-    }
-
-    /// Three devices of three families are three apps: Apple's devices as one app for both.
-    func testAWishCanBeThreeApps() throws {
-        XCTAssertEqual(Parts.kinds(for: ["tv", "mac", "iphone", "android"]), [.universal, .android, .tv])
-    }
-
-    /// An Android app alone is still one app, and a device whose integration declares its apps still stands alone.
-    func testOneKindAloneIsOneApp() throws {
-        XCTAssertEqual(Parts.kinds(for: ["android"]), [.android])
-        XCTAssertNil(Parts.kinds(for: ["android", "nothing-lamp-makes"]))
-    }
-}
-
 /// A game and a screen are apps of a wish like any other: listed with other apps, each is an app of its own, and the
 /// devices it can be on stay its places unless "app" follows one.
 final class WishGameAppsTests: XCTestCase {
@@ -35,76 +12,6 @@ final class WishGameAppsTests: XCTestCase {
     }
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
-
-    /// "Make a fun TV party game" for a Mac wish: Lamp said it couldn't make a game as a part of another wish. Asked
-    /// for the game alone, the game replaces the Mac app, in a folder of its own; asked for both, the Mac app stays.
-    func testAGameReplacesTheMacAppOrGoesBesideIt() throws {
-        let wish = try Template.scaffold(name: "Party", platform: .mac, in: root)
-        let alone = try XCTUnwrap(Parts.asked(["game"]))
-        XCTAssertEqual(alone, Parts.Asked(kinds: [.game], places: [.game: []]))
-        XCTAssertEqual(Parts.plan(alone.kinds, for: [wish]), Parts.Plan(keep: [:], add: [.game], remove: [wish.id]))
-        let both = try XCTUnwrap(Parts.asked(["game", "mac"]))
-        XCTAssertEqual(both.kinds, [.mac, .game])
-        XCTAssertEqual(Parts.plan(both.kinds, for: [wish]), Parts.Plan(keep: [wish.id: .mac], add: [.game], remove: []))
-        XCTAssertTrue(Parts.partKinds.contains(.game))
-        XCTAssertTrue(Parts.partKinds.contains(.screen))
-    }
-
-    /// Every word of `devices` is an app; where the game is played or the screen shown is `places`, apart and by app.
-    /// So the phones' own apps beside a game are "iphone" and "android" in `devices`, the game played on an Xbox too is
-    /// {"game": ["xbox-one"]}, and a wish with a game and a screen says which places are whose.
-    func testDevicesAreAppsAndPlacesAreGivenApartByApp() throws {
-        XCTAssertEqual(Parts.asked(["game", "iphone", "android"], places: ["game": ["xbox-one"]]),
-                       Parts.Asked(kinds: [.iphone, .android, .game], places: [.game: ["xbox-one"]]))
-        XCTAssertEqual(Parts.asked(["game"], places: ["game": ["iphone", "android"]]), Parts.Asked(kinds: [.game], places: [.game: ["iphone", "android"]]))
-        XCTAssertEqual(Parts.asked(["screen"], places: ["screen": ["tv"]]), Parts.Asked(kinds: [.screen], places: [.screen: ["tv"]]))
-        XCTAssertEqual(Parts.asked(["game", "screen"], places: ["game": ["xbox-one"], "screen": ["tv"]])?.places,
-                       [.game: ["xbox-one"], .screen: ["tv"]])
-        XCTAssertEqual(Parts.kinds(for: ["game", "tv"]), [.tv, .game])
-        XCTAssertEqual(Parts.kinds(for: ["screen", "tv"]), [.tv, .screen])
-        // Places are only a game's or a screen's, only one the list has, and only where it can be.
-        XCTAssertNil(Parts.asked(["mac"], places: ["mac": ["iphone"]]))
-        XCTAssertNil(Parts.asked(["game"], places: ["screen": ["tv"]]))
-        XCTAssertNil(Parts.asked(["game"], places: ["game": ["apple-tv"]]))
-        // The tool's argument: by app, or the plain list it once was, which is the one game's or screen's.
-        XCTAssertEqual(Parts.places(["game": [" iPhone "]], devices: ["game"]), ["game": ["iphone"]])
-        XCTAssertEqual(Parts.places(["iphone"], devices: ["game", "mac"]), ["game": ["iphone"]])
-        XCTAssertNil(Parts.places(["tv"], devices: ["game", "screen"]))
-        XCTAssertEqual(Parts.places(nil, devices: ["game"]), [:])
-    }
-
-    /// An entry of `apps` that can't be read is no entry: `make_app_for` refuses the call rather than drop it, since an
-    /// app left out of the list is taken away.
-    func testAnUnreadableAppEntryIsNoEntry() {
-        XCTAssertNil(Parts.AppAsked(["kind": ""]))
-        XCTAssertNil(Parts.AppAsked(["kind": "  "]))
-        XCTAssertNil(Parts.AppAsked(["places": ["iphone"]]))
-        XCTAssertNil(Parts.AppAsked(["kind": "game", "places": [1, "iphone"]]))
-        XCTAssertNil(Parts.AppAsked(["kind": "game", "places": "iphone"]))
-        XCTAssertEqual(Parts.AppAsked(["kind": " Game ", "places": ["iPad"]]), Parts.AppAsked(kind: "game", places: ["ipad"]))
-        XCTAssertEqual(Parts.AppAsked(["kind": "mac"]), Parts.AppAsked(kind: "mac"))
-    }
-
-    /// `make_app_for`'s `apps`, one entry per app, each with its own places: a wish of a game and a screen says where
-    /// each goes, which one list of places for the wish couldn't; a Mac app given the iPhone is one app for both.
-    func testEachAppOfMakeAppForHasItsOwnPlaces() throws {
-        let app = { (kind: String, places: Set<String>) in Parts.AppAsked(kind: kind, places: places) }
-        XCTAssertEqual(Parts.asked(apps: [app("game", ["iphone"]), app("screen", ["tv"])]),
-                       .apps(Parts.Asked(kinds: [.game, .screen], places: [.game: ["iphone"], .screen: ["tv"]],
-                                         words: [.game: ["game", "iphone"], .screen: ["screen", "tv"]])))
-        guard case .apps(let both) = Parts.asked(apps: [app("mac", []), app("game", ["mac", "iphone"])]) else { return XCTFail() }
-        XCTAssertEqual(both.kinds, [.mac, .game])
-        XCTAssertEqual(both.places, [.game: ["iphone"]])
-        guard case .apps(let apple) = Parts.asked(apps: [app("mac", ["iphone"])]) else { return XCTFail() }
-        XCTAssertEqual(apple.kinds, [.universal])
-        guard case .apps(let watch) = Parts.asked(apps: [app("iphone", ["watch"]), app("tv", [])]) else { return XCTFail() }
-        XCTAssertEqual(watch.kinds, [.iphone, .tv])
-        XCTAssertEqual(watch.words[.iphone], ["iphone", "watch"])
-        // What can't be: a game on an Apple TV, two Mac apps, a Mac app on an Xbox.
-        for wrong in [[app("game", ["apple-tv"])], [app("mac", []), app("mac", ["iphone"])], [app("mac", ["xbox-one"])]] {
-            guard case .wrong = Parts.asked(apps: wrong) else { return XCTFail("\(wrong) was taken") }
-        }
-    }
 
     /// With a game and a Mac app, "mac" for `look_at_app` and `use_app` is the Mac app, though the game runs on the
     /// Mac too and comes first; "game" is the game.
@@ -170,8 +77,7 @@ final class WishGameAppsTests: XCTestCase {
     }
 }
 
-/// `make_app_for` makes a wish the apps listed, every app of it treated alike: kept, changed in place inside its family,
-/// added in a folder of its own, or taken away, the app in the wish's own folder as much as any other.
+/// A wish's apps are all treated alike, the one in the wish's own folder as much as any other.
 final class WishAppsRootTests: XCTestCase {
     private var root: URL!
 
@@ -181,55 +87,6 @@ final class WishAppsRootTests: XCTestCase {
     }
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
-
-    /// "Put it on the TV too" for a Mac wish: the Mac app stays, its code kept, and the TV app goes beside it in TV/.
-    func testTVAddedToAMacWishKeepsTheMacApp() throws {
-        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
-        let plan = Parts.plan(try XCTUnwrap(Parts.kinds(for: ["mac", "tv"])), for: [wish])
-        XCTAssertEqual(plan, Parts.Plan(keep: [wish.id: .mac], add: [.tv], remove: []))
-        XCTAssertEqual(Parts.folder(for: .tv), "TV")
-    }
-
-    /// An app is changed in place only inside its family: a Mac app that's to be for the iPhone too becomes the app for
-    /// both, in the same folder, with its code.
-    func testAnAppChangesInPlaceInsideItsFamily() throws {
-        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
-        let plan = Parts.plan(try XCTUnwrap(Parts.kinds(for: ["mac", "iphone", "tv"])), for: [wish])
-        XCTAssertEqual(plan, Parts.Plan(keep: [wish.id: .universal], add: [.tv], remove: []))
-    }
-
-    /// "I want it on my TV, not my Mac" for a Mac wish: the Mac app the wish began with goes like any other, and the TV
-    /// app is made in TV/. The wish itself (its folder, name, chat and history) stays.
-    func testTheFirstAppIsReplacedLikeAnyOther() throws {
-        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
-        XCTAssertEqual(Parts.plan(try XCTUnwrap(Parts.kinds(for: ["tv"])), for: [wish]), Parts.Plan(keep: [:], add: [.tv], remove: [wish.id]))
-        let tv = LampProject(id: "tally.tv", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("TV"), platform: .tv, partOf: wish.id)
-        // With a TV app beside it, dropping the Mac app takes only it away.
-        XCTAssertEqual(Parts.plan(try XCTUnwrap(Parts.kinds(for: ["tv"])), for: [wish, tv]), Parts.Plan(keep: [tv.id: .tv], add: [], remove: [wish.id]))
-    }
-
-    /// "Just the TV" for a wish of a Mac app, a TV app and an Android app: the Mac app and the Android app both go, since
-    /// the TV app stays. Only when nothing stays or is added does one app the request leaves out stay, so the wish keeps one.
-    func testEveryAppLeftOutGoesWhileAnotherStays() throws {
-        let wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
-        let tv = LampProject(id: "tally.tv", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("TV"), platform: .tv, partOf: wish.id)
-        let android = LampProject(id: "tally.android", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("Android"), platform: .android, partOf: wish.id)
-        let apps = [wish, tv, android]
-        let plan = Parts.plan(try XCTUnwrap(Parts.kinds(for: ["tv"])), for: apps)
-        XCTAssertEqual(plan.remove, [wish.id, android.id])
-        XCTAssertEqual(Parts.staying(of: plan.remove, survivors: apps.count - plan.remove.count), [])
-        // "Android only" on a Mac wish this Mac can't build Android apps for yet: the Mac app stays until it can.
-        XCTAssertEqual(Parts.staying(of: [wish.id], survivors: 0), [wish.id])
-        XCTAssertEqual(Parts.staying(of: [wish.id, tv.id], survivors: 0), [wish.id])
-    }
-
-    /// An iPhone app asked for "iphone" and "watch": its kind is already right, but the answer says to add the watch
-    /// app, so it isn't dropped as saying nothing new. Nor is one saying to take the watch app away.
-    func testAWatchToAddOrTakeAwayIsNeverDropped() {
-        XCTAssertTrue(Parts.saysNothingNew("It's already made for iPhone and iPad."))
-        XCTAssertFalse(Parts.saysNothingNew("It's already made for iPhone and iPad.\n\nThen add its Apple Watch app in Watch/: open the apple-watch skill with `read_skill` first, and follow it."))
-        XCTAssertFalse(Parts.saysNothingNew("It's already made for iPhone and iPad.\n\nThen take its Apple Watch app away: delete the files in Watch/ with delete_file."))
-    }
 
     /// A TV app in TV/, beside the Mac app in the wish's own folder, takes players as a TV app with other apps does: its
     /// game is open for the wish's other apps wherever it is. A TV app on its own without a phone page takes none.
@@ -368,6 +225,34 @@ final class WishAppsKeptTests: XCTestCase {
         let wish = try Template.scaffold(name: "Tally", platform: .tv, in: root)
         XCTAssertNotEqual(IPhoneSetupLine.key(wish, wanted: .iphone, part: true), IPhoneSetupLine.key(wish, wanted: .android, part: true))
         XCTAssertEqual(IPhoneSetupLine.key(wish, wanted: .iphone, part: false), wish.id)
+    }
+
+    /// "Make it playable on my iPad and on our Roku too": a Roku app is one of the wish's apps, but it can't join the
+    /// wish's room yet, so the iPhone app beside it gets no link to it, and the Roku app gets `LampWish` saying it's away.
+    func testARokuAppIsAnAppOfTheWishOutsideItsRoom() throws {
+        var wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        wish.apps = [WishApp(kind: .iphone), WishApp(kind: .device, integration: "roku")]
+        try Template.saveMeta(wish)
+        XCTAssertTrue(Template.hasOtherApps(wish))
+        XCTAssertFalse(Template.talksToOtherApps(wish), "nothing to reach")
+        let roku = LampProject(id: wish.id + ".roku", name: "Tally", exe: "Tally", dir: wish.dir.appendingPathComponent("Roku"),
+                               platform: .device, integration: "roku", partOf: wish.id)
+        XCTAssertFalse(Template.talksToOtherApps(roku))
+        XCTAssertTrue(Template.hasOtherApps(roku))
+    }
+
+    /// A device's app is found by its own mark, whatever its folder is called (its integration may have been renamed
+    /// since), and a version keeps which device it was for.
+    func testADevicesAppIsFoundByItsMarkAndVersionsKeepItsDevice() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .iphone, in: root)
+        for folder in ["Roku", "OldName"] {
+            let dir = wish.dir.appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try "roku\n".write(to: dir.appendingPathComponent(DeviceApps.marker), atomically: true, encoding: .utf8)
+        }
+        XCTAssertEqual(Set(Parts.folders(in: wish.dir)), ["Roku", "OldName"], "both, while one replaces the other")
+        let apps = [WishApp(kind: .iphone), WishApp(kind: .device, integration: "roku")]
+        XCTAssertEqual(Versions.apps(from: apps.map(Versions.trailerWord).joined(separator: " ")), apps)
     }
 
     /// An Android app in Android/ is one of the wish's parts, found from its files as the others are.

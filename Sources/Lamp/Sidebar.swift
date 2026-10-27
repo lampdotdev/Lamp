@@ -373,7 +373,7 @@ final class SidebarServer {
         var sections = TryOnMenu.make(for: project, store: store)?.sections ?? []
         // Each of the wish's other apps in a menu of its own: used or quit alone, and given a place, as the wish is.
         for part in store.parts(of: project) {
-            let (name, symbol) = part.platform.target.part?.menu ?? ("App", "app")
+            let (name, symbol) = Parts.menu(of: part)
             let open = store.isOpen(part)
             var items = [TryOnMenu.Item(id: "part:\(part.id):" + (open ? "quit" : "use"), title: (open ? "Quit the " : "Use the ") + name,
                                         symbol: open ? "stop.fill" : symbol, disabled: busy)]

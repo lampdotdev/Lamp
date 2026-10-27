@@ -257,6 +257,10 @@ and current JavaScript, with the app's console in its log. Use it for a web app 
 one kind. The integrations Lamp ships may offer more kinds beside `app` in `kinds` (the Xbox's native 3D games,
 `{"lamp": "native-game"}`); an integration you write has only `app`.
 
+`"runs"`, beside `app`, says in one plain sentence what the device runs ("Only its own channels, written in BrightScript
+and driven by the remote: no web pages, no 3D"). Lamp gives it as the reason when something the device can't run is asked
+of it, so write it for the person, from the device's documentation.
+
 ## Checking it before you send
 
 - Every step has a check that asks the device (or a field the step itself asks for).

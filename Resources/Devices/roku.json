@@ -26,6 +26,7 @@
   "supports": [
     "native"
   ],
+  "runs": "Only Roku channels, written in Roku's own BrightScript and driven by the remote: no web pages, no WebGL or 3D, and no touch, mouse or game controller.",
   "bridge": {
     "install": [
       {

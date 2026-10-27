@@ -109,7 +109,7 @@ extension Agent {
     static func screenPrompt(for project: LampProject) -> String {
         let rules = [Rules.screenEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
                      Rules.webSound, Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
-                     Rules.begin, Rules.finish]
+                     Skills.index(Skills.offered(.screen)), Rules.begin, Rules.finish]
         return (Rules.screenHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a screen")
@@ -120,7 +120,8 @@ extension Agent {
     /// there, without those about the wish as a whole.
     static func screenPrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.screenEdit, Rules.tvFrameworks, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.webAI, Rules.pageNative,
-                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk]
+                     Rules.webSound, Rules.tvLogs, Rules.tvTry, alone ? "" : Rules.screenAmongApps + Rules.wishTalk,
+                     Skills.index(Skills.offered(.screen))]
         return (Rules.partHeader("a screen, a page in Web/ shown full screen and glanced at from across a room, at home on the Mac and shown anywhere else a page goes (an iPhone or iPad, an Android tablet or TV, a Samsung or LG TV, an Xbox) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "screen")
@@ -146,9 +147,9 @@ extension Agent.Rules {
     at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, an Android \
     emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. \
     Lay the page out for a fixed 1920x1080, as for a TV: Lamp scales it to every screen. Where else it's shown is the \
-    person's to ask for: when they want it somewhere else, call make_app_for with the screen as {"kind": "screen", \
-    "places": [every place beside the Mac it's to be on]} and every other app the wish keeps beside it in `apps`; it \
-    stays the same screen. Its places are wherever a page goes: \(Places.pageList).
+    person's to ask for: when they want it somewhere else, call make_app_for with `devices` every device it's to be on \
+    ("mac", "ipad", "android", "android-tv", "tv"…: a page goes wherever the table of devices gives a web host) and \
+    `made` "web"; it stays the same screen, and the wish's other apps stay as they are.
     """ }
 
     /// Where a screen is shown, for the request's device line.
