@@ -102,7 +102,7 @@ setting), `favs`, and what a copy that can read them publishes for the others: `
 events) and `photos` (the album, its pictures in `LampStore.sharedFiles('photos')`). A change on any copy reaches
 the others at once while they're on the same Wi‑Fi, and when they next meet otherwise. The views change `DATA` and
 call `App.emit('data')`: that's what saves and shares a change, so every change must call it. An example changed is
-kept as the family's; one taken away is kept as `{ id, gone: true }` so it stays away. Each device also keeps its own
+kept as the family's; one taken away is kept, marked `gone: true`, so it stays away. Each device also keeps its own
 copy with `LampStore` under "homehq" (`DATA.save`, `DATA.snapshot`, `DATA.restore`). Only add fields to what's saved
 or shared, never rename one.
 

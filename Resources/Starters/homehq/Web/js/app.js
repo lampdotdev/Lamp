@@ -333,10 +333,19 @@
   }
 
   // ------------------------------------------------------------ clock tick
-  var lastMin = -1;
+  var lastMin = -1, lastDay = new Date().toDateString();
   function tick() {
     var n = App.now();
     App.emit('second', n);
+    // A new day while the screen stays open: the chores start again, as they do when it opens on a new day.
+    var day = new Date().toDateString();
+    if (day !== lastDay) {
+      lastDay = day;
+      D.chores.forEach(function (c) { c.done = false; c.doneBy = undefined; });
+      D.save();
+      App.emit('data');
+      App.rerender();
+    }
     if (n.getMinutes() !== lastMin) {
       lastMin = n.getMinutes();
       $('#railClock').innerHTML = '<b>' + App.fmt.time(n, false) + '</b><span>' + App.fmt.ampm(n) + '</span>';

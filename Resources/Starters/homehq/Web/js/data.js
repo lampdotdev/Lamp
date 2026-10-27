@@ -282,7 +282,8 @@ window.DATA = (function () {
       // examples, made afresh each launch.
       people: D.edited.people ? D.people : null,
       chores: D.cleared || D.edited.chores ? D.chores.map(function (c) { return { id: c.id, r: c.r, who: c.who, title: c.title, emoji: c.emoji, stars: c.stars }; }) : null,
-      done: { day: dayKey(base), ids: done },
+      // The day it is now, not the day the page opened: a screen on the wall stays open for days.
+      done: { day: dayKey(new Date()), ids: done },
       stars: { stars: D.stars, week: D.week },
       favs: D.photos.filter(function (p) { return p.fav; }).map(function (p) { return p.id || p.seed; }),
       settings: D.settings
@@ -346,7 +347,7 @@ window.DATA = (function () {
     Object.keys(D.stars).forEach(function (k) { if (!D.week[k]) D.week[k] = [0, 0, 0, 0, 0, 0, 0]; });
     // Chores ticked off today stay ticked; a new day starts them all again.
     if (p.done) {
-      var today = p.done.day === dayKey(base);
+      var today = p.done.day === dayKey(new Date());
       D.chores.forEach(function (c) {
         var by = today ? p.done.ids[c.id] : null;
         c.done = !!by;

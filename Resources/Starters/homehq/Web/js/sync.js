@@ -5,7 +5,7 @@
 //
 //   people, chores      the family and the chore list, once changed in the editor (until then, the examples)
 //   groceries, events   the shopping list and the events added on the screen (an example changed is kept as theirs;
-//                       one taken away is kept as { id, gone: true }, so it stays away)
+//                       one taken away is kept, marked gone, so it stays away)
 //   ticks               a chore ticked off: one item per chore per day
 //   stars               each kid's stars and week
 //   settings            one item per setting: place, calendars, album, cleared
@@ -48,7 +48,7 @@
       if (now[id]) return;
       var was = JSON.parse(k[id]);
       if (was && was.gone) return;
-      if (examples && (examples === ALL_GONE || examples[id])) { var g = { id: id, gone: true }; k[id] = json(g); S[name].put(g); }
+      if (examples && (examples === ALL_GONE || examples[id])) { var g = Object.assign({}, was, { gone: true }); k[id] = json(g); S[name].put(g); }
       else { delete k[id]; S[name]['delete'](id); }
     });
   }
@@ -78,12 +78,14 @@
                       { id: 'calendarsBy', value: D.settings.calendarsBy || null }, { id: 'album', value: D.settings.album },
                       { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'cleared', value: D.cleared }], null, dry);
     sync('favs', D.photos.filter(function (p) { return p.fav; }).map(function (p) { return { id: p.id || p.seed }; }), null, dry);
-    if (App.readsCalendars() && !dry) publishCalendar();
+    if (!dry) publishCalendar();
   }
 
+  // The copy that read them and has since turned them off publishes none, so no copy shows them any more.
   function publishCalendar() {
-    if (!App.readsCalendars()) return;
-    var items = D.events.filter(function (e) { return e.cal; }).map(function (e) {
+    var off = !D.settings.calendars && D.settings.calendarsBy === App.me();
+    if (!App.readsCalendars() && !off) return;
+    var items = off ? [] : D.events.filter(function (e) { return e.cal; }).map(function (e) {
       return { id: e.id, title: e.title, start: +e.start, end: +e.end, allDay: !!e.allDay, people: e.people, loc: e.loc || '' };
     });
     var text = json(items);
@@ -94,6 +96,14 @@
 
   // The album's pictures, for the copies that can't read it: each one's bytes once, and the list in the album's order.
   function publishPhotos() {
+    // Turned off on the copy that read it: the list is taken back, so the others go back to their own examples.
+    if (D.settings.album == null && D.settings.albumBy === App.me()) {
+      if (known.photosOff) return;
+      known.photosOff = true;
+      S.photos.publish([]);
+      return;
+    }
+    known.photosOff = false;
     if (!App.readsAlbum()) return;
     var list = D.photos.filter(function (p) { return p.src && p.id; });
     if (!list.length) return;
@@ -110,6 +120,7 @@
 
   // ------------------------------------------------------------ what the copies have, into DATA
   function take() {
+    var examplesBack = false;
     taking = true;
     try {
       var settings = {};
@@ -139,8 +150,9 @@
       D.events = D.events.filter(function (e) { return e.ex || e.cal; }).concat(S.events.all().map(function (e) {
         return Object.assign({}, e, { start: new Date(e.start), end: new Date(e.end) });
       }));
+      // Another copy's calendars, only while they're turned on: once off, what it published shows nowhere.
       if (!App.readsCalendars()) {
-        D.events = D.events.filter(function (e) { return !e.cal; }).concat(S.calendar.all().map(function (e) {
+        D.events = D.events.filter(function (e) { return !e.cal; }).concat(!D.settings.calendars ? [] : S.calendar.all().map(function (e) {
           return Object.assign({}, e, { cal: true, start: new Date(e.start), end: new Date(e.end) });
         }));
       }
@@ -149,12 +161,15 @@
       var favs = {};
       S.favs.all().forEach(function (f) { favs[f.id] = true; });
       D.photos.forEach(function (p) { p.fav = !!favs[p.id || p.seed]; });
-      if (!App.readsAlbum()) takePhotos();
+      if (D.settings.album == null) examplesBack = D.photos.some(function (p) { return !p.ex; }) || (!D.cleared && !D.photos.length);
+      else if (!App.readsAlbum()) takePhotos();
 
       D.save();
     } finally { taking = false; }
     // What this copy holds now is in step with the others: nothing of it to put back.
     share(true);
+    // The album turned off on another copy: back to the examples, as on the copy where it was turned off.
+    if (examplesBack) App.loadPhotos();
     App.emit('data');
     App.rerender();
   }

@@ -11272,7 +11272,7 @@ final class Store: ObservableObject {
         let saved = turn.autoApplied
         turn.autoApplied = 0
         if project.onAndroid { return await lookOnAndroid(project, turn: turn, changed: changed, reopen: reopen) }
-        if project.onTV { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen) }
+        if project.onTV { return await lookOnTV(project, turn: turn, changed: changed, reopen: reopen, shape: shape) }
         if project.onDevice { return await lookOnDeviceApp(project, turn: turn, changed: changed, reopen: reopen, onDevice: onDevice) }
         if project.onIOS {
             // The simulator photographs the screen; nothing in the app has to cooperate.
