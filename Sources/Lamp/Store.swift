@@ -5795,6 +5795,14 @@ final class Store: ObservableObject {
             }
         case .update(let member, let asked):
             target = asked
+            if let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }),
+               let other = Parts.clash(changing: app, to: target.kind, integration: target.integration, places: target.places,
+                                       among: apps(of: wish), in: wish) {
+                return (400, ["error": "\(describe(member).prefix(1).uppercased() + describe(member).dropFirst()) can't become this: it would share its name among "
+                              + "the wish's apps, or its place on this Mac, with \(Parts.name(of: other)) in "
+                              + (other.isPart ? other.dir.lastPathComponent + "/" : "the wish's own folder")
+                              + ". Leave `app` out to add a new app for these devices instead. Nothing changed."])
+            }
             if let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }) {
                 let (status, answer) = await change(app, to: target)
                 let text = answer["text"] as? String ?? answer["error"] as? String ?? ""

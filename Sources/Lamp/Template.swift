@@ -44,7 +44,7 @@ enum Template {
     /// A wish whose apps a Lamp from before wouldn't find as they are (two of one code, or one in a folder of another
     /// name: `Parts.readByEarlierLamp`) says this Lamp's layout whatever its own folder holds, so that Lamp leaves it be.
     static func layout(of project: LampProject) -> Int? {
-        if !project.isPart, !Parts.readByEarlierLamp(project.dir) { return NewerWish.layout }
+        if !project.isPart, !Parts.readByEarlierLamp(project) { return NewerWish.layout }
         return project.holdsApp ? nil : NewerWish.foldersLayout
     }
 

@@ -116,6 +116,21 @@ final class SharingWishTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: Sharing.waitingFolder(in: receiver.dir, for: .iphone).path))
     }
 
+    /// Two apps of one family that can't be made yet (a Mac app in Mac/ and an iPhone app in iPhone/, from one file) keep
+    /// their files apart, each under the folder kept for it: the second kept never takes the place of the first.
+    func testTwoWaitingAppsOfOneFamilyKeepTheirFilesApart() throws {
+        let package = try opened(try exported(try tvWishWithPhone()))
+        let receiver = try Template.scaffold(name: "Remote 4", platform: .tv, in: root)
+        let part = try XCTUnwrap(package.parts.first)
+        try Sharing.keep(Sharing.Package.Part(folder: "Mac", package: part.package), in: receiver.dir, slot: "Mac")
+        try Sharing.keep(Sharing.Package.Part(folder: "iPhone", package: part.package), in: receiver.dir, slot: "iPhone")
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: "Mac")?.folder, "Mac")
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: "iPhone")?.folder, "iPhone")
+        Sharing.forgetKept(in: receiver.dir, for: .iphone, slot: "Mac")
+        XCTAssertNil(Sharing.kept(in: receiver.dir, for: .iphone, slot: "Mac"))
+        XCTAssertEqual(Sharing.kept(in: receiver.dir, for: .iphone, slot: "iPhone")?.folder, "iPhone")
+    }
+
     /// A part's notes go to the reviewer held to the root's limit, and count against what's sent.
     func testAPartsNotesAreBoundedInTheReview() throws {
         let wish = try tvWishWithPhone()

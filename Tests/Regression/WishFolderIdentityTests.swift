@@ -174,6 +174,30 @@ final class WishFolderIdentityTests: XCTestCase {
         XCTAssertEqual(pending.slot, "Mac3")
     }
 
+    /// A wish whose Mac apps in Mac2/ and Mac3/ are still to be made says a layout an earlier Lamp leaves alone, as it
+    /// does once they're made: that Lamp would read the list by code and fold them into one.
+    func testWaitingAppsAnEarlierLampWouldFoldMarkTheWishNewer() throws {
+        var wish = try Template.scaffold(name: "Tally", platform: .mac, in: root)
+        XCTAssertNil(Template.layout(of: wish))
+        wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .mac, needs: "Xcode", folder: "Mac2"),
+                     WishApp(kind: .mac, needs: "Xcode", folder: "Mac3")]
+        XCTAssertEqual(Template.layout(of: wish), NewerWish.layout)
+        // An app waiting in its kind's own folder beside apps of other families is one an earlier Lamp reads.
+        wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .android, needs: "Android Studio", folder: "Android")]
+        XCTAssertNil(Template.layout(of: wish))
+    }
+
+    /// The app in the wish's own folder made a Mac app beside a Mac app in Mac/ would be "mac" and installed under the
+    /// wish's name twice: `make_app_for` refuses it, and nothing else of the wish clashes.
+    func testChangingAnAppIntoOneThatSharesAnothersNameIsRefused() throws {
+        let wish = try Template.scaffold(name: "Tally", platform: .tv, in: root)
+        let mac = try part("Mac", .mac, of: wish), other = try part("Mac2", .mac, of: wish)
+        let apps = [wish, mac, other]
+        XCTAssertEqual(Parts.clash(changing: wish, to: .mac, integration: nil, places: nil, among: apps, in: wish)?.id, mac.id)
+        XCTAssertNil(Parts.clash(changing: wish, to: .android, integration: nil, places: nil, among: apps, in: wish))
+        XCTAssertNil(Parts.clash(changing: other, to: .universal, integration: nil, places: nil, among: apps, in: wish))
+    }
+
     /// Only folders of the wish's own are its apps': a link to another folder holding an app, and the source folders of
     /// the app in the wish's own folder, are never one.
     func testALinkOrTheWishsOwnSourcesAreNoApp() throws {

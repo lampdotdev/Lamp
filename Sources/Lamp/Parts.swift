@@ -197,6 +197,40 @@ enum Parts {
         return true
     }
 
+    /// The same for a wish as Lamp holds it: its folders, and also every app on its list, made or still to be made,
+    /// since a Lamp from before reads the list by code and would fold two entries of one family into one, or make an
+    /// app waiting for Mac2/ in Mac/.
+    static func readByEarlierLamp(_ wish: LampProject) -> Bool {
+        guard readByEarlierLamp(wish.dir) else { return false }
+        var wish = wish
+        wish.partFolders = folders(in: wish.dir)
+        var families: Set<String> = []
+        for app in wanted(in: wish, parts: load(wish)) {
+            guard let part = app.kind.target.part else { continue }
+            if part.folderFor != nil { continue }
+            if let folder = app.folder, folder != ".", !self.folder(folder, canHold: app.kind) { return false }
+            guard families.insert(part.family).inserted else { return false }
+        }
+        return true
+    }
+
+    /// The app of the wish an app would be the same as if it were made `kind` in place: one with the same name among the
+    /// wish's apps (`WishRooms.peer`), or installed in the same place while both are on the Mac. Only the app in the
+    /// wish's own folder, or one in a folder of Lamp's own, can come to that, since their names follow their kind: a TV
+    /// app in the wish's own folder made a Mac app beside a Mac app in Mac/ would be "mac" and the wish's name twice.
+    @MainActor static func clash(changing app: LampProject, to kind: Platform, integration: String?, places: [Destination]?,
+                      among apps: [LampProject], in wish: LampProject) -> LampProject? {
+        var changed = app
+        changed.platform = kind
+        changed.integration = kind.reaches(.device) && !kind.addsPlaces ? integration : nil
+        changed.places = kind.addsPlaces ? places : nil
+        let peer = WishRooms.peer(changed, in: wish)
+        return apps.first { other in
+            other.id != app.id && (WishRooms.peer(other, in: wish) == peer
+                                   || other.hasMac && changed.hasMac && other.installedURL == changed.installedURL)
+        }
+    }
+
     /// The kind of app the scaffold in a part's folder is, read without following a link (`AppFile`): the folder is the
     /// agent's to write.
     static func kindOfScaffold(in dir: URL, wish: URL) -> Platform? {
