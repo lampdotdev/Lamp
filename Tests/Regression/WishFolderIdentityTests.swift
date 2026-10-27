@@ -151,15 +151,17 @@ final class WishFolderIdentityTests: XCTestCase {
         XCTAssertEqual(Versions.apps(from: trailer)?.map(\.folder), [nil, nil, "Mac2"])
     }
 
-    /// `make_app_for` with `another` is one more app, even beside one of the same code, and with neither it's refused;
-    /// with `app` it changes that app and no other. An `app` that names no app, or a path, changes nothing.
+    /// `make_app_for` with `another` is one more app only of a code the wish has none of: a third Mac app beside two is
+    /// refused, as is a call with neither; with `app` it changes that app and no other, the one in Mac2/ included. An
+    /// `app` that names no app, or a path, changes nothing.
     func testMakeAppForChangesOnlyTheAppItNames() throws {
         let mac = AppKinds.member(of: LampProject(id: "tally", name: "Tally", exe: "Tally", dir: root, platform: .mac))
         let other = AppKinds.member(of: LampProject(id: "tally.mac2", name: "Tally", exe: "Tally", dir: root.appendingPathComponent("Mac2"),
                                                      platform: .mac, partOf: "tally"))
-        guard case .another(let added) = try AppPlanner.make(.native, devices: ["mac"], another: true, in: [mac, other]).get() else { return XCTFail() }
+        XCTAssertThrowsError(try AppPlanner.make(.native, devices: ["mac"], another: true, in: [mac, other]).get(), "two apps of one code")
         XCTAssertThrowsError(try AppPlanner.make(.native, devices: ["mac"], in: [mac, other]).get(), "naming no app, a wish that has one gets none")
-        XCTAssertEqual(added.kind, .mac)
+        guard case .another(let added) = try AppPlanner.make(.native, devices: ["android"], another: true, in: [mac, other]).get() else { return XCTFail() }
+        XCTAssertEqual(added.kind, .android)
         guard case .update(let changed, let target) = try AppPlanner.make(.native, devices: ["mac", "iphone"], app: "mac2", in: [mac, other]).get()
         else { return XCTFail() }
         XCTAssertEqual(changed, other)

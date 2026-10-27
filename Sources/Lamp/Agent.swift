@@ -179,8 +179,9 @@ enum Agent {
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
     (the iPhone, the Mac or a TV), and `remove_app` when they want one of the wish's apps gone. A change of mind \
     ("never mind, make it a timer instead") changes the app the wish has, in its own code and, when what it's made for \
-    changes, with `make_app_for` and its folder in `app`; one more app ("a second Mac app") is `another`, only \
-    once they chose it when you asked them with `ask`, before changing anything: the `more-apps` skill. When a piece fits, use it instead of writing the same \
+    changes, with `make_app_for` and its folder in `app`; one more app of another kind ("an Android app as well") is \
+    `another`, only once they chose it when you asked them with `ask`, before changing anything; two apps of one kind \
+    (two Mac apps) can't be in a wish yet: the `more-apps` skill. When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.

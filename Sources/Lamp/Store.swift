@@ -636,9 +636,6 @@ final class Store: ObservableObject {
 
     @MainActor final class Turn {
         var agent: Process?                 // the engine, while it runs
-        /// The apps `make_app_for` added with `another` in this request, by what each is (`additionKey`), with the folder
-        /// each went in: the same call again in the request is that app, not one more.
-        var added: [String: String] = [:]
         /// Lamp ended the engine itself after it had answered (`endAfterAnswer`): its exit is no failure.
         var endedAfterAnswer = false
         var build: Process?                 // the app's build.sh, while it runs
@@ -5867,15 +5864,9 @@ final class Store: ObservableObject {
             }
         case .another(let asked):
             target = asked
-            // The same call again in the same request (its answer lost on the way, or sent twice) is the app it added, not
-            // one more: one new app of a kind and devices per request.
-            let key = Self.additionKey(target)
-            if let folder = added(in: wish)[key], members.contains(where: { $0.slot?.lowercased() == folder.lowercased() }) {
-                return (200, ["text": "Already done in this request: \(Parts.name(of: target.waiting)) in \(folder)/. Nothing more was added; build that one."])
-            }
-            let folder = Parts.newFolder(Parts.folder(for: target.kind, integration: target.kind == .device ? target.integration : nil), in: wish)
-            noteAdded(key, in: folder, for: wish)
-            said += await add(target, to: wish, folder: folder)
+            // Of a code the wish has none of (`AppPlanner.make`): the same call again finds that app there and is refused,
+            // so it never makes a folder more.
+            said += await add(target, to: wish)
             said.append("The wish's other apps stay as they are (" + members.map(describe).joined(separator: ", ") + ").")
         case .update(let member, let asked):
             target = asked
@@ -5912,25 +5903,6 @@ final class Store: ObservableObject {
             said.append("Its \(family.name) build is this same Swift code: Try On's \(family.name) opens it in the simulator. " + Agent.Rules.otherOS(family))
         }
         return (200, ["text": said.joined(separator: "\n\n")])
-    }
-
-    /// The apps added with `another` in the request under way (`Turn.added`): kept with the turn that runs it, from when
-    /// it takes its messages until it ends, so a message queued meanwhile changes nothing. A call made outside any turn
-    /// keeps its own, by wish, until `requestBegins`.
-    private var addedOutsideTurns: [String: [String: String]] = [:]
-
-    private func added(in wish: LampProject) -> [String: String] { turns[wish.id]?.added ?? addedOutsideTurns[wish.id] ?? [:] }
-
-    private func noteAdded(_ key: String, in folder: String, for wish: LampProject) {
-        if let turn = turns[wish.id] { turn.added[key] = folder } else { addedOutsideTurns[wish.id, default: [:]][key] = folder }
-    }
-
-    /// A new request outside any turn: an app added before it is no repeat of what it asks.
-    func requestBegins(for project: LampProject) { addedOutsideTurns[wish(of: project).id] = nil }
-
-    /// What one added app is, for telling a repeated call from another: its kind and the devices it's for.
-    private static func additionKey(_ target: AppTarget) -> String {
-        ([target.kind.rawValue + (target.integration.map { ":" + $0 } ?? "")] + target.rows.sorted()).joined(separator: " ")
     }
 
     /// A new app of the wish, in a folder of its own, made as the plan says. Its folder is found and kept for it first

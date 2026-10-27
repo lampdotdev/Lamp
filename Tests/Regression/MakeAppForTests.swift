@@ -28,8 +28,8 @@ final class MakeAppForTests: XCTestCase {
         try AppPlanner.make(made, devices: devices, app: app, another: another, in: members, table: table).get()
     }
 
-    private func refused(_ made: Place.Make, _ devices: [String], app: String? = nil, in members: [WishMember] = []) -> String? {
-        guard case .failure(let refusal) = AppPlanner.make(made, devices: devices, app: app, in: members, table: table) else { return nil }
+    private func refused(_ made: Place.Make, _ devices: [String], app: String? = nil, another: Bool? = nil, in members: [WishMember] = []) -> String? {
+        guard case .failure(let refusal) = AppPlanner.make(made, devices: devices, app: app, another: another, in: members, table: table) else { return nil }
         return refusal.reason
     }
 
@@ -153,8 +153,8 @@ final class MakeAppForTests: XCTestCase {
     }
 
     /// A device's own app is one of the wish's apps beside the others: a Mac app asked for as another app in a Roku app's
-    /// wish, or a Roku app in a Mac app's, goes beside it, and so does an Xbox's app in a Roku app's, never made out of it.
-    /// Only the app `app` names is changed.
+    /// wish, or a Roku app in a Mac app's, goes beside it. A device's own app is one per wish for now: an Xbox's asked for
+    /// in a Roku app's wish is refused, never made out of the Roku app. Only the app `app` names is changed.
     func testADevicesOwnAppGoesBesideTheOthersAndIsNeverMadeIntoAnother() throws {
         let roku = app("channel", .device, integration: "roku")
         XCTAssertNotEqual(roku.target.code, AppKinds.code(of: .device, integration: "xbox-one"))
@@ -163,8 +163,8 @@ final class MakeAppForTests: XCTestCase {
         guard case .another(let channel) = try make(.native, ["roku"], another: true, in: [app("notes", .mac)]) else { return XCTFail("a Roku app goes beside the Mac app") }
         XCTAssertEqual(channel.kind, .device)
         XCTAssertEqual(channel.integration, "roku")
-        guard case .another(let xbox) = try make(.web, ["xbox-one"], another: true, in: [roku]) else { return XCTFail("an Xbox's app goes beside the Roku app") }
-        XCTAssertEqual(xbox.integration, "xbox-one")
+        XCTAssertTrue(refused(.web, ["xbox-one"], another: true, in: [roku])?.contains("remove_app") == true)
+        XCTAssertNotNil(refused(.native, ["roku"], another: true, in: [roku]), "a second Roku app")
         guard case .update(let same, _) = try make(.native, ["roku"], app: ".", in: [roku]) else { return XCTFail() }
         XCTAssertEqual(same, roku)
     }

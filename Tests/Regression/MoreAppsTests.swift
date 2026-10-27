@@ -50,25 +50,38 @@ final class MoreAppsTests: XCTestCase {
         XCTAssertEqual(store.apps(of: try XCTUnwrap(store.current(wish))).count, 1)
     }
 
-    /// "I want a second Mac app": `another` adds exactly one app, in a folder of its own, the wish's app staying as it
-    /// is. The same call again in the same request is that app, never a third; a new request asking again adds one more.
-    func testAnotherAppIsAddedOncePerRequest() async throws {
+    /// "I want a second Mac app": `another` for a kind the wish already has is refused, with why, before anything is
+    /// written: no folder, no entry on the wish's list, no card. The same call again is refused the same way.
+    func testASecondAppOfAKindTheWishHasIsRefusedWithNothingWritten() async throws {
         let (store, wish) = try macWish()
-        let (added, said) = await call(store, wish, ["another": true])
-        XCTAssertEqual(added, 200, said)
-        XCTAssertEqual(folders(wish), ["Mac2"])
+        let meta = try Data(contentsOf: wish.dir.appendingPathComponent(".lamp/meta.json"))
+        let names = try FileManager.default.contentsOfDirectory(atPath: wish.dir.path).sorted()
+        for _ in 0..<2 {
+            let (status, text) = await call(store, wish, ["another": true])
+            XCTAssertEqual(status, 400, text)
+            XCTAssertTrue(text.contains("can't keep two apps of one kind") && text.contains("Nothing changed"), text)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: wish.dir.path).sorted(), names)
+        XCTAssertEqual(try Data(contentsOf: wish.dir.appendingPathComponent(".lamp/meta.json")), meta)
+        XCTAssertEqual(try XCTUnwrap(store.current(wish)).apps, wish.apps)
         XCTAssertNil(store.logs[wish.id]?.last { $0.ask != nil }, "Lamp puts up no card of its own")
-        let (again, repeated) = await call(store, wish, ["another": true])
-        XCTAssertEqual(again, 200)
-        XCTAssertTrue(repeated.hasPrefix("Already done"), repeated)
-        XCTAssertEqual(folders(wish), ["Mac2"])
-        // Another app for other devices in the same request is one more.
-        _ = await call(store, wish, ["another": true, "devices": ["mac", "iphone"]])
-        XCTAssertEqual(Set(folders(wish)), ["Mac2", "Apple2"])
+        // An app of the same code for other devices too (the Mac and the iPhone) is the same code: refused as well.
+        let (both, _) = await call(store, wish, ["another": true, "devices": ["mac", "iphone"]])
+        XCTAssertEqual(both, 400)
+        XCTAssertEqual(folders(wish), [])
+    }
 
-        store.requestBegins(for: wish)
-        _ = await call(store, wish, ["another": true])
-        XCTAssertEqual(folders(wish).count, 3, "\(folders(wish))")
+    /// One more app of a code the wish has none of (a web game beside a Mac app) is added, in a folder of its own kept
+    /// for it, the wish's app staying as it is (here it waits on the wish's list, as a game can't be built without
+    /// Lamp's bundle). Asked for again, it's refused: an app still to be made is an app the wish has.
+    func testAnotherAppOfAnotherKindIsAdded() async throws {
+        let (store, wish) = try macWish()
+        let (added, said) = await call(store, wish, ["another": true, "made": "web"])
+        XCTAssertEqual(added, 200, said)
+        XCTAssertEqual(try XCTUnwrap(store.current(wish)).apps.filter { $0.kind == .game }.map(\.folder), ["Game"])
+        let (again, text) = await call(store, wish, ["another": true, "made": "web"])
+        XCTAssertEqual(again, 400, text)
+        XCTAssertEqual(try XCTUnwrap(store.current(wish)).apps.filter { $0.kind == .game }.count, 1)
     }
 
     /// What isn't a plain choice is refused before anything is written: a blank, unknown or malformed `app`, `app` with
@@ -203,6 +216,9 @@ final class MoreAppsTests: XCTestCase {
         guard case .success(.first) = AppPlanner.decide(app: nil, another: nil, in: []) else { return XCTFail() }
         guard case .failure = AppPlanner.decide(app: nil, another: nil, in: [waiting]) else { return XCTFail("a waiting app is an app") }
         guard case .success(.another) = AppPlanner.decide(app: nil, another: true, in: [waiting]) else { return XCTFail() }
+        // A Mac app still to be made is a Mac app the wish has: another one is refused, an Android app isn't.
+        guard case .failure = AppPlanner.make(.native, devices: ["mac"], another: true, in: [waiting]) else { return XCTFail("two Mac apps") }
+        guard case .success(.another) = AppPlanner.make(.native, devices: ["android"], another: true, in: [waiting]) else { return XCTFail() }
         guard case .success(.change(let member)) = AppPlanner.decide(app: "mac", another: false, in: [waiting]) else { return XCTFail() }
         XCTAssertEqual(member.slot, "Mac")
     }

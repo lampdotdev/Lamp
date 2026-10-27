@@ -264,7 +264,7 @@ enum AppPlanner {
         if adding || members.isEmpty { return .success(members.isEmpty ? .first : .another) }
         return .failure(Refusal("This wish already has \(members.count == 1 ? "an app" : "\(members.count) apps") (`app` \(folders(members))). "
             + "To change one, including when the person changed their mind or wants something else in its place, give its folder in `app`. "
-            + "To add one more app beside it, ask the person first with `ask` and end your turn; give `another: true` only once they chose a second app. "
+            + "To add one more app of another kind beside it (an Android app beside a Mac app), ask the person first with `ask` and end your turn; give `another: true` only once they chose that. "
             + "Nothing changed."))
     }
 
@@ -298,6 +298,22 @@ enum AppPlanner {
         switch AppKinds.target(made, on: devices, existing: chosen.map { [$0] } ?? [], in: table) {
         case .success(let found): target = found
         case .failure(let refusal): return .failure(refusal)
+        }
+        // One more app is of a code the wish has none of, made or still to be made: two apps of one code (two Mac apps)
+        // can't be in one wish yet, as sharing a wish and a request's repeated call can't tell them apart. A device's
+        // own app is one per wish for now, whichever device's. Refused here, before any folder is found or anything
+        // written.
+        if mode == .another {
+            if let same = members.first(where: { $0.target.code == target.code }) {
+                let name = Parts.name(of: target.kind, integration: target.integration)
+                return .failure(Refusal("This wish already has \(name)" + (same.slot.map { $0 == "." ? " (`app` \".\")" : " (`app` \"\($0)\")" } ?? "")
+                    + ", and Lamp can't keep two apps of one kind in a wish yet. Nothing changed. To change that app, give its folder in `app`; "
+                    + "tell the person in a sentence that a second one can't be added for now."))
+            }
+            if target.kind == .device, let other = members.first(where: { $0.target.kind == .device }) {
+                return .failure(Refusal("A wish has one app for a device of its own for now, and this one has \(Parts.name(of: .device, integration: other.target.integration)). "
+                                        + "Nothing changed. If the person wants this device's app instead, take that one away with remove_app, then ask again."))
+            }
         }
         switch mode {
         case .change(let member): return .success(.update(member, to: target))

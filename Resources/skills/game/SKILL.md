@@ -102,6 +102,7 @@ single picture hides. Play it the way the person would before you finish: a game
 When the person wants an app to become a game ("actually, make it a game"), change its code in place: the same app,
 now played. If they might want both (the app they use and a game beside it), ask once whether to keep the app as well
 or replace it. Turning it into a game is a change to that app: `make_app_for` with its folder in `app` when what it's
-made for changes, its code otherwise. A game beside the app is one more app, only when they say they want both:
-`make_app_for` with `another`, in a folder of its own, once they chose that when you asked (the `more-apps` skill). A game that becomes an app again is the same in
+made for changes, its code otherwise. A game beside the app is one more app, only when they say they want both and the game
+is of another kind than the app (a web game beside a native Mac app): `make_app_for` with `another`, in a folder of its
+own, once they chose that when you asked. Two apps of one kind can't be in one wish yet (the `more-apps` skill). A game that becomes an app again is the same in
 reverse.

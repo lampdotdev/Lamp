@@ -10,9 +10,9 @@ its name, chat and history. A wish's first app is made in the wish's own folder,
 it's taken away or replaced; each other app is an app of its own kind in a folder of the wish's
 (`iPhone/`, `Mac/`, `Apple/`, `TV/`, `Android/`, a device's app in its device's: `Roku/`), with its own `.lamp/meta.json`, build files, bundle id and runtime folder, so it's built,
 opened, looked at and used as any app of its kind is. The folder is the app: its id, instance, name among the wish's
-apps (`WishRooms.peer`), bundle and data ids, installed copy and skill all come from it, so a wish can have any number
-of apps of one kind or code (two Mac apps in `Mac/` and `Mac2/`, two Roku apps), each found, addressed and changed on
-its own; the app in the wish's own folder, from before, is the one exception, and keeps the ids it has. A new app's
+apps (`WishRooms.peer`), bundle and data ids, installed copy and skill all come from it, so Lamp finds, addresses and
+changes each app of a wish by its folder, whatever it's called and however many of a kind a wish's files hold (two
+Mac apps in `Mac/` and `Mac2/` included); the app in the wish's own folder, from before, is the one exception, and keeps the ids it has. A new app's
 folder is found before anything can stop it being made (`Parts.newFolder`: its kind's or device's name, else `Mac2`,
 `Mac3`…), letters and digits only, never one that's there already whatever's in it, that differs only in case from
 one, that's kept for an app still to be made (`WishApp.folder`), or that an app was taken away from
@@ -25,8 +25,10 @@ another by default: a call with neither is refused, as is one with both, a blank
 change of mind changes the app the wish has. Whether a request is for one more app or a change to the one the wish
 has is the person's to say: the agent asks them with its own `ask` before adding one (the `more-apps` skill,
 which every kind of app is offered, with a line in every engine's prompt pointing to it). A call with `another` adds the
-app in a folder of its own; the same call again in the same request is that app, not one more (`Turn.added`,
-kept with the turn that runs the request, from when it takes its messages until it ends). An app Lamp makes later from the wish's list
+app in a folder of its own, only of a code the wish has none of, made or still to be made: two apps of one code (two Mac
+apps) can't be added to one wish yet, since sharing a wish (`Sharing.open` keeps only Lamp's own part folders) and a
+request's repeated call couldn't tell them apart, and a device's own app is one per wish. Such a call is refused in
+`AppPlanner.make`, before any folder is found or anything written, so the same call repeated is refused too. An app Lamp makes later from the wish's list
 (`makeWaitingParts`) reuses the folder kept for it and isn't asked about again. `part` in `look_at_app` and `use_app` names an app by its folder before anything else (`Parts.picks`), and
 a word that fits several ("mac" beside two Mac apps) is asked about, each app then offered by a word that reaches it
 alone (`Parts.address`). A wish whose folder holds no app of its own (its apps all in
