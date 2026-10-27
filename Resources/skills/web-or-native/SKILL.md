@@ -33,16 +33,20 @@ Lamp's around the page, and it gets there the same way as a native app:
   yet;
 - a Samsung or LG TV, an Android TV and an Xbox get it from Lamp, which installs it on each one once it's set up.
 
-The one way phones join with nothing to install is as controllers or companions of a TV app's page: that page hosts
-them, on the TV and in the TV preview on this Mac, and each phone opens a link (the phone-controllers skill).
+The one way phones join with nothing to install is as controllers or companions of a Samsung or LG TV app's page:
+that page hosts them, on the TV and in its preview on this Mac, and each phone opens a link (the phone-controllers
+skill). Nothing else hosts phones yet: an Apple TV and an Android TV can't run a page, and a page on an Xbox, a Mac or
+an iPad can't host phone controllers.
 
 So think about whose devices it's for, how many there are, and which one matters most:
 
 - **Only this Mac**: native. Lamp builds it here and it's ready, and it does more.
 - **The person's own iPhone**: native. It's installed the same way as a page would be, and it does more.
-- **Several people's phones** (a family, a class, friends at a party): each phone gets an app installed one device at
-  a time, whichever the make. For a quiz or a game night with a TV, make it a TV app's page the phones join as
-  controllers. Without a TV, say plainly that each phone has to be set up with this Mac.
+- **Several people's phones** (a family, a class, friends at a party): an app on each phone is installed one device
+  at a time, whichever the make. For a quiz or a game night, make it a Samsung or LG TV app's page the phones join as
+  controllers by a link: on that TV, or in the app's preview on this Mac when there's no such TV. With an Apple TV,
+  an Android TV or an Xbox, say plainly that phones can't join a game there yet, and offer the preview on this Mac or
+  the device's own controllers.
 - **A TV**: whichever the TV runs. An Apple TV runs only native, and for now only in its simulator on this Mac: say so.
   A Samsung or LG TV runs only web, an Android TV only native.
 - **One main device and others to glance at**: make the main one the way it suits best, then reach the others from
@@ -57,7 +61,7 @@ So think about whose devices it's for, how many there are, and which one matters
 | A game for my Apple TV | Native: the Apple TV runs nothing else. Say it runs in the Apple TV simulator on this Mac, since Lamp can't put it on a real Apple TV yet |
 | A 3D racing game for my LG TV | Web: the only make it runs; keep the scene light (the 3d-game skill) |
 | A game the family plays on a Samsung or LG TV, phones as controllers | Web: the TV app's page hosts the phones, and each joins by a link, with nothing to install |
-| A quiz for my class's tablets | With a Samsung or LG TV in the room: a TV app's page the tablets join by a link. Without one, either make is installed tablet by tablet: say so before building |
+| A quiz for my class's tablets | Web: a Samsung or LG TV app's page the tablets join by a link, on that TV or in the app's preview on this Mac when the room has no such TV. An app on each tablet is installed tablet by tablet, whichever the make |
 | An iPhone app to track X, that I can also see on the TV | Native iPhone app; an Apple TV app from the same Swift (in its simulator for now), or a small web app for a Samsung or LG TV |
 | A game for iPhone, nobody named | Ask whose phones in one short line, or pick and say which and why: your judgment |
 

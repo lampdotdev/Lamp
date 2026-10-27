@@ -5,10 +5,10 @@ description: 3D games and scenes in a web page with three.js, on any device that
 
 # 3D in a web page
 
-three.js runs wherever web runs with WebGL 2: a Mac, an iPhone or iPad, Android, an Android TV, a Samsung or LG TV
+three.js runs wherever web runs with WebGL 2: a Mac, an iPhone or iPad, an Android phone or tablet, a Samsung or LG TV
 and an Xbox. Any of them can show a 3D game. What differs is speed: a Mac draws far more than a phone, and a TV's chip
-is often slower than a phone's. Nothing here limits what you make; it says what costs the most, so you can choose
-what the game is worth on the devices it's played on.
+is often slower than a phone's. Nothing here limits what you make; it says what costs the most, so you can choose what
+the game is worth on the devices it's played on.
 
 For 3D in Swift in a Mac-only app (RealityKit through LampSceneView), open the scene-3d skill instead; native 3D on
 iPhone, iPad or Apple TV is written with that device's own frameworks. The game skill holds what every game needs

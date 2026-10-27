@@ -59,9 +59,11 @@ tapped or clicked, so a page that works with the remote works there too.
 | Device | What shows the page | Worth knowing |
 |---|---|---|
 | Mac, iPhone, iPad | Lamp's app around the page (WebKit) | Modern; LampNative reaches the person's things |
-| Android phone or tablet, Android TV | Lamp's app around the page (Android's WebView, Chromium) | Modern on recent devices |
+| Android phone or tablet | Lamp's app around the page (Android's WebView, Chromium) | Modern on recent devices |
 | Samsung and LG TVs | The TV's own browser engine | Chromium 108 to 132 on recent models, older on older ones; WebGL 2 not on every Samsung |
 | Xbox | Lamp's web host (Edge WebView2) | Modern |
+
+An Apple TV, an Android TV, an Apple Watch and a Vision Pro have no host for a page: an app for one of them is native.
 
 A TV keeps the page's syntax to what its older browsers run, as the TV rules say when the app is for one. A page at
 1920x1080 with a margin of about 5% on every side (a TV may cut its edges) is shown well everywhere: Lamp scales it to
