@@ -180,7 +180,12 @@ const { place } = Astro.props;
     });
   });
 
-  fileLink.addEventListener("click", () => { if (current) track("idea_file", { idea: current.name, place: from }); });
+  fileLink.addEventListener("click", () => {
+    if (current) track("idea_file", { idea: current.name, place: from });
+    // A request that came with the link goes along with the exact wish the same way a wish goes with Download: copied
+    // with Lamp's mark, which Lamp finds as the file opens and puts in that wish's message box (`Store.finishImport`).
+    if (asked) copyWish(asked);
+  });
 
   openLink.addEventListener("click", () => {
     const link = wishLink(text.value);

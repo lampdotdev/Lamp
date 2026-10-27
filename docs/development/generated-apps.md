@@ -271,7 +271,7 @@ in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the li
 published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them.
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
-(`LampMagic.isOn` when `LampInstall.isInstalled` is false) and the chat beside the app is the sidebar extension with
+(`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
 nothing to connect to: once Lamp has been away a few seconds and macOS says no Lamp is installed (`Link.lampInstalled`,
 from the `LampHost` Lamp wrote into the extension's Info.plist), it shows `RemixPanel` (LampSidebarKit): the app's name
 and line, three things to change and a box; Continue with Lamp opens the wish's Share Link page with the request as
@@ -280,7 +280,11 @@ and line, three things to change and a box; Continue with Lamp opens the wish's 
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
-(`RemixOffer.fallback`). A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
+(`RemixOffer.fallback`). When suggestions arrive after an install, or a Share Link is made or taken down, the installed
+copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
+else at its next quit), so a copy taken off this Mac carries them. A request that came with a wish's link is copied
+with Lamp's mark as the exact wish's file is taken (`WishDialog.astro`), and the import puts it in the wish's box
+(`Store.finishImport`, `Wish.look`). A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
 Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
 goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
 and goes into an app only as Lamp installs it (`Sidebar.install`).

@@ -3849,8 +3849,6 @@ enum Template {
         static var note: String { value("note") }
         /// Lamp's own bundle id.
         static var host: String { value("host") }
-        /// Whether that Lamp is on this Mac at all.
-        static var isInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: host) != nil }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
         /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
@@ -5734,9 +5732,12 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        /// On while Lamp has written its mark beside the apps, and on a Mac with no Lamp at all (the app was built from its
-        /// code, or Lamp was removed): there the wand opens the chat's own way into Lamp (`RemixPanel`).
-        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") || !LampInstall.isInstalled }
+        /// On while Lamp has written its mark beside the apps, and on a Mac with no Lamp at all (the app was copied over,
+        /// or Lamp was removed): there the wand opens the chat's own way into Lamp (`RemixPanel`).
+        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") || !lampInstalled }
+        /// Whether the Lamp that installed this app is on this Mac at all. Here and not in `LampInstall`, which every
+        /// kind of app has and which reads only its own values: this asks macOS.
+        static var lampInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: LampInstall.host) != nil }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
@@ -6206,7 +6207,7 @@ enum Template {
         @MainActor static func openFromMenu() {
             if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
-                NSWorkspace.shared.open(LampInstall.isInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
+                NSWorkspace.shared.open(LampMagic.lampInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
                 return
             }
             window.makeKeyAndOrderFront(nil)
@@ -7060,7 +7061,7 @@ enum Template {
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
             // Lamp's window, or on a Mac without Lamp, its site.
-            NSWorkspace.shared.open(LampInstall.isInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
+            NSWorkspace.shared.open(LampMagic.lampInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
         }
     }
 

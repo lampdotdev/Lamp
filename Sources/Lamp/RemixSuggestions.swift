@@ -35,6 +35,8 @@ enum RemixSuggestions {
         let kept = Kept(ideas: ideas, stamp: stamp(project))
         guard let data = try? JSONEncoder().encode(kept) else { return }
         try? data.write(to: project.dir.appendingPathComponent(file), options: .atomic)
+        // Into the installed copy too, which carries them for a Mac without Lamp.
+        await MainActor.run { Store.shared.refreshInstalled(project) }
     }
 
     static func stamp(_ project: LampProject) -> String {

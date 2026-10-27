@@ -3151,6 +3151,12 @@ final class Store: ObservableObject {
 
         reload()
         showChat(project.id)
+        // A request that came with the wish's link (an app's remix panel, `RemixLink`): the site copies it with Lamp's
+        // mark as the exact wish is taken, so it's waiting in the box once the wish is here, and taken off the clipboard.
+        if case .wish(let text) = Wish.look() {
+            updateDraft(Draft(text: text), for: project)
+            NSPasteboard.general.clearContents()
+        }
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {
             defer { try? FileManager.default.removeItem(at: package.folder) }
@@ -9166,6 +9172,7 @@ final class Store: ObservableObject {
         guard let project = projects.first(where: { app.bundleIdentifier == $0.bundleID })
                 ?? projects.first(where: { $0.hasMac && app.bundleURL?.standardizedFileURL == $0.installedURL.standardizedFileURL }),
               !busy.contains(project.id), reloadWatches[project.id] == nil else { return }
+        if refreshWhenQuit.remove(project.id) != nil, let current = current(project) { refreshInstalled(current) }
         let since = app.launchDate ?? Date().addingTimeInterval(-5)
         Task { [weak self] in
             // macOS writes the report after the process is gone, sometimes ten seconds or more later (the time
@@ -9292,6 +9299,20 @@ final class Store: ObservableObject {
     /// the installed copy. The swap is atomic, so it's safe even while the app is running.
     private func deploy(_ project: LampProject) async throws {
         try await swapIn(try await stageSigned(project), for: project)
+    }
+
+    /// Apps whose installed copy is to be made again from the build on disk once they quit (`refreshInstalled`).
+    private var refreshWhenQuit: Set<String> = []
+
+    /// What the installed copy carries about itself changed (its suggestions, its Share Link: what `Sidebar.install`
+    /// writes into the chat beside it, for a Mac without Lamp): the copy is made again from the build on disk, signed
+    /// as before, now if the app isn't open, else at its next quit. Nothing is built; a wish with no build yet, or
+    /// one being worked on, waits for its next install.
+    func refreshInstalled(_ project: LampProject) {
+        guard project.holdsApp, Sidebar.applies(to: project), !busy.contains(project.id),
+              FileManager.default.fileExists(atPath: project.builtURL.path), FileManager.default.fileExists(atPath: project.installedURL.path) else { return }
+        guard macCopies(of: project).isEmpty else { refreshWhenQuit.insert(project.id); return }
+        Task { try? await deploy(project) }
     }
 
     /// Everything `deploy` does before the swap: a copy of the build in the apps folder, finished and signed there.
