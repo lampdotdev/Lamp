@@ -30,10 +30,18 @@ enum TVTemplate {
         relative == supportFile || relative.hasPrefix(threeFolder + "/")
     }
 
+    /// three.js as a TV app's page is given it: Lamp's copy (`DeviceSupport.threeFiles`). Tests stand in their own, since
+    /// a test run has none of Lamp's resources.
+    static var threeSource: (LampProject) -> [(name: String, contents: String)] = { DeviceSupport.threeFiles(for: $0, page: webFolder) }
+
+    /// lamp.js, and for a TV app three.js too. A web app or a screen made before writes lamp.js through here as well
+    /// (`ScreenKit.write`), but three.js isn't Lamp's in those (`DeviceSupport.paths`): a copy of their own at Web/three
+    /// stays theirs, and none is added to a page that never asked for one.
     static func writeOwnedFiles(for project: LampProject) throws {
         try Template.write(lampJS(for: project), to: supportFile, for: project)
+        guard !ScreenKit.isScreen(project) else { return }
         // `put`, as a game's are: only where they differ, and never into the app's versions (`DeviceSupport.paths`).
-        for file in DeviceSupport.threeFiles(for: project, page: webFolder) {
+        for file in threeSource(project) {
             try Template.put(file.contents, at: project.dir.appendingPathComponent("\(threeFolder)/\(file.name)"), for: project)
         }
     }
