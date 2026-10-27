@@ -287,7 +287,8 @@ link goes with the exact wish through a link of Lamp's own (`lamp://wish?file=�
 lib/wish.js, `Wish.Exact`): Lamp fetches the shared file itself (https only, no bigger than any shared file, refused by its
 declared length and cut off as it comes, `Store.fetch`), keeps the request beside the file in a folder of its own
 (`fetchedRequest`), so it stays with that file through the review, a wait for setup or a restart, reviews it as one
-opened by hand, and the request is in the wish's box once it's here (`PendingImport.request`, `finishImport`). The clipboard isn't used: macOS 15.4 asks before a browser's copy is read. A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
+opened by hand, and the request is in the wish's box once it's here (`PendingImport.request`, `finishImport`, and `confirmUpdate` for a
+file that's another version of an app already here). The clipboard isn't used: macOS 15.4 asks before a browser's copy is read. A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
 Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
 goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
 and goes into an app only as Lamp installs it (`Sidebar.install`).

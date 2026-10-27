@@ -3081,6 +3081,9 @@ final class Store: ObservableObject {
         importRequest = nil
         pendingImport = nil
         showChat(project.id)
+        // A request that came with the wish's link goes into the app it updates, as into a new one (`finishImport`):
+        // in the box, ready to send, whether or not the file has anything new.
+        if let request = pending.request { updateDraft(Draft(text: request), for: project) }
         Task {
             defer { finish(project) }
             let package = pending.package
