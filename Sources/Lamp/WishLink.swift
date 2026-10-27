@@ -369,9 +369,15 @@ enum WishLink {
                 cards[project.id]?.stage = .editing
                 copy(project)
             } catch {
-                cards[project.id]?.stage = .failed(error.localizedDescription)
+                cards[project.id]?.stage = .failed(Self.problem(error))
             }
         }
+    }
+
+    /// What the card says went wrong: the headline, and the why and what to do when there is one (a wish Lamp won't let
+    /// go with its link says which licence is missing or where the key is, and what to ask Lamp).
+    static func problem(_ error: Error) -> String {
+        ((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription
     }
 
     func copy(_ project: LampProject) {
