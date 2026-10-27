@@ -1,6 +1,6 @@
 ---
 name: game
-description: Games, 2D or 3D, made either way - the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
+description: Games, 2D or 3D, made either way - the frame loop, controls (a controller, keys, touch, a TV remote), sound, saves, keeping every frame smooth and light rendering - with the tools for each (Lamp's game runtime in a web page, a Samsung or LG TV app's page, in 2D or with three.js, for a game played with phones, SpriteKit and Lamp's blocks in Swift, an integration's own), and turning an app into a game. Read before writing or changing a game.
 ---
 
 # Games
@@ -15,11 +15,12 @@ The tools Lamp has for games:
   It's the same on every device that runs web. Read lamp-game.js first, all of it: its comments are the whole
   interface. Below, "Web" means this runtime.
 - **A game played with phones on a Samsung or LG TV**: for now a TV app's page (`kind` "app", the phone-controllers
-  skill), since the runtime has no `Lamp.controllers` yet. It has no lamp-game.js and no three.js: it follows the TV
-  rules and lamp.js instead. Its frame loop is its own `requestAnimationFrame`, moving everything by the time since the
-  last frame; players are `Lamp.controllers` (and the remote's keys, with `Lamp.navigation = false`); sound is Web
-  Audio and saves are `LampStore`, as the TV rules say; and it's drawn in 2D on a canvas. The rest of this skill holds
-  for it wherever it doesn't name the runtime.
+  skill), since the runtime has no `Lamp.controllers` yet. It has no lamp-game.js: it follows the TV rules and lamp.js
+  instead. Its frame loop is its own `requestAnimationFrame`, moving everything by the time since the last frame;
+  players are `Lamp.controllers` (and the remote's keys, with `Lamp.navigation = false`); sound is Web Audio and saves
+  are `LampStore`, as the TV rules say. It's drawn in 2D on a canvas, or in 3D with the three.js Lamp writes in its
+  Web/three (the TV rules say how to load it, and the 3d-game skill how to keep it light). The rest of this skill
+  holds for it wherever it doesn't name the runtime.
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
   in LampSupport.swift. For 3D, LampSceneView (the scene-3d skill) is for Mac-only apps; a native 3D game on iPhone,
   iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit), without LampSceneView.
@@ -93,7 +94,7 @@ A frame has about 16 ms, and anything that runs during play takes from it, so a 
 - many copies of one thing are one draw (THREE.InstancedMesh, `LampScene.copies` in a Mac-only app).
 
 The request's device line names the slowest device the game is played on and its budget; the log says how frames kept
-to time. When frames are late, draw less. On a TV, draw much less: the 3d-game skill says how.
+to time. When frames are late, draw less.
 
 ## The look
 

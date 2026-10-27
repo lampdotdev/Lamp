@@ -9,7 +9,12 @@ made under the app's sandbox, links refused), which is all the preview and the p
 `Web/lamp.js` (`TVTemplate.lampJS`, plain ES5 for the TVs' Chrome-79-era browsers): Lamp's building blocks for the web
 (`DeviceSupport.webJS`, below), then the remote's keys by name, focus moved with the arrows to the nearest thing in that
 direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing handles it (`Lamp.store` is
-`LampStore` under the name it had first). The rules are `Agent.tvPrompt` (`Rules.tv…`: a
+`LampStore` under the name it had first). Lamp also owns `Web/three` (`TVTemplate.threeFolder`): three.js as a game's
+page has it (`DeviceSupport.threeFiles`), written by `TVTemplate.writeOwnedFiles` before every build, kept out of the
+app's versions (`DeviceSupport.paths`) and out of a shared file (`TVTemplate.isLamps`), so a TV app's page, a game
+played with phones above all, can draw in 3D. The page loads it with an import map and module scripts
+(`Rules.tvThree`), which need a newer TV browser than the oldest; slowness on a TV is a warning to the agent, never a
+reason to refuse 3D. The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). Sound is the browser's own
 Web Audio (`Rules.webSound`, also given to every declared kind with the web library, the Xbox's included), with no
 building block of Lamp's: every one of these browsers has it, and the preview on the Mac plays it with no click first
@@ -57,7 +62,7 @@ developer-mode session renewed with LG at every install. Play with a TV chosen u
 runs that TV's setup first) packages and installs; the preview needs nothing set up. Lamp's Info.plist carries a local
 network description; the first scan brings macOS's firewall and local network questions. A TV app is shared as a
 `.lampapp` like any other (format 10): its Web/ and Phone/ travel (`TVFiles`: pages and scripts as code, which the review
-reads, pictures and sounds as data), never Lamp's lamp.js, which the Mac that opens it writes back as it installs them.
+reads, pictures and sounds as data), never Lamp's lamp.js or three.js, which the Mac that opens it writes back as it installs them.
 
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-pages`

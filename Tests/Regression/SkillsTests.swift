@@ -261,6 +261,21 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { $0.name == "game" }.map(\.because), ["it's a SpriteKit game"])
     }
 
+    /// A TV app's page brings in three.js by the path of Lamp's copy as well as by the import map's name, in a module
+    /// file of its own: either shows the 3d-game skill applies, and Lamp's copy in Web/three still doesn't.
+    func testATVPagesThreeShowsThe3DGameSkillApplies() throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web.appendingPathComponent("three"), withIntermediateDirectories: true)
+        try "import * as THREE from './three.core.js';".write(to: web.appendingPathComponent("three/three.module.js"), atomically: true, encoding: .utf8)
+        XCTAssertFalse(Skills.applying(to: app(.tv)).contains { $0.name == "3d-game" }, "Lamp's copy doesn't count")
+        try "import * as THREE from './three/three.module.js';\n".write(to: web.appendingPathComponent("scene.mjs"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: app(.tv)).filter { $0.name == "3d-game" }.map(\.because), ["its page draws with three.js"])
+        try FileManager.default.removeItem(at: web.appendingPathComponent("scene.mjs"))
+        try "<script type=\"module\">const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');</script>"
+            .write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(Skills.applying(to: app(.tv)).contains { $0.name == "3d-game" })
+    }
+
     func testReadingASkill() {
         let (status, answer) = Skills.read(["name": "maps"], from: shipped)
         XCTAssertEqual(status, 200)
