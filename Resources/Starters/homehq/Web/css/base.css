@@ -278,7 +278,8 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .demo-note a { color: #fff; }
 .demo-line { font-size: 1.375rem; font-weight: 700; margin-top: .375rem; }
 .demo-find { display: flex; gap: .5rem; margin-top: .625rem; }
-.demo-input { flex: 1; min-width: 0; min-height: var(--tap); border-radius: .875rem; border: 0; padding: 0 1rem; font: inherit; font-size: 1.25rem; }
+.demo-input { flex: 1; min-width: 0; min-height: var(--tap); border-radius: .875rem; border: 0; padding: 0 1rem; font: inherit; font-size: 1.25rem;; background: #fff; color: var(--ink); caret-color: var(--ink); }
+.demo-input::placeholder { color: #8a8478; }
 .demo-find button { min-height: var(--tap); border-radius: .875rem; padding: 0 1.25rem; background: #fff; color: var(--ink); font-size: 1.125rem; font-weight: 800; }
 
 /* What a remote's arrows or the keyboard rest on, plain from across the room: shown once a key is pressed (app.js). */
