@@ -182,6 +182,8 @@ enum Gallery {
         ]),
         SidebarTryOn.Section(title: nil, items: [SidebarTryOn.Item(id: "check:iphone", title: "Check iPhone & iPad Setup…", symbol: "checklist",
                                                                     checked: false, disabled: false)]),
+        SidebarTryOn.Section(title: nil, items: [SidebarTryOn.Item(id: TryOnMenu.another.id, title: TryOnMenu.another.title, symbol: TryOnMenu.another.symbol,
+                                                                    checked: false, disabled: false)]),
     ], symbol: "iphone", current: "iPhone")
 
     private static let finishedChat: [LogLine] = [

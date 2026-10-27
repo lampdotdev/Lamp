@@ -111,6 +111,37 @@ enum GameKit {
     static func isMade(_ dir: URL) -> Bool {
         FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path)
             || DeviceApps.integrationID(in: dir).map { DeviceApps.appKind($0)?.lamp == kind } == true
+            || isXboxWebGame(dir)
+    }
+
+    /// Whether a folder holds a game made as the Xbox's web app before games were a kind of their own: the web app's
+    /// marker, a page in Web/, and the agent's own line that it's a game (capabilities.json's `game`, or icon.json's,
+    /// which it wrote for every game before capabilities.json asked). Not three.js alone: it draws scenes that aren't
+    /// games, and a game may draw without it. An Xbox app of menus and pages has none of these and stays the Xbox's.
+    static func isXboxWebGame(_ dir: URL) -> Bool {
+        guard DeviceApps.integrationID(in: dir) == xbox,
+              FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(webFolder)/index.html").path) else { return false }
+        if Template.Capabilities.load(dir.appendingPathComponent(Template.Capabilities.file)).game == true { return true }
+        struct Icon: Decodable { let game: Bool? }
+        let icon = AppFile.read(dir.appendingPathComponent("icon.json"), inFolder: dir).flatMap { try? JSONDecoder().decode(Icon.self, from: $0) }
+        return icon?.game == true
+    }
+
+    /// A meta.json from before games were a kind of their own, of a game made as the Xbox's web app (`isXboxWebGame`):
+    /// a three.js game now, at home on the Mac, with the Xbox one of its places and its console still the one chosen
+    /// there, so it goes on as a game and is updated. Only meta.json changes: the code, its versions, chat and icon are
+    /// as they were, and the folder reads as a game in every version of it (`isMade`), so a restore keeps it one.
+    static func migratedWebGame(_ project: LampProject) -> LampProject? {
+        // A wish with other apps in folders is left as it is: its Xbox app is one of several, the person's to change.
+        guard project.platform == .device, project.integration == xbox, project.partFolders.isEmpty, isXboxWebGame(project.dir) else { return nil }
+        var game = project
+        game.platform = .game
+        game.engine = Engine.web.rawValue
+        game.places = [.mac, .device]
+        game.chosen = .mac
+        game.integration = integration(for: game)
+        game.apps = game.apps.map { $0.kind == .device && ($0.integration == nil || $0.integration == xbox) ? WishApp(kind: .game) : $0 }
+        return game
     }
 
     /// A meta.json from before games were a kind of their own: a device app of the Xbox's game kind. It's a game now,

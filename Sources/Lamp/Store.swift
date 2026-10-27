@@ -375,6 +375,19 @@ struct LogLine: Identifiable, Codable, Equatable {
         return (lines.map(\.upgraded), skipped && !keepAside(data, of: file) ? data : nil)
     }
 
+    /// Adds a line of Lamp's to a chat on disk that isn't loaded yet (a wish changed as it's read). A chat holding lines
+    /// this Lamp can't read is left alone.
+    static func noteInChat(_ text: String, at dir: URL) {
+        let file = dir.appendingPathComponent(".lamp/chat.json")
+        var lines: [LogLine] = []
+        if FileManager.default.fileExists(atPath: file.path) {
+            guard let data = try? Data(contentsOf: file), let read = try? JSONDecoder().decode([LogLine].self, from: data) else { return }
+            lines = read
+        }
+        lines.append(LogLine(kind: .status, text: text, at: Date()))
+        if let data = try? JSONEncoder().encode(lines) { try? data.write(to: file, options: .atomic) }
+    }
+
     private struct Readable: Decodable {
         let line: LogLine?
         init(from decoder: Decoder) throws { line = try? LogLine(from: decoder) }
@@ -1118,6 +1131,12 @@ final class Store: ObservableObject {
         // A game made before games were a kind of their own reads as one now, and is kept so.
         if let game = GameKit.migrated(project) {
             try? Template.saveMeta(game)
+            return game
+        }
+        // A game made as the Xbox's web app is a game now, at home on the Mac. Said in its chat once it's saved: a save
+        // that failed leaves the wish as it was, to be moved at the next read.
+        if let game = GameKit.migratedWebGame(project), (try? Template.saveMeta(game)) != nil {
+            LogLine.noteInChat("\(game.name) is a game now: it plays on this Mac as well as your Xbox.", at: dir)
             return game
         }
         // The layout meta.json says follows the files, whatever took the app in the wish's own folder away or brought it
