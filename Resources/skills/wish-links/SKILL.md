@@ -87,9 +87,14 @@ in `values`:
   `LampStore.shared<Event>("events", wish = true) { it.id }` in Kotlin, `LampStore.shared('events', { wish: true })`
   in lamp.js, and `sharedFiles(name, wish: true)` likewise) every app of the wish keeps it the same: a Mac app and the
   iPhone app beside it sharing one calendar, a TV game and the phone controllers sharing a scoreboard. Every app that
-  uses it gives the same name and the same item shape. It merges as above, and the wish's apps share its limits.
+  uses it gives the same name. It merges as above; each app's 1 MB counts only the items it set last.
   Use the wish's own collection whenever different apps of the wish show the same records; never make one app the
   keeper of them for the others, since that app is often closed or asleep.
+- A collection starts empty: the wish's own and the app's own of the same name are separate, so switching a list to
+  `wish: true` doesn't bring its items along. When the person already has items there, copy them over.
+- Apps that share a collection agree on what an item looks like: the same fields with the same meaning. Add a field
+  as optional, so an app that doesn't know it yet still reads the item, and change every app that uses the collection
+  together.
 
 What it gives: the apps find each other on the home Wi‑Fi with nothing to sign up for, pair, host or pay for. While
 Lamp is open on the Mac it introduces them; with Lamp closed, the Mac asleep or Lamp updating they go on talking

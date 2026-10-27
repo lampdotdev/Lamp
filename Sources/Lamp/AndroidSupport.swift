@@ -2017,7 +2017,9 @@ extension Template {
             valuesLock.withLock {
                 if (collections[name] == null && collections.size >= collectionsLimit) { Log.e("LampStore", "$what: an app shares at most $collectionsLimit collections."); return false }
                 dropExpiredItems()
-                var held = collections.values.sumOf { list -> list.values.sumOf { it.held } }
+                // Only what this app set counts: a wish's own collections also hold what its other apps set, which this
+                // one can't make room for.
+                var held = collections.values.sumOf { list -> list.values.sumOf { if (isOwn(it.entry)) it.held else 0 } }
                 for ((id, value) in given) {
                     if (!isItemID(id)) { Log.e("LampStore", "$what: an item's id is 1 to 128 bytes; \"${id.take(40)}\" wasn't set."); failed = true; continue }
                     val had = collections[name]?.get(id)
@@ -2029,10 +2031,12 @@ extension Template {
                     if (kept == null && had?.entry?.value == null) continue
                     if (kept != null && had?.entry?.value != null && canon(had.entry.value) == canon(kept)) continue
                     val need = id.toByteArray().size + maxOf(32, size)
-                    if (held - (had?.held ?: 0) + need > sharedLimit) {
-                        Log.e("LampStore", "$what: the item \"$id\" wasn't set: the app's shared collections would pass $sharedLimit bytes (a deleted item counts 32 bytes for a month)."); failed = true; continue
+                    val ownHad = if (had != null && isOwn(had.entry)) had.held else 0
+                    // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+                    if (kept != null && held - ownHad + need > sharedLimit) {
+                        Log.e("LampStore", "$what: the item \"$id\" wasn't set: this app's items in shared collections would pass $sharedLimit bytes (a deleted item counts 32 bytes for a month)."); failed = true; continue
                     }
-                    held += need - (had?.held ?: 0)
+                    held += need - ownHad
                     val now = System.currentTimeMillis()
                     clock = if (now > clock.first) now to 0 else if (clock.second < Entry.counts) clock.first to clock.second + 1 else clock.first + 1 to 0
                     val entry = Entry(kept, clock.first, clock.second, copy)
@@ -2047,6 +2051,9 @@ extension Template {
             for (each in storePeers()) if (shares(name, each)) shareItems(name, sets, each)
             return !failed
         }
+
+        /** An item this app set last, on this copy or another, or before it knew its own name. */
+        private fun isOwn(entry: Entry): Boolean = entry.peer.isEmpty() || (me.isNotEmpty() && appOf(entry.peer) == me)
 
         /** Makes this copy's items of a collection exactly these: each set, and an item this copy set last that isn't among
          *  them deleted. */

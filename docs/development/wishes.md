@@ -508,7 +508,9 @@ bucket is FNV-1a 32 of the id's UTF-8, low four bits; its number the XOR of FNV-
 digits a collection), `ask` (the sixteenths that differ where the other has something, answered with their items) and
 `file`. So two copies that meet send only what differs, and a setting lost on the way is made up within a minute.
 Settings taken from one copy are passed on as values are (`pass`). Limits are sized for real lists: an item 8 KB as
-JSON, everything an app sets 1 MB (each id and its value or 32 bytes, deletions included), what it holds from others
+JSON, everything an app sets 1 MB (each id and its value or 32 bytes, deletions included; only items whose last
+setting is the app's own count, so other apps' items in the wish's own collections never use it up, and deleting an
+item that's there is never turned down, since it takes no more than the item it replaces), what it holds from others
 twice that times the wish's apps, the oldest deletions let go first, and 32 collections. `publish(items)` is for what one
 copy can read and the others can't (a Mac's or an iPad's calendars through `LampNative`): this copy's items become
 exactly these, an unchanged one setting nothing and an item another copy set last left alone. A shared file is an item

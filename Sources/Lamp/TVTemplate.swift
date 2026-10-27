@@ -2428,6 +2428,10 @@ extension TVTemplate {
           }
           function heldItem(id, v) { return bytes(id) + (v === undefined ? 32 : Math.max(32, bytes(JSON.stringify(v)))); }
           function heldAll() { var t = 0; for (var n in cols) for (var id in cols[n]) t += cols[n][id].h; return t; }
+          // Only what this app set counts toward its own limit: a wish's own collections also hold what its other apps set,
+          // which this one can't make room for. An item set before this app knew its own name is its own.
+          function isOwn(item) { return !item.c[2] || (!!mine && appOf(item.c[2]) === mine); }
+          function heldOwn() { var t = 0; for (var n in cols) for (var id in cols[n]) if (isOwn(cols[n][id])) t += cols[n][id].h; return t; }
           function colItems(name) {
             var list = [], c = cols[name] || {};
             for (var id in c) if (c[id].v !== undefined) list.push([id, c[id].v]);
@@ -2453,9 +2457,10 @@ extension TVTemplate {
             for (var k in cols) count++;
             if (!cols[name] && count >= COLLECTIONS) { say(what + ': an app shares at most ' + COLLECTIONS + ' collections.'); return false; }
             dropExpiredItems();
-            var held = heldAll(), sets = {}, changed = [], failed = false;
+            var held = heldOwn(), sets = {}, changed = [], failed = false;
             for (var i = 0; i < given.length; i++) {
-              var id = given[i][0], value = given[i][1], had = cols[name] && cols[name][id], v, size = 32;
+              // v is set afresh for each item: a deletion after a put must not take the put's value.
+              var id = given[i][0], value = given[i][1], had = cols[name] && cols[name][id], v = undefined, size = 32;
               if (!itemOk(id)) { say(what + ': an item\'s id is 1 to 128 bytes; "' + String(id).slice(0, 40) + '" was not set.'); failed = true; continue; }
               if (value !== null && value !== undefined) {
                 var text;
@@ -2468,9 +2473,10 @@ extension TVTemplate {
                 if (had && had.v !== undefined && v !== undefined && canon(had.v) === canon(v)) continue;
               }
               if (v === undefined && (!had || had.v === undefined)) continue;
-              var need = bytes(id) + Math.max(32, v === undefined ? 32 : size);
-              if (held - (had ? had.h : 0) + need > SHARED) { say(what + ': the item "' + id + '" was not set: the app\'s shared collections would pass ' + SHARED + ' bytes (a deleted item counts 32 bytes for a month).'); failed = true; continue; }
-              held += need - (had ? had.h : 0);
+              var need = bytes(id) + Math.max(32, v === undefined ? 32 : size), ownHad = had && isOwn(had) ? had.h : 0;
+              // A deletion is never turned down: it takes no more than the item it replaces, so the wish holds no more than before.
+              if (v !== undefined && held - ownHad + need > SHARED) { say(what + ': the item "' + id + '" was not set: this app\'s items in shared collections would pass ' + SHARED + ' bytes (a deleted item counts 32 bytes for a month).'); failed = true; continue; }
+              held += need - ownHad;
               var now = Date.now();
               clock = now > clock[0] ? [now, 0] : clock[1] < COUNTS ? [clock[0], clock[1] + 1] : [clock[0] + 1, 0];
               if (!cols[name]) cols[name] = Object.create(null);
