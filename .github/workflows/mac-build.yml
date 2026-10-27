@@ -1,11 +1,15 @@
 # Builds Lamp on every pull request with the Xcode the release is built with (.github/xcode-version), so code that
-# only a newer Xcode accepts is caught here rather than when a release is tagged. Builds only: no signing, no tests.
+# only a newer Xcode accepts is caught here rather than when a release is tagged, and runs the regression tests as
+# a second check. No signing and no release secrets. The runner is GitHub's `xcode-27` image (macOS 27, Xcode 27),
+# chosen on purpose while it's a preview: it's the Xcode the team builds and generates apps with.
 name: Mac build
 
 on:
   pull_request:
     paths:
       - "Sources/**"
+      - "Tests/**"
+      - "Resources/**"
       - "Package.swift"
       - "Package.resolved"
       - ".github/**"
@@ -19,7 +23,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -37,3 +41,25 @@ jobs:
 
       - name: Build
         run: swift build
+
+  test:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_$(cat .github/xcode-version).app"
+          xcodebuild -version
+
+      - name: Cache Swift packages and build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: mac-test-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}
+
+      - name: Regression tests
+        # About a quarter of an hour on a fast Mac. The suites that need a key, a device or the live cases skip
+        # themselves when those aren't there.
+        run: swift test

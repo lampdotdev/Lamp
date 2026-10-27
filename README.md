@@ -174,6 +174,18 @@ Local models are slower and much less capable than the best cloud models for who
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
 | `site/` | The website at lamp.dev: one static Astro page (see RELEASING.md) |
 | `Resources/Icon/` | Lamp's own icon as an Icon Composer document: a flame over two rings, each a vector layer in Liquid Glass on white (dark in dark mode). It's compiled into `Resources/Assets.car` (Liquid Glass on macOS 26) and drawn into `Resources/AppIcon.icns` and `Resources/AppIcon.png` on Apple's grid |
-| `Resources/THIRD_PARTY_NOTICES.md` | Licenses for the bundled pi agent and llama.cpp (both MIT) |
+| `Resources/THIRD_PARTY_NOTICES.md` | Licenses for the software bundled inside Lamp.app and written into the apps it builds |
 
 Generated apps live in `~/Library/Application Support/Lamp/Apps/<app>/`, each with its own git history.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build Lamp and open a pull request, and [SECURITY.md](SECURITY.md)
+for reporting a security problem privately.
+
+## License
+
+Lamp is open source under the [MIT License](LICENSE). The Lamp name and icon aren't part of that license: a
+fork is welcome to the code, but should ship under its own name. The software bundled inside Lamp.app (the pi
+coding agent, llama.cpp, Lobe Icons, xwin and the libraries in the Xbox game kit) has its own licenses, listed in
+[Resources/THIRD_PARTY_NOTICES.md](Resources/THIRD_PARTY_NOTICES.md).

@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-26
+    runs-on: xcode-27   # macOS 27 with Xcode 27, the same image as mac-build.yml
     timeout-minutes: 60
     environment: release
     steps:
