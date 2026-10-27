@@ -23,7 +23,12 @@ projects, unless the problem is in how Lamp runs them.
 
 ## How Lamp handles your data
 
-Lamp runs on your Mac. The agent runs locally, every shell command it wants goes through an approval, and
-files outside an app's own folder are checked the same way. API keys stay on your Mac, in the login Keychain
-(release builds) or a private file (builds from source), and are never sent anywhere but the provider they're
-for. **Help → AI & Privacy** inside Lamp says the same to the person using it.
+Lamp runs on your Mac, and so does the agent. Lamp's own commands over an app's folder run in that app's
+sandbox. Whether the agent's shell commands wait for your approval is a setting (**Settings → Building**: Only
+when risky, Always or Never); with Only when risky, lower-risk commands run in the sandbox without asking. Files
+outside an app's own folder are checked the same way whichever engine is building.
+
+API keys stay on your Mac, in the login Keychain (release builds) or a private file (builds from source), and
+are sent only to the provider they're for, with one exception: an iPhone or iPad app that uses AI away from
+your Mac is given your OpenRouter key, which it keeps in the phone's Keychain. **Help → AI & Privacy** inside
+Lamp says all of this to the person using it.
