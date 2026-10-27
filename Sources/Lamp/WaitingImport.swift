@@ -31,10 +31,13 @@ struct WaitingImport {
     /// How many shared apps are waiting.
     var count: Int { paths.count }
 
+    /// The request a link brought with a fetched file, kept beside it (`Store.fetchedRequest`): it goes with the copy.
+    static let requestFile = "request.txt"
+
     /// Keeps a copy, since the file may be a temporary one (opened straight from Mail or Messages), behind
     /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
     /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
-    /// promises a file it may not have.
+    /// promises a file it may not have. A request kept beside a fetched file is copied with it.
     func keep(_ file: URL) -> Bool {
         let fm = FileManager.default
         let kept = paths
@@ -45,6 +48,10 @@ struct WaitingImport {
         do {
             try fm.createDirectory(at: home, withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: copy)
+            let request = file.deletingLastPathComponent().appendingPathComponent(Self.requestFile)
+            if Store.fetchedRequest(beside: file) != nil, fm.fileExists(atPath: request.path) {
+                try fm.copyItem(at: request, to: home.appendingPathComponent(Self.requestFile))
+            }
         } catch {
             try? fm.removeItem(at: home)
             return false

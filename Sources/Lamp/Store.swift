@@ -1571,14 +1571,16 @@ final class Store: ObservableObject {
     /// the message box of a new app, written in a word at a time as the site writes. It is never sent from
     /// here: any web page can open such a link, so the person reads it and presses Send.
     /// Where a shared file a link named is kept once fetched, with the request that came with it beside it
-    /// (`fetchedRequest`), so the request stays with that file through the review, a wait for setup, or a restart.
+    /// (`fetchedRequest`), so the request stays with that file through the review, a wait for setup (`WaitingImport`
+    /// copies it with the file), or a restart.
     private static let fetchedPrefix = "lamp-fetched-"
-    private static let requestFile = "request.txt"
+    private static let requestFile = WaitingImport.requestFile
 
-    /// The request kept beside a fetched file, for the wish made from it; nil for a file opened by hand.
+    /// The request kept beside a fetched file, for the wish made from it: only in a folder Lamp made for the file
+    /// (one it fetched, or one it kept for setup), never beside a file opened from anywhere else. Nil for the rest.
     nonisolated static func fetchedRequest(beside file: URL) -> String? {
         let folder = file.deletingLastPathComponent()
-        guard folder.lastPathComponent.hasPrefix(fetchedPrefix) else { return nil }
+        guard folder.lastPathComponent.hasPrefix(fetchedPrefix) || folder.deletingLastPathComponent().lastPathComponent == "Waiting" else { return nil }
         return Wish.tidy(try? String(contentsOf: folder.appendingPathComponent(requestFile), encoding: .utf8))
     }
 
