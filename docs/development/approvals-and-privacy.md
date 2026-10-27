@@ -30,7 +30,8 @@ A capability given to one engine must be given to all of them that can take it, 
   Claude Code's and pi's approved commands come back confined (`Sandbox`: `sandbox-exec` with a profile
   that opens the app's folder, the system, developer tools, caches, temp folders and the network, and
   closes the rest of the home folder and both Lamps' folders), so nothing reads a command's text to see
-  where it looks. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
+  where it looks. Lamp's own builds run under the same profile, a game's or a screen's with Lamp's player opened for
+  reading only (`Store.runBuild`), since its build copies the player rather than compile. Codex's commands run in Codex's own sandbox instead, which its reviewer works with and which can't
   start inside Lamp's: a permission profile (`Sandbox.codexPermissions`, `-c permissions.lamp=…`, a Beta feature of
   Codex's) that closes everything and opens what Lamp's opens, by name: the app's folder (its `.git` kept read-only by
   Codex), the runtime, the developer tools, Homebrew's and the applications for reading, caches and temporary folders,

@@ -1037,10 +1037,32 @@ final class Store: ObservableObject {
             openWaitingImport()
         }
         // During the welcome, Apple's installer waits for the step that explains it.
-        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
+        // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && waitsForAppleTools { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
-        prepareStarters()   // the prebuilt ones need no build tools
+        prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
         if setup.ready && !wasReady { await becameReady() }
+        // A request that needs no tools starts as soon as what builds is set up.
+        for project in projects where !(queued[project.id] ?? []).isEmpty && readyFor(project) { startQueued(project) }
+    }
+
+    /// Whether a wish's requests wait for Apple's Command Line Tools: anything Lamp compiles on this Mac does. A game or
+    /// a screen made from Lamp's player doesn't (`GameKit.usesPlayer`), nor does a wish not yet told what it is, whose
+    /// naming call needs none: its turn waits once it's named, if what it names needs them (`waitForAppleTools`).
+    func needsAppleTools(_ project: LampProject) -> Bool {
+        let wish = wish(of: project)
+        guard !wish.untitled, !wish.makesNoApp else { return false }
+        return apps(of: wish).contains { !GameKit.usesPlayer($0) }
+    }
+
+    /// Whether a request to the wish can start now: what builds is set up, and Apple's tools are there or not needed.
+    func readyFor(_ project: LampProject) -> Bool {
+        setup.ready || (setup.hasBuilder && setup.hasAgent && !needsAppleTools(project))
+    }
+
+    /// Some request waits for Apple's tools to arrive.
+    var waitsForAppleTools: Bool {
+        !setup.hasBuildTools && projects.contains { !(queued[$0.id] ?? []).isEmpty && needsAppleTools($0) }
     }
 
     func requestBuildTools() {
@@ -2085,6 +2107,8 @@ final class Store: ObservableObject {
     /// A wish's first version, saved as every other is (`Versions.commitAll`), so it carries the wish's list of apps:
     /// Undo back to it gives back an app the wish waits for (a shared file's part this Mac can't build yet, say).
     func initRepo(_ project: LampProject, message: String) async -> Bool {
+        // A game or a screen is made before Apple's tools, git among them, are on the Mac: it has no versions until then.
+        guard Versions.hasGit else { return true }
         guard await Versions.git("git init -q", cwd: project.dir) == 0 else { return false }
         return await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved
     }
@@ -3324,7 +3348,9 @@ final class Store: ObservableObject {
         // Anything but a click on a card is the person going on: what they allowed once is spent.
         if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
-        if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
+        let ready = readyFor(project)
+        if !ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
+        if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested { requestBuildTools() }
         let files = message.attachments, pointed = message.pointed
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
@@ -3372,7 +3398,9 @@ final class Store: ObservableObject {
     }
 
     private func saveWaiting() {
-        let waiting = queued.filter { Self.keptAcrossRelaunch($0.value, setupReady: setup.ready) }.mapValues { messages in
+        let waiting = queued.filter { id, messages in
+            Self.keptAcrossRelaunch(messages, setupReady: projects.first { $0.id == id }.map(readyFor) ?? setup.ready)
+        }.mapValues { messages in
             messages.map(\.saved)
         }
         if waiting.isEmpty {
@@ -3627,7 +3655,7 @@ final class Store: ObservableObject {
             }
             return startQueued(owner)
         }
-        guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
+        guard readyFor(project), let messages = queued[project.id], !messages.isEmpty,
               Self.startsNow(messages, changeHeld: holdsAnyBuild(project)),
               let owner = begin(project) else { return }
         queued[project.id] = nil
@@ -3720,6 +3748,14 @@ final class Store: ObservableObject {
                 // Lamp's own request waiting for Reload starts nothing by itself: the person is told as after any turn.
                 if !owner.stopped, !result.watched, (queued[project.id] ?? []).allSatisfy(\.afterReload) { notify(project, after: result.end) }
                 finish(project)
+            }
+            // Named now as something Lamp compiles, on a Mac whose Apple tools are still to come: the turn waits for them,
+            // as the request would have before it was named. A game or a screen goes on: Lamp's player needs none.
+            if first, needsAppleTools(project), !setup.hasBuildTools {
+                if !setup.installRequested { requestBuildTools() }
+                log(project, .status, "Waiting for Apple's app-building tools…")
+                while !setup.hasBuildTools, !owner.stopped, exists(project) { try? await Task.sleep(for: .seconds(2)) }
+                guard !owner.stopped, exists(project) else { return }
             }
             // Named now, so the scaffold is written under its name. If it can't be, the turn ends here, failed.
             // Not while a wish is still being found: the agent only asks, and the wish it finds may be for the
@@ -6630,8 +6666,8 @@ final class Store: ObservableObject {
     /// ones Lamp came with already built (`PrebuiltStarters`).
     func canPrepare(_ project: LampProject? = nil) -> Bool {
         if setup.hasBuildTools { return true }
-        if let project { return PrebuiltStarters.has(project) }
-        return projects.contains { needsPreparing($0) && PrebuiltStarters.has($0) }
+        if let project { return PrebuiltStarters.has(project) || !needsAppleTools(project) }
+        return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
     }
 
     private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
@@ -6649,7 +6685,7 @@ final class Store: ObservableObject {
         // The copy Lamp came with when it's what this build would make, so the starter is ready at once.
         var ready = PrebuiltStarters.install(into: project)
         // Without Apple's tools there's no build: a starter whose prebuilt copy couldn't be used waits for them.
-        let canBuild = setup.hasBuildTools
+        let canBuild = setup.hasBuildTools || !needsAppleTools(project)
         if !ready, canBuild { ready = await build(project) == nil }
         if ready {
             await prepareIcon(project)
@@ -6736,7 +6772,7 @@ final class Store: ObservableObject {
     func updatePlaces(of project: LampProject, retrying: Bool = false) {
         let wish = self.wish(of: project)
         refreshPlacesBehind(wish)
-        guard setup.hasBuildTools, !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
+        guard setup.hasBuildTools || !needsAppleTools(wish), !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
               apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
         // Started by a change, not a retry: the places out of reach get their tries afresh.
         if !retrying { placesRetries[wish.id] = nil }
@@ -7323,6 +7359,8 @@ final class Store: ObservableObject {
             log(project, .error, error.localizedDescription)
             return error.localizedDescription
         }
+        // A page with no Swift of its own is Lamp's player on this Mac, copied rather than compiled (`GameKit.usesPlayer`).
+        env.merge(GameKit.playerEnvironment(for: project)) { $1 }
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
         // Said again: a change that couldn't go into the open app left the line on putting it in, through the whole build.
         note("Building…", for: project)
@@ -7386,7 +7424,10 @@ final class Store: ObservableObject {
                          onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
         // Which structs the app reads as bytes, for the live copy's spares: worked out only when its raw-memory code changed.
         if env["LAMP_LIVE"] == "1" { await LiveSlots.noteByteStructs(project) }
-        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
+        // Lamp's player, which a page's build copies, is read where Lamp keeps it, and only read.
+        let reading = env["LAMP_PLAYER"].map { [$0] } ?? []
+        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env.merging(Pretend.buildEnvironment) { $1 },
+                                 reading: reading, started: started, onLine: onLine)
     }
 
     /// A new app's bar that has already said how its turn ended follows what happens to the app afterwards
@@ -9271,7 +9312,7 @@ final class Store: ObservableObject {
         let report = Runtime.newestCrash(of: crashed)?.date
         if let report, crashesAnswered[project.id] == report { return true }
         // While a turn runs or a request waits, the agent hears of the crash with it.
-        guard setup.ready, !busy.contains(project.id), turns[project.id] == nil,
+        guard readyFor(project), !busy.contains(project.id), turns[project.id] == nil,
               queued[project.id]?.isEmpty ?? true else { return false }
         guard !lastRequestByLamp(project) else { return false }
         if let report { crashesAnswered[project.id] = report }
@@ -10666,7 +10707,7 @@ final class Store: ObservableObject {
             guard let id = agentTokens[token], let project = projects.first(where: { $0.id == id }) else {
                 return (401, ["error": "Lamp isn't working on this app right now."])
             }
-            guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+            guard readyFor(project) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
             guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
             if project.isDeviceSetup, let refusal = Self.deviceSetupRefusal(route: route, request: request) { return refusal }
             return await agentRequest(request, route: route, for: project)
@@ -10696,7 +10737,7 @@ final class Store: ObservableObject {
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
-        guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+        guard readyFor(project) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
 

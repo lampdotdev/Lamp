@@ -166,6 +166,137 @@ enum GameKit {
         }
     }
 
+    // MARK: Lamp's player
+
+    /// Lamp's player (`apple/LampPlayer.swift`): the Mac app around a page, compiled once when Lamp is built (build.sh,
+    /// from `playerSources`) and copied for every game and screen played on this Mac, so one opens in about a second and
+    /// with none of Apple's tools. Nothing of a game is in it: each copy reads what it is from its own bundle, which
+    /// build.sh writes as it copies it (its Info.plist, `playerPlist`, and the page in Resources/Web), as `stageSigned`
+    /// does for every Mac app (install values, permission reasons, icon, signature). Not an .app inside Lamp's bundle,
+    /// so the system never lists it as an app of its own.
+    static let playerFolder = "LampPlayer.bundle"
+    static let playerExe = "LampPlayer"
+    static let playerSourcesFlag = "--player-sources"
+    /// Where a game's page is served (`LampGamePage` in LampWebGame.swift), and so where what it saves is kept.
+    static let gameScheme = "lamp-game"
+
+    static var playerURL: URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent(playerFolder),
+              FileManager.default.isExecutableFile(atPath: url.appendingPathComponent("Contents/MacOS/\(playerExe)").path) else { return nil }
+        return url
+    }
+
+    /// What the player in Lamp's bundle was compiled from, by its contents (`playerSourcesVersion`, written into its
+    /// Info.plist as it's built): stamped on every copy (`BuildStamp.player`), so a game an older player made is made again.
+    static let playerVersion: String? = playerURL.flatMap {
+        NSDictionary(contentsOf: $0.appendingPathComponent("Contents/Info.plist"))?["LampPlayerVersion"] as? String
+    }
+
+    /// The player's Swift, by its path in the package build.sh compiles: what a game or a screen is compiled from, with
+    /// what Lamp fills in for each one read from the copy's Info.plist instead (`LampPlayer`), and both apps' `@main`
+    /// left to main.swift, which picks one as the copy opens.
+    static var playerSources: [(path: String, text: String)]? {
+        let host = read([("", "apple/LampWebApp.swift"), ("", "apple/LampPlayer.swift")])
+        guard let game = webFiles.first(where: { $0.path == "Sources/LampGame.swift" }), let page, let native, host.count == 2 else { return nil }
+        func filled(_ text: String) -> String {
+            text.replacingOccurrences(of: "@main\n", with: "")
+                .replacingOccurrences(of: "\"{{NAME}}\"", with: "LampPlayer.name")
+                .replacingOccurrences(of: "\"{{PAGE_SCHEME}}\"", with: "LampPlayer.scheme")
+                .replacingOccurrences(of: "{{PAGE_CANVAS}}", with: "LampPlayer.canvas")
+        }
+        return [("Sources/main.swift", host[1].text), ("Sources/LampGame.swift", filled(game.text)), ("Sources/LampWebApp.swift", filled(host[0].text)),
+                ("Sources/LampPage.swift", page.text), ("Sources/Native.swift", native.text), ("Sources/LampSupport.swift", Template.lampSupportSwift),
+                ("Package.swift", webPackageSwift.replacingOccurrences(of: "{{EXE}}", with: playerExe))]
+    }
+
+    static func playerSourcesVersion(_ sources: [(path: String, text: String)]) -> String {
+        var hasher = SHA256()
+        for file in sources { hasher.update(data: Data((file.path + "\n" + file.text).utf8)) }
+        return hasher.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// `Lamp --player-sources <folder>`: writes the player's package there, and its version beside it, for build.sh to
+    /// compile into Lamp's bundle.
+    static func writePlayerSourcesFromCommandLine() -> Never {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: playerSourcesFlag), index + 1 < arguments.count, let sources = playerSources else {
+            FileHandle.standardError.write(Data("Lamp's game kit is missing, or no folder was given.\n".utf8))
+            exit(1)
+        }
+        let folder = URL(fileURLWithPath: arguments[index + 1])
+        // A placeholder Lamp fills for a compiled app that the player doesn't read for itself would compile as a word in
+        // a string and show in every game: the build stops instead.
+        for file in sources where ["Sources/LampGame.swift", "Sources/LampWebApp.swift"].contains(file.path) {
+            for line in file.text.split(separator: "\n") where line.contains("{{") && !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
+                FileHandle.standardError.write(Data("The player doesn't fill in \(file.path)'s line: \(line)\n".utf8))
+                exit(1)
+            }
+        }
+        do {
+            for file in sources {
+                let url = folder.appendingPathComponent(file.path)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try file.text.write(to: url, atomically: true, encoding: .utf8)
+            }
+            try playerSourcesVersion(sources).write(to: folder.appendingPathComponent("version"), atomically: true, encoding: .utf8)
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't write the player's Swift: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+        exit(0)
+    }
+
+    /// Whether the app is a page in an app of Lamp's own on the Mac (a three.js game, a screen, a web app).
+    static func hostsPage(_ project: LampProject) -> Bool {
+        (isGame(project) && engine(project) == .web) || ScreenKit.isScreen(project)
+    }
+
+    /// Lamp's own Swift in a page's app: the player has all of it. `Native.swift` too while it's still Lamp's.
+    private static let ownSwift: Set<String> = Set(["Sources/LampSupport.swift", "Sources/LampPage.swift", "Sources/LampGame.swift",
+                                                     ScreenKit.screenPage.swift, ScreenKit.webAppPage.swift].map { String($0.dropFirst("Sources/".count)) })
+
+    /// Swift of the app's own beside Lamp's, in Sources/ (what its Package.swift compiles): a `Native.swift` that answers
+    /// the page's calls of the device (Home HQ's calendars and photos), or any other file. Such an app is compiled.
+    static func hasOwnSwift(_ project: LampProject) -> Bool {
+        let sources = project.dir.appendingPathComponent("Sources")
+        for path in (try? FileManager.default.subpathsOfDirectory(atPath: sources.path)) ?? [] where path.hasSuffix(".swift") {
+            if ownSwift.contains(path) { continue }
+            if path == "Native.swift", let native,
+               AppFile.text(sources.appendingPathComponent(path), in: project) == native.text { continue }
+            return true
+        }
+        return false
+    }
+
+    /// Whether the app's Mac copy is Lamp's player, copied rather than compiled: a page with no Swift of its own, on a
+    /// Lamp that carries the player. Decided at every build, so one that comes to have Swift of its own is compiled
+    /// from then on, and one whose Swift is taken away is copied again.
+    static func usesPlayer(_ project: LampProject) -> Bool {
+        hostsPage(project) && playerVersion != nil && !hasOwnSwift(project)
+    }
+
+    /// What build.sh is given to copy the player for the Mac rather than compile (`LAMP_PLAYER`), with its version for the
+    /// copy's stamp; nothing for an app that's compiled, or for any other place.
+    static func playerEnvironment(for project: LampProject) -> [String: String] {
+        guard project.destination == .mac, usesPlayer(project), let url = playerURL, let version = playerVersion else { return [:] }
+        return ["LAMP_PLAYER": url.path, "LAMP_PLAYER_VERSION": version]
+    }
+
+    /// What a Mac build of the page is made from beside its files (`Target.Recipe.inputs`): the player it's copied from,
+    /// so a new one makes it again, or that it's compiled.
+    static func playerInput(for project: LampProject) -> String {
+        guard project.destination == .mac else { return "" }
+        return usesPlayer(project) ? "player " + (playerVersion ?? "") : "compiled"
+    }
+
+    /// The lines of the copy's Info.plist that say what it is (`LampPlayer` in LampPlayer.swift): a game's window or any
+    /// other page's, where the page is served, and the fixed size one is laid out at. A compiled app has these in its
+    /// code and ignores them.
+    static func playerPlist(game: Bool, scheme: String, canvas: (width: Int, height: Int)?) -> String {
+        "  <key>LampPlayer</key><dict><key>kind</key><string>\(game ? "game" : "page")</string><key>scheme</key><string>\(scheme)</string>"
+            + (canvas.map { "<key>canvas</key><string>\($0.width)x\($0.height)</string>" } ?? "") + "</dict>"
+    }
+
     /// Writes the page's bridge, and the app's `Native` when it has none.
     static func writePage(for project: LampProject) throws {
         guard let page, let native else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
@@ -276,7 +407,8 @@ enum GameKit {
             }
             // On Android too: Lamp's Android app around the page.
             if project.hasAndroid { try GameAndroid.write(for: project) }
-            try Template.write(webBuildSh, to: "build.sh", for: project, executable: true)
+            let played = playerPlist(game: true, scheme: gameScheme, canvas: nil)
+            try Template.write(webBuildSh.replacingOccurrences(of: "{{PLAYER_PLIST}}", with: played), to: "build.sh", for: project, executable: true)
             try Template.write(webPackageSwift, to: "Package.swift", for: project)
             try Template.write("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n", to: marker, for: project)
             return
@@ -410,8 +542,13 @@ enum GameKit {
       FLAGS=(-c release "${RESTRICT[@]}")
       APP="build/{{EXE}}.app"
     fi
-    BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
-    swift build "${FLAGS[@]}" 2>&1
+    # On this Mac, Lamp's player when Lamp hands it over (LAMP_PLAYER): copied, not compiled, so nothing of Apple's tools runs.
+    PLAYER="${LAMP_PLAYER:-}"
+    [[ "$PLACE" == "ios" ]] && PLAYER=""
+    if [[ -z "$PLAYER" ]]; then
+      BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/{{EXE}}"
+      swift build "${FLAGS[@]}" 2>&1
+    fi
     rm -rf "$APP"
     if [[ "$PLACE" == "ios" ]]; then
       mkdir -p "$APP"
@@ -444,12 +581,20 @@ enum GameKit {
     </dict></plist>
     PLIST
     else
-      mkdir -p "$APP/Contents/MacOS"
-      cp "$BIN" "$APP/Contents/MacOS/{{EXE}}"
-      # The copy names the SDK it was really built with (see a Mac app's build.sh), so macOS draws it as that SDK does.
-      if SDKVER="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null)" \\
-        && MINOS="$(otool -l "$APP/Contents/MacOS/{{EXE}}" | awk '/minos/ {print $2; exit}')" && [ -n "$MINOS" ]; then
-        xcrun vtool -set-build-version macos "$MINOS" "$SDKVER" -replace -output "$APP/Contents/MacOS/{{EXE}}" "$APP/Contents/MacOS/{{EXE}}" >/dev/null 2>&1 || true
+      PLAYED=""
+      if [[ -n "$PLAYER" ]]; then
+        mkdir -p "$(dirname "$APP")"
+        cp -Rp "$PLAYER" "$APP"
+        mv "$APP/Contents/MacOS/\(playerExe)" "$APP/Contents/MacOS/{{EXE}}"
+        PLAYED="<key>LampPlayerVersion</key><string>${LAMP_PLAYER_VERSION:-}</string>"
+      else
+        mkdir -p "$APP/Contents/MacOS"
+        cp "$BIN" "$APP/Contents/MacOS/{{EXE}}"
+        # The copy names the SDK it was really built with (see a Mac app's build.sh), so macOS draws it as that SDK does.
+        if SDKVER="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null)" \\
+          && MINOS="$(otool -l "$APP/Contents/MacOS/{{EXE}}" | awk '/minos/ {print $2; exit}')" && [ -n "$MINOS" ]; then
+          xcrun vtool -set-build-version macos "$MINOS" "$SDKVER" -replace -output "$APP/Contents/MacOS/{{EXE}}" "$APP/Contents/MacOS/{{EXE}}" >/dev/null 2>&1 || true
+        fi
       fi
       cat > "$APP/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
@@ -466,6 +611,8 @@ enum GameKit {
       <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
       <key>GCSupportsGameMode</key><true/>
     {{MAC_USAGE}}
+    {{PLAYER_PLIST}}
+      $PLAYED
       <key>NSPrincipalClass</key><string>NSApplication</string>
       <key>NSHighResolutionCapable</key><true/>
     </dict></plist>
@@ -779,7 +926,11 @@ extension Agent.Rules {
     the app on the Mac, iPhone and iPad (LampAI on Android and the Xbox too): elsewhere, and in Lamp's preview, \
     `LampNative.available` is false and the calls reject, so the page shows example content then, never an error. \
     Make these calls once as it opens or from a menu, never every frame; `look_at_app` with `on_device` shows the \
-    real thing.
+    real thing. Without Swift of its own the app on the Mac is Lamp's ready-made one, made in a second and with none \
+    of Apple's tools; a call registered in Native.swift, or any other Swift in Sources/, makes Lamp compile the app \
+    instead, which takes minutes the first time and needs Apple's tools on the person's Mac. So write Swift only for \
+    what the page can't reach itself (the person's own things above), never for what the page, lamp.js or \
+    lamp-game.js already does.
     """
 
     static let gameWebKit = """

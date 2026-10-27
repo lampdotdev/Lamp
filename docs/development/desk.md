@@ -89,7 +89,9 @@ page's settings, so nothing asks for access as the starter opens; elsewhere the 
 names the upstream repository at its commit and the two fonts it ships, each with its license file. A game's or a
 screen's starter has no App.swift: `StartersTests` looks for its `Web/index.html`, and check-starters.sh type-checks its
 Native.swift against Lamp's LampPage.swift. `StartersBuildTests` can't build one (the screen and game kits are in
-Lamp's bundle): build it in a Lamp Dev instance.
+Lamp's bundle): build it in a Lamp Dev instance. New York has no Swift of its own, so it's prebuilt as a copy of Lamp's
+player (build.sh builds the player before the starters, and `PrebuiltStarters` hands it to the starter's build as a
+person's Mac does); Home HQ's Native.swift makes it compiled ("Lamp's player" in the devices guide).
 A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.

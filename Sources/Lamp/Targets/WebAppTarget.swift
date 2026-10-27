@@ -26,7 +26,7 @@ extension Target {
                        isMade: ScreenKit.isWebAppMade, scaffolded: { dir, _ in ScreenKit.isWebAppMade(dir) },
                        // Sources/ too: the Swift that answers the page's calls of the device is the agent's (Native.swift).
                        sources: { _ in [TVTemplate.webFolder, "Sources", "icon.json"] },
-                       inputs: { _ in ScreenKit.stamp },
+                       inputs: { ScreenKit.stamp + GameKit.playerInput(for: $0) },
                        builtURL: { project in
                            project.onTV ? TVs.stagingFolder(for: project).appendingPathComponent("web/index.html")
                                : project.onDevice ? DeviceApps.packageURL(for: project)

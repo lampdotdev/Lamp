@@ -24,7 +24,10 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp). The stamp is read where the app runs from: a Mac
 app's installed copy, an iPhone app's own build (what the simulator gets), and never a Mac copy for the iPhone half of
-an app for both.
+an app for both. A game's or a screen's Mac copy made from Lamp's player carries the player's version too
+(`BuildStamp.player`), and is made again, in a second, when it's another player's or the app has come to be compiled
+("Lamp's player" in the devices guide). LampSupport.swift is compiled into the player as well, so a change to it reaches
+games and screens with the next Lamp build, and nothing else needs bumping for them.
 
 A Mac app's reasons for its permissions are one list, `Template.macUsageDescriptions`, written by build.sh, the
 Mac half of an app for both (`universalMacInfoPlist`) and `Store.deploy`: macOS kills an app that asks for

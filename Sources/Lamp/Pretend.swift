@@ -17,8 +17,9 @@ import Foundation
 ///   downloads it) as on a Mac without them.
 /// - `bare`: all of the above that a Mac straight out of the box doesn't have.
 ///
-/// It fools only Lamp's checks: anything that runs `swift` or `xcrun` still finds the real ones. A release
-/// build ignores it.
+/// It fools only Lamp's checks: anything that runs `swift` or `xcrun` still finds the real ones, except an app's build,
+/// which with `tools` runs with no developer folder (`buildEnvironment`), so one that would compile fails as it would
+/// on a bare Mac, and a game or a screen copied from Lamp's player shows it needs none. A release build ignores it.
 enum Pretend {
     static let bare: Set<String> = ["tools", "xcode", "claude", "codex", "uv", "mflux-generate", "mlx_lm.server"]
     static let installSeconds: TimeInterval = 30
@@ -34,6 +35,10 @@ enum Pretend {
     }()
 
     static func isMissing(_ thing: String) -> Bool { missing.contains(thing.lowercased()) }
+
+    /// What an app's build runs with while the Command Line Tools are pretended missing: a developer folder that isn't
+    /// there, so `swift` and `xcrun` stop rather than find the real tools.
+    static var buildEnvironment: [String: String] { toolsMissing ? ["DEVELOPER_DIR": "/var/empty/no-developer-tools"] : [:] }
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var installStarted: Date?

@@ -36,7 +36,8 @@ struct ContentView: View {
 
     private var main: some View {
         VStack(spacing: 0) {
-            if store.setup.checked && !store.setup.hasBuildTools { BuildToolsBanner() }
+            // While they install, or while a request waits for them: games and screens are made without them.
+            if store.setup.checked && !store.setup.hasBuildTools && (store.setup.installRequested || store.waitsForAppleTools) { BuildToolsBanner() }
             WishDesk()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -409,14 +410,14 @@ enum AppInfoView {
     private static func runs(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 }
 
-/// While Apple's tools install, above everything: what's happening, and that requests wait for it.
+/// While Apple's tools install, above everything: what's happening, and that the requests that need them wait for it.
 struct BuildToolsBanner: View {
     @EnvironmentObject private var store: Store
 
     var body: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text("Installing Apple's app-building tools. Anything you ask for starts as soon as they're in.")
+            Text("Installing Apple's app-building tools. Apps that need them start as soon as they're in.")
                 .font(.callout)
             Spacer()
             Button(store.setup.installRequested ? "Show Installer" : "Install…") {

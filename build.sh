@@ -298,6 +298,49 @@ if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
 sign "$APP/Contents/Helpers/LampRelay"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"
+# Lamp's player (GameKit.playerSources, Resources/GameKit/apple/LampPlayer.swift): the Mac app around a game's or a
+# screen's page, compiled once here and copied for every one Lamp makes, so a game opens in a second and with none of
+# Apple's tools. Lamp writes its Swift (what it writes into a game, with nothing of one game in it) and names it by its
+# contents; a development build keeps it in .build/player under that name and the compiler's, and builds it again only
+# when either changes. A release builds it afresh.
+# Not an .app, so the system never lists it as an app of its own. Before the starters, which a game's prebuild copies.
+PLAYER_SOURCES="$(mktemp -d)"
+"$APP/Contents/MacOS/$NAME" --player-sources "$PLAYER_SOURCES"
+PLAYER_VERSION="$(cat "$PLAYER_SOURCES/version")"
+PLAYER_KEY=$( { echo "$PLAYER_VERSION"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version; echo "${SDKROOT:-}"; } | shasum | cut -c1-16 )
+PLAYER=".build/player/$PLAYER_KEY/LampPlayer.bundle"
+if [ "$FLAVOR" = release ] || [ ! -d "$PLAYER" ]; then
+  echo "Building Lamp's player…"
+  PLAYER_FLAGS=(-c release --package-path "$PLAYER_SOURCES" -Xlinker -sectcreate -Xlinker __RESTRICT -Xlinker __restrict -Xlinker "$PLAYER_SOURCES/restrict")
+  : > "$PLAYER_SOURCES/restrict"   # dyld ignores DYLD_INSERT_LIBRARIES for it, as for every app Lamp builds (GameKit.webBuildSh)
+  swift build "${PLAYER_FLAGS[@]}"
+  PLAYER_BIN="$(swift build "${PLAYER_FLAGS[@]}" --show-bin-path)/LampPlayer"
+  rm -rf .build/player
+  PARTIAL="$PLAYER.partial"
+  mkdir -p "$PARTIAL/Contents/MacOS"
+  cp "$PLAYER_BIN" "$PARTIAL/Contents/MacOS/LampPlayer"
+  # It names the SDK it was really built with, as a game's own build does, so macOS draws it as that SDK does.
+  if SDKVER="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null)" \
+    && MINOS="$(otool -l "$PARTIAL/Contents/MacOS/LampPlayer" | awk '/minos/ {print $2; exit}')" && [ -n "$MINOS" ]; then
+    xcrun vtool -set-build-version macos "$MINOS" "$SDKVER" -replace -output "$PARTIAL/Contents/MacOS/LampPlayer" "$PARTIAL/Contents/MacOS/LampPlayer" >/dev/null 2>&1 || true
+  fi
+  cat > "$PARTIAL/Contents/Info.plist" <<PLAYERPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>LampPlayer</string>
+  <key>CFBundleIdentifier</key><string>dev.lamp.player</string>
+  <key>CFBundleName</key><string>LampPlayer</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LampPlayerVersion</key><string>$PLAYER_VERSION</string>
+</dict></plist>
+PLAYERPLIST
+  mv "$PARTIAL" "$PLAYER"
+fi
+rm -rf "$PLAYER_SOURCES" "$APP/Contents/Resources/LampPlayer.bundle"
+cp -R "$PLAYER" "$APP/Contents/Resources/LampPlayer.bundle"
+sign "$APP/Contents/Resources/LampPlayer.bundle"
 # Lamp ships the starters already built (PrebuiltStarters.swift): Lamp builds each one as a person's Mac would, with
 # this checkout's LampSupport, once Lamp's own parts are signed and before Lamp is: the stamp on what Lamp builds
 # (BuildStamp) covers the signed chat sidebar. Each built app is signed like the rest of Lamp and zipped beside its

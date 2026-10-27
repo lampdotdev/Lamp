@@ -27,6 +27,9 @@ network. To try the Local Network question as a new person meets it, build the i
 (`-Xlinker -random_uuid` added to build.sh's `swift build` for that build, not committed). To see what someone with a bare Mac
 sees, `LAMP_PRETEND_MISSING` (`Pretend`, Lamp Dev only) makes Lamp's own checks miss the Command Line Tools,
 Xcode, the person's own Claude Code and Codex or tools from the PATH; a new check for something a fresh Mac lacks goes through it too.
+With `tools` an app's build also runs with no developer folder (`Pretend.buildEnvironment`), so only what Lamp's player
+makes gets built, as on a bare Mac; git still works, so a game's versions and Undo can be tried, where a bare Mac has
+none until the tools come.
 
 ## Checking a change beside other work
 
