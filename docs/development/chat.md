@@ -125,7 +125,8 @@ line is first in view as the scrolling settles (`SidebarCommand.scrolled`), and 
 window beside it Play and Stop (`SidebarToolbar.play`) and Try On's one list for every kind (`TryOnMenu`, which looks for devices as it opens, as Lamp's own does, and each
 of the wish's other apps in a menu of its own, to use, quit and give a place). A kind not given places one at a time
 (an Apple, Android, TV or device app) ends its list with "Add an App for Another Device…" (`TryOnMenu.another`), which
-sends that request in the wish's chat and brings the chat forward, so the agent asks which device, as when it's typed. In Lamp's panel a Mac app's chat has Play too, which opens the app with its chat beside it;
+sends that request in the wish's chat and brings the chat forward, so the agent asks which device, as when it's typed. A
+wish whose apps are all in folders has it too, after their menus, and on the desk it's that wish's whole Try On. In Lamp's panel a Mac app's chat has Play too, which opens the app with its chat beside it;
 and whenever a wish's Mac app opens while its chat is in Lamp's panel (Play, a reopen for a change, the person opening
 it), the app is asked to take the chat (`ChatPanel.place`, `MagicPanel.openChat`), and the panel closes once it has.
 Chats on their own cascade, a step down and across from one another, so none hides another. Lamp's mark at the start of the bar brings

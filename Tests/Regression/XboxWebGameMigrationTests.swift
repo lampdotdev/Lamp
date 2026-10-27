@@ -38,6 +38,7 @@ final class XboxWebGameMigrationTests: XCTestCase {
         XCTAssertEqual(GameKit.engine(game), .web)
         XCTAssertTrue(Store.placesToAdd(game).contains(.ios))
         XCTAssertEqual(Targets.kind(of: gameDir), .game, "a restored version reads as a game too")
+        XCTAssertTrue(GameKit.ownsLoop(game), "its page has no game() to script, so it's looked at in the page preview")
 
         // Once: read again, it's the game it was saved as, and its chat says so a single time.
         XCTAssertEqual(Store.readWish(at: gameDir)?.platform, .game)

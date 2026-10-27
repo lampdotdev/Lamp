@@ -5385,9 +5385,10 @@ final class Store: ObservableObject {
             return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
-        if GameKit.isGame(project) { return await useOnGame(project, actions: actions) }
-        // A page with the remote's focus and keys (a screen) is used in the TV preview, wherever it's shown.
-        if project.platform.target.looksInTVPreview { return await useOnTV(project, actions: actions, json: json) }
+        if GameKit.isGame(project), !GameKit.ownsLoop(project) { return await useOnGame(project, actions: actions) }
+        // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used in
+        // the page preview, wherever it's shown.
+        if project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
@@ -8115,7 +8116,8 @@ final class Store: ObservableObject {
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
             // A page looked at in the preview (a screen) not pointed at a TV opens there by itself; its install is its Mac or iPad app's.
-            let problem = project.platform.target.looksInTVPreview && !project.onTV ? await openDevicePreview(project, folder: TVTemplate.webFolder)
+            let problem = (project.platform.target.looksInTVPreview || GameKit.ownsLoop(project)) && !project.onTV
+                ? await openDevicePreview(project, folder: TVTemplate.webFolder)
                 : await install(project, inFront: false, early: true)
             turn.look.installed[project.id] = true
             if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
@@ -11558,7 +11560,11 @@ final class Store: ObservableObject {
 
         try? await writeOwnFiles(project, all: false)
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
-        if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
+        if GameKit.isGame(project), !onDevice {
+            // One made for the Xbox with a loop of its own can't play the preview's script: it's looked at as a page is.
+            if GameKit.ownsLoop(project) { return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen) }
+            return await lookAtGame(project, turn: turn, motion: motion)
+        }
         // A page with the remote's focus and keys (a screen) is looked at in the TV preview, wherever it's shown, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.

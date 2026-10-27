@@ -387,7 +387,9 @@ three.js game now (`GameKit.migratedWebGame`, in `Store.readWish`, once, with a 
 where Try On points, with the Xbox one of its places and its console still the one chosen there, so it's installed there
 as a game and updated as before. Only meta.json changes, and its folder reads as a game in every version
 (`GameKit.isXboxWebGame`, in `isMade`), so a restore keeps it one. An Xbox app of menus and pages says nothing of a game
-and stays the Xbox's, as does a wish whose Xbox app is one of several.
+and stays the Xbox's, as does a wish whose Xbox app is one of several. Its page runs its own loop, not Lamp's game runtime,
+so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used in
+the page preview it had as the Xbox's web app, as a screen is, and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
 
 On the Mac and on iOS a three.js game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy

@@ -24,14 +24,17 @@ struct TryOnMenu: Equatable {
     }
 
     let sections: [Section]
-    /// The symbol for where Play puts it now, for the chat's button.
-    let symbol: String
+    /// The symbol for where Play puts it now, for the chat's button: nil for a wish that opens nowhere itself.
+    let symbol: String?
 
     /// Every kind's places but a Mac app's alone, which has only this Mac: a game's or a screen's (`places`), a TV app's,
     /// a device app's, an Android app's, and an Apple app's simulators and phones.
     @MainActor static func make(for project: LampProject, store: Store) -> TryOnMenu? {
-        // A wish whose apps are all in folders of their own opens nowhere itself: each app has its own menu.
-        guard project.holdsApp else { return nil }
+        // A wish whose apps are all in folders of their own opens nowhere itself: each app has its own menu, and the wish
+        // has only the way to one more app.
+        guard project.holdsApp else {
+            return project.isPart || project.partFolders.isEmpty ? nil : TryOnMenu(sections: [Section(title: nil, items: [another])], symbol: nil)
+        }
         guard project.platform.addsPlaces else { return choices(for: project, store: store) }
         let places = project.openPlaces, verb = ScreenKit.isScreen(project) ? "Show" : "Play"
         // A place whose copy is older than the code says so, and that opening it there brings it up to date.
