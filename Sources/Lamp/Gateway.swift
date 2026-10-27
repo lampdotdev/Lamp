@@ -266,7 +266,10 @@ enum AppAI {
             // Installed, and not known to be signed out: a signed-out sign-in can't answer, and the setup offer
             // should be to sign in rather than to say it's set up.
             case .engine(let engine, _): available = EngineInstall.path(for: engine) != nil && EngineSignIn.known[engine] != false
-            case .localModel(_, let model): available = LocalModels.shared.installed.contains { $0.id == model }
+            // Downloaded and able to run: an MLX model also needs mlx_lm.server, a separate install, and without it
+            // it can't answer at all, so it mustn't be taken for what answers apps while something else could.
+            case .localModel(_, let model):
+                available = LocalModels.shared.installed.contains { $0.id == model && ($0.format != .mlx || LocalModels.mlxServerPath != nil) }
             }
             return TextRoute(id: id, label: "\(name) via \(via ?? group)", group: group, name: name, kind: kind, available: available)
         }
@@ -925,7 +928,9 @@ enum AppAI {
         var answers: [String: Any] = [:]
         for (id, question) in questions {
             guard let q = question as? [String: Any], let type = q["type"] as? String else { continue }
-            let given = raw[id] as? [String: Any] ?? [:]
+            // A small model asked one question sometimes answers it bare, without the question's key around it.
+            let bare = questions.count == 1 && raw[id] == nil && (raw["choice"] != nil || raw["noul"] != nil || raw["score"] != nil)
+            let given = bare ? raw : (raw[id] as? [String: Any] ?? [:])
             func clamp(_ value: Any?) -> Double? { (value as? NSNumber).map { min(max($0.doubleValue, 0), 1) } }
             switch type {
             case "noul":
@@ -933,12 +938,22 @@ enum AppAI {
                 answers[id] = ["noul": p]
             case "choice":
                 let options = (q["criteria"] as? [String: Any])?.keys.map { $0 } ?? (q["criteria"] as? [String] ?? [])
-                var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
-                    if options.contains($1.key), let p = clamp($1.value) { $0[$1.key] = p }
+                // The model's own wording of an option ("dairy and eggs" for "Dairy & Eggs") is that option.
+                func key(_ text: String) -> String { text.lowercased().replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "&", with: "and").filter { $0.isLetter || $0.isNumber } }
+                let byKey = Dictionary(options.map { (key($0), $0) }, uniquingKeysWith: { first, _ in first })
+                func option(_ text: String) -> String? {
+                    if options.contains(text) { return text }
+                    if let named = byKey[key(text)] { return named }
+                    // Shortened ("Dairy" for "Dairy & Eggs"): the one option it begins.
+                    let begun = options.filter { !key(text).isEmpty && key($0).hasPrefix(key(text)) }
+                    return begun.count == 1 ? begun[0] : nil
                 }
-                var choice = given["choice"] as? String
-                if choice == nil || !options.contains(choice!) { choice = probabilities.max { $0.value < $1.value }?.key }
-                guard let choice else { throw Failure(message: "The model didn't pick an option for \"\(id)\".", cost: cost) }
+                var probabilities = (given["probabilities"] as? [String: Any] ?? [:]).reduce(into: [String: Double]()) {
+                    if let named = option($1.key), let p = clamp($1.value) { $0[named, default: 0] += p }
+                }
+                var choice = (given["choice"] as? String).flatMap(option)
+                if choice == nil { choice = probabilities.max { $0.value < $1.value }?.key }
+                guard let choice else { throw Failure(message: "The model didn't pick an option for \"\(id)\". It said: \(text.prefix(300))", cost: cost) }
                 if probabilities.isEmpty { probabilities = [choice: 1] }
                 let total = probabilities.values.reduce(0, +)
                 if total > 0 { probabilities = probabilities.mapValues { $0 / total } }
