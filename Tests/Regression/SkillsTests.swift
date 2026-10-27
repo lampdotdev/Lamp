@@ -230,6 +230,9 @@ final class SkillsTests: XCTestCase {
         for project in [app(.mac), app(.iphone), app(.android), onTheMac] {
             XCTAssertEqual(Skills.forDevices(of: project, from: shipped), "", project.platform.rawValue)
         }
+        // A wish's prompt is every app's: a Mac app in its own folder with a TV app beside it is offered it, once.
+        XCTAssertEqual(Skills.forDevices(of: [app(.mac), app(.tv), screen], from: shipped).components(separatedBy: line).count - 1, 1)
+        XCTAssertEqual(Skills.forDevices(of: [app(.mac), app(.iphone)], from: shipped), "")
         XCTAssertTrue(Skills.forNewDevices(["mac", "tv"], had: ["mac"]).contains("tv-design skill"))
         XCTAssertEqual(Skills.forNewDevices(["mac", "tv", "android-tv"], had: ["mac", "tv"]), "", "already on a TV")
         XCTAssertEqual(Skills.forNewDevices(["mac", "iphone"]), "")

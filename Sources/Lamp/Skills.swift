@@ -67,7 +67,13 @@ enum Skills {
     /// either make, as a rule of its prompt; empty when its devices offer none. Optional guidance, listed like the
     /// kind's own skills, never a rule the app must follow.
     static func forDevices(of project: LampProject, from skills: [String: Skill] = all) -> String {
-        forDevices(rows: AppKinds.member(of: project).target.rows, from: skills)
+        forDevices(of: [project], from: skills)
+    }
+
+    /// For a wish's apps together, each skill once: its prompt is every app's, the one in its own folder and those in
+    /// folders of their own alike, so a TV app beside a Mac app is offered a TV's design in every turn.
+    static func forDevices(of apps: [LampProject], from skills: [String: Skill] = all) -> String {
+        forDevices(rows: apps.reduce(into: Set<String>()) { $0.formUnion(AppKinds.member(of: $1).target.rows) }, from: skills)
     }
 
     static func forDevices(rows: Set<String>, in table: [Place] = Places.all, from skills: [String: Skill] = all) -> String {

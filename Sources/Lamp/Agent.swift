@@ -404,7 +404,7 @@ enum Agent {
         if let candidates = project.undecided { return undecidedPrompt(candidates: candidates) }
         let parts = Store.shared.parts(of: project)
         guard project.holdsApp else { return wishPrompt(for: project, parts: parts) }
-        return kindPrompt(for: project) + Skills.forDevices(of: project) + Parts.rule(for: project, parts: parts)
+        return kindPrompt(for: project) + Skills.forDevices(of: [project] + parts) + Parts.rule(for: project, parts: parts)
     }
 
     /// The prompt of a wish whose apps are all in folders of their own: what holds for the wish as a whole (asking, the
@@ -428,7 +428,7 @@ enum Agent {
                 + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
             : Parts.rule(for: wish, parts: parts) + Skills.index(Skills.everywhere)
         // Each app's devices offer their skills (a TV's design) in the wish's prompt, which is every app's.
-        let devices = Skills.forDevices(rows: parts.reduce(into: Set<String>()) { $0.formUnion(AppKinds.member(of: $1).target.rows) })
+        let devices = Skills.forDevices(of: parts)
         return header + "\n\nRules:\n" + rules + each + devices
     }
 
