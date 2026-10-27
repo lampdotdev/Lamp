@@ -147,7 +147,8 @@ extension Template {
                 // The pictures, once the four views have drawn; then the scene again.
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(1.6))
-                    LampRuntime.snapshot()
+                    // Answered once the pictures are written, and the studio kept up until then.
+                    await withCheckedContinuation { done in LampRuntime.snapshot { done.resume() } }
                     LampScene.answerProp("shown")
                     try? await Task.sleep(for: .seconds(0.6))
                     if studio == name { studio = nil }
