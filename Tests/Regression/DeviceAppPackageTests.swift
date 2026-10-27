@@ -3,15 +3,18 @@ import XCTest
 
 /// What Lamp ships for devices, and the Windows packages it makes for one, held to what the device was seen to take.
 final class DeviceAppPackageTests: XCTestCase {
-    /// Every integration Lamp ships passes the same checks as one the builder writes (with its own marks allowed).
+    /// Every integration Lamp ships passes the same checks as one the builder writes (with its own marks allowed). The
+    /// skills an integration names are checked against the source tree's, since the test runner's bundle has none.
     func testShippedIntegrationsPassTheChecker() throws {
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/Devices")
+        let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources")
+        let folder = resources.appendingPathComponent("Devices"), skills = Skills.load(from: resources.appendingPathComponent("skills"))
+        XCTAssertFalse(skills.isEmpty)
         let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }
         XCTAssertFalse(files.isEmpty)
         for file in files {
             let data = try Data(contentsOf: file)
-            XCTAssertEqual(IntegrationCheck.unknownKeys(data) + IntegrationCheck.problems(data, submitted: false), [], file.lastPathComponent)
+            XCTAssertEqual(IntegrationCheck.unknownKeys(data) + IntegrationCheck.problems(data, submitted: false, skills: skills), [], file.lastPathComponent)
             // And the whole lifecycle a builder's integration is held to.
             XCTAssertEqual(IntegrationCheck.lifecycle(try JSONDecoder().decode(Integration.self, from: data)), [], file.lastPathComponent)
         }

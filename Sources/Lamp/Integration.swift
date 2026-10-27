@@ -438,10 +438,10 @@ enum Placeholders {
 /// What's wrong with an integration, in plain reasons the model can act on. Empty means Lamp takes it.
 enum IntegrationCheck {
     /// `submitted`: from the builder, which may only say a step was read. A file Lamp kept is read with its own marks.
-    static func problems(_ data: Data, submitted: Bool = true) -> [String] {
+    static func problems(_ data: Data, submitted: Bool = true, skills: [String: Skills.Skill] = Skills.all) -> [String] {
         do {
             let integration = try JSONDecoder().decode(Integration.self, from: data)
-            return problems(integration, submitted: submitted)
+            return problems(integration, submitted: submitted, skills: skills)
         } catch let DecodingError.keyNotFound(key, context) {
             return ["\(path(context.codingPath + [key])) is missing."]
         } catch let DecodingError.typeMismatch(_, context) {
@@ -524,7 +524,9 @@ enum IntegrationCheck {
     /// The bridges Lamp ships, which an action may name.
     static let bridges: Set<String> = ["devicectl", "adb", "sdb"]
 
-    static func problems(_ integration: Integration, submitted: Bool = true) -> [String] {
+    /// `skills` is what a skill the integration names must be one of: Lamp's own, from its bundle, unless the caller
+    /// has them from elsewhere (a test, from the source tree).
+    static func problems(_ integration: Integration, submitted: Bool = true, skills: [String: Skills.Skill] = Skills.all) -> [String] {
         var problems: [String] = []
         func say(_ text: String) { problems.append(text) }
 
@@ -716,8 +718,8 @@ enum IntegrationCheck {
         if let runs = integration.runs, runs.trimmed.isEmpty || runs.count > 300 {
             say("runs says what the device runs in one plain sentence, 300 characters at most.")
         }
-        for skill in integration.skills ?? [] where Skills.all[skill] == nil {
-            say("skills: \"\(skill)\" isn't one of Lamp's skills (\(Skills.all.keys.sorted().joined(separator: ", "))).")
+        for skill in integration.skills ?? [] where skills[skill] == nil {
+            say("skills: \"\(skill)\" isn't one of Lamp's skills (\(skills.keys.sorted().joined(separator: ", "))).")
         }
         if let input = integration.input, let problem = Controllers.problem(in: input) { say(problem) }
         if let root = integration.certificateRoot, !root.hasPrefix("/") || root.contains("{") || root.contains("..") {
