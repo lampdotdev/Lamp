@@ -24,19 +24,21 @@ final class MakeAppForTests: XCTestCase {
         return AppKinds.member(of: app, in: table)
     }
 
-    private func make(_ made: Place.Make, _ devices: [String], app: String? = nil, another: Bool? = nil, in members: [WishMember]) throws -> AppPlan {
-        try AppPlanner.make(made, devices: devices, app: app, another: another, in: members, table: table).get()
+    private func make(_ made: Place.Make, kind: AppIntent = .app, _ devices: [String], app: String? = nil, another: Bool? = nil,
+                      in members: [WishMember]) throws -> AppPlan {
+        try AppPlanner.make(made, kind: kind, devices: devices, app: app, another: another, in: members, table: table).get()
     }
 
-    private func refused(_ made: Place.Make, _ devices: [String], app: String? = nil, another: Bool? = nil, in members: [WishMember] = []) -> String? {
-        guard case .failure(let refusal) = AppPlanner.make(made, devices: devices, app: app, another: another, in: members, table: table) else { return nil }
+    private func refused(_ made: Place.Make, kind: AppIntent = .app, _ devices: [String], app: String? = nil, another: Bool? = nil,
+                         in members: [WishMember] = []) -> String? {
+        guard case .failure(let refusal) = AppPlanner.make(made, kind: kind, devices: devices, app: app, another: another, in: members, table: table) else { return nil }
         return refusal.reason
     }
 
     /// A Mac wish with a game beside it: putting the game on the iPhone too changes the game, and only the game.
     func testAnAppLeftOutOfARequestStays() throws {
         let mac = app("party", .mac), game = app("party.game", .game, folder: "Game", places: [.mac])
-        guard case .update(let changed, let target) = try make(.web, ["mac", "iphone"], app: "Game", in: [mac, game]) else { return XCTFail() }
+        guard case .update(let changed, let target) = try make(.web, kind: .game, ["mac", "iphone"], app: "Game", in: [mac, game]) else { return XCTFail() }
         XCTAssertEqual(changed, game)
         XCTAssertEqual(target.kind, .game)
         XCTAssertEqual(target.places, [.mac, .ios])
@@ -122,34 +124,65 @@ final class MakeAppForTests: XCTestCase {
     /// read as a new app beside it, and one more app is `another` alone.
     func testAChangeOfMakeChangesTheAppNamed() throws {
         let racer = app("racer", .mac)
-        guard case .update(let changed, let target) = try make(.web, ["mac"], app: ".", in: [racer]) else { return XCTFail() }
+        guard case .update(let changed, let target) = try make(.web, kind: .game, ["mac"], app: ".", in: [racer]) else { return XCTFail() }
         XCTAssertEqual(changed, racer)
         XCTAssertEqual(target.kind, .game)
-        XCTAssertThrowsError(try make(.web, ["mac"], in: [racer]))
-        guard case .another(let beside) = try make(.web, ["mac"], another: true, in: [racer]) else { return XCTFail() }
+        XCTAssertThrowsError(try make(.web, kind: .game, ["mac"], in: [racer]))
+        guard case .another(let beside) = try make(.web, kind: .game, ["mac"], another: true, in: [racer]) else { return XCTFail() }
         XCTAssertEqual(beside.kind, .game)
     }
 
-    /// Web apps are today's kinds by their devices, the wish's own web app keeping its kind; what no kind reaches, and
-    /// native apps of two codes, are refused with why.
+    /// What an app is made as follows its `kind` and `made`, never its devices alone: the same devices give a game or a
+    /// web app as asked (the Mac and a TV, a TV and an Android phone, which once fell to one kind by which reached fewer
+    /// places, and the TV and Android one to none), and what no host reaches, and native apps of two codes, are refused
+    /// with why.
     func testEachRequestIsOneOfTodaysKindsOrRefusedWithItsReason() throws {
         func kind(_ plan: AppPlan) -> Platform? {
             switch plan {
-            case .add(let target), .update(_, let target): target.kind
+            case .add(let target), .another(let target), .update(_, let target): target.kind
             default: nil
             }
         }
-        // A new web app is never made a screen: only a wish's own screen stays one (testAnIPadAskedForIsAnIPad).
-        XCTAssertNotEqual(kind(try make(.web, ["mac", "tv"], in: [])), .screen)
-        XCTAssertEqual(kind(try make(.web, ["tv"], in: [])), .tv)
-        XCTAssertEqual(kind(try make(.web, ["iphone", "android"], in: [])), .game)
-        XCTAssertEqual(kind(try make(.native, ["android-tv"], in: [])), .androidTV)
-        XCTAssertEqual(kind(try make(.web, ["xbox-one"], in: [])), .device)
-        XCTAssertEqual(kind(try make(.web, ["tv", "android"], in: [])), .game)   // a game goes everywhere a web engine is
+        for devices in [["mac", "tv"], ["tv", "android"], ["iphone", "android"]] {
+            XCTAssertEqual(kind(try make(.web, kind: .game, devices, in: [])), .game, "\(devices)")
+            XCTAssertEqual(kind(try make(.web, kind: .app, devices, in: [])), .webApp, "\(devices)")
+        }
+        XCTAssertEqual(kind(try make(.web, kind: .app, ["tv"], in: [])), .tv)
+        XCTAssertEqual(kind(try make(.web, kind: .game, ["tv"], in: [])), .game)
+        XCTAssertEqual(kind(try make(.native, kind: .app, ["android-tv"], in: [])), .androidTV)
+        XCTAssertEqual(kind(try make(.native, kind: .game, ["mac"], in: [])), .mac, "a native game is the Mac's own code")
+        XCTAssertEqual(kind(try make(.web, kind: .app, ["xbox-one"], in: [])), .device)
+        guard case .add(let xboxGame) = try make(.web, kind: .game, ["xbox-one"], in: []) else { return XCTFail() }
+        XCTAssertEqual(xboxGame.kind, .game)
+        XCTAssertEqual(xboxGame.places, [.mac, .device])
         XCTAssertTrue(refused(.web, ["apple-tv"])?.contains("tvOS has no web view") == true)
         XCTAssertNotNil(refused(.native, ["mac", "android"]))
         XCTAssertNotNil(refused(.native, ["tv"]))
         XCTAssertNotNil(refused(.web, ["toaster"]))
+    }
+
+    /// A screen made before, changed as an app made with web, stays a screen wherever it goes, so its folder, address and
+    /// saves stay its own; a new web app beside it is a web app, never a screen.
+    func testAScreenMadeBeforeStaysAScreen() throws {
+        let screen = app("board", .screen, folder: "Screen", places: [.mac])
+        guard case .update(let changed, let target) = try make(.web, ["mac", "tv", "android"], app: "Screen", in: [screen]) else { return XCTFail() }
+        XCTAssertEqual(changed, screen)
+        XCTAssertEqual(target.kind, .screen)
+        XCTAssertEqual(target.places, [.mac, .android, .tv])
+        guard case .another(let added) = try make(.web, ["mac", "tv"], another: true, in: [screen]) else { return XCTFail() }
+        XCTAssertEqual(added.kind, .webApp)
+    }
+
+    /// A game asked for natively is the devices' own code: while it waits to be made, the list keeps that it's a game,
+    /// so it's made as one.
+    func testAWaitingNativeGameStaysAGame() throws {
+        guard case .add(let target) = try make(.native, kind: .game, ["iphone"], in: []) else { return XCTFail() }
+        XCTAssertEqual(target.kind, .iphone)
+        let kept = try JSONDecoder().decode([WishApp].self, from: JSONEncoder().encode([target.waiting.needing("Xcode")]))[0]
+        XCTAssertEqual(kept.game, true)
+        XCTAssertTrue(AppKinds.member(waiting: kept.needing(nil), in: table).target.game)
+        guard case .add(let app) = try make(.native, kind: .app, ["iphone"], in: []) else { return XCTFail() }
+        XCTAssertNil(app.waiting.game)
     }
 
     /// A device's own app is one of the wish's apps beside the others: a Mac app asked for as another app in a Roku app's
@@ -170,7 +203,7 @@ final class MakeAppForTests: XCTestCase {
     }
 
     /// `remove_app` finds an app by its folder or own word first, then by any device it's on through the table, and
-    /// says when a name fits several or none; an app still to be made is taken off the list; the only app stays.
+    /// says when a name fits several or none; an app still to be made is taken off the list; the last app goes too.
     func testRemoveFindsTheAppThroughTheTable() throws {
         let mac = app("party", .mac), screen = app("party.screen", .screen, folder: "Screen", places: [.mac, .tv])
         let game = app("party.game", .game, folder: "Game", places: [.mac, .android, .device])
@@ -188,6 +221,6 @@ final class MakeAppForTests: XCTestCase {
         XCTAssertEqual(try AppPlanner.remove("tv", in: members, table: table, describe: describe).get(), .remove(screen))
         let waiting = AppKinds.member(waiting: WishApp(kind: .iphone, needs: "Xcode"))
         XCTAssertEqual(try AppPlanner.remove("iphone", in: [mac, waiting], table: table, describe: describe).get(), .cancel(waiting))
-        guard case .failure = AppPlanner.remove("mac", in: [mac, waiting], table: table, describe: describe) else { return XCTFail("the only made app went") }
+        XCTAssertEqual(try AppPlanner.remove("mac", in: [mac, waiting], table: table, describe: describe).get(), .remove(mac), "the only made app goes too")
     }
 }

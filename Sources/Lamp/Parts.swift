@@ -32,6 +32,9 @@ struct WishApp: Codable, Hashable {
     /// "." for the app in the wish's own folder. Nil in a list from before the list kept folders, whose entries are
     /// matched to the wish's apps by their code, as that list was (`Parts.lists`).
     var folder: String? = nil
+    /// Asked for as a game though made in the devices' own code (a native game), so it's made as one when it's made;
+    /// nil for any other.
+    var game: Bool? = nil
 
     /// The same app, now stopped by this (or no longer, for nil), and nothing else changed.
     func needing(_ problem: String?) -> WishApp {
@@ -54,6 +57,17 @@ enum Parts {
     static func id(wish: String, folder: String) -> String { wish + "." + folder.lowercased() }
     /// A part's instance: its wish's, kept through renames, then its folder.
     static func instance(wish: LampProject, folder: String) -> String { (wish.instance.isEmpty ? wish.id : wish.instance) + "." + folder }
+
+    /// What marks a wish's own folder as only the wish's: its apps, if it has any, are each in a folder of their own, and
+    /// the folder itself is never a draft to write an app into (`LampProject.holdsApp`). Kept with the wish's files, so a
+    /// version restored from before it was marked brings back what the folder held then.
+    static let wishOnly = ".lamp-wish"
+    static let wishOnlyText = "A wish made with Lamp: each of its apps is in a folder of its own, and this folder holds none.\n"
+
+    /// Whether a wish's own folder is marked as only the wish's: the mark a plain file, never a link.
+    static func isWishOnly(_ dir: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(wishOnly).path))?[.type] as? FileAttributeType == .typeRegular
+    }
 
     /// Every folder a part can be in.
     static var folders: Set<String> { Set(Targets.all.compactMap(\.part).flatMap(\.folders)) }
@@ -197,7 +211,9 @@ enum Parts {
     static func readByEarlierLamp(_ wish: URL) -> Bool {
         var families: Set<String> = []
         for folder in folders(in: wish) {
-            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish), let part = kind.target.part else { return false }
+            guard let kind = kindOfScaffold(in: wish.appendingPathComponent(folder), wish: wish), let part = kind.target.part,
+                  // A web app is a kind such a Lamp doesn't know: it would find no app in its folder.
+                  kind != .webApp else { return false }
             guard part.folderFor != nil || self.folder(folder, canHold: kind), families.insert(part.family).inserted else { return false }
         }
         return true
@@ -208,6 +224,9 @@ enum Parts {
     /// app waiting for Mac2/ in Mac/.
     static func readByEarlierLamp(_ wish: LampProject) -> Bool {
         guard readByEarlierLamp(wish.dir) else { return false }
+        // A web app in the wish's own folder is a kind it doesn't know, and a wish with no app at all is one it would take
+        // for a draft to write a new app into.
+        if wish.holdsApp ? wish.platform == .webApp : folders(in: wish.dir).isEmpty && !wish.isPart { return false }
         var wish = wish
         wish.partFolders = folders(in: wish.dir)
         var families: Set<String> = []
@@ -491,7 +510,8 @@ enum Parts {
 
         - This wish is \(apps.count) apps: \(listed.joined(separator: ", and ")). Each is an app of its own kind with its own \
         build files, made to work with the others, and each is the person's: none comes first, and any of them can be \
-        added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks. Before you write or change one in a folder of \
+        added or changed (`make_app_for`) or taken away (`remove_app`) when the person asks, each named by its folder in their `app` ("." for \
+        the one in the wish's own folder). Before you write or change one in a folder of \
         its own, open its rules with `read_skill` (once per conversation) and follow them for the files in its folder. \
         `look_at_app` and `use_app` take `part` to say which app: look at each one you changed before finishing.
         """ + (apps.filter { WishRooms.joins($0.platform) }.count >= 2 ? Agent.Rules.wishTalk : "") + Targets.all.flatMap { kind in
@@ -553,12 +573,12 @@ extension Agent {
     static func undecidedPrompt(candidates devices: [String]) -> String {
         let named = devices.compactMap { Places.named($0) }.map(\.name)
         return """
-        You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Before anything         is written, you decide what it is and where it runs, and give it its first app with `make_app_for`: the devices         the app is to be on, and whether it's made as a web page or as each device's own native code.         \(named.isEmpty ? "The request names no device." : "The request names: \(named.joined(separator: ", ")).")
+        You are Lamp's builder agent. The current directory is a new wish with nothing made for it yet. Before anything         is written, you decide what it is and where it runs, and give it its first app with `make_app_for`: what it is (a game or an         app), the devices it's to be on, and whether it's made as a web page or as each device's own native code.         \(named.isEmpty ? "The request names no device." : "The request names: \(named.joined(separator: ", ")).")
 
         Rules:
         - Choose from the request and from what each device can run (the table in `make_app_for`'s description, and the         person's own devices Lamp knows of, below the request). Think about who will use it, on whose devices, how many,         which one matters most, and how the app gets onto each: a native app looks and does more, but each phone has to         be set up with this Mac, while a web app reaches the devices that run one the way the table says. Most wishes         that name nothing are for this Mac, made natively.
         - Ask with `ask` only when the answer really changes what you make, in one short question about people and         devices ("Just your phone, or your family's too?"), never "web or native". Nothing else in the card, and change         no files until it's answered. When it's clear, call `make_app_for` straight away.
-        - A wish can be more than one app, made to work together (an iPhone app and its TV app): give the first with         `make_app_for`, then each other one the same way.
+        - A wish can be more than one app, made to work together (an iPhone app and its TV app): give the first with         `make_app_for`; one more beside it only once the person chose that when you asked with `ask`, with `another` (the more-apps skill).
         - `make_app_for`'s reply carries the rules for the app it made, which take the place of these: follow them and         build the wish in the same request.
         """ + Rules.audience + Rules.begin
     }

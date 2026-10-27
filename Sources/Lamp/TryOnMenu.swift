@@ -32,7 +32,7 @@ struct TryOnMenu: Equatable {
         // A wish whose apps are all in folders of their own opens nowhere itself: each app has its own menu.
         guard project.holdsApp else { return nil }
         guard project.platform.addsPlaces else { return choices(for: project, store: store) }
-        let places = project.openPlaces, verb = project.platform == .screen ? "Show" : "Play"
+        let places = project.openPlaces, verb = ScreenKit.isScreen(project) ? "Show" : "Play"
         // A place whose copy is older than the code says so, and that opening it there brings it up to date.
         let behind = store.placesBehind[project.id] ?? []
         func older(_ place: Destination, _ title: String) -> String { behind.contains(place) ? title + Self.olderNote : title }

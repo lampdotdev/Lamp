@@ -47,7 +47,8 @@ struct Place: Equatable {
     /// named by: "ipad" is an iPad, "iphone" an iPhone, though both are the one row that runs them.
     var wordFamilies: [String: DeviceFamily] = [:]
     var families: Set<DeviceFamily> { Set(wordFamilies.values) }
-    /// The row whose native app it comes with, never alone: an Apple Watch's app is the iPhone app's.
+    /// The row whose native app Lamp's build of it goes with, for now never alone: Lamp builds an Apple Watch app only
+    /// beside an iPhone app. That's Lamp's recipe, not the device's limit.
     var comesWith: String? = nil
     /// Lamp's skills for designing what the device shows, offered to every app on it, whatever it is and however it's
     /// made (`Places.skills`): a TV's across-the-room design is the TV rows'.
@@ -114,7 +115,7 @@ enum Places {
               native: .init(code: .apple, reach: "in the simulator on this Mac, or on the person's own iPhone or iPad paired with this Mac, one device at a time"),
               wordFamilies: ["iphone": .iphone, "ipad": .ipad], input: .apple),
         Place(id: "watch", name: "Apple Watch", words: ["watch"], destination: .ios, web: nil,
-              native: .init(code: .apple, reach: "with the iPhone app, onto the watch paired with that iPhone"),
+              native: .init(code: .apple, reach: "Lamp doesn't build a Watch app on its own yet: its Watch build goes with an iPhone app, onto the watch paired with that iPhone"),
               noWeb: "watchOS has no web view, so a page there needs a native version", comesWith: "iphone", input: nil),
         Place(id: "apple-tv", name: "Apple TV", words: ["apple-tv"], destination: .ios, web: nil,
               native: .init(code: .apple, reach: "in the Apple TV simulator on this Mac; Lamp can't put it on a real Apple TV yet"),

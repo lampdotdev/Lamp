@@ -200,7 +200,7 @@ final class SkillsTests: XCTestCase {
     /// Every kind's prompt, whatever the app is now, offers how an app is made, games, 3D in a page, web apps and phones
     /// as controllers, so the agent has their reasons for any request; and no prompt names the 2D skill they replace.
     func testEveryKindOffersTheSkillsForEveryChoice() throws {
-        let kinds: [Platform] = [.mac, .iphone, .universal, .android, .androidTV, .tv, .game, .screen, .device]
+        let kinds: [Platform] = [.mac, .iphone, .universal, .android, .androidTV, .tv, .game, .webApp, .screen, .device]
         for kind in kinds {
             XCTAssertEqual(Array(Skills.offered(kind).prefix(Skills.everywhere.count)), Skills.everywhere, kind.rawValue)
             XCTAssertEqual(Skills.offered(kind).filter(Skills.everywhere.contains).count, Skills.everywhere.count, "\(kind.rawValue) lists each once")

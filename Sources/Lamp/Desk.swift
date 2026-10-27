@@ -1611,7 +1611,9 @@ enum WishPlace: Equatable {
         // A wish whose apps are all in folders of their own lives where they do: one app's place, or several named.
         if !project.holdsApp {
             let places = Parts.load(project).map(of)
-            guard places.count > 1 else { return places.first ?? .window }
+            // One with no app at all lives nowhere: only its name, chat and history are left, until it's given one.
+            guard !places.isEmpty else { return .elsewhere("No apps", symbol: "square.dashed") }
+            guard places.count > 1 else { return places[0] }
             return .elsewhere(places.map { $0.caption ?? "Mac" }.joined(separator: " and "), symbol: places[0].symbol)
         }
         if let place = project.platform.target.identity.place(project) { return place }

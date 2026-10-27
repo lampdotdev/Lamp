@@ -28,7 +28,7 @@ final class MoreAppsTests: XCTestCase {
     }
 
     private func call(_ store: Store, _ wish: LampProject, _ extra: [String: Any] = [:]) async -> (Int, String) {
-        let (status, answer) = await store.agentKind(["made": "native", "devices": ["mac"]].merging(extra) { $1 }, for: wish)
+        let (status, answer) = await store.agentKind(["kind": "app", "made": "native", "devices": ["mac"]].merging(extra) { $1 }, for: wish)
         return (status, answer["text"] as? String ?? answer["error"] as? String ?? "")
     }
 
@@ -76,10 +76,10 @@ final class MoreAppsTests: XCTestCase {
     /// Lamp's bundle). Asked for again, it's refused: an app still to be made is an app the wish has.
     func testAnotherAppOfAnotherKindIsAdded() async throws {
         let (store, wish) = try macWish()
-        let (added, said) = await call(store, wish, ["another": true, "made": "web"])
+        let (added, said) = await call(store, wish, ["another": true, "kind": "game", "made": "web"])
         XCTAssertEqual(added, 200, said)
         XCTAssertEqual(try XCTUnwrap(store.current(wish)).apps.filter { $0.kind == .game }.map(\.folder), ["Game"])
-        let (again, text) = await call(store, wish, ["another": true, "made": "web"])
+        let (again, text) = await call(store, wish, ["another": true, "kind": "game", "made": "web"])
         XCTAssertEqual(again, 400, text)
         XCTAssertEqual(try XCTUnwrap(store.current(wish)).apps.filter { $0.kind == .game }.count, 1)
     }
@@ -106,10 +106,10 @@ final class MoreAppsTests: XCTestCase {
         try Template.saveMeta(wish)
         let fresh = Store(testingAt: root)
         let current = try XCTUnwrap(fresh.current(wish))
-        let (refused, said) = await fresh.agentKind(["made": "native", "devices": ["android"]], for: current)
+        let (refused, said) = await fresh.agentKind(["kind": "app", "made": "native", "devices": ["android"]], for: current)
         XCTAssertEqual(refused, 400)
         XCTAssertTrue(said["error"].map { "\($0)".contains("\"Android\"") } == true, "\(said)")
-        let (status, answer) = await fresh.agentKind(["made": "native", "devices": ["android"], "app": "Android"], for: current)
+        let (status, answer) = await fresh.agentKind(["kind": "app", "made": "native", "devices": ["android"], "app": "Android"], for: current)
         XCTAssertEqual(status, 200, "\(answer)")
         XCTAssertEqual(try XCTUnwrap(fresh.current(wish)).apps.map(\.folder), [".", "Android"])
         _ = store
@@ -123,7 +123,7 @@ final class MoreAppsTests: XCTestCase {
         wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .android, needs: "Android Studio")]
         try Template.saveMeta(wish)
         let store = Store(testingAt: root)
-        let (status, answer) = await store.agentKind(["made": "web", "devices": ["mac", "ipad"], "app": "Android"], for: try XCTUnwrap(store.current(wish)))
+        let (status, answer) = await store.agentKind(["kind": "app", "made": "web", "devices": ["mac", "ipad"], "app": "Android"], for: try XCTUnwrap(store.current(wish)))
         XCTAssertEqual(status, 200, "\(answer)")
         let apps = try XCTUnwrap(store.current(wish)).apps
         XCTAssertEqual(apps.map(\.folder), [".", "Android"])
@@ -201,7 +201,7 @@ final class MoreAppsTests: XCTestCase {
         // Nor does anything else act on the wish's apps meanwhile: Lamp's own retry makes nothing, and make_app_for refuses.
         await store.makeWaitingParts(of: try XCTUnwrap(store.current(wish)))
         XCTAssertEqual(Parts.folders(in: wish.dir), [])
-        let (status, _) = await store.agentKind(["made": "native", "devices": ["iphone"], "app": "iPhone"], for: try XCTUnwrap(store.current(wish)))
+        let (status, _) = await store.agentKind(["kind": "app", "made": "native", "devices": ["iphone"], "app": "iPhone"], for: try XCTUnwrap(store.current(wish)))
         XCTAssertEqual(status, 500)
         let given = try XCTUnwrap(store.current(wish))
         XCTAssertEqual(given.apps.map(\.folder), [".", nil])
@@ -217,8 +217,8 @@ final class MoreAppsTests: XCTestCase {
         guard case .failure = AppPlanner.decide(app: nil, another: nil, in: [waiting]) else { return XCTFail("a waiting app is an app") }
         guard case .success(.another) = AppPlanner.decide(app: nil, another: true, in: [waiting]) else { return XCTFail() }
         // A Mac app still to be made is a Mac app the wish has: another one is refused, an Android app isn't.
-        guard case .failure = AppPlanner.make(.native, devices: ["mac"], another: true, in: [waiting]) else { return XCTFail("two Mac apps") }
-        guard case .success(.another) = AppPlanner.make(.native, devices: ["android"], another: true, in: [waiting]) else { return XCTFail() }
+        guard case .failure = AppPlanner.make(.native, kind: .app, devices: ["mac"], another: true, in: [waiting]) else { return XCTFail("two Mac apps") }
+        guard case .success(.another) = AppPlanner.make(.native, kind: .app, devices: ["android"], another: true, in: [waiting]) else { return XCTFail() }
         guard case .success(.change(let member)) = AppPlanner.decide(app: "mac", another: false, in: [waiting]) else { return XCTFail() }
         XCTAssertEqual(member.slot, "Mac")
     }

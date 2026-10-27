@@ -85,9 +85,7 @@ hosted by Lamp: say so plainly, and offer what works (playing together on the sa
 
 ## Changing it later
 
-A change from web to native, or back, writes the app again in the other code, and moves what it saved (LampStore in
-Swift, `Lamp.store` and `save`/`load` in a page): `make_app_for` says what it set up. Do it when the reason changed
-(the person now wants widgets, or wants phones to join a game on their Samsung or LG TV), not to try the other way. An
-app another way beside the one there, or in its place, is the person's call: when both could make sense, ask whether
-to keep the old one. In its place means the new one is made first, and only then the old one is taken away with
-`remove_app`, which the person can undo.
+`make_app_for` with an app's folder in `app` changes how that app is made: it keeps its folder and what it saved, but
+the new code doesn't read what the old one saved unless you write it to, and Lamp moves nothing across, so say so when
+it matters. One more app beside the others is `another`, only once the person chose that when you asked (the
+`more-apps` skill). `remove_app` takes one away, which the person can undo.

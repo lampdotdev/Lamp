@@ -18,10 +18,10 @@
  *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
- * - `make_app_for`: adds an app to the wish, or changes the one of the same code, given the devices it's on and whether
- *   it's made as a web page or native code; the wish's other apps stay. The reply says how to adapt the code and gives a
- *   new app's rules.
- * - `remove_app`: takes one of the wish's apps away, by its folder or a device it's on; its versions keep it.
+ * - `make_app_for`: gives the wish a new app, or changes the one whose folder `app` names, given what it is (a game or
+ *   an app), the devices it's on and whether it's made as a web page or native code; the wish's other apps stay. The
+ *   reply says how to adapt the code and gives a new app's rules.
+ * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
  * - `network_devices`: lists the devices on the person's home network as Lamp's own look finds them now, with what

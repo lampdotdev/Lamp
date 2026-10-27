@@ -12,11 +12,34 @@ import Foundation
 /// browser; one made at a fixed 1920x1080 (its viewport says so, `fillsAnyShape`) is zoomed to the window instead. On Android it's Lamp's Android app around the page, on a Samsung or LG TV the TV app's own way there (`TVs`),
 /// and on the Xbox the integration's web app ("xbox-one"). Wherever it's shown, the agent looks at it in the TV preview
 /// on the Mac (`Target.looksInTVPreview`), at any shape it asks for (`look_at_app`'s `shape`), so it never waits for a build of the Mac app to see a change.
+///
+/// A web app made now (`Platform.webApp`, `make_app_for`'s `kind` "app" with `made` "web") is written the same way,
+/// with what's its own (`Page`): its marker, its own address and so its own saved data, and the folder it's installed
+/// in. The two are never changed into each other: a screen stays a screen, its address and saves with it.
 enum ScreenKit {
     /// What marks a screen's folder, kept with the code so a version restored brings the kind back with it.
     static let marker = ".lamp-screen"
 
-    static func isScreen(_ project: LampProject) -> Bool { project.platform == .screen }
+    /// What's a kind's own in the app Lamp writes around its page.
+    struct Page {
+        let marker: String
+        /// Where its page is served, which is where its saved data is kept: never changed for an app already made.
+        let scheme: String
+        /// The Swift around the page, by the file its builds and versions know.
+        let swift: String
+        let says: String
+    }
+
+    static let screenPage = Page(marker: marker, scheme: "lamp-screen", swift: "Sources/LampScreen.swift",
+                                 says: "A screen made with Lamp: a page in Web/, shown full screen.\n")
+    static let webAppPage = Page(marker: ".lamp-web-app", scheme: "lamp-web-app", swift: "Sources/LampWebApp.swift",
+                                 says: "A web app made with Lamp: a page in Web/.\n")
+
+    static func page(for platform: Platform) -> Page { platform == .webApp ? webAppPage : screenPage }
+
+    /// Whether the kind is a web app around a page: a web app, or a screen made before.
+    static func isWebApp(_ platform: Platform) -> Bool { platform == .screen || platform == .webApp }
+    static func isScreen(_ project: LampProject) -> Bool { isWebApp(project.platform) }
 
     /// Shown on this Mac or an iPhone or iPad, where it's an app of Lamp's around the page.
     static func hostsOnApple(_ project: LampProject) -> Bool {
@@ -24,6 +47,7 @@ enum ScreenKit {
     }
 
     static func isMade(_ dir: URL) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path) }
+    static func isWebAppMade(_ dir: URL) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(webAppPage.marker).path) }
 
     /// Whether the page fills any shape: its viewport isn't the fixed `width=1920` screens were laid out at before.
     static func fillsAnyShape(_ project: LampProject) -> Bool {
@@ -50,27 +74,28 @@ enum ScreenKit {
     }
 
     /// Where a screen's page is served, which is where its saved data is kept: never changed for a screen already made.
-    static let scheme = "lamp-screen"
+    static var scheme: String { screenPage.scheme }
 
-    /// Lamp's common app around a page, as a screen has it: at the screen's own address, its page laid out at the
-    /// window's size, or at 1920x1080 and zoomed for a page made that way (`fillsAnyShape`). It's still written as
+    /// Lamp's common app around a page, as a kind has it: at its own address, its page laid out at the window's size, or at
+    /// 1920x1080 and zoomed for a page made that way (`fillsAnyShape`). A screen's is still written as
     /// Sources/LampScreen.swift, the file a screen's build and every version of it know.
     private static func host(for project: LampProject) -> String? {
-        GameKit.webApp(scheme: scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
+        GameKit.webApp(scheme: page(for: project.platform).scheme, canvas: fillsAnyShape(project) ? nil : (1920, 1080))
     }
 
     /// Lamp's own files, written before every turn and build: the page's script, the Swift around it, what builds it.
     static func write(for project: LampProject) throws {
-        guard let host = host(for: project) else { throw Failure(message: "This copy of Lamp is missing its screen kit.") }
+        let page = page(for: project.platform)
+        guard let host = host(for: project) else { throw Failure(message: "This copy of Lamp is missing its web app kit.") }
         try TVTemplate.writeOwnedFiles(for: project)
-        try Template.write(host, to: "Sources/LampScreen.swift", for: project)
+        try Template.write(host, to: page.swift, for: project)
         try GameKit.writePage(for: project)
         // On Android: Lamp's Android app around the page, as a game's.
         if project.openPlaces.contains(.android) { try GameAndroid.write(for: project) }
         try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
         try Template.write(buildSh, to: "build.sh", for: project, executable: true)
         try Template.write(packageSwift, to: "Package.swift", for: project)
-        try Template.write("A screen made with Lamp: a page in Web/, shown full screen.\n", to: marker, for: project)
+        try Template.write(page.says, to: page.marker, for: project)
         // On Android: Lamp's Android app around the page, as a game's.
         if project.hasAndroid { try GameAndroid.write(for: project) }
     }
@@ -85,14 +110,17 @@ enum ScreenKit {
         try write(for: project)
     }
 
-    static func remove(from project: LampProject) {
-        for path in ["Sources/LampScreen.swift", GameAndroid.folder, marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
+    /// What Lamp wrote for the kind it was (`was`), gone once the app is another kind.
+    static func remove(from project: LampProject, was: Platform) {
+        let page = page(for: was)
+        for path in [page.swift, GameAndroid.folder, page.marker] { AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir) }
         GameKit.removePage(from: project)
     }
 
-    /// Every path Lamp owns in a screen.
+    /// Every path Lamp owns in a screen or a web app.
     static func paths(for project: LampProject) -> [String] {
-        [TVTemplate.supportFile, "Sources/LampScreen.swift", "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
+        let page = page(for: project.platform)
+        return [TVTemplate.supportFile, page.swift, "Sources/LampPage.swift", "Sources/LampSupport.swift", "build.sh", "Package.swift", page.marker]
             + GameAndroid.paths(for: project)
     }
 
@@ -182,8 +210,10 @@ enum ScreenKit {
     }
 
     static var stamp: String {
-        // Both ways the app around the page is written: a change to either is a change of Lamp's.
-        let hosts: String = (GameKit.webApp(scheme: scheme, canvas: nil) ?? "") + (GameKit.webApp(scheme: scheme, canvas: (1920, 1080)) ?? "")
+        // Both ways the app around the page is written, at each kind's address: a change to either is a change of Lamp's.
+        let hosts: String = [screenPage, webAppPage].map { page in
+            (GameKit.webApp(scheme: page.scheme, canvas: nil) ?? "") + (GameKit.webApp(scheme: page.scheme, canvas: (1920, 1080)) ?? "")
+        }.joined()
         let rest: String = (GameKit.page?.text ?? "") + buildSh + packageSwift
         return hosts + rest + TVTemplate.lampJS + GameAndroid.stamp
     }
@@ -235,9 +265,10 @@ extension Agent.Rules {
     at the end of your turn, opens the screen where Try On points (its window on this Mac, a simulator, an Android \
     emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, and leave .lamp/ alone. \
     The page fills the screen it's on, whatever its shape (the design rule below). Where else it's shown is the \
-    person's to ask for: when they want it somewhere else, call make_app_for with `devices` every device it's to be on \
-    ("mac", "ipad", "android", "android-tv", "tv"…: a page goes wherever the table of devices gives a web host) and \
-    `made` "web"; it stays the same screen, and the wish's other apps stay as they are.
+    person's to ask for: when they want it somewhere else, call make_app_for with its folder in `app` ("." when it's the \
+    wish's own folder), `kind` "app", `made` "web" and `devices` every device it's to be on ("mac", "ipad", "android", \
+    "android-tv", "tv"…: a page goes wherever the table of devices gives a web host); it stays the same app, with its \
+    saves, and the wish's other apps stay as they are.
     """ }
 
     /// How a screen looks: like a TV app's page (`tvDesign`), but filling whatever it's shown on rather than a fixed

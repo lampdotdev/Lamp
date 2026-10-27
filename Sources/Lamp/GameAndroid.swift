@@ -36,7 +36,7 @@ enum GameAndroid {
         try Template.write(Template.androidGradleProperties, to: "\(folder)/gradle.properties", for: project)
         try Template.write(Template.androidVersionsCatalogue, to: "\(folder)/gradle/libs.versions.toml", for: project)
         try Template.write(talks ? wishBuildGradle : aloneBuildGradle, to: "\(folder)/app/build.gradle.kts", for: project)
-        let screen = project.platform == .screen
+        let screen = ScreenKit.isScreen(project)
         try Template.write(screen ? screenManifest : manifest, to: "\(folder)/app/src/main/AndroidManifest.xml", for: project)
         let activity = screen ? screenActivity : gameActivity
         try Template.write((talks ? activity : withoutWish(activity: activity)).replacingOccurrences(of: "{{PACKAGE}}", with: package),

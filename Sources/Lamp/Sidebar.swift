@@ -331,8 +331,9 @@ final class SidebarServer {
             toolbar.canPublish = Publish.canPublish(project) && made ? true : nil
             // Play and Stop where the wish isn't a Mac window beside this chat (that one is open, and quits as a window does).
             // Only once there's something to play: a first build opens the app itself.
+            // A wish with no app at all has nothing to play.
             let open = store.isWishOpen(project)
-            if !Self.besideItsApp(project, place: history?.place), open || made {
+            if !Self.besideItsApp(project, place: history?.place), open || made, !store.apps(of: project).isEmpty {
                 toolbar.play = SidebarPlay(open: open, enabled: true, help: open ? "Quit \(project.name)" : "Use \(project.name)")
             }
             state.toolbar = toolbar
@@ -1451,7 +1452,8 @@ final class LocalChat: ChatLink {
         guard let server, let project = Store.shared.projects.first(where: { $0.id == projectID }) else { return }
         var state = server.state(for: project)
         // A Mac app's chat has no Play beside its window; here, away from it, Play opens it, and the chat goes beside it.
-        if state.toolbar != nil, state.toolbar?.play == nil,
+        // A wish with no app at all has nothing to play, here as anywhere.
+        if state.toolbar != nil, state.toolbar?.play == nil, !Store.shared.apps(of: project).isEmpty,
            Store.shared.isWishOpen(project) || server.histories[project.id]?.value?.made == true {
             let open = Store.shared.isWishOpen(project)
             state.toolbar?.play = SidebarPlay(open: open, enabled: true, help: open ? "Quit \(project.name)" : "Use \(project.name)")

@@ -117,16 +117,28 @@ opens the app, and a request naming none leaves that as it is), checked
 against the table and the wish's apps (`WishMember`: each made one with its id and folder, and each still waiting, with
 what it is: `AppTarget`, its kind, devices, integration, Try On family and places, and `code`, the key of what it's
 written in), planned (`AppPlanner`: `AppPlan.add`, `.update`, `.remove` or `.cancel`) and carried out as planned by
-`Store.agentKind` and `agentRemove`. `make_app_for` gives one app, the `devices` it's to be on and whether it's `made` "web"
-or "native": it updates the wish's app of the same code (changed in place by `convert`, its code and data kept) or adds
-one beside the others, and never takes an app away. A device's own app is a code of its own per integration, one of the wish's apps beside the others, one per wish
-for now. `remove_app` finds an app by its folder or own word, then by any device it's on through the table (unique,
-several or none, each said as such), takes a made one away reversibly, takes one still waiting off the list, and never
-takes the wish's only made app. Today's kinds are read in these terms in one place, `AppKinds`, which holds only the
+`Store.agentKind` and `agentRemove`. `make_app_for` gives one app: what it is (`kind`, `AppIntent`: a game or an app,
+never read off the devices), whether it's `made` "web" or "native", and the `devices` it's to be on. With `app`, the
+folder of one of the wish's apps (`AppPlanner.select`: exactly one folder, or "." for the app in the wish's own folder,
+and nothing else names one), that app is changed in place (`convert`, `setPlaces`, `setFamily`, its folder and data
+kept); a wish with no app gets its first in a folder of its own, a new wish's first app too; one more beside the others
+is `another` alone (`AppPlanner.decide`), and an existing app is never picked by its code, kind or devices. It never
+takes an app away. `remove_app` finds an app by its folder, then its own
+word, then by any device it's on through the table (unique, several or none, each said as such), takes a made one away
+reversibly, takes one still waiting off the list, and takes the last app too.
+
+A wish is what keeps its name, chat, history and icon: with no app left it's a wish with no app, never a draft. Its own
+folder says so with a mark the versions keep (`Parts.wishOnly`, `.lamp-wish`), written before a new wish's first app
+goes in a folder of its own and whenever the wish's own folder stops holding an app, so `LampProject.holdsApp` is false
+for it and nothing writes an app there by itself; a version from before the mark brings back what that version held.
+Such a wish's meta.json says layout 3 (`Template.layout`, `NewerWish`), as does one with a web app, whose kind and
+folder a Lamp that reads layout 2 doesn't know: that Lamp leaves both alone rather than take them for an empty draft. Its prompt is `Agent.emptyWishPrompt`, the desk calls it "No apps"
+(`WishPlace.of`), and its chat has no Try On or Play.
+Today's kinds are read in these terms in one place, `AppKinds`, which holds only the
 translation from rows to today's recipes: a native app is the kind of its rows' one `native.code` (Apple's a Mac app,
 an iPhone app or one for both by where its rows open), built with any row it comes with (`Place.comesWith`: the watch
-with the iPhone); until Lamp has one host for every page, a web app is the kind of page whose places reach every row,
-the wish's own when it has one that does, else the one that reaches the fewest other places, and a device's own app on
+with the iPhone); a web game is a game, and a web app is a web app (`Platform.webApp`) or, on Samsung or LG TVs alone, a TV app, a
+screen made before being kept as one, and a device's own app on
 one integration's device alone; what no kind reaches is refused, saying why. Which device is which, which family a
 word means and which code a row is are the table's alone, so a row added to it needs nothing in `AppKinds`. A game's own wish told its conversations to
 list places among the devices, and then in a `places` of their own, before, so its prompt is recorded as "app apps"
