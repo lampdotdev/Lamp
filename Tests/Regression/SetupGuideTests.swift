@@ -157,6 +157,26 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertTrue(guided.atPassphrase)
     }
 
+    /// Skipped while the device isn't answering: the steps go on only once it answers again, so the next request has
+    /// a connection, and still nothing claims a restart.
+    func testASkipWhileTheDeviceIsAwayWaitsForItToAnswer() async throws {
+        let rejoin = try parsed("""
+          {"do": "rejoin", "ask": "Unplug it.", "button": "Not Needed", "every": 1, "done": "{name} is back on"},
+          {"do": "request", "uri": "open-app", "done": "Asked {name} to open it"},
+          {"do": "passphrase", "ask": "Type it."}
+        """)
+        let device = FakeDevice()
+        device.connectResults = [.unreachable, .unreachable, .unreachable, nil]
+        let guided = GuidedSetup()
+        guided.start(rejoin, name: "Den TV", connection: device)
+        try await until { device.connects >= 1 }
+        guided.confirm()
+        await guided.finished()
+        XCTAssertNil(guided.failure)
+        XCTAssertEqual(guided.lines.map(\.text), ["Asked Den TV to open it"])
+        XCTAssertTrue(guided.atPassphrase)
+    }
+
     private func parsed(_ steps: String) throws -> SetupSteps {
         let body = "```lamp-setup\n{\"connection\": \"webos-second-screen\", \"steps\": [\(steps)]}\n```"
         return try SetupSteps.parse(skill: body).get()
@@ -193,14 +213,20 @@ private final class FakeDevice: SetupConnection {
     var connects = 0
     var closed = false
 
+    /// Whether the last connect let Lamp in: a request without it finds no one there, as on a real socket.
+    var connected = false
+
     func connect() async throws {
         connects += 1
-        if !connectResults.isEmpty { if let result = connectResults.removeFirst() { throw result }; return }
+        connected = false
+        if !connectResults.isEmpty { if let result = connectResults.removeFirst() { throw result }; connected = true; return }
         if let connectFailure { throw connectFailure }
+        connected = true
     }
 
     func request(_ uri: String, payload: [String: Any]) async throws -> [String: Any] {
         sent.append(uri)
+        guard connected else { throw SetupConnectionError.unreachable }
         if let failure = failing[uri] { throw failure }
         guard uri == "list" else { return ["returnValue": true] }
         return lists.count > 1 ? lists.removeFirst() : lists.first ?? [:]

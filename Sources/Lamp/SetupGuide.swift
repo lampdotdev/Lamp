@@ -231,14 +231,18 @@ final class GuidedSetup: ObservableObject {
                     button = step.button
                     link = step.link
                     var gone = false
-                    while !skipped {
+                    var connected = false
+                    while true {
                         do {
                             try await connection.connect()
+                            connected = true
                             if gone { break }
                         } catch SetupConnectionError.unreachable {
                             gone = true
+                            connected = false
                         }
-                        if skipped { break }
+                        // A skip goes on only with the device answering: the next step talks to it.
+                        if skipped && connected { break }
                         try await Task.sleep(for: .seconds(step.every))
                     }
                     button = nil
