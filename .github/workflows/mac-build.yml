@@ -4,15 +4,10 @@
 # chosen on purpose while it's a preview: it's the Xcode the team builds and generates apps with.
 name: Mac build
 
+# On every pull request, whatever it touches: main's ruleset requires the build and test checks, and a check that
+# never reports would hold a pull request forever.
 on:
   pull_request:
-    paths:
-      - "Sources/**"
-      - "Tests/**"
-      - "Resources/**"
-      - "Package.swift"
-      - "Package.resolved"
-      - ".github/**"
 
 concurrency:
   group: mac-build-${{ github.event.pull_request.number }}
