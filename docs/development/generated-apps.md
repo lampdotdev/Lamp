@@ -95,7 +95,11 @@ This is how a new app is changed from its first build on:
 as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
 `Store.present`; else at the agent's first look, or at the end of that turn), Lamp's panel, where its chat was until then, closes and the app opens the chat beside its content, so the rest of the turn's passes go
 in while the person watches (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the panel
-closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
+closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). A wish whose apps are all
+in folders of their own has its chat beside its one Mac app with windows (a game in Game/), the same way
+(`Store.chatApp`): that app's sidebar connects as the wish (`SidebarServer.accepted`), so it shows the wish's chat,
+the only one there is, and everything keyed by the chat (the panel closing, `isConnected`, pointing) goes by the
+wish while the window and the app's copies go by that app. Lamp asks the app
 with a file in its runtime folder for a copy still starting and a notification for one already running
 (`MagicPanel.openChat`, `LampSidebar.openForLamp`). The first time the person closes the chat, a popover points at
 the wand to say how to get back (`LampSidebar.coach`, once per app). The

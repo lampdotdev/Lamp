@@ -183,7 +183,8 @@ final class SidebarServer {
             close(socket)
             return
         }
-        let connection = Connection(socket: socket, projectID: project.id, server: self)
+        // A wish's Mac app in a folder of its own shows the wish's chat, which is the only one it has.
+        let connection = Connection(socket: socket, projectID: Store.shared.wish(of: project).id, appID: project.id, server: self)
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
         MagicPanel.shared.chatOpenedInApp(project)
@@ -367,9 +368,11 @@ final class SidebarServer {
         return state
     }
 
-    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window.
+    /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window, the
+    /// wish's own or its one Mac app in a folder (`Store.chatApp`).
     static func besideItsApp(_ project: LampProject, place: WishPlace?) -> Bool {
-        project.holdsApp && project.destination == .mac && project.hasMac && (place ?? .window) == .window
+        let app = Store.shared.chatApp(of: project)
+        return app.holdsApp && app.destination == .mac && app.hasMac && (place ?? .window) == .window
     }
 
     /// Where each chat was being read, the first line in view, or none at its end (`SidebarCommand.scrolled`).
@@ -1239,7 +1242,7 @@ final class SidebarServer {
             // anything else, an app built before the chat could go beside it included, is opened as Play opens it.
             let beside = Self.besideItsApp(project, place: histories[project.id]?.value?.place)
             Task {
-                if beside, FileManager.default.fileExists(atPath: project.installedURL.path), await MagicPanel.chatsInApp(project) {
+                if beside, FileManager.default.fileExists(atPath: store.chatApp(of: project).installedURL.path), await MagicPanel.chatsInApp(project) {
                     return store.change(project)
                 }
                 store.openWish(project)
@@ -1304,6 +1307,8 @@ final class SidebarServer {
     fileprivate final class Connection {
         let fd: Int32
         let projectID: String
+        /// The app whose window this chat is in: the wish's own, or one of its apps in a folder, which pointing reaches.
+        let appID: String
         weak var server: SidebarServer?
         private var source: DispatchSourceRead?
         private var buffer = Data()
@@ -1319,9 +1324,10 @@ final class SidebarServer {
         /// Which shape of the chat the sidebar reads (`SidebarCommand.hello`); 1 until it says.
         fileprivate var version = 1
 
-        init(socket: Int32, projectID: String, server: SidebarServer) {
+        init(socket: Int32, projectID: String, appID: String, server: SidebarServer) {
             fd = socket
             self.projectID = projectID
+            self.appID = appID
             self.server = server
             // A sidebar that went away mid-write mustn't end Lamp.
             var on: Int32 = 1
@@ -1355,6 +1361,11 @@ final class SidebarServer {
                     push(force: true)
                     // A starter's first chat: what it offers to change arrives once the chat is there to see.
                     Store.shared.offerStarterChanges(projectID, after: 0.9)
+                } else if case .point = command, let app = Store.shared.projects.first(where: { $0.id == appID }), app.isPart {
+                    // Pointing is at the window this chat is beside, not whichever app stands for the wish.
+                    MagicPanel.shared.point(in: app, fromLamp: false)
+                } else if case .pointAgain = command, let app = Store.shared.projects.first(where: { $0.id == appID }), app.isPart {
+                    MagicPanel.shared.pointAgain(in: app)
                 } else {
                     server?.handle(command, from: projectID)
                 }
