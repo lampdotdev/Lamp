@@ -87,10 +87,13 @@
     if (typeof p === 'string') p = App.person(p);
     return '--c:' + p.color + ';--c-rgb:' + p.rgb + ';--c-ink:' + p.ink;
   };
+  // The family's people, without its pets: the ones with a day in the calendar.
+  App.humans = function () { return D.people.filter(function (p) { return !p.pet; }); };
   App.avatar = function (p, size, cls) {
     if (typeof p === 'string') p = App.person(p);
     size = size || 48;
-    return '<span class="avatar ' + (cls || '') + '" style="' + App.pstyle(p) + ';width:' + App.rem(size) + ';height:' + App.rem(size) + ';font-size:' + App.rem(size * 0.46) + '">' + (p.id === 'family' ? '★' : p.name[0]) + '</span>';
+    var face = p.id === 'family' ? '★' : p.pet ? (p.emoji || '🐾') : (p.name[0] || '?');
+    return '<span class="avatar ' + (cls || '') + '" style="' + App.pstyle(p) + ';width:' + App.rem(size) + ';height:' + App.rem(size) + ';font-size:' + App.rem(size * 0.46) + '">' + face + '</span>';
   };
   App.dots = function (ids, size) {
     return '<span class="dots">' + ids.map(function (id) { return '<i style="' + App.pstyle(id) + (size ? ';width:' + App.rem(size) + ';height:' + App.rem(size) : '') + '"></i>'; }).join('') + '</span>';
@@ -98,7 +101,7 @@
 
   // ------------------------------------------------------------ calendar helpers
   App.events = function () { return D.events.slice(); };
-  App.isFamily = function (e) { return e.people.length >= D.people.length; };
+  App.isFamily = function (e) { return e.people.length >= App.humans().length; };
   App.evColor = function (e) { return App.isFamily(e) ? D.family : App.person(e.people[0]); };
   App.timedOn = function (day, pid) {
     var s = App.dayStart(day), e = App.addDays(s, 1);

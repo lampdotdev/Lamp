@@ -30,7 +30,7 @@
   // Where each person's day is, from the calendar: what they're at now, else when they're next busy.
   function presence() {
     var now = App.now();
-    return D.people.map(function (p) {
+    return App.humans().map(function (p) {
       var list = App.timedOn(now, p.id).filter(function (e) { return e.end > now; });
       var cur = list.filter(function (e) { return e.start <= now; })[0], next = list.filter(function (e) { return e.start > now; })[0];
       var free = !cur;
@@ -76,7 +76,7 @@
 
   function lanes() {
     var now = App.now();
-    return D.people.map(function (p) {
+    return App.humans().map(function (p) {
       var list = App.timedOn(now, p.id).filter(function (e) { return e.end > now; });
       var shown = list.slice(0, 3), more = list.length - shown.length;
       return '<div class="h-lane" style="' + App.pstyle(p) + '">' +
@@ -139,7 +139,7 @@
     el.querySelector('.h-weather').innerHTML = weather();
     el.querySelector('.h-presence').innerHTML = presence();
     el.querySelector('.h-hero-slot').innerHTML = hero();
-    el.querySelector('.h-lanes').style.setProperty('--lanes', D.people.length);
+    el.querySelector('.h-lanes').style.setProperty('--lanes', App.humans().length);
     el.querySelector('.h-lanes').innerHTML = lanes();
     el.querySelector('.h-chores').innerHTML = chores();
     el.querySelector('.h-shop').innerHTML = shopping();
@@ -159,7 +159,7 @@
           '<div class="h-clock" data-go="calendar"></div>' +
           '<div class="h-weather"></div>' +
           '<div class="h-presence"></div>' +
-          '<div class="h-main"><div class="h-hero-slot"></div><div class="h-lanes" style="--lanes:' + D.people.length + '"></div></div>' +
+          '<div class="h-main"><div class="h-hero-slot"></div><div class="h-lanes" style="--lanes:' + App.humans().length + '"></div></div>' +
           '<div class="h-side">' +
           '  <button class="h-photo" data-go="photos"><div class="h-photo-stage"></div><div class="h-photo-cap"></div></button>' +
           '  <button class="h-chores card" data-go="tasks"></button>' +

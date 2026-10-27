@@ -315,3 +315,18 @@ button:focus, a:focus { outline: none; }
 .ed-note { font-size: 1.0625rem; color: var(--mute); margin-top: 1rem; }
 .narrow .ed-row { flex-wrap: wrap; }
 .narrow .ed-name { flex-basis: calc(100% - 4.25rem); }
+
+/* The first run (js/views/setup.js): a welcome, then the family's own Home HQ in a few steps. */
+.setup .sheet-actions--start { justify-content: flex-start; flex-wrap: wrap; }
+.setup .sheet-actions { flex-wrap: wrap; }
+.setup .btn[disabled] { opacity: .35; }
+.setup-welcome { padding: 1rem 0 .5rem; }
+.setup-title { font-size: 4rem; line-height: .98; margin: .5rem 0 1.25rem; max-width: 14ch; }
+.setup .sheet-p { margin: 0 0 1.25rem; max-width: 42rem; }
+.setup .chips + .sheet-actions, .setup .ed-list + .sheet-actions { margin-top: 1.5rem; }
+.setup-chosen { display: flex; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+.setup .demo-find { margin-top: 0; }
+.setup-results { margin-top: 1rem; }
+.setup-chores .chip span { font-size: 1.375rem; }
+html.narrow .setup-title { font-size: 2.75rem; }
+

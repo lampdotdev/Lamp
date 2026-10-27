@@ -1,4 +1,4 @@
-// One Home HQ on every screen: the copies of this screen (the Mac, the kitchen iPad, the TV, the photo frame) keep the
+// One Home HQ on every screen: the copies of this screen (the Mac, the kitchen tablet, the TV, the photo frame) keep the
 // family's own data the same through Lamp's shared collections (LampStore.shared in Web/lamp.js), merged item by item,
 // so two devices changing different things never lose either. What's here is only the family's own: the examples are
 // made on each device and never shared, so a copy opened for the first time can't put them over real data.
@@ -63,7 +63,7 @@
 
   function share(dry) {
     if (taking) return;
-    if (D.edited.people) sync('people', D.people.map(function (p, i) { return Object.assign(plain(p, ['id', 'name', 'color', 'rgb', 'ink', 'age']), { order: i }); }), null, dry);
+    if (D.edited.people) sync('people', D.people.map(function (p, i) { return Object.assign(plain(p, ['id', 'name', 'color', 'rgb', 'ink', 'age', 'pet', 'emoji']), { order: i }); }), null, dry);
     if (D.edited.chores || D.cleared) sync('chores', D.chores.map(function (c) { return plain(c, ['id', 'r', 'who', 'title', 'emoji', 'stars']); }), null, dry);
     sync('groceries', D.groceries.map(function (g) { return plain(g, GROCERY); }).filter(function (g) { return !g.ex || original[g.id] !== json(g); }),
          exampleIds(D.examples.groceries), dry);
@@ -120,16 +120,19 @@
 
   // ------------------------------------------------------------ what the copies have, into DATA
   function take() {
-    var examplesBack = false;
+    var examplesBack = false, newPlace = false;
     taking = true;
     try {
       var settings = {};
       S.settings.all().forEach(function (s) { settings[s.id] = s.value; });
+      var where = JSON.stringify(D.settings.place || null);
       ['place', 'calendars', 'calendarsBy', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
+      // A place chosen on another screen: its weather here too.
+      newPlace = where !== JSON.stringify(D.settings.place || null);
       if (settings.cleared && !D.cleared) D.clearExamples();
 
       var people = S.people.all().sort(function (a, b) { return a.order - b.order; });
-      if (people.length) { D.people = people; D.edited.people = true; D.ALL = people.map(function (p) { return p.id; }); }
+      if (people.length) { D.people = people; D.edited.people = true; D.ALL = D.humanIds(); }
 
       var chores = S.chores.all();
       if (chores.length || D.cleared) { D.chores = chores; D.edited.chores = true; }
@@ -170,6 +173,7 @@
     share(true);
     // The album turned off on another copy: back to the examples, as on the copy where it was turned off.
     if (examplesBack) App.loadPhotos();
+    if (newPlace) App.loadWeather();
     App.emit('data');
     App.rerender();
   }
