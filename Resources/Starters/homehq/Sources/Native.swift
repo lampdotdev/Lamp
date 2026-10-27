@@ -1,3 +1,4 @@
+import EventKit
 import Foundation
 
 /// What the page asks of this Mac, iPhone or iPad with `LampNative.call(name, args)` in Web/: the person's own
@@ -5,20 +6,13 @@ import Foundation
 /// turns it on in the page's settings, so the system asks for access then and not as the screen opens.
 enum Native {
     @MainActor static func register() {
-        // The calendars' names, for the settings sheet.
-        LampNative.on("calendars") { _ in try await LampCalendar.calendars() }
+        // The calendars, for the settings sheet: each with its own id and where it's from, since two can share a name
+        // (a "Family" in iCloud and a "Family" subscribed to from Google).
+        LampNative.on("calendars") { _ in try await Calendars.list() }
 
-        // Events from a week ago to six weeks ahead, in the page's shape (js/data.js): ISO dates, the calendar's name.
+        // Events from a week ago to `days` ahead from the chosen calendars, in the page's shape (js/data.js).
         LampNative.on("events") { args in
-            let now = Date()
-            let from = Calendar.current.date(byAdding: .day, value: -7, to: Calendar.current.startOfDay(for: now)) ?? now
-            let to = Calendar.current.date(byAdding: .day, value: args["days"] as? Int ?? 42, to: now) ?? now
-            let names = args["calendars"] as? [String]
-            let iso = ISO8601DateFormatter()
-            return try await LampCalendar.events(from: from, to: to, calendars: names?.isEmpty == false ? names : nil).map { event in
-                ["id": event.id, "title": event.title, "start": iso.string(from: event.start), "end": iso.string(from: event.end),
-                 "allDay": event.isAllDay ? "1" : "", "loc": event.location ?? "", "notes": event.notes ?? "", "calendar": event.calendar]
-            }
+            try await Calendars.events(in: args["calendars"] as? [String] ?? [], days: args["days"] as? Int ?? 42)
         }
 
         // The person's albums with something in them, for the settings sheet.
@@ -53,3 +47,47 @@ enum Native {
         var errorDescription: String? { "Photos isn't allowed." }
     }
 }
+
+/// The person's calendars, read with EventKit off the main thread: EventKit waits on the system's calendar service, which
+/// holds it while it asks for access. Calendars are chosen by their identifier; a name saved by an earlier version still
+/// finds its calendar.
+enum Calendars {
+    nonisolated(unsafe) private static let store = EKEventStore()
+
+    private static func authorize() async throws {
+        if EKEventStore.authorizationStatus(for: .event) == .fullAccess { return }
+        guard try await store.requestFullAccessToEvents() else { throw Refused(what: "Calendars") }
+    }
+
+    static func list() async throws -> [[String: String]] {
+        try await authorize()
+        return await Task.detached {
+            store.calendars(for: .event).map { ["id": $0.calendarIdentifier, "title": $0.title, "source": $0.source?.title ?? ""] }
+        }.value
+    }
+
+    static func events(in chosen: [String], days: Int) async throws -> [[String: String]] {
+        try await authorize()
+        return await Task.detached {
+            let calendars = store.calendars(for: .event).filter { chosen.contains($0.calendarIdentifier) || chosen.contains($0.title) }
+            guard !calendars.isEmpty else { return [] }
+            let now = Date()
+            let from = Calendar.current.date(byAdding: .day, value: -7, to: Calendar.current.startOfDay(for: now)) ?? now
+            let to = Calendar.current.date(byAdding: .day, value: days, to: now) ?? now
+            let iso = ISO8601DateFormatter()
+            return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: calendars))
+                .sorted { $0.startDate < $1.startDate }
+                .map { e in
+                    ["id": e.eventIdentifier ?? UUID().uuidString, "title": e.title ?? "", "start": iso.string(from: e.startDate),
+                     "end": iso.string(from: e.endDate), "allDay": e.isAllDay ? "1" : "", "loc": e.location ?? "", "notes": e.notes ?? "",
+                     "calendar": e.calendar.title]
+                }
+        }.value
+    }
+
+    struct Refused: LocalizedError {
+        let what: String
+        var errorDescription: String? { "\(what) isn't allowed." }
+    }
+}
+

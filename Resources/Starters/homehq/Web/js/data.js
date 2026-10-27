@@ -254,7 +254,7 @@ window.DATA = (function () {
     weather: weather, photos: photos,
     // The settings sheet's choices: the weather's place, the family's own calendars and photos.
     // `example`: this screen was asked to show the example family rather than the welcome.
-    settings: { place: null, calendars: null, calendarsBy: null, album: null, albumBy: null, example: false },
+    settings: { place: null, calendars: null, calendarName: null, calendarsBy: null, album: null, albumBy: null, example: false },
     cleared: false,
     edited: { people: false, chores: false },
     _gid: function () { return 'u' + Date.now().toString(36) + (++gid); },

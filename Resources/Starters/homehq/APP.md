@@ -26,7 +26,8 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - **First run** (`views/setup.js`): a screen that isn't set up opens on a welcome: Set up my family, or Show me an
   example. The setup asks who's at home (people and pets, who earns stars), where they live, the family's shared
   calendar, an album, and a few chores to start; finishing takes the examples away for good, and every other
-  copy of the screen follows. A look at a fresh copy shows the welcome over the example family (`App.setup`,
+  copy of the screen follows. A family already made in the editor, and a calendar or album already chosen, are where
+  the setup starts. A look at a fresh copy shows the welcome over the example family (`App.setup`,
   `DATA.isSetUp`, `settings.example`).
 - **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a colour each, Stars for those who
   earn them, and pets, with a picture instead of a colour) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
@@ -100,8 +101,8 @@ either way up and a phone, and reflows for each.
   with `hi` and `lo`; `example` until a place is chosen.
 - `photos`: `{ seed or src, o ('l' or 'p'), date 'YYYY-MM-DD', place, from (a person), tag (photos taken together),
   fav }`.
-- `settings`: `place` ({ name, lat, lon }), `calendars` (null off, or the family's calendar as `[name]`; [] all, from
-  before), `album` (null off, or its id), `example` (this screen chose the example family over the welcome; not shared).
+- `settings`: `place` ({ name, lat, lon }), `calendars` (null off, or the family's calendar as `[id]`, its
+  EventKit identifier, with its name in `calendarName`; a name or [] all, from before, still works), `album` (null off, or its id), `example` (this screen chose the example family over the welcome; not shared).
 
 Examples are made afresh on each device at each launch, relative to today, until the family is set up; they're never
 shared. What the family changes is the same on every copy of the screen (the Mac, the kitchen tablet, the TV, the

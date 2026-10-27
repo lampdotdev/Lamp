@@ -75,7 +75,7 @@
     sync('ticks', D.chores.filter(function (c) { return c.done; }).map(function (c) { return { id: day + ':' + c.id, day: day, chore: c.id, by: c.doneBy || '' }; }), ALL_GONE, dry);
     sync('stars', Object.keys(D.stars).map(function (k) { return { id: k, stars: D.stars[k], week: D.week[k] || [0, 0, 0, 0, 0, 0, 0] }; }), null, dry);
     sync('settings', [{ id: 'place', value: D.settings.place }, { id: 'calendars', value: D.settings.calendars },
-                      { id: 'calendarsBy', value: D.settings.calendarsBy || null }, { id: 'album', value: D.settings.album },
+                      { id: 'calendarsBy', value: D.settings.calendarsBy || null }, { id: 'calendarName', value: D.settings.calendarName || null }, { id: 'album', value: D.settings.album },
                       { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'cleared', value: D.cleared }], null, dry);
     sync('favs', D.photos.filter(function (p) { return p.fav; }).map(function (p) { return { id: p.id || p.seed }; }), null, dry);
     if (!dry) publishCalendar();
@@ -126,7 +126,7 @@
       var settings = {};
       S.settings.all().forEach(function (s) { settings[s.id] = s.value; });
       var where = JSON.stringify(D.settings.place || null);
-      ['place', 'calendars', 'calendarsBy', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
+      ['place', 'calendars', 'calendarName', 'calendarsBy', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
       // A place chosen on another screen: its weather here too.
       newPlace = where !== JSON.stringify(D.settings.place || null);
       if (settings.cleared && !D.cleared) D.clearExamples();

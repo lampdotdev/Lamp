@@ -75,6 +75,13 @@
     return named.length ? named.map(function (p) { return p.id; }) : D.ALL.slice();
   }
 
+  // A calendar as the family sees it: its name, and where it's from when another has the same name ("Family · iCloud").
+  // The list is what LampNative's "calendars" gives: { id, title, source }.
+  App.calendarLabel = function (list, c) {
+    var twin = list.filter(function (x) { return x.title === c.title; }).length > 1;
+    return c.title + (twin && c.source ? ' · ' + c.source : '');
+  };
+
   // Which copy of the screen reads the family's calendars and album: the one where they were turned on. The others
   // (another Mac, the iPad, the TV) show what it publishes (js/sync.js) and never read their own, so turning them on
   // once never has every device asking for the person's calendars or photos.

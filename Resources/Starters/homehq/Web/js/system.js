@@ -90,8 +90,10 @@
     // Turned on at another screen: this one shows what that one reads.
     if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
     // The family's one calendar: an event goes to whoever its title names, else to everyone (js/live.js).
-    var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? chosen[0] : 'All calendars') + '</p>' : '';
-    if (S.calendars) body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !!chosen && chosen.length === 1 && chosen[0] === c); }));
+    var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? D.settings.calendarName || chosen[0] : 'All calendars') + '</p>' : '';
+    if (S.calendars) body += grid(S.calendars.map(function (c) {
+      return btn('data-cal="' + App.esc(c.id) + '"', App.calendarLabel(S.calendars, c), !!chosen && chosen.length === 1 && chosen[0] === c.id);
+    }));
     else body += grid([btn('data-cal-on', chosen ? 'Change calendar' : 'Show our calendar')]);
     if (chosen) body += grid([btn('data-cal-off', 'Stop showing it')]);
     return sec('Calendars', body);
@@ -163,7 +165,8 @@
       return;
     }
     if (d.cal != null) {
-      D.settings.calendars = [d.cal]; D.settings.calendarsBy = App.me(); S.calendars = null;
+      var picked = S.calendars.filter(function (c) { return c.id === d.cal; })[0];
+      D.settings.calendars = [d.cal]; D.settings.calendarName = picked ? picked.title : d.cal; D.settings.calendarsBy = App.me(); S.calendars = null;
       App.emit('data'); App.loadCalendars();
       return App.openSettings();
     }
