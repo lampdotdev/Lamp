@@ -638,42 +638,64 @@ struct IntegrationRunner {
     /// waiting won't mend (the device's certificate changed, or it rejected the sign-in), which the card shows as a
     /// failure rather than waiting.
     func check(_ step: Integration.Step) async -> (passed: Bool, why: String?, read: String?, failed: Bool) {
+        switch await evaluate(step.check) {
+        case .holds(let read): (true, nil, read, false)
+        case .waiting(let why), .away(let why): (false, why, nil, false)
+        case .rejected(let why): (false, why, nil, true)
+        }
+    }
+
+    /// What a check found, told apart the way a restart needs it told (`GuidedSetup`): the device answering otherwise,
+    /// the device not answering at all, and the device answering but not to Lamp.
+    enum Verdict: Equatable {
+        /// Every condition held, with the first value read.
+        case holds(String?)
+        /// The device answered, or the person hasn't typed what's needed yet, and a condition doesn't hold.
+        case waiting(String)
+        /// The device didn't answer.
+        case away(String)
+        /// The device answered, but its certificate isn't the one kept or it turned the sign-in away.
+        case rejected(String)
+    }
+
+    func evaluate(_ conditions: [Integration.Condition]) async -> Verdict {
         await prepare()
         let values = values()
+        let waiting = "Waiting for \(device.name)…"
         var read: String?
-        for condition in step.check {
+        for condition in conditions {
             if let key = condition.field {
-                guard values["field:" + key]?.isEmpty == false else { return (false, "Waiting for what you type.", nil, false) }
+                guard values["field:" + key]?.isEmpty == false else { return .waiting("Waiting for what you type.") }
             } else if condition.signedIn == true {
-                guard values["signIn"] != nil else { return (false, "Waiting for you to sign in.", nil, false) }
+                guard values["signIn"] != nil else { return .waiting("Waiting for you to sign in.") }
             } else if let port = condition.tcp {
-                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return (false, "Waiting for \(device.name)…", nil, false) }
+                guard let address = try? address, await DeviceProbe.tcp(address, port: port) else { return .away(waiting) }
             } else if let request = condition.http {
-                let answer: DeviceHTTP.Answer?
+                let answer: DeviceHTTP.Answer
                 do {
                     answer = try await send(request, try address, values, DeviceTLS.Pins(deviceID: device.id))
-                    if let answer, answer.ok { await learnRoot(request, answer) }
+                    if answer.ok { await learnRoot(request, answer) }
                 } catch let refusal as DeviceTLS.Refusal {
-                    return (false, refusal.localizedDescription, nil, true)
+                    return .rejected(refusal.localizedDescription)
                 } catch {
-                    answer = nil
+                    return .away(waiting)
                 }
                 // A device that turns the password away keeps doing so however long Lamp waits: the person has to
                 // type it again, so the card says so and stops checking.
-                if request.auth != nil, answer?.status == 401 {
-                    return (false, "The device rejected the sign-in. Check the user name and password, then try again.", nil, true)
+                if request.auth != nil, answer.status == 401 {
+                    return .rejected("The device rejected the sign-in. Check the user name and password, then try again.")
                 }
-                guard let answer, answer.ok else { return (false, "Waiting for \(device.name)…", nil, false) }
+                guard answer.ok else { return .waiting(waiting) }
                 if condition.json != nil || condition.xml != nil {
                     let value = DeviceHTTP.value(json: condition.json, xml: condition.xml, in: answer)
-                    guard let value else { return (false, "\(device.name) doesn't say yet.", nil, false) }
-                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return (false, "Waiting for \(device.name)…", nil, false) }
-                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return (false, "Waiting for \(device.name)…", nil, false) }
+                    guard let value else { return .waiting("\(device.name) doesn't say yet.") }
+                    if let equals = condition.equals, value.caseInsensitiveCompare(equals) != .orderedSame { return .waiting(waiting) }
+                    if let contains = condition.contains, !value.localizedCaseInsensitiveContains(contains) { return .waiting(waiting) }
                     read = read ?? value
                 }
             }
         }
-        return (true, nil, read, false)
+        return .holds(read)
     }
 
     /// A step passed on this device: it's kept, with the step and what the step read.

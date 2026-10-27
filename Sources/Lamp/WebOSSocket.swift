@@ -10,7 +10,7 @@ import Security
 /// The TV signs its own certificate. As the Connect SDK does, the one it shows when the person lets Lamp in is kept with
 /// the client key, and the key is offered only to a TV showing that certificate again; one showing another is asked
 /// afresh, on its screen, without the old key.
-final class WebOSSocket: NSObject, SetupConnection, URLSessionDelegate, @unchecked Sendable {
+final class WebOSSocket: NSObject, SocketSetupConnection, URLSessionDelegate, @unchecked Sendable {
     static let permissions = ["LAUNCH", "READ_INSTALLED_APPS"]
 
     static func clientKeyURL(_ id: String) -> URL {

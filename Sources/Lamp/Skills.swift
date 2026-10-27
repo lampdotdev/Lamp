@@ -13,6 +13,9 @@ enum Skills {
         let name: String
         let description: String
         let body: String
+        /// The frontmatter's other lines, by name: what a skill says of itself to Lamp beyond the agent's two (a setup
+        /// guide's `setup-for`, `SetupGuides`).
+        var meta: [String: String] = [:]
     }
 
     /// Lamp's own skills, from its bundle.
@@ -47,7 +50,8 @@ enum Skills {
         }
         guard let name = fields["name"], !name.isEmpty, let description = fields["description"], !description.isEmpty else { return nil }
         return Skill(name: name, description: description,
-                     body: lines[(close + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+                     body: lines[(close + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines),
+                     meta: fields.filter { $0.key != "name" && $0.key != "description" })
     }
 
     /// The skills a prompt offers, by the kind of app it's for. How each kind of app looks is for the apps that have

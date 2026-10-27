@@ -426,6 +426,20 @@ enum Gallery {
                                     content: DeviceStepCard.Content(step: rokuPassword, number: 2, of: 3, device: roku.name, values: [:], state: .idle),
                                     typed: .constant(""), approval: nil, act: {}, decide: { _ in }))
         },
+        guideEntry("The setup window, Do It for Me offered", offer: "Lamp opens the developer screen; you set the password."),
+        guideEntry("The setup window, Do It for Me under way",
+                   guide: .init(lines: [.init(text: "Living Room Roku answers", state: .done), .init(text: "Opening the developer screen…", state: .doing)],
+                                ask: "Choose Enable installer and restart.")),
+        guideEntry("The setup window, Do It for Me waiting on the person",
+                   guide: .init(lines: [.init(text: "Living Room Roku answers", state: .done), .init(text: "Asked Living Room Roku for its developer screen", state: .done)],
+                                ask: "Agree to the license, then set a developer password. The Roku restarts; Lamp carries on once it's back.",
+                                button: "It Didn't Restart", link: .init(title: "Roku's Developer Setup", url: URL(string: "https://developer.roku.com/")!))),
+        guideEntry("The setup window, Do It for Me stopped",
+                   guide: .init(lines: [.init(text: "Living Room Roku answers", state: .done)],
+                                failure: "Living Room Roku isn't answering. Check it's on and on the same network as this Mac, then click Try Again.")),
+        guideEntry("The setup window, Do It for Me handed back",
+                   guide: .init(lines: [.init(text: "Living Room Roku is back on", state: .done), .init(text: "Developer mode is on", state: .done)],
+                                ask: "Type the developer password you just set on the Roku."), handedBack: true, step: rokuPassword),
         Entry(group: "Device setup", name: "A device with a new certificate") {
             AnyView(DeviceReconnectCard(device: "XBOX", reconnect: {}))
         },
@@ -458,6 +472,17 @@ enum Gallery {
                                             .init(id: "Take it off", state: .passed)], tryIt: {}, worked: "Apps worked on 3900X, 15.3.4"))
         },
     ]
+
+    /// The setup window with a step's Do It for Me: offered, under way, or ended, each from made-up values.
+    private static func guideEntry(_ name: String, offer: String? = nil, guide: SetupGuideView.State? = nil, handedBack: Bool = false,
+                                   step: Integration.Step = rokuMode) -> Entry {
+        Entry(group: "Device setup", name: name) {
+            AnyView(DeviceSetupPage(device: roku, steps: [rokuMode, rokuPassword, rokuLook], passed: step.id == rokuMode.id ? [] : [rokuMode.id],
+                                    content: DeviceStepCard.Content(step: step, number: step.id == rokuMode.id ? 1 : 2, of: 3, device: roku.name, values: [:], state: .idle),
+                                    typed: .constant(""), approval: nil, act: {}, decide: { _ in },
+                                    guide: guide, handedBack: handedBack, offer: guide == nil ? offer : nil))
+        }
+    }
 
     private static func step(_ name: String, _ step: Integration.Step, known: Integration.Known? = nil, state: DeviceStepCard.State = .idle) -> Entry {
         var step = step

@@ -51,10 +51,11 @@ final class SkillsTests: XCTestCase {
         // The integrations' skill and the one on controlling the person's devices are named by the devices' rule, in every
         // prompt, rather than in the list, and how to build a page for phones by the phone-controllers skill and by an app
         // whose code has one; designing for a TV by the TV rows of the table (`Place.skills`), to an app on one, whatever
-        // its kind; a device's setup by the table too (`Place.setupSkills`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
+        // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
         // is offered to every kind that carries `LampWish`, which is every kind but a device's.
         let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
-        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design", "lg-developer-mode"])) }
+        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
+                                                       .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
         XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
         // How an app is made and on which devices, games, 3D in a page, web apps and phones as controllers are offered to
         // every kind, first, whatever the app is now.

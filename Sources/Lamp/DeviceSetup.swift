@@ -31,6 +31,7 @@ final class DeviceSetupModel: ObservableObject {
         DeviceSetupWindow.close(deviceID)
         guard let model = models.removeValue(forKey: deviceID) else { return }
         model.stopWatching()
+        model.guided.cancel()
         if model.approval != nil { model.decide(false) }
         model.then = nil
     }
@@ -50,9 +51,14 @@ final class DeviceSetupModel: ObservableObject {
     private var watching: Task<Void, Never>?
     /// What asked for the setup, run once the device is ready.
     var then: (() -> Void)?
+    /// Do It for Me: the steps of the skill that says it does the device's next step, run for this device. While they
+    /// run they alone talk to the device; the watch below is stopped until they hand it back.
+    let guided = GuidedSetup()
+    private var following: AnyCancellable?
 
     private init(device: Device) {
         self.device = device
+        following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         passed = Integrations.kept(device.id)?.passed ?? []
         // A card may show Lamp's public key, which is made the first time it's needed: made now, the card is drawn again.
         if let runner, runner.needsSSHKey, DeviceSSH.publicKey == nil {
@@ -91,6 +97,40 @@ final class DeviceSetupModel: ObservableObject {
         })
     }
 
+    /// The steps Do It for Me follows for the device's next step, when a skill does that step for its integration and
+    /// its steps can be followed here.
+    var guide: SetupSteps? {
+        guard let integration, let step = next,
+              case .success(let steps)? = SetupGuides.find(step.id, in: .init(row: integration.id, system: device.os, steps: Set(steps.map(\.id)),
+                                                                       fields: Set(steps.compactMap { $0.field?.key }), integration: true))
+        else { return nil }
+        return steps
+    }
+
+    func doItForMe() {
+        guard let step = next, let steps = guide, let runner, !state.isBusy, approval == nil else { return }
+        stopWatching()
+        state = .idle
+        let device = device
+        guided.start(steps, name: device.name, step: step.id, connect: {
+            steps.connection == SetupConnections.http ? HTTPSetupConnection(runner: runner, reach: steps.reach)
+                : SetupConnections.socket(steps.connection, address: device.address ?? "", id: device.id)
+        }, onFinish: { [weak self] in self?.handedBack() })
+    }
+
+    /// Back to the step in words: the guide stops, and the step's own check is watched again.
+    func doItMyself() {
+        guided.cancel()
+        watch()
+    }
+
+    /// The guide's steps ended: the step is checked again by its own check, what passes is kept, and the step left to
+    /// do is shown. Nothing the guide said counts toward it.
+    private func handedBack() {
+        guard let step = next, let runner else { return }
+        Task { await checkOnce(step, runner: runner, keepWatching: step.wait == true) }
+    }
+
     /// The card's content for the step the device is at.
     var content: DeviceStepCard.Content? {
         guard let step = next, let runner else { return nil }
@@ -121,7 +161,7 @@ final class DeviceSetupModel: ObservableObject {
 
     /// Looks at the step's check, and for a step done on the device keeps looking every few seconds while it's shown.
     func watch() {
-        guard let step = next, step.wait == true, watching == nil, let runner else { return }
+        guard let step = next, step.wait == true, watching == nil, !guided.holdsDevice, let runner else { return }
         watching = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, self.next == step else { break }
@@ -151,6 +191,8 @@ final class DeviceSetupModel: ObservableObject {
             runner.passed(step, read: read)
             passed = Integrations.kept(device.id)?.passed ?? passed + [step.id]
             state = .idle
+            // A guide stays on screen only while the step it was for is still the one to do.
+            if guided.step != next?.id { guided.cancel() }
             Store.shared.refreshDevices()
             if ready { then?(); then = nil } else { watch() }
         } else if failed {
@@ -175,6 +217,7 @@ final class DeviceSetupModel: ObservableObject {
         // Its SSH host key too, which a reset device changes as it does its certificate.
         try? FileManager.default.removeItem(at: DeviceFolder.of(device.id).appendingPathComponent("known_hosts"))
         Integrations.startOver(device.id)
+        guided.cancel()
         passed = []
         typed = ""
         state = .idle
@@ -240,6 +283,7 @@ final class DeviceSetupWindow: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         model.stopWatching()
+        model.guided.cancel()
         if model.approval != nil { model.decide(false) }
         Self.windows[model.device.id] = nil
         Self.delegates[model.device.id] = nil
@@ -256,7 +300,10 @@ struct DeviceSetupView: View {
                         ask: conversation.map { project in { Store.shared.showChat(project.id) } },
                         reconnect: model.certificateChanged ? { model.reconnect() } : nil,
                         trial: model.trial, tryIt: model.integration?.app?.declared != nil ? { model.tryIt() } : nil,
-                        canTry: model.canTry, worked: model.worked)
+                        canTry: model.canTry, worked: model.worked,
+                        guide: model.guided.started ? model.guided.state : nil, handedBack: model.guided.handedBack,
+                        offer: model.guide.map { $0.offer ?? "" }, doItForMe: { model.doItForMe() },
+                        confirm: { model.guided.confirm() }, retry: { model.guided.retry() }, doItMyself: { model.doItMyself() })
     }
 }
 
@@ -280,6 +327,15 @@ struct DeviceSetupPage: View {
     var tryIt: (() -> Void)? = nil
     var canTry = true
     var worked: String? = nil
+    /// Do It for Me: the guide's state once started, whether it has handed the device back to the step, and, before it
+    /// starts, its line (set when the step has a guide).
+    var guide: SetupGuideView.State? = nil
+    var handedBack = false
+    var offer: String? = nil
+    var doItForMe: () -> Void = {}
+    var confirm: () -> Void = {}
+    var retry: () -> Void = {}
+    var doItMyself: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -317,7 +373,13 @@ struct DeviceSetupPage: View {
             } else if let approval {
                 DeviceCommandCard(approval: approval, allow: { decide(true) }, deny: { decide(false) }).padding(.top, 16)
             } else if let content {
-                DeviceStepCard(content: content, typed: $typed, act: act).padding(.top, 16)
+                if let guide {
+                    SetupGuideView(state: guide, confirm: confirm, retry: retry, doItMyself: handedBack ? nil : doItMyself).padding(.top, 16)
+                } else if let offer {
+                    DoItForMeRow(offer: offer.isEmpty ? nil : offer, start: doItForMe).disabled(content.state.isBusy).padding(.top, 16)
+                }
+                // The step's own card, once the guide has handed the device back to it: its field, its button, its check.
+                if guide == nil || handedBack { DeviceStepCard(content: content, typed: $typed, act: act).padding(.top, 16) }
             } else if !steps.isEmpty {
                 Label("\(device.name) is set up.", systemImage: "checkmark.circle.fill").foregroundStyle(.green).padding(.top, 16)
                 if let tryIt { DeviceTrialCard(device: device.name, stages: trial, worked: worked, enabled: canTry, tryIt: tryIt).padding(.top, 12) }

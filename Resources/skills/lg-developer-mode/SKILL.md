@@ -1,6 +1,9 @@
 ---
 name: lg-developer-mode
 description: How Lamp walks the person through turning on Developer Mode on their LG TV (webOS) the way LG supports - opening the Developer Mode app's page in the LG Content Store and then the app itself on the TV, while the person installs it, restarts the TV when asked, signs in and turns its switches on with their own remote. Lamp's TV setup follows the steps below when the person clicks Do It for Me.
+setup-for: tv
+setup-system: webOS
+setup-step: developer-mode
 ---
 
 # Turning on Developer Mode on an LG TV
@@ -43,17 +46,20 @@ need the key, and fail with 401 without it.
 
 ## The steps
 
-Lamp's setup reads this block and follows it in order. `{name}` is the TV's name. A step is one of: `connect` (let
-Lamp in; asks on the TV the first time), `request` (send one request; `failed` is said and the setup goes on when
-`continueOnFailure`), `wait` (ask the TV every `every` seconds until `until.path` holds `until.contains`), `confirm`
-(the person clicks `button` once they've done it; a confirm has no `done`, since Lamp didn't see it happen), `rejoin`
-(the device restarts: Lamp carries on by itself once it has seen it stop answering and answer again, and only then
-says `done`; `button` skips a restart that isn't needed and claims nothing), and `passphrase` (the setup window's own
-passphrase step).
+Lamp's setup reads this block and follows it in order; the frontmatter's `setup-for`, `setup-system` and `setup-step`
+say which setup step it does (the TV row's first, on webOS). `{name}` is the TV's name. A step is one of: `connect`
+(let Lamp in; asks on the TV the first time), `request` (send one request; `failed` is said and the setup goes on when
+`continueOnFailure`), `wait` (ask the TV every `every` seconds until the value at `until.json` in the answer to
+`until.uri` equals `until.equals`), `confirm` (the person clicks `button` once they've done it; a confirm has no
+`done`, since Lamp didn't see it happen), `rejoin` (the device restarts: Lamp carries on by itself once it has seen it
+stop answering and answer again, and only then says `done`; `button` skips a restart that isn't needed and claims
+nothing), and `handoff` (the last: the TV goes back to the setup window's own step, here the passphrase, which is done
+only once the key is fetched, unlocked and SSH answers).
 
 ```lamp-setup
 {
   "connection": "webos-second-screen",
+  "offer": "Lamp opens each screen on the TV; you press the buttons.",
   "steps": [
     {
       "do": "connect",
@@ -78,10 +84,10 @@ passphrase step).
     },
     {
       "do": "wait",
-      "uri": "ssap://com.webos.applicationManager/listApps",
       "until": {
-        "path": "apps.id",
-        "contains": "com.palmdts.devmode"
+        "uri": "ssap://com.webos.applicationManager/listApps",
+        "json": "apps.id",
+        "equals": "com.palmdts.devmode"
       },
       "every": 3,
       "doing": "Waiting for Developer Mode to be installed…",
@@ -138,7 +144,7 @@ passphrase step).
       "continueOnFailure": true
     },
     {
-      "do": "passphrase",
+      "do": "handoff",
       "ask": "In Developer Mode, turn Key Server on and keep Developer Mode open on the TV. Type the passphrase it shows below exactly as shown, then click Connect."
     }
   ]
