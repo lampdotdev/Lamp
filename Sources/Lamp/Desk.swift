@@ -1805,6 +1805,11 @@ extension Store {
             unread.remove(project.id)
             // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat comes.
             if running || !MagicPanel.shared.startWithChat(project) { MagicPanel.shared.openChat(in: project) }
+            // The copy open here may be older than the code (changed for another place since): it's brought up to date.
+            if running {
+                updatePlaces(of: project)
+                if project.platform.choosesPlace, project.destination == .mac, Runtime.sourcesChanged(project) { openPrepared(project) }
+            }
             if !running {
                 openWish(project)
                 MagicPanel.shared.showChatIfAppNeverComes(project)

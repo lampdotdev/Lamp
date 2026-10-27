@@ -833,6 +833,12 @@ enum Emulator {
         try await create(.tv)
     }
 
+    /// Which of Lamp's emulators is running on Lamp's ports, or nil when neither is.
+    static func runningKind() -> Kind? {
+        guard let own = ownProcesses().first(where: \.onLampsPorts) else { return nil }
+        return own.avd == Kind.tv.avd ? .tv : .phone
+    }
+
     /// The serial adb gives Lamp's emulator, by the console port it was started on.
     static var serial: String { "emulator-\(Edition.androidPorts.console)" }
 

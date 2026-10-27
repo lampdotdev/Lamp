@@ -18,7 +18,14 @@ enum Runtime {
     /// `folder` as the agent names it, from the app's folder.
     static func folderPath(_ project: LampProject) -> String { String(folder(project).path.dropFirst(project.dir.path.count + 1)) }
     static func logURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("log.txt") }
-    private static func builtURL(_ project: LampProject) -> URL { folder(project).appendingPathComponent("built") }
+    /// What each place's build was made from, kept apart: a game or a screen has a build of its own for every place it
+    /// opens (this Mac, the simulator, Android, a TV, an Xbox), and building for one leaves the others as they were. This
+    /// Mac's and the simulator's are in their copies' folders; every other place's beside this Mac's, named after it.
+    private static func builtURL(_ project: LampProject) -> URL {
+        let place = project.destination
+        guard project.platform.choosesPlace, place != .mac, place != .ios else { return folder(project).appendingPathComponent("built") }
+        return macFolder(project).appendingPathComponent("built-\(place.rawValue)")
+    }
     /// The build no longer stands for the sources (a build after a live change failed): the next look builds again.
     static func forgetBuilt(_ project: LampProject) { AppFolder.remove(builtURL(project), in: project.dir) }
 
@@ -419,6 +426,10 @@ enum Runtime {
               let built = try? String(contentsOf: builtURL(project), encoding: .utf8), !built.isEmpty else { return true }
         return built != fingerprint(project)
     }
+
+    /// Whether the build for one of the app's places is older than its code, or there's none: a place Try On doesn't
+    /// point at keeps the build it was last given until it's built again (`Store.updatePlaces`, or opening it there).
+    static func behind(_ project: LampProject, at place: Destination) -> Bool { sourcesChanged(project.at(place)) }
 
     /// Whether the app's code is still to be built: changed since its last build, and not the code that went into the
     /// open app with its whole build still running (`Store.reloadBeforeBuilding`). That build writes what it was built
