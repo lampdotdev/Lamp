@@ -19,6 +19,8 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - **Chores** (`views/tasks.js`): a lane per person and Anyone, for the morning, after school or the evening; ticking one
   off gives a kid its stars, with Undo. Ticks start again each day.
 - **Shopping** (`views/shopping.js`): the list by aisle and by store, add from usuals and suggestions, tick off, clear.
+  An item the catalog doesn't know goes in its aisle by `LampAI.choose` (the AI set up in Lamp, remembered 90 days), and
+  stays in Other without AI.
 - **Photos** (`views/photos.js`): a slideshow with Auto, Cover, Pair, Collage and Polaroid layouts, and favorites,
   which come round more often.
 - **Photo frame and night clock** (`views/ambient.js`): after two minutes untouched it goes back to Today and then to a

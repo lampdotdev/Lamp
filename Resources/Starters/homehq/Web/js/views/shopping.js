@@ -15,6 +15,27 @@
       D.catalog.filter(function (c) { return n.split(/\s+/).some(function (w) { return w.length > 3 && c[0].toLowerCase().indexOf(w) > -1; }); })[0];
     return hit ? hit[1] : 'Other';
   }
+  // An item the list doesn't know (it would land in Other) goes in its aisle by the AI the family set up in Lamp: a
+  // quick decision of a small model, remembered for months so the same item isn't asked about again. Without AI set up
+  // (or away from the Mac's Wi-Fi) it stays in Other, as before.
+  function aisleByAI(g) {
+    if (g.cat !== 'Other' || !(window.LampAI && LampAI.choose)) return;
+    var aisles = D.catOrder.all.slice();
+    LampAI.choose('Which aisle of a grocery store is this shopping-list item in?', aisles.concat(['Other']), {
+      each: [g.name], about: function (name) { return { item: name }; }, remember: 90 * 86400
+    }).then(function (list) {
+      var v = list && list[0];
+      if (!v || v.error || !v.choice || v.choice === 'Other' || (v.confidence != null && v.confidence < 0.5)) return;
+      // The item as the list holds it now, by its id (saving it rebuilds the list from what's shared), still on the
+      // list and still uncategorized: the family may have moved or taken it meanwhile.
+      var now = D.groceries.filter(function (x) { return x.id === g.id; })[0];
+      if (!now || now.cat !== 'Other') return;
+      now.cat = v.choice;
+      App.emit('data');
+      if (V.el && App.current === 'shopping') paintList();
+    }, function () {});
+  }
+
   function find(name, isDone) {
     return D.groceries.filter(function (g) { return !!g.done === isDone && g.name.toLowerCase() === name.toLowerCase(); })[0];
   }
@@ -153,8 +174,9 @@
       var cat = D.catalog.filter(function (c) { return c[0].toLowerCase() === name.toLowerCase(); })[0];
       g = { id: D._gid(), name: cat ? cat[0] : name.charAt(0).toUpperCase() + name.slice(1), cat: categorize(name), qty: 1, store: V.store === 'all' ? 'grocer' : V.store, done: false, note: '' };
       D.groceries.push(g);
-      msg = 'Added <b>' + App.esc(g.name) + '</b> to ' + g.cat;
+      msg = 'Added <b>' + App.esc(g.name) + '</b>' + (g.cat === 'Other' ? '' : ' to ' + g.cat);
       insertRow(g);
+      aisleByAI(g);
     }
     var hadQuery = !!V.query.trim();
     V.query = '';
