@@ -76,8 +76,7 @@
     sync('stars', Object.keys(D.stars).map(function (k) { return { id: k, stars: D.stars[k], week: D.week[k] || [0, 0, 0, 0, 0, 0, 0] }; }), null, dry);
     sync('settings', [{ id: 'place', value: D.settings.place }, { id: 'calendars', value: D.settings.calendars },
                       { id: 'calendarsBy', value: D.settings.calendarsBy || null }, { id: 'album', value: D.settings.album },
-                      { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'calendarPeople', value: D.settings.calendarPeople || {} },
-                      { id: 'cleared', value: D.cleared }], null, dry);
+                      { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'cleared', value: D.cleared }], null, dry);
     sync('favs', D.photos.filter(function (p) { return p.fav; }).map(function (p) { return { id: p.id || p.seed }; }), null, dry);
     if (!dry) publishCalendar();
   }
@@ -121,17 +120,15 @@
 
   // ------------------------------------------------------------ what the copies have, into DATA
   function take() {
-    var examplesBack = false, reread = false, newPlace = false;
+    var examplesBack = false, newPlace = false;
     taking = true;
     try {
       var settings = {};
       S.settings.all().forEach(function (s) { settings[s.id] = s.value; });
-      var whose = JSON.stringify(D.settings.calendarPeople || {}), where = JSON.stringify(D.settings.place || null);
-      ['place', 'calendars', 'calendarsBy', 'calendarPeople', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
-      // Whose each calendar is, changed on another screen: the copy that reads them reads them again with it.
+      var where = JSON.stringify(D.settings.place || null);
+      ['place', 'calendars', 'calendarsBy', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
       // A place chosen on another screen: its weather here too.
       newPlace = where !== JSON.stringify(D.settings.place || null);
-      reread = App.readsCalendars() && whose !== JSON.stringify(D.settings.calendarPeople || {});
       if (settings.cleared && !D.cleared) D.clearExamples();
 
       var people = S.people.all().sort(function (a, b) { return a.order - b.order; });
@@ -176,7 +173,6 @@
     share(true);
     // The album turned off on another copy: back to the examples, as on the copy where it was turned off.
     if (examplesBack) App.loadPhotos();
-    if (reread) App.loadCalendars();
     if (newPlace) App.loadWeather();
     App.emit('data');
     App.rerender();

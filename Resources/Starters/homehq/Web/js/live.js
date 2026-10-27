@@ -55,15 +55,12 @@
   };
 
   // ------------------------------------------------------------ calendars
-  // Each calendar's events go to whoever it was given to (Settings, or the setup), else to the person it's named after
-  // ("Maya's soccer" → Maya), else to everyone.
-  function personFor(calendar) {
-    var given = (D.settings.calendarPeople || {})[calendar];
-    if (given === 'all') return D.ALL.slice();
-    if (given && App.person(given) !== D.family) return [given];
-    var name = (calendar || '').toLowerCase();
-    var p = D.people.filter(function (x) { return name.indexOf(x.name.toLowerCase()) > -1; })[0];
-    return p ? [p.id] : D.ALL.slice();
+  // An event is for whoever its title names, by first name ("Maya soccer", "Sam & Ava dentist", "Ava's recital");
+  // one that names nobody is for everyone. Pets aren't matched: a vet visit is the family's.
+  function peopleIn(title) {
+    var words = (title || '').toLowerCase().replace(/[’']s\b/g, '').split(/[^a-z0-9\u00c0-\u024f]+/);
+    var named = App.humans().filter(function (p) { return words.indexOf(p.name.trim().toLowerCase()) > -1; });
+    return named.length ? named.map(function (p) { return p.id; }) : D.ALL.slice();
   }
   // Which copy of the screen reads the family's calendars and album: the one where they were turned on. The others
   // (another Mac, the iPad, the TV) show what it publishes (js/sync.js) and never read their own, so turning them on
@@ -84,7 +81,7 @@
       if (!App.readsCalendars() || JSON.stringify(D.settings.calendars) !== asked) return;
       D.events = D.events.filter(function (e) { return !e.cal; }).concat(list.map(function (e) {
         return { id: 'k' + e.id, cal: true, title: e.title, start: new Date(e.start), end: new Date(e.end), allDay: !!e.allDay,
-                 loc: e.loc || undefined, notes: e.notes || undefined, people: personFor(e.calendar) };
+                 loc: e.loc || undefined, notes: e.notes || undefined, people: peopleIn(e.title) };
       }));
       App.emit('data');
     }, function () {});

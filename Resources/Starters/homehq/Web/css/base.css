@@ -268,12 +268,12 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
 .demo-x { width: var(--tap); height: var(--tap); border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .1); }
 .demo-sec { margin-bottom: 1.375rem; }
 .demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .625rem; }
-.demo-grid button, .demo-cal button {
+.demo-grid button {
   min-height: var(--tap); border-radius: .875rem; padding: 0 1rem;
   background: rgba(255, 255, 255, .1);
   font-size: 1.125rem; font-weight: 700;
 }
-.demo-grid button:active, .demo-grid button.is-on, .demo-cal button.is-on { background: #fff; color: var(--ink); }
+.demo-grid button:active, .demo-grid button.is-on { background: #fff; color: var(--ink); }
 .demo-note { font-size: 1rem; color: rgba(255, 255, 255, .6); margin-top: .625rem; }
 .demo-note a { color: #fff; }
 .demo-line { font-size: 1.375rem; font-weight: 700; margin-top: .375rem; }
@@ -328,10 +328,5 @@ button:focus, a:focus { outline: none; }
 .setup .demo-find { margin-top: 0; }
 .setup-results { margin-top: 1rem; }
 .setup-chores .chip span { font-size: 1.375rem; }
-.setup-grow { flex: 1; }
 html.narrow .setup-title { font-size: 2.75rem; }
 
-/* A calendar in the settings drawer, and whose it is. */
-.demo-cals { display: flex; flex-direction: column; gap: .5rem; margin-top: .625rem; }
-.demo-cal { display: grid; grid-template-columns: 1fr auto; gap: .5rem; align-items: center; }
-.demo-who { min-height: var(--tap); border: 0; border-radius: .875rem; padding: 0 .75rem; background: rgba(255, 255, 255, .12); color: #fff; font: inherit; font-size: 1.0625rem; font-weight: 700; }

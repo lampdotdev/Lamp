@@ -1,5 +1,5 @@
 // The first run: a welcome, then the family's own Home HQ in a few steps (who's at home, pets too; where they live;
-// their calendars, each given to someone; an album; a few chores to start), or the example family to look around.
+// their family calendar; an album; a few chores to start), or the example family to look around.
 // Finishing takes the examples away for good (DATA.clearExamples) and every other copy of the screen follows
 // (js/sync.js), so a family sets it up once, on whichever screen is handiest.
 (function () {
@@ -95,28 +95,15 @@
     return head('Where do you live?', 'For the weather on the dashboard.') + body + actions('Next', { skip: !F.place });
   }
 
-  function whoOptions(chosen) {
-    return [['all', 'Everyone']].concat(humans().map(function (p) { return [p.id, p.name]; })).map(function (w) {
-      return '<option value="' + w[0] + '"' + (w[0] === chosen ? ' selected' : '') + '>' + App.esc(w[1]) + '</option>';
-    }).join('');
-  }
-
   function calendarsHTML() {
     var body;
-    if (!F.calendars) {
-      body = '<div class="chips"><button class="btn" data-cals>' + App.icon('calendar', 22) + 'Use my calendars</button></div>';
-    } else {
-      body = '<div class="ed-list">' + F.calendars.map(function (c) {
-        var on = F.useCals.indexOf(c) > -1;
-        return '<div class="ed-row" data-cal="' + App.esc(c) + '">' +
-          '<button class="chip' + (on ? ' is-on' : '') + '" data-cal-on>' + App.icon(on ? 'check' : 'plus', 18) + App.esc(c) + '</button>' +
-          '<span class="setup-grow"></span>' +
-          (on ? '<select class="ed-select" data-cal-who aria-label="Whose">' + whoOptions(F.calPeople[c] || 'all') + '</select>' : '') +
-          '</div>';
-      }).join('') + '</div>';
-    }
-    return head('Your calendars', 'Pick the calendars to show and whose each one is. They’re read on this device and shared with your other screens.') +
-      body + actions('Next', { skip: !F.calendars });
+    if (!F.calendars) body = '<div class="chips"><button class="btn" data-cals>' + App.icon('calendar', 22) + 'Choose our calendar</button></div>';
+    else if (!F.calendars.length) body = '<p class="ed-note">No calendars on this device.</p>';
+    else body = '<div class="chips setup-results">' + F.calendars.map(function (c) {
+      return '<button class="chip' + (F.calendar === c ? ' is-on' : '') + '" data-cal="' + App.esc(c) + '">' + App.esc(c) + '</button>';
+    }).join('') + '</div>';
+    return head('Your family calendar', 'The one you all share. An event is for whoever its title names, like “Maya soccer”; the rest are for everyone.') +
+      body + actions('Next', { skip: !F.calendar });
   }
 
   function photosHTML() {
@@ -162,12 +149,7 @@
     D.chores = chores;
     D.edited.people = true; D.edited.chores = true;
     if (F.place) D.settings.place = { name: F.place.name, lat: F.place.lat, lon: F.place.lon };
-    if (F.calendars) {
-      D.settings.calendars = F.useCals.length === F.calendars.length ? [] : F.useCals.slice();
-      D.settings.calendarsBy = App.me();
-      D.settings.calendarPeople = F.calPeople;
-      if (!F.useCals.length) D.settings.calendars = null;
-    }
+    if (F.calendar) { D.settings.calendars = [F.calendar]; D.settings.calendarsBy = App.me(); }
     if (F.album != null) { D.settings.album = F.album; D.settings.albumBy = App.me(); }
     D.settings.example = false;
     F = null;
@@ -183,7 +165,7 @@
   App.setup = function (step) {
     F = {
       step: step || 'welcome', people: [], place: D.settings.place, places: null, query: '',
-      calendars: null, useCals: [], calPeople: Object.assign({}, D.settings.calendarPeople || {}),
+      calendars: null, calendar: null,
       albums: null, album: D.settings.album, chores: {}
     };
     F.people.push(newPerson(false));
@@ -217,9 +199,6 @@
           var next = s.querySelector('.sheet-actions [data-next]:last-child');
           if (next) next.disabled = !humans().length;
         });
-        s.addEventListener('change', function (e) {
-          if (e.target.hasAttribute('data-cal-who')) F.calPeople[e.target.closest('[data-cal]').dataset.cal] = e.target.value;
-        });
         s.addEventListener('keydown', function (e) {
           if (e.keyCode !== 13) return;
           if (e.target.hasAttribute('data-place-q')) { e.preventDefault(); findPlace(); }
@@ -251,22 +230,14 @@
           if (d.place != null) { F.place = F.places[+d.place]; return again(); }
           if (b.hasAttribute('data-cals')) {
             LampNative.call('calendars', {}).then(function (names) {
-              F.calendars = names; F.useCals = names.slice();
-              // Each given to whoever it's named after ("Maya's soccer"), else to everyone, until the family says.
-              names.forEach(function (c) {
-                if (F.calPeople[c]) return;
-                var low = c.toLowerCase(), who = humans().filter(function (h) { return low.indexOf(h.name.trim().toLowerCase()) > -1; })[0];
-                F.calPeople[c] = who ? who.id : 'all';
-              });
+              F.calendars = names;
+              // The one called Family, if there is one.
+              F.calendar = names.filter(function (c) { return /family/i.test(c); })[0] || null;
               again();
             }, function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
             return;
           }
-          if (b.hasAttribute('data-cal-on')) {
-            var c = b.closest('[data-cal]').dataset.cal, at = F.useCals.indexOf(c);
-            if (at > -1) F.useCals.splice(at, 1); else F.useCals.push(c);
-            return again();
-          }
+          if (d.cal != null) { F.calendar = F.calendar === d.cal ? null : d.cal; return again(); }
           if (b.hasAttribute('data-albums')) {
             LampNative.call('albums', {}).then(function (list) { F.albums = list; again(); },
               function () { App.toast('Photos aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'photo' }); });

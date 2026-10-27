@@ -89,21 +89,11 @@
     var chosen = D.settings.calendars;
     // Turned on at another screen: this one shows what that one reads.
     if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-on', 'Read them here'), btn('data-cal-off', 'Stop showing them')]));
-    var body = chosen ? '' : grid([btn('data-cal-on', 'Show my calendars')]);
-    if (chosen && S.calendars) {
-      // Each calendar on or off, and whose it is.
-      var given = D.settings.calendarPeople || {};
-      body += '<div class="demo-cals">' + S.calendars.map(function (c) {
-        var on = !chosen.length || chosen.indexOf(c) > -1;
-        return '<div class="demo-cal">' + btn('data-cal="' + App.esc(c) + '"', c, on) +
-          (on ? '<select class="demo-who" data-cal-who="' + App.esc(c) + '" aria-label="Whose">' + [['all', 'Everyone']].concat(App.humans().map(function (p) { return [p.id, p.name]; })).map(function (w) {
-            return '<option value="' + w[0] + '"' + (w[0] === (given[c] || 'all') ? ' selected' : '') + '>' + App.esc(w[1]) + '</option>';
-          }).join('') + '</select>' : '') + '</div>';
-      }).join('') + '</div>';
-      body += grid([btn('data-cal-off', 'Stop showing them')]);
-    } else if (chosen) {
-      body += grid([btn('data-cal-off', 'Stop showing them')]);
-    }
+    // The family's one calendar: an event goes to whoever its title names, else to everyone (js/live.js).
+    var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? chosen[0] : 'All calendars') + '</p>' : '';
+    if (S.calendars) body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !!chosen && chosen.length === 1 && chosen[0] === c); }));
+    else body += grid([btn('data-cal-on', chosen ? 'Change calendar' : 'Show our calendar')]);
+    if (chosen) body += grid([btn('data-cal-off', 'Stop showing it')]);
     return sec('Calendars', body);
   }
 
@@ -138,7 +128,7 @@
   };
   function closeSettings() {
     $('#demo').classList.remove('is-open');
-    S.finding = false; S.places = null; S.albums = null;
+    S.finding = false; S.places = null; S.albums = null; S.calendars = null;
     if (window.Lamp) { Lamp.scope = null; Lamp.focus('.rail-clock'); }
   }
   App.closeSettings = closeSettings;
@@ -166,16 +156,12 @@
     }
     if (b.hasAttribute('data-place-clear')) { D.settings.place = null; App.exampleWeather(); App.emit('data'); return App.openSettings(); }
     if (b.hasAttribute('data-cal-on')) {
-      LampNative.call('calendars', {}).then(function (names) {
-        S.calendars = names; D.settings.calendars = []; D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); App.openSettings();
-      }, function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
+      LampNative.call('calendars', {}).then(function (names) { S.calendars = names; App.openSettings(); },
+        function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
       return;
     }
     if (d.cal != null) {
-      var all = S.calendars, chosen = D.settings.calendars.length ? D.settings.calendars.slice() : all.slice();
-      var i = chosen.indexOf(d.cal);
-      if (i > -1) chosen.splice(i, 1); else chosen.push(d.cal);
-      D.settings.calendars = chosen.length === all.length ? [] : chosen;
+      D.settings.calendars = [d.cal]; D.settings.calendarsBy = App.me(); S.calendars = null;
       App.emit('data'); App.loadCalendars();
       return App.openSettings();
     }
@@ -195,12 +181,6 @@
 
   App.on('ready', function () {
     $('#demo').addEventListener('click', settingsClick);
-    $('#demo').addEventListener('change', function (e) {
-      var c = e.target.getAttribute('data-cal-who');
-      if (c == null) return;
-      D.settings.calendarPeople = Object.assign({}, D.settings.calendarPeople, (function (o) { o[c] = e.target.value; return o; })({}));
-      App.emit('data'); App.loadCalendars();
-    });
     $('#demo').addEventListener('keydown', function (e) { if (e.target.hasAttribute('data-place-q') && e.keyCode === 13) { e.preventDefault(); findPlace(); } });
     $('#railClock').addEventListener('click', App.openSettings);
     if (window.Lamp && Lamp.onBack) Lamp.onBack(function () {
