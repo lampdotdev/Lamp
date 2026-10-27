@@ -11,7 +11,7 @@
 // is input(), and label() and glyph() name and draw a button for it, so a prompt never names one the player hasn't got.
 //
 //   import * as THREE from 'three';
-//   import { game, BUTTON, STICK, random, sound, log, label, glyph, onInput } from './lamp-game.js';
+//   import { game, BUTTON, STICK, random, sound, log, label, glyph, onInput, fixedStep } from './lamp-game.js';
 //   const renderer = new THREE.WebGLRenderer({ antialias: true });
 //   game({ renderer, async init() { … }, frame(f) { … renderer.render(scene, camera); } });
 
@@ -499,6 +499,31 @@ export function glyph(what, on = current) {
         badge(text, dark + 'border-radius:.85em;' + (text.length > 2 ? 'font-size:.62em;text-transform:uppercase;letter-spacing:.04em' : ''));
     }
     return el;
+}
+
+// MARK: A fixed step, for physics
+
+// Physics (Rapier's world.step(), or the game's own) wants the same step every time, whatever the device's frame rate:
+// a step that follows the frame bounces and tunnels differently at 30, 60 and 120 frames a second, and the preview's
+// replay only matches the play when the steps do. fixedStep(step) gives a function to call once a frame with f.dt: it
+// runs step() as many times as the time since the last frame holds, at 1/60 s each (`rate` a second), and at most `most`
+// times, so a device that can't keep up slows the game down rather than falling further behind. It returns how far the
+// frame is into the next step, 0 to 1, for a game that places what it draws between the last two steps (most needn't).
+// In the preview every frame is exactly one step.
+//
+//   const physics = fixedStep(() => world.step(events));
+//   frame(f) { steer(f.pads[0]); physics(f.dt); place(); renderer.render(scene, camera); }
+export function fixedStep(step, { rate = 60, most = 4 } = {}) {
+    const h = 1 / rate;
+    let owed = 0;
+    return dt => {
+        owed += dt;
+        let n = 0;
+        // A hair under a whole step still counts as one, so a frame of 1/60 s is always one step of 1/60 s.
+        while (owed >= h - 1e-9 && n < most) { step(h); owed -= h; n++; }
+        if (n === most) owed = Math.min(owed, h);
+        return Math.max(0, owed) / h;
+    };
 }
 
 // MARK: The frame

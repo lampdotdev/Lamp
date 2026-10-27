@@ -26,6 +26,12 @@ watches the front window for about two seconds and writes what changed frame to 
 most different frames beside it), and `Runtime.motion` puts that in words; it's how flicker is caught, which a
 single picture hides.
 
+Physics is the engine's own for each make, and its guidance is in the skill for that make: Rapier for a three.js game
+(the `3d-game` skill; how it's put into a game is in [devices](devices.md)), RealityKit's `PhysicsBodyComponent`,
+`CollisionComponent`, character controller and joints for a Mac app's scene (the `scene-3d` skill; LampScene's
+`lampPhysics` sets the first two), and SpriteKit's physics bodies for 2D in Swift (the `game` skill). Each skill
+first says when a game needs none, since most don't.
+
 ### Widgets
 
 A Mac app can have a desktop widget. The agent writes it in `Widget/` at the app's root (`Agent.Rules.widget` and the `mac-widgets` skill,

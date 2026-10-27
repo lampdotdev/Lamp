@@ -215,6 +215,15 @@ enum GameKit {
 
     /// Where a three.js game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
     static let webFolder = "Web"
+    /// Where Rapier goes in a game whose page imports it, by the name its import map gives it.
+    static let rapierFolder = "\(webFolder)/rapier"
+    static let rapierImport = "@dimforge/rapier3d-compat"
+
+    /// Whether the game's page imports Rapier (its import map names it), so Lamp puts it beside the page.
+    static func usesRapier(_ project: LampProject) -> Bool {
+        DeviceSupport.pageNames([rapierImport], project, page: webFolder)
+    }
+
     /// The controllers a game names buttons for (`Controllers`), which lamp-game.js imports.
     static let controllersFile = "\(webFolder)/lamp-controllers.js"
 
@@ -242,7 +251,8 @@ enum GameKit {
         let common = ["Sources/LampSupport.swift", "build.sh", "Package.swift", marker]
         // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
-        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" } + common
+        return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
+            + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" } + common
             + GameAndroid.paths(for: project)
     }
 
@@ -260,6 +270,14 @@ enum GameKit {
             try writePage(for: project)
             for file in DeviceSupport.threeFiles(for: project, page: webFolder) {
                 try Template.put(file.contents, at: project.dir.appendingPathComponent("\(webFolder)/three/\(file.name)"), for: project)
+            }
+            // Rapier only once the page imports it: it's bigger than three.js, and most games need no physics.
+            if usesRapier(project) {
+                for file in DeviceSupport.rapierFiles {
+                    try Template.put(file.contents, at: project.dir.appendingPathComponent("\(rapierFolder)/\(file.name)"), for: project)
+                }
+            } else {
+                AppFolder.remove(project.dir.appendingPathComponent(rapierFolder), in: project.dir)
             }
             // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host); elsewhere
             // the page loads nothing from it.
@@ -295,7 +313,7 @@ enum GameKit {
     /// Takes Lamp's game files out of an app that's no longer a game, so its next kind builds without them; the
     /// game's own code in Game/ is the agent's to move and delete.
     static func remove(from project: LampProject) {
-        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", controllersFile, "\(webFolder)/three", marker] {
+        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", controllersFile, "\(webFolder)/three", rapierFolder, marker] {
             AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir)
         }
         removePage(from: project)
@@ -756,7 +774,7 @@ extension Agent.Rules {
     static var gameWebEdit: String { """
     - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
-    Web/lamp-game.js, Web/lamp-controllers.js, Web/lamp.js and Web/three/ are Lamp's (written before every build), and so are Sources/ but for \
+    Web/lamp-game.js, Web/lamp-controllers.js, Web/lamp.js, Web/three/ and Web/rapier/ are Lamp's (written before every build), and so are Sources/ but for \
     Sources/Native.swift, build.sh, Package.swift and Lamp/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
@@ -787,7 +805,8 @@ extension Agent.Rules {
     device. index.html loads lamp.js, then the import map for three.js (`three` and `three/addons/`, from Web/three: \
     the WebGL build and its addons such as GLTFLoader; `three/webgpu` and `three/tsl`, node materials drawing with \
     WebGL 2, are added once the page imports them, and only a heavy scene needs them; nothing else is there, so no \
-    Draco or KTX2 files), then \
+    Draco or KTX2 files; physics is Rapier, `@dimforge/rapier3d-compat` mapped to ./rapier/rapier.js, put in Web/rapier/ \
+    once the import map names it: the 3d-game skill says when a game needs it and how), then \
     game.js as a module: keep that. game.js makes a `THREE.WebGLRenderer({ antialias: true })` and calls \
     `game({ renderer, init, frame, touch })` once: Lamp sizes the canvas to 1920x1080 and fits it to the window or \
     screen, runs `init` once (it may be async, to load models with `GLTFLoader().loadAsync('ship.glb')` or sounds), \

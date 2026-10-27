@@ -114,3 +114,10 @@ licence in full): sokol (https://github.com/floooh/sokol, zlib licence, Copyrigh
 HandmadeMath (https://github.com/HandmadeMath/HandmadeMath, public domain), cgltf (https://github.com/jkuhlmann/cgltf,
 MIT, Copyright (c) 2018-2021 Johannes Kuhlmann) and stb_image (https://github.com/nothings/stb, MIT or public domain,
 Copyright (c) 2017 Sean Barrett).
+
+## Libraries for games and web apps
+
+Lamp writes these into the games and web apps it makes, each with its license in full beside it
+(Resources/WebLibraries/<name>/LICENSE and NOTICE.md): three.js (https://github.com/mrdoob/three.js, MIT, Copyright ©
+2010-2026 three.js authors) and Rapier (https://github.com/dimforge/rapier, the npm package @dimforge/rapier3d-compat,
+Apache License 2.0, Copyright 2020 Dimforge EURL), into a game whose page imports it.
