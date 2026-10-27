@@ -15009,8 +15009,9 @@ enum Template {
                 if let device = directs[id].flatMap({ $0.ready ? $0.device : nil }) ?? relayPresent[id]?.device, !device.isEmpty { devices[id] = device }
             }
             // This app itself is listed only while another copy of it is open.
-            // `listed`, not `app`: a closure parameter named like `app(of:)` in the same expression trips Swift before 6.4.
-            let list = roster.filter { $0.id != me || open.contains { Self.app(of: $0) == me } }.map { listed in
+            // A loop, not a map: Swift before 6.4 can't type a closure this long that reaches into the roster's entries.
+            var list: [Peer] = []
+            for listed in roster.filter({ $0.id != me || open.contains { Self.app(of: $0) == me } }) {
                 let copies = open.filter { Self.app(of: $0) == listed.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
                     .sorted { ($0.since, $0.id) < ($1.since, $1.id) }
                 let isOpen = !copies.isEmpty
@@ -15032,7 +15033,7 @@ enum Template {
                     : Status(state: .notOpen, reason: Self.notOpen(name: listed.name, kind: listed.kind, lastSeen: lastSeen[listed.id],
                                                                    waiting: waiting.contains(listed.id), now: now),
                              lastSeen: lastSeen[listed.id])
-                return Peer(id: listed.id, copies: copies, kind: listed.kind, name: listed.name, device: copies.last?.device ?? "", status: status)
+                list.append(Peer(id: listed.id, copies: copies, kind: listed.kind, name: listed.name, device: copies.last?.device ?? "", status: status))
             }
             if !copiesSeen, open.contains(where: { Self.app(of: $0) == me }) {
                 copiesSeen = true
