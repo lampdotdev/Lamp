@@ -132,15 +132,17 @@ A setup step Lamp can walk the person through is named in the device table: `Pla
 a TV reports ("webOS"), the skill that does it, so the TV row, which covers Samsung's too, offers Do It for Me only
 for the systems it names. The skill carries its steps as data, a `lamp-setup` block of JSON in its SKILL.md
 (`SetupSteps.parse`), and `GuidedSetup` runs them: `connect`, `request`, `wait` (asked again every few seconds until
-the answer holds a value), `confirm` (the person says they did it) and `passphrase` (the setup window's own step,
+the answer holds a value), `confirm` (the person says they did it), `rejoin` (the device restarts, by the person's hand or by itself, and the
+steps go on once Lamp has seen it stop answering and answer again; the person can skip a restart that isn't needed)
+and `passphrase` (the setup window's own step,
 which finishes only once the key is fetched, unlocked and SSH answers). No step is a maker's code: the skill names
 the connection (`SetupConnections`), and each connection is a protocol its maker publishes. LG's is the TV's
 second-screen socket as the Connect SDK speaks it (`WebOSSocket`): `wss://` on port 3001, a manifest asking only for
 the permissions the steps use, the TV's certificate kept with the client key it hands back and the key offered only
 to a TV showing that certificate again.
 
-Lamp says only what it saw: a TV that let it in, an app in the TV's list. A sign-in, a switch or a restart is
-confirmed by the person, never read off a dropped connection or a timer. Each failure says what to do: the TV said
+Lamp says only what it saw: a TV that let it in, an app in the TV's list, a TV that went away and came back. A sign-in
+or a switch is the person's, never read off a dropped connection or a timer. Each failure says what to do: the TV said
 no (Try Again, then Accept), it couldn't do one request (the step's own words, and the steps go on when the skill
 allows), or it stopped answering. Closing the window or turning to another TV cancels the steps under way. Nothing
 the person types (an account, the passphrase) goes through an agent: the steps run without one.

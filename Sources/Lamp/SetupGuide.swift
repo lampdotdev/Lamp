@@ -9,7 +9,7 @@ import Foundation
 /// what the person does on it (a sign-in, a switch, a restart) they confirm themselves, and a dropped connection or a
 /// timer is never taken for either.
 struct SetupSteps {
-    enum Kind: String { case connect, request, wait, confirm, passphrase }
+    enum Kind: String { case connect, request, wait, confirm, rejoin, passphrase }
 
     struct Step {
         let kind: Kind
@@ -67,6 +67,8 @@ struct SetupSteps {
                 return .failure(Problem("step \(index + 1) is missing what it sends or waits for"))
             case .confirm where step.ask == nil || step.button == nil:
                 return .failure(Problem("step \(index + 1) doesn't say what the person confirms"))
+            case .rejoin where step.ask == nil || step.button == nil:
+                return .failure(Problem("step \(index + 1) doesn't say what the person does, or how they skip it"))
             default: break
             }
             steps.append(step)
@@ -149,6 +151,8 @@ final class GuidedSetup: ObservableObject {
     private var work: Task<Void, Never>?
     private var connection: SetupConnection?
     private var confirmed: CheckedContinuation<Void, Never>?
+    /// The person said a `rejoin` step's restart isn't needed.
+    private var skipped = false
 
     var started: Bool { !lines.isEmpty || failure != nil || atPassphrase }
 
@@ -161,6 +165,7 @@ final class GuidedSetup: ObservableObject {
 
     /// The person did what the step asked.
     func confirm() {
+        skipped = true
         let waiting = confirmed
         confirmed = nil
         button = nil
@@ -202,6 +207,7 @@ final class GuidedSetup: ObservableObject {
             if let doing = fill(step.doing) { lines.append(Line(text: doing, state: .doing)) }
             ask = fill(step.ask)
             do {
+                var done = fill(step.done)
                 switch step.kind {
                 case .connect:
                     try await connection.connect()
@@ -217,11 +223,32 @@ final class GuidedSetup: ObservableObject {
                     button = step.button
                     link = step.link
                     await withCheckedContinuation { confirmed = $0 }
+                case .rejoin:
+                    // The device restarts (the person unplugs it, or it restarts by itself): Lamp carries on once it
+                    // has seen it stop answering and answer again, and says it's back only then. The person's
+                    // button skips a restart that isn't needed, and claims nothing.
+                    skipped = false
+                    button = step.button
+                    link = step.link
+                    var gone = false
+                    while !skipped {
+                        do {
+                            try await connection.connect()
+                            if gone { break }
+                        } catch SetupConnectionError.unreachable {
+                            gone = true
+                        }
+                        if skipped { break }
+                        try await Task.sleep(for: .seconds(step.every))
+                    }
+                    button = nil
+                    link = nil
+                    if skipped { done = nil }
                 case .passphrase:
                     break
                 }
                 guard !Task.isCancelled else { return }
-                settle(fill(step.done), as: .done)
+                settle(done, as: .done)
             } catch is CancellationError {
                 return
             } catch SetupConnectionError.failed(let words) where step.continueOnFailure {

@@ -32,8 +32,8 @@ need the key, and fail with 401 without it.
 - Press the remote's buttons for the person, install the app silently, or sign in for them.
 - See the LG account's password or the passphrase in any conversation: the passphrase is typed into the setup window
   and goes only to the TV's key server (port 9991), exactly as typed (it's case-sensitive).
-- Say a step happened that it can't see. Lamp sees that the TV let it in and that the app is installed; a restart, a
-  sign-in or a switch is the person's to do, and Lamp says nothing of it as done: the person's Continue only moves on.
+- Say a step happened that it can't see. Lamp sees that the TV let it in, that the app is installed, and that the TV
+  went away and came back; a sign-in or a switch is the person's to do, and Lamp says nothing of it as done.
 - Open anything but the LG Content Store's page for Developer Mode and the Developer Mode app.
 
 ## Not yet checked on a real TV
@@ -46,8 +46,10 @@ need the key, and fail with 401 without it.
 Lamp's setup reads this block and follows it in order. `{name}` is the TV's name. A step is one of: `connect` (let
 Lamp in; asks on the TV the first time), `request` (send one request; `failed` is said and the setup goes on when
 `continueOnFailure`), `wait` (ask the TV every `every` seconds until `until.path` holds `until.contains`), `confirm`
-(the person clicks `button` once they've done it; a confirm has no `done`, since Lamp didn't see it happen), and
-`passphrase` (the setup window's own passphrase step).
+(the person clicks `button` once they've done it; a confirm has no `done`, since Lamp didn't see it happen), `rejoin`
+(the device restarts: Lamp carries on by itself once it has seen it stop answering and answer again, and only then
+says `done`; `button` skips a restart that isn't needed and claims nothing), and `passphrase` (the setup window's own
+passphrase step).
 
 ```lamp-setup
 {
@@ -63,7 +65,12 @@ Lamp in; asks on the TV the first time), `request` (send one request; `failed` i
     {
       "do": "request",
       "uri": "ssap://system.launcher/launch",
-      "payload": { "id": "com.webos.app.discovery", "params": { "query": "category/GAME_APPS/com.palmdts.devmode" } },
+      "payload": {
+        "id": "com.webos.app.discovery",
+        "params": {
+          "query": "category/GAME_APPS/com.palmdts.devmode"
+        }
+      },
       "doing": "Opening the LG Content Store on {name}…",
       "done": "Asked {name} to show Developer Mode in the LG Content Store",
       "failed": "{name} couldn't open the LG Content Store. On the TV, open it and search for Developer Mode.",
@@ -72,7 +79,10 @@ Lamp in; asks on the TV the first time), `request` (send one request; `failed` i
     {
       "do": "wait",
       "uri": "ssap://com.webos.applicationManager/listApps",
-      "until": { "path": "apps.id", "contains": "com.palmdts.devmode" },
+      "until": {
+        "path": "apps.id",
+        "contains": "com.palmdts.devmode"
+      },
       "every": 3,
       "doing": "Waiting for Developer Mode to be installed…",
       "ask": "On the TV, choose Install. If the store shows its front page, search for Developer Mode first.",
@@ -81,50 +91,47 @@ Lamp in; asks on the TV the first time), `request` (send one request; `failed` i
     {
       "do": "request",
       "uri": "ssap://system.launcher/launch",
-      "payload": { "id": "com.palmdts.devmode" },
+      "payload": {
+        "id": "com.palmdts.devmode"
+      },
       "doing": "Opening Developer Mode on {name}…",
       "done": "Asked {name} to open Developer Mode",
       "failed": "{name} couldn't open Developer Mode. On the TV, open it from your apps.",
       "continueOnFailure": true
     },
     {
-      "do": "confirm",
-      "ask": "If Developer Mode shows no Sign In, restart the TV fully: unplug it for 30 seconds, plug it back in and turn it on. Click Continue when the TV is on and Developer Mode shows Sign In, or is already signed in.",
-      "button": "Continue"
-    },
-    {
-      "do": "connect",
-      "doing": "Connecting to {name}…",
-      "ask": "If the TV asks, choose Accept.",
-      "done": "Connected to {name}",
-      "refused": "{name} didn't let Lamp in. Click Try Again, then choose Accept on the TV."
+      "do": "rejoin",
+      "ask": "If Developer Mode shows no Sign In, unplug the TV for 30 seconds, then plug it back in and turn it on. Lamp carries on once the TV answers again.",
+      "button": "Sign In Is Showing",
+      "done": "{name} is back on"
     },
     {
       "do": "request",
       "uri": "ssap://system.launcher/launch",
-      "payload": { "id": "com.palmdts.devmode" },
+      "payload": {
+        "id": "com.palmdts.devmode"
+      },
       "doing": "Opening Developer Mode on {name}…",
       "done": "Asked {name} to open Developer Mode",
       "failed": "{name} couldn't open Developer Mode. On the TV, open it from your apps.",
       "continueOnFailure": true
     },
     {
-      "do": "confirm",
-      "ask": "In Developer Mode, sign in with your LG developer account, then turn Dev Mode Status on. The TV restarts. Click Continue once it's back on. If it's already signed in with Dev Mode Status on, click Continue now.",
-      "button": "Continue",
-      "link": { "title": "Get an LG Developer Account", "url": "https://webostv.developer.lge.com/" }
-    },
-    {
-      "do": "connect",
-      "doing": "Connecting to {name} again…",
-      "ask": "If the TV asks, choose Accept.",
-      "done": "Connected to {name} again",
-      "refused": "{name} didn't let Lamp in. Click Try Again, then choose Accept on the TV."
+      "do": "rejoin",
+      "ask": "In Developer Mode, sign in with your LG developer account, then turn Dev Mode Status on. The TV restarts, and Lamp carries on once it's back on.",
+      "button": "Dev Mode Status Is Already On",
+      "link": {
+        "title": "Get an LG Developer Account",
+        "url": "https://webostv.developer.lge.com/"
+      },
+      "done": "{name} is back on"
     },
     {
       "do": "request",
       "uri": "ssap://system.launcher/launch",
-      "payload": { "id": "com.palmdts.devmode" },
+      "payload": {
+        "id": "com.palmdts.devmode"
+      },
       "doing": "Opening Developer Mode on {name} again…",
       "done": "Asked {name} to open Developer Mode again",
       "failed": "{name} couldn't open Developer Mode. On the TV, open it from your apps.",

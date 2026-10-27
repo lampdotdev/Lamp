@@ -19,9 +19,9 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertEqual(steps.steps.last?.kind, .passphrase)
         // Whatever the person does on the TV that Lamp can't see is theirs to confirm, and their Continue claims nothing
         // as done: no "You turned Dev Mode Status on" when they may only have clicked.
-        let confirms = steps.steps.filter { $0.kind == .confirm }
-        XCTAssertFalse(confirms.isEmpty)
-        for confirm in confirms { XCTAssertNil(confirm.done, confirm.ask ?? "") }
+        for confirm in steps.steps where confirm.kind == .confirm { XCTAssertNil(confirm.done, confirm.ask ?? "") }
+        // The restart is the person's (unplugging the TV), and Lamp carries on by itself once it sees the TV come back.
+        XCTAssertTrue(steps.steps.contains { $0.kind == .rejoin && ($0.ask ?? "").contains("unplug") })
         for place in Places.builtIn {
             for name in place.setupSkills.values {
                 let skill = try XCTUnwrap(shipped[name], "\(place.name) names \(name), which Lamp doesn't ship")
@@ -122,6 +122,46 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertEqual(device.sent, ["open-store"])
     }
 
+    /// A restart: Lamp says the device is back only once it saw it stop answering and answer again.
+    func testARestartIsSeenGoingAndComingBack() async throws {
+        let rejoin = try parsed("""
+          {"do": "rejoin", "ask": "Unplug it.", "button": "Not Needed", "every": 1, "done": "{name} is back on"},
+          {"do": "passphrase", "ask": "Type it."}
+        """)
+        let device = FakeDevice()
+        device.connects = 0
+        device.connectResults = [nil, .unreachable, .unreachable, nil]
+        let guided = GuidedSetup()
+        guided.start(rejoin, name: "Den TV", connection: device)
+        try await until { guided.button != nil }
+        XCTAssertEqual(guided.lines, [], "nothing is said while the TV is still on")
+        await guided.finished()
+        XCTAssertEqual(guided.lines.map(\.text), ["Den TV is back on"])
+        XCTAssertEqual(device.connects, 4)
+        XCTAssertTrue(guided.atPassphrase)
+    }
+
+    /// The person skips a restart that isn't needed: the steps go on, and nothing claims the TV restarted.
+    func testSkippingARestartClaimsNothing() async throws {
+        let rejoin = try parsed("""
+          {"do": "rejoin", "ask": "Unplug it.", "button": "Not Needed", "every": 1, "done": "{name} is back on"},
+          {"do": "passphrase", "ask": "Type it."}
+        """)
+        let device = FakeDevice()
+        let guided = GuidedSetup()
+        guided.start(rejoin, name: "Den TV", connection: device)
+        try await until { guided.button == "Not Needed" }
+        guided.confirm()
+        await guided.finished()
+        XCTAssertEqual(guided.lines, [])
+        XCTAssertTrue(guided.atPassphrase)
+    }
+
+    private func parsed(_ steps: String) throws -> SetupSteps {
+        let body = "```lamp-setup\n{\"connection\": \"webos-second-screen\", \"steps\": [\(steps)]}\n```"
+        return try SetupSteps.parse(skill: body).get()
+    }
+
     func testCancellingStopsTheStepsAndClosesTheConnection() async throws {
         let device = FakeDevice()
         device.lists = [["apps": []]]
@@ -144,6 +184,8 @@ final class SetupGuideTests: XCTestCase {
 
 private final class FakeDevice: SetupConnection {
     var connectFailure: SetupConnectionError?
+    /// What each connect does, in turn (nil: it lets Lamp in); once they run out, `connectFailure`.
+    var connectResults: [SetupConnectionError?] = []
     var failing: [String: SetupConnectionError] = [:]
     /// What each `list` request answers, in turn; the last one again once they run out.
     var lists: [[String: Any]] = []
@@ -153,6 +195,7 @@ private final class FakeDevice: SetupConnection {
 
     func connect() async throws {
         connects += 1
+        if !connectResults.isEmpty { if let result = connectResults.removeFirst() { throw result }; return }
         if let connectFailure { throw connectFailure }
     }
 
