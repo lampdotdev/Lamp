@@ -5825,6 +5825,9 @@ enum Template {
                 button.identifier = NSUserInterfaceItemIdentifier("lampReload")
                 button.imagePosition = .imageLeading
                 button.imageHugsTitle = true
+                // The glass style is macOS 26's, and its names exist only in Xcode 26's SDK: a build with an older
+                // Xcode (the compiler says which) gets the push style on every macOS.
+                #if compiler(>=6.2)
                 if #available(macOS 26, *) {
                     button.bezelStyle = .glass
                     button.borderShape = .capsule
@@ -5832,6 +5835,9 @@ enum Template {
                 } else {
                     button.bezelStyle = .push
                 }
+                #else
+                button.bezelStyle = .push
+                #endif
                 button.bezelColor = .controlAccentColor
                 button.toolTip = "Reload the app to see the latest change"
                 button.setAccessibilityLabel("Reload to see the latest change")
@@ -5979,6 +5985,7 @@ enum Template {
             image.accessibilityDescription = name
             let button = NSButton(image: image, target: Opener.shared, action: action)
             button.toolTip = tip
+            #if compiler(>=6.2)
             if #available(macOS 26, *) {
                 button.bezelStyle = .glass
                 button.borderShape = .circle
@@ -5986,6 +5993,10 @@ enum Template {
                 button.bezelStyle = .accessoryBarAction
                 button.isBordered = false
             }
+            #else
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            #endif
             return button
         }
 
