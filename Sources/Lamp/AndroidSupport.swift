@@ -3240,23 +3240,30 @@ extension Template {
         private val itemsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<T>>(emptyList())
         private val byID = java.util.concurrent.ConcurrentHashMap<String, T>()
         private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, T?, String) -> Unit>()
+        /** Held while the store is written or read and what's read here follows it, so a write on one thread and a change
+         *  heard on another never leave this holding the older of the two. */
+        private val cache = Any()
         val items: kotlinx.coroutines.flow.StateFlow<List<T>> get() = itemsFlow
 
-        /** What the collection holds now, so a write here reads back before its change is heard. */
+        private fun show() { itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] } }
+
+        /** What the collection holds now, so a write here reads back before its change is heard. Under `cache`. */
         private fun reload() {
             val now = LampWish.items(name).toMap()
             byID.keys.retainAll(now.keys)
             for ((id, value) in now) decode(value, id)?.let { byID[id] = it }
-            itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] }
+            show()
         }
 
         init {
-            reload()
+            synchronized(cache) { reload() }
             LampWish.onItems(name) { changed, from ->
                 // Each item as the collection holds it now, not as the change said: a later put of the same id, already
                 // read back here, is never undone by an earlier change heard after it.
-                val said = changed.map { (id, _) -> id to LampWish.itemNow(name, id)?.let { decode(it, id) }.also { item -> if (item != null) byID[id] = item else byID.remove(id) } }
-                itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] }
+                val said = synchronized(cache) {
+                    changed.map { (id, _) -> id to LampWish.itemNow(name, id)?.let { decode(it, id) }.also { item -> if (item != null) byID[id] = item else byID.remove(id) } }
+                        .also { show() }
+                }
                 for ((id, item) in said) for (listener in listeners) listener(id, item, from)
             }
         }
@@ -3264,16 +3271,16 @@ extension Template {
         /** Adds the item, or replaces the one with the same id, here and on every copy. Read back at once; `onChange`
          *  hears it a moment later, on the main thread. */
         fun put(item: T): Boolean = put(listOf(item))
-        fun put(items: List<T>): Boolean {
+        fun put(items: List<T>): Boolean = synchronized(cache) {
             val kept = LampWish.putItems(name, items.map { idOf(it).toString() to encode(it) })
             // All kept: just these change; one turned down, the whole collection is read again.
-            if (kept) { for (item in items) byID[idOf(item).toString()] = item; itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] } } else reload()
-            return kept
+            if (kept) { for (item in items) byID[idOf(item).toString()] = item; show() } else reload()
+            kept
         }
         /** Makes the items this copy put exactly these: each put, and each it put before that isn't among them deleted. */
-        fun publish(items: List<T>): Boolean = LampWish.publishItems(name, items.map { idOf(it).toString() to encode(it) }).also { reload() }
-        fun delete(id: Any): Boolean = LampWish.putItems(name, listOf(id.toString() to null)).also {
-            if (it) { byID.remove(id.toString()); itemsFlow.value = byID.keys.sorted().mapNotNull { key -> byID[key] } }
+        fun publish(items: List<T>): Boolean = synchronized(cache) { LampWish.publishItems(name, items.map { idOf(it).toString() to encode(it) }).also { reload() } }
+        fun delete(id: Any): Boolean = synchronized(cache) {
+            LampWish.putItems(name, listOf(id.toString() to null)).also { if (it) { byID.remove(id.toString()); show() } }
         }
         fun get(id: Any): T? = byID[id.toString()]
         fun all(): List<T> = itemsFlow.value
