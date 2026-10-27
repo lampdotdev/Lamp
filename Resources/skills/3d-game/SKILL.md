@@ -1,6 +1,6 @@
 ---
 name: 3d-game
-description: 3D games and scenes in a web page with three.js, on any device that runs web, TVs included - the renderer, models, light and materials, and what costs the most. Read before writing or changing 3D in a web page.
+description: 3D games and scenes in a web page with three.js, on any device that runs web, TVs included - the renderer, models, light and materials, physics with Rapier (things that fall, roll, stack and collide, a player that walks on them, a car on its wheels), and what costs the most. Read before writing or changing 3D in a web page.
 ---
 
 # 3D in a web page
@@ -45,6 +45,145 @@ device) or tell the person why 3D in a page can't run there.
   MeshLambertMaterial or MeshBasicMaterial cost less.
 - Make every mesh, material and texture once in `init` and reuse it; many copies of one shape are one
   `THREE.InstancedMesh`.
+
+## Physics
+
+**Whether a game needs it.** Most don't. A runner, a shooter, a racer on a track or a platformer on flat ground moves
+things by its own rules and tests what touches what itself: the distance between two centers, two boxes
+(`THREE.Box3`), a ray down to the ground over a few meshes (`THREE.Raycaster`). That costs nearly nothing and does
+exactly what the game means. Physics is for games whose fun is things behaving like things: a stack of crates that
+topples, marbles that roll and knock into each other, a board that tilts, a ball through pins, a car on its
+suspension, a door on a hinge, a chain, a pile of anything. Once a game starts writing its own bounces, stacking or
+rolling, it wants physics: hand-made physics is where objects sink, jitter and pass through walls.
+
+**Rapier.** Lamp ships Rapier, a physics engine in WebAssembly, as one module that loads like three.js does,
+wherever the game is played. It's for a game's page on its runtime; a TV app's page doesn't get it. Add it to the import map in index.html,
+`"@dimforge/rapier3d-compat": "./rapier/rapier.js"`, and Lamp puts `Web/rapier/` beside the page (it's Lamp's, like
+`Web/three/`; a game that doesn't import it doesn't carry it). Start it once, in `init`, and step the world with
+`fixedStep` from lamp-game.js:
+
+```js
+import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { game, fixedStep } from './lamp-game.js';
+
+let world, events, physics, pad, presses = 0;
+game({ renderer, async init() {
+    await RAPIER.init();
+    world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    events = new RAPIER.EventQueue(true);
+    physics = fixedStep(() => { steer(); world.step(events); events.drainCollisionEvents(hit); });
+    // … the ground, the bodies and their meshes
+}, frame(f) {
+    pad = f.pads[0];
+    presses |= pad.pressed;   // kept until a step uses them
+    physics(f.dt);
+    place();
+    renderer.render(scene, camera);
+} });
+
+function steer() {
+    // Held buttons and sticks are read as they are now, every step.
+    ball.applyImpulse({ x: pad.lx * PUSH, y: 0, z: -pad.ly * PUSH }, true);
+    // A press is used by one step only: a frame can run no step (at 120 frames a second) or two (at 30).
+    if (presses & CONTROLS.jump) ball.applyImpulse({ x: 0, y: JUMP, z: 0 }, true);
+    presses = 0;
+}
+```
+
+- `await RAPIER.init()` goes inside `init` (never at the top of the module), so a failure is the game's start-up
+  error, which the preview reports.
+- The world steps 1/60 s at a time (`world.timestep`, its default), the step `fixedStep` runs as often as the frame
+  needs, so the game plays the same at 30, 60 or 120 frames a second and the preview replays it exactly: the same
+  moves give the same tumble every play. Never pass `f.dt` to the world or change `timestep` per frame. Anything that
+  pushes bodies (the controls, a motor) runs inside the step, as `steer()` does above, reading the pad the frame
+  kept. A press (`pressed`, `released`) belongs to a frame, not a step: gather it into `presses` in `frame` and let the
+  first step that runs use it and clear it, or a jump is lost at 120 frames a second and done twice at 30. Anything
+  random in the setup comes from `random()`.
+- Meters, kilograms and seconds, y up, as three.js has them. Keep things their real size: a box a meter across, a
+  marble a few centimeters. Rapier's tolerances are tuned for things about a meter across: in a world of small things
+  (a tabletop maze, marbles, dice) set `world.lengthUnit` to their typical size in meters (0.05 for marbles), or they
+  sink into each other and jitter. Small fast things can pass through thin walls between steps: make walls thick, or
+  give the fast body `setCcdEnabled(true)`.
+
+**Bodies and colliders.** A body is how a thing moves; its colliders are its shape.
+
+- Fixed (`RigidBodyDesc.fixed()`): what never moves, the ground, walls, the track.
+- Dynamic (`RigidBodyDesc.dynamic()`): moved only by physics, crates, balls, debris. Push it with `applyImpulse` (a
+  kick) or `addForce` (a steady push), never by setting its position each frame.
+- Kinematic (`RigidBodyDesc.kinematicPositionBased()`): moved by the game, pushing dynamic bodies without being
+  pushed back: a moving platform, a tilting board, a door the game opens. Give it its place each step with
+  `setNextKinematicTranslation` and `setNextKinematicRotation`.
+
+Colliders are simple shapes: `ColliderDesc.cuboid`, `ball`, `capsule`, `cylinder`, `roundCuboid` (a box with
+rounded edges rolls and stacks more kindly), several on one body for a shape made of parts (a table: a top and four
+legs). A model's look never becomes its collider: an odd shape that moves is a `convexHull` of a few of its points,
+a level that never moves may be a `trimesh` of a simplified mesh, and land is a `heightfield`. Bounce, grip and weight
+are the collider's: `setRestitution`, `setFriction`, `setDensity`.
+
+**Meshes in step with bodies.** Keep each body with the mesh that shows it and copy the body onto the mesh after the
+step, straight into three.js's own objects, so nothing is allocated per frame:
+
+```js
+const things = [];   // { body, mesh }
+function place() {
+    for (const t of things) { t.body.translation(t.mesh.position); t.body.rotation(t.mesh.quaternion); }
+}
+```
+
+Many of one thing (a hundred crates) are one `THREE.InstancedMesh`: read each body into one Vector3 and Quaternion
+kept for it, `matrix.compose(position, quaternion, scale)`, `setMatrixAt(i, matrix)`, and set `instanceMatrix.needsUpdate`.
+
+**The player.** A character that walks, climbs steps and stands on slopes is a kinematic body with a capsule and
+Rapier's character controller, rather than a dynamic ball pushed around:
+
+```js
+const controller = world.createCharacterController(0.02);
+controller.enableAutostep(0.3, 0.2, true);   // steps up to 30 cm
+controller.enableSnapToGround(0.3);
+controller.setMaxSlopeClimbAngle(45 * Math.PI / 180);
+// each step: where the player wants to go this step, gravity included
+controller.computeColliderMovement(playerCollider, wanted);
+const moved = controller.computedMovement(), at = playerBody.translation();
+playerBody.setNextKinematicTranslation({ x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z });
+const grounded = controller.computedGrounded();   // may jump
+```
+
+The game keeps the player's own vertical speed (gravity added each step, set on a jump, zeroed when grounded).
+
+**A vehicle.** A car is a dynamic body (a box for the chassis, its weight low) and Rapier's vehicle controller, which
+casts a ray for each wheel and gives it suspension and grip:
+
+```js
+const car = world.createVehicleController(chassis);
+const down = { x: 0, y: -1, z: 0 }, axle = { x: -1, y: 0, z: 0 };
+for (const [x, z] of [[-0.8, 1.3], [0.8, 1.3], [-0.8, -1.3], [0.8, -1.3]]) car.addWheel({ x, y: 0, z }, down, axle, 0.3, 0.35);
+// each step: steering on the front wheels, engine and brake on the back
+car.setWheelSteering(0, steer); car.setWheelSteering(1, steer);
+car.setWheelEngineForce(2, gas); car.setWheelEngineForce(3, gas);
+car.updateVehicle(world.timestep);
+```
+
+Wheels are drawn from the controller (`wheelSuspensionLength(i)`, `wheelRotation(i)`, `wheelSteering(i)`), not given
+bodies of their own. Tune `setWheelFrictionSlip` and the suspension by driving it in the preview.
+
+**Joints** hold two bodies together: `RAPIER.JointData.revolute` (a hinge: a door, a wheel, a flipper),
+`prismatic` (a slider), `spherical` (a ball joint: a chain link, a pendulum), `fixed` (welded), made with
+`world.createImpulseJoint(data, body1, body2, true)`. A hinge can be driven with `configureMotorVelocity`.
+
+**What touched what.** Give a collider `setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS)` and read
+`events.drainCollisionEvents((a, b, started) => …)` after each step, a pair of collider handles: keep a `Map` from
+handle to the game's thing. A sensor (`setSensor(true)`) is a zone that's felt but not hit: a goal, a pickup, a
+checkpoint. A collision is the moment for a sound and a rumble.
+
+**Keeping it light.** Physics runs on the CPU, before anything is drawn, so it takes from the same 16 ms. Resting
+bodies fall asleep by themselves and then cost almost nothing: leave them be (don't set their position or velocity
+unless something happens to them), and when the game moves a sleeping one itself, `wakeUp()` it. Balls, boxes and
+capsules are cheapest; convex hulls cost more, trimeshes most. Where the request's device line names a slow place
+(a TV, a streamer, an older console), keep to about 100 dynamic bodies awake at once, with a few hundred more asleep or
+fixed; a Mac takes a thousand. Step only through `fixedStep`, never make a body or collider per frame (make them in `init` or when a level starts, and reuse them), and remove what
+falls out of the world (`world.removeRigidBody`). The device's log says how its frames keep to time: when they're late
+with physics in play, make fewer bodies move at once before drawing less.
 
 ## What costs the most
 

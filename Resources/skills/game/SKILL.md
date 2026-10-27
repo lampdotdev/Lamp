@@ -41,6 +41,8 @@ different rates, and a slow frame must not slow the game.
   through `phaser({ scenes })` from lamp-phaser.js, moving by `update`'s `delta`, on the same one loop. Never requestAnimationFrame, timers, the
   clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime let Lamp's preview replay a
   play exactly.
+  Physics is the one exception to moving by `f.dt`: it steps at a fixed 1/60 s inside the frame, through `fixedStep`
+  from lamp-game.js, so it behaves the same at any frame rate (Rapier for 3D, in the 3d-game skill).
 - SpriteKit: in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`; movement in
   `update(_:)` scaled by the time since the last frame; collisions with SKPhysicsBody, its category and contact masks,
   and an SKPhysicsContactDelegate. An SKCameraNode follows the player through a world bigger than the screen.

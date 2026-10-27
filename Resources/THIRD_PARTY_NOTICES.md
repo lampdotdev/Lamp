@@ -121,4 +121,6 @@ Lamp writes these into the pages of the games it makes, each with its license be
 (Resources/WebLibraries/<name>/NOTICE.md says which release and how it was checked): three.js
 (https://github.com/mrdoob/three.js, MIT, Copyright © 2010-2026 three.js authors), for 3D, and Phaser
 (https://github.com/phaserjs/phaser, MIT, Copyright (c) 2024 Richard Davey, Phaser Studio Inc.), for 2D, only into a
-game that draws with it.
+game that draws with it, and Rapier (https://github.com/dimforge/rapier, the npm package
+@dimforge/rapier3d-compat, Apache License 2.0, Copyright 2020 Dimforge EURL), for physics, only into a game that
+imports it.

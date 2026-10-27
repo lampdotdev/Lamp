@@ -367,7 +367,16 @@ off (the pad is the runtime's, `pad()`, and sound its `sound`), its pointer inpu
 1920x1080 stage the runtime fits to the screen (Phaser's FIT, so clicks land where they're drawn). A Phaser game is
 always `sharp`: Phaser draws at the game's size, so the runtime's smaller drawing doesn't apply. In the preview a scene
 that starts loading is waited for before the next frame (the frame function's promise, which `runPreview` awaits), and
-the stats count WebGL draws and their triangles. What the player holds is `input()` (a controller and
+the stats count WebGL draws and their triangles. Physics is Rapier (`Resources/WebLibraries/rapier`, Apache-2.0, put
+there by `scripts/update-rapier.sh` from one npm release of `@dimforge/rapier3d-compat`, checked against the SHA-512
+npm lists): one ES module of about 4 MB with its WebAssembly inside it, so it loads from the page's folder like any
+module in every host (the Mac's and iOS's web view, Android's WebView, the Xbox's WebView2, the preview), with no
+.wasm file for a host to serve. It goes into `Web/rapier` only while the page's own files name it
+(`GameKit.usesRapier`: the import map's `@dimforge/rapier3d-compat` entry, which the agent adds), and is taken out when
+they stop. `fixedStep` in lamp-game.js steps it, or any physics, at 1/60 s however fast frames come, so the preview's
+frames (each exactly one step) replay a play exactly; Rapier gives the same results run to run on one machine, which
+is all the preview needs. Starting it takes about 20 ms in WebKit and 200 ms in Chromium on a Mac, and its memory
+starts at about 1 MB and grows with the bodies (about 7 MB for 500). What the player holds is `input()` (a controller and
 its family, from the Gamepad API's id or the vendor Lamp's Android app sends with the pad, the keyboard, or touch; a
 device that comes with a controller starts on it, a touch screen on touch, anything else and the preview on the
 keyboard, and it follows the last one used, with `onInput` to redraw), and `label`/`glyph` name and draw a button, stick

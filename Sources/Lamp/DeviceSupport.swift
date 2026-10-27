@@ -86,13 +86,18 @@ enum DeviceSupport {
 
     /// Whether the page's own files (not three.js's) name the node renderer, `three/webgpu` or `three/tsl`.
     static func usesNodeRenderer(_ project: LampProject, page: String) -> Bool {
+        pageNames(["three/webgpu", "three/tsl"], project, page: page)
+    }
+
+    /// Whether the page's own files (its .js, .mjs and .html, not the libraries Lamp puts beside them) name any of `words`.
+    static func pageNames(_ words: [String], _ project: LampProject, page: String) -> Bool {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
         for case let url as URL in walk {
-            if url.lastPathComponent == "three" || url.lastPathComponent == "phaser" { walk.skipDescendants(); continue }
+            if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
             guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
                   let text = AppFile.text(url, in: project) else { continue }
-            if text.contains("three/webgpu") || text.contains("three/tsl") { return true }
+            if words.contains(where: text.contains) { return true }
         }
         return false
     }
@@ -113,7 +118,7 @@ enum DeviceSupport {
         let folder = project.dir.appendingPathComponent(page)
         guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
         for case let url as URL in walk {
-            if url.lastPathComponent == "three" || url.lastPathComponent == "phaser" { walk.skipDescendants(); continue }
+            if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
             guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent),
                   let text = AppFile.text(url, in: project) else { continue }
             if text.range(of: phaserUse, options: .regularExpression) != nil { return true }
@@ -127,8 +132,17 @@ enum DeviceSupport {
     /// What in a page's code shows it draws with Phaser.
     static let phaserUse = #"from\s*['"]phaser['"]|import\(\s*['"]phaser['"]|lamp-phaser\.js"#
 
-    static let threeFiles: [(name: String, contents: String)] = {
-        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/three"),
+    static let threeFiles = bundled("WebLibraries/three")
+
+    /// Rapier, the physics engine a three.js game may take (Apache-2.0, in Lamp's bundle with its license,
+    /// `WebLibraries/rapier`, put there by scripts/update-rapier.sh): one module with its WebAssembly inside it, so it
+    /// loads the same in every host. Given only to a game whose page imports it (`GameKit.usesRapier`).
+    static let rapierFiles = bundled("WebLibraries/rapier")
+
+    /// A folder of Lamp's bundle, every file by its path in the folder, read once; empty in a build without it, which
+    /// then writes nothing for it.
+    private static func bundled(_ path: String) -> [(name: String, contents: String)] {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent(path),
               let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
         let base = folder.resolvingSymlinksInPath().path + "/"
         return walk.compactMap { item -> (String, String)? in
@@ -136,7 +150,7 @@ enum DeviceSupport {
                   let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
             return (String(url.resolvingSymlinksInPath().path.dropFirst(base.count)), text)
         }.sorted { $0.0 < $1.0 }
-    }()
+    }
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
