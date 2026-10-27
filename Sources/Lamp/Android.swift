@@ -827,7 +827,7 @@ enum Emulator {
         guard !AndroidTools.has(.tv) else { return }
         if !AndroidTools.hasTVImage {
             await note("Downloading the Android TV emulator, about a gigabyte, once…")
-            // The TV image has a licence of its own, asked for during the install, so the answer goes to the install itself.
+            // The TV image has a license of its own, asked for during the install, so the answer goes to the install itself.
             let install = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --install \"$LAMP_IMAGE\" 2>&1"
             let result = await Subprocess.run("/bin/sh", ["-c", install], env: AndroidTools.environment.merging(["LAMP_SDKMANAGER": AndroidTools.sdkmanager, "LAMP_IMAGE": Kind.tv.image]) { $1 },
                                               timeout: 3600)
@@ -993,7 +993,7 @@ enum Emulator {
         }
     }
 
-    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimised, or hidden and not
+    /// Lamp's emulator's screen on the Mac's, or nil when its window isn't on screen (minimized, or hidden and not
     /// back within a moment of `unhide`).
     static func glass(_ kind: Kind, size: CGSize) async -> Glass? {
         for _ in 0..<10 {

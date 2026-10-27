@@ -14,7 +14,7 @@ enum TVs {
     }
 
     /// A TV as found on the network and, once one of its setup steps has worked, kept (found is not owned: a
-    /// neighbour's TV may answer a scan, and only hands on the TV's own remote prove it's the person's).
+    /// neighbor's TV may answer a scan, and only hands on the TV's own remote prove it's the person's).
     struct Record: Codable, Hashable {
         var id: String            // "samsung:<udn>", "lg:<udn>"
         var maker: String         // "Samsung", "LG"

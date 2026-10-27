@@ -4,7 +4,7 @@ Lamp's Share Wish menu has **Share Link…**: the person reviews what the link w
 its words and, if they keep it, a picture of the app, which they can leave out or take again), and Copy Link puts it
 on lamp.dev and copies `https://lamp.dev/w/<id>`. Whoever opens the link makes their own version from the words. If the
 person ticks **Include the wish itself**, the wish's shared file (`<name>.lampapp`, made as Share… makes it, with its
-licence and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or get this exact one, to
+license and key checks) goes too, and the page offers that exact wish to anyone with Lamp ("Or get this exact one, to
 open in Lamp", on a Mac), which reviews it before it opens, as any shared file. Never the chat or the app's data.
 
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):

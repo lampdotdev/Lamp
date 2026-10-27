@@ -14,7 +14,7 @@ struct ContentView: View {
     @State private var store = Store()
     var body: some View {
         let _ = Log.add("\(store.title): \(store.items.map(\.name)) + \([Item(name: "Eggs")].map(\.name))")
-        Row(title: "Milk", subtitle: "2 litres")
+        Row(title: "Milk", subtitle: "2 liters")
     }
 }
 struct Row: View {

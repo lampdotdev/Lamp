@@ -33,7 +33,7 @@ struct Idea: Identifiable, Equatable {
     }
 }
 
-/// Starting points for a first app. Each starts from a moment someone would recognise as their own (the
+/// Starting points for a first app. Each starts from a moment someone would recognize as their own (the
 /// screenshots piling up, the dates buried in a school newsletter), not a kind of app they could download,
 /// and leans on what only an app made for them can do: their own mail, calendar, contacts, reminders and
 /// folders, the menu bar, a shortcut from anywhere, a desktop widget, watching quietly in the background,
@@ -240,7 +240,7 @@ private enum Inventor {
             : "the camera, where they are, the motion sensors, a quick tap on the go"
         let session = LanguageModelSession(instructions: """
             You suggest small \(device) apps a person with no programming experience could ask for. \
-            Each starts from one specific situation the person would recognise as their own, not a kind of app \
+            Each starts from one specific situation the person would recognize as their own, not a kind of app \
             they could download. Where it fits, it uses what's already on their \(device): \(powers). \
             No accounts, no servers, no websites. Plain, warm, everyday words, never technical terms.
             """)

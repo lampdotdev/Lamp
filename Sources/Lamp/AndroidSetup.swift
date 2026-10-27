@@ -136,7 +136,7 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
     }
 }
 
-/// The checks as the person would recognise them, each a row: the tools, the emulator, and their device when one is
+/// The checks as the person would recognize them, each a row: the tools, the emulator, and their device when one is
 /// chosen.
 struct AndroidSetupView: View {
     @ObservedObject var model: AndroidSetup

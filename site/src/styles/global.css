@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* The Mac's own type, and the icon's colours: a night sky and the lamp's warm glow. */
+/* The Mac's own type, and the icon's colors: a night sky and the lamp's warm glow. */
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -16,7 +16,7 @@
   --color-graphite: #33302e;
   --color-graphite-deep: #141311;
 
-  /* The feature tiles' own colours, strong like the app icons. Amber and mint take the page's dark words; sky and
+  /* The feature tiles' own colors, strong like the app icons. Amber and mint take the page's dark words; sky and
      lilac are deep enough for white ones, darkest where the words sit (the top of sky, the bottom of lilac). */
   --color-amber-from: #ffd25e;
   --color-amber-to: #ff9f1c;
@@ -26,7 +26,7 @@
   --color-lilac-to: #6a32cf;
   --color-mint-from: #5fd97f;
   --color-mint-to: #34c759;
-  /* The AI tiles' colours, unlike the feature tiles' so the two sections read apart. Indigo, coral and teal take
+  /* The AI tiles' colors, unlike the feature tiles' so the two sections read apart. Indigo, coral and teal take
      white words, darkest where the words sit and dark enough there for 4.5:1 with the words' 85% white; butter
      takes dark ones. */
   --color-indigo-from: #7b78ff;
@@ -78,7 +78,7 @@
 /* The hero's opening (index.astro): the card starts as tall as the window, with the icon large in its middle,
    then shrinks to its own height (its minimum height falls to nothing, so it stops where its content does) as
    the icon settles and the words rise under it; the button follows. */
-/* The hero's card: the page's light grey, washed from the top with a faint, see-through indigo (the night sky of
+/* The hero's card: the page's light gray, washed from the top with a faint, see-through indigo (the night sky of
    the app icon, barely there), and a hint of the lamp's warm light at the bottom. */
 .hero-sky {
   background:

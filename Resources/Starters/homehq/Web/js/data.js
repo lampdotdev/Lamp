@@ -1,6 +1,6 @@
 // The family's data. The example content (marked `ex`) is made afresh at each launch relative to "today", so it
 // always looks current, until Clear Examples in the settings sheet takes it away for good. What the family adds or
-// changes (their own events, the shopping list, chores ticked off today, stars, favourites, settings) is saved with
+// changes (their own events, the shopping list, chores ticked off today, stars, favorites, settings) is saved with
 // LampStore (Web/lamp.js) under "homehq" by `save()`, which app.js calls whenever the data changes.
 window.DATA = (function () {
   var base = new Date();
@@ -21,7 +21,7 @@ window.DATA = (function () {
     return Object.assign({ id: 'e' + (++n), allDay: true, start: at(d, '00:00'), end: at(d + days, '00:00'), title: title, people: people, ex: true }, extra || {});
   }
 
-  // The family, one colour each. Kids (with an age) earn stars for chores.
+  // The family, one color each. Kids (with an age) earn stars for chores.
   var people = [
     { id: 'alex', name: 'Alex', color: '#2D5BFF', rgb: '45 91 255', ink: '#FFFFFF' },
     { id: 'jordan', name: 'Jordan', color: '#E4007C', rgb: '228 0 124', ink: '#FFFFFF' },
@@ -58,7 +58,7 @@ window.DATA = (function () {
     ev(1, '16:00', '18:00', 'Playdate with Leo', ['otto'], { travel: 8, loc: "Leo's house" }),
     ev(1, '19:00', '21:00', 'Book club', ['jordan'], { travel: 10, loc: "Priya's" }),
 
-    ev(2, '09:00', '14:00', 'Science Centre trip', ['otto'], { loc: 'Ontario Science Centre' }),
+    ev(2, '09:00', '14:00', 'Science Center trip', ['otto'], { loc: 'Ontario Science Center' }),
     ev(2, '13:00', '13:45', 'Haircuts', ['maya', 'otto'], { travel: 10, loc: 'Snip Snip Kids' }),
     ev(2, '16:30', '18:00', 'Soccer practice', ['maya'], { travel: 20, loc: 'Lakeshore Fields' }),
     ev(2, '18:00', '19:30', 'Pizza night', ALL),

@@ -59,14 +59,14 @@ resources, `app/build.gradle.kts`), without `app/build`, hidden folders, `local.
 and `platform` "android" in `lamp-app.json`. The Mac that opens it writes Lamp's Gradle files and renames the code to
 its own package for the app (`Template.androidPackage`), which Lamp installs and launches it by. The review reads its
 manifests' `uses-permission` lines (INTERNET is going online, the rest said in plain words) and the libraries its build
-files bring in beyond Lamp's catalogue. Converting to or from Android is a rewrite in the other
+files bring in beyond Lamp's catalog. Converting to or from Android is a rewrite in the other
 language: `convert` puts the new kind's scaffold beside the old code and tells the agent to write the app again and
 delete the rest.
 
 **Android TV** (`Platform.androidTV`, "android-tv", Targets/AndroidTVTarget.swift) is an Android app made for a Google
 TV, Android TV or Fire TV: the same Gradle project and building blocks, with a mark of its own (`.lamp-android-tv`,
 `recipe.refines` Android), a TV's manifest (the leanback launcher, no touch screen required, a banner) and Compose for
-TV (`androidx.tv:tv-material`, in Lamp's catalogue), and rules for the remote and the room (`Rules.androidTVDesign`,
+TV (`androidx.tv:tv-material`, in Lamp's catalog), and rules for the remote and the room (`Rules.androidTVDesign`,
 `androidTVTry`) in place of the phone's design skill. The banner (`lamp_banner.png`, 320x180) is drawn by Lamp from the
 app's icon before every build, the tile alone until there is one (`writeAndroidTVOwnedFiles`, `DeviceSupport.iconPNG`).
 The naming call reads a device that's a TV (it has the `android.software.leanback` feature: `Device.from(adb:)` gives

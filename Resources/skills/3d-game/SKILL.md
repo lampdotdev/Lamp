@@ -29,7 +29,7 @@ device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials
 
-- Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and coloured, often look better than
+- Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
   mismatched models, and cost little. A model the game needs (a .glb) goes in Web/ and loads once in `init` with
   `new GLTFLoader().loadAsync('ship.glb')`.
 - One or two lights computed in the shader are the safe start. MeshStandardMaterial looks good under them;
@@ -52,7 +52,7 @@ second on a TV. Once the renderer runs there, a light scene keeps the game playa
 - no post-processing;
 - few draw calls: merge what doesn't move, instance what repeats;
 - textures 1024 px at most, and few of them;
-- a simple sky (a gradient or a colour) rather than an environment map.
+- a simple sky (a gradient or a color) rather than an environment map.
 
 These are suggestions, not limits: a scene that runs well on the person's TV is right, however much it draws. The way
 to know is to try it on the device: the log says every ten seconds how its frames kept to time ("frames … ms on

@@ -9,7 +9,7 @@
 //   ticks               a chore ticked off: one item per chore per day
 //   stars               each kid's stars and week
 //   settings            one item per setting: place, calendars, album, cleared
-//   favs                photos marked as favourites
+//   favs                photos marked as favorites
 //   calendar, photos    what a copy that can read them (LampNative: the Mac, an iPhone or iPad) publishes for the
 //                       others: the chosen calendars' events, and the album's pictures (their bytes in
 //                       LampStore.sharedFiles('photos'))

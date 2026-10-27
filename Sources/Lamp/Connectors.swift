@@ -240,7 +240,7 @@ enum Connectors {
                     "longitude, country, admin1}]}). Past days: https://archive-api.open-meteo.com/v1/archive with " +
                     "start_date and end_date. LampLocation.current() gives where the person is. Free for personal use, " +
                     "about 10,000 calls a day: keep an answer for a while rather than ask on every view. Show " +
-                    "\"Weather data by Open-Meteo.com\" where its data is shown (its licence, CC BY 4.0, asks for it)."),
+                    "\"Weather data by Open-Meteo.com\" where its data is shown (its license, CC BY 4.0, asks for it)."),
         Connector(id: "openfoodfacts", name: "Open Food Facts", holds: "groceries by barcode or name: ingredients, nutrition, allergens and scores",
                   kind: .open(Open(base: "https://world.openfoodfacts.org/", also: ["https://search.openfoodfacts.org/"],
                                    example: "get(\"api/v2/product/3017624010701.json\", query: [\"fields\": \"product_name,brands,nutriments,nutrition_grades\"])")),

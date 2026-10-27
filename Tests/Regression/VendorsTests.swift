@@ -11,7 +11,7 @@ final class VendorsTests: XCTestCase {
         let list = try XCTUnwrap(list)
         XCTAssertGreaterThan(list.count, 30_000)
         XCTAssertEqual(Vendors.maker(of: "78:1c:3c:1f:84:bc", in: list), "Espressif")
-        // The neighbour table drops leading zeros ("5c:aa:fd:5e:8:f6").
+        // The neighbor table drops leading zeros ("5c:aa:fd:5e:8:f6").
         XCTAssertEqual(Vendors.maker(of: "5c:aa:fd:5e:8:f6", in: list), "Sonos")
         // A block the registry sold on in parts names the part's buyer, not the registry.
         XCTAssertEqual(list["CCE7DE"], nil)

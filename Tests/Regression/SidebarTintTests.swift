@@ -1,7 +1,7 @@
 import XCTest
 @testable import Lamp
 
-/// The Chrome sidebar's `/lamp.css` gives a page one tint among Apple's system colours (`data-tint`). Each one's
+/// The Chrome sidebar's `/lamp.css` gives a page one tint among Apple's system colors (`data-tint`). Each one's
 /// text shade must read at 4.5:1 on the page, on a group and on the tint's own wash, and a button's words on its
 /// fill, in both appearances: the strip above the page writes the app's offer in that text shade too.
 final class SidebarTintTests: XCTestCase {
@@ -30,7 +30,7 @@ final class SidebarTintTests: XCTestCase {
         }
     }
 
-    /// Each `html[data-tint=…]` block's colours, the first of each name in the text (blue's comes with `:root`).
+    /// Each `html[data-tint=…]` block's colors, the first of each name in the text (blue's comes with `:root`).
     private func tints(in css: String) -> [String: Tint] {
         var found: [String: Tint] = [:]
         let blocks = try! NSRegularExpression(pattern: #"html\[data-tint=(\w+)\]\{([^}]*)\}"#)

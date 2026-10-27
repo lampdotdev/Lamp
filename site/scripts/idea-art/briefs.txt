@@ -27,17 +27,17 @@ Quitting Time|a small sunset over a desk lamp switched off|purple|a dropdown pan
 Team Clocks|three small clocks side by side showing different times|indigo|a dropdown panel with three cities (Lisbon, Austin, Singapore), their local times, small sun or moon icons, and a "4pm here is 11pm in Singapore" note
 Morning Wallpaper|a framed landscape painting with a sun and clouds|blue|a whole Mac desktop whose wallpaper is a soft painted rainy landscape, with a small panel saying "Rainy Monday, 5 meetings"
 Movie Night|a bucket of popcorn with a small film clapper|red|five movie poster cards (illustrated, no real titles), a mood picker row (Funny, Cosy, Adventure), and a "Final say: Ivy" badge
-Whose Turn|a spinning chore wheel with tiny icons of a plate and a bin|green|three kids' names as big colourful columns with today's chores, a big "Whose turn now: Sam" card at the top
+Whose Turn|a spinning chore wheel with tiny icons of a plate and a bin|green|three kids' names as big colorful columns with today's chores, a big "Whose turn now: Sam" card at the top
 Grandma's Cards|a handwritten recipe card with a small wooden spoon|orange|a photo of an old handwritten recipe card on the left and the neatly typed recipe on the right with a servings stepper and grams
 Bedtime Stories|an open storybook with a small plush giraffe sitting on it|indigo|a storybook page with a soft illustration of a girl and a stuffed giraffe under the stars, and two lines of large story text
-The House Book|a small house with an open book in front of it|teal|a sidebar of rooms and topics (Boiler, Paint, Gutters, Plumber) and, in the main area, a question asked in plain words above an answer card with a photo of the boiler, its model, the last service date and the plumber's phone number, plus a row of paint colour swatches for the living room
+The House Book|a small house with an open book in front of it|teal|a sidebar of rooms and topics (Boiler, Paint, Gutters, Plumber) and, in the main area, a question asked in plain words above an answer card with a photo of the boiler, its model, the last service date and the plumber's phone number, plus a row of paint color swatches for the living room
 Tooth Fairy Ledger|a small tooth with a gold coin and a sparkle|pink|a list for two twins with tooth drawings, dates and coin amounts, all the same amount, and a tiny sparkle
 Fridge Rescue|an open fridge with a carrot and a spinach leaf|green|a photo of an open fridge at the top and three recipe suggestion cards below with "Use first: spinach" tags
-Mum's Week|a pill organiser box with days of the week|pink|a week view with medication times, appointments and visitor names per day, and a drafted message to two brothers in a side panel
+Mum's Week|a pill organizer box with days of the week|pink|a week view with medication times, appointments and visitor names per day, and a drafted message to two brothers in a side panel
 Has Biscuit Eaten?|a dog bowl with a small bone|orange|two enormous buttons "Fed" and "Walked" with "2 hours ago" and "45 minutes ago" under them, and a small cartoon dachshund
-Fridge Gallery|a child's crayon drawing pinned with a magnet|yellow|a grid of colourful children's crayon drawings grouped by child and age, and a "Make Gran's book" button
+Fridge Gallery|a child's crayon drawing pinned with a magnet|yellow|a grid of colorful children's crayon drawings grouped by child and age, and a "Make Gran's book" button
 Deep Freeze|a frosty ice cube with a snowflake|blue|a list of frozen foods with frost icons and dates, the oldest at the top in amber ("Lasagne, 2024"), and a microphone button
-Frank the Snake|a long dachshund curled in a snake shape holding a striped sock|green|a cheerful top-down retro snake game where the snake is a very long dachshund weaving through a cartoon living room picking up colourful socks, a cat obstacle, and a score counter
+Frank the Snake|a long dachshund curled in a snake shape holding a striped sock|green|a cheerful top-down retro snake game where the snake is a very long dachshund weaving through a cartoon living room picking up colorful socks, a cat obstacle, and a score counter
 Escape Room Maker|an old brass key with a small padlock|graphite|an iPad countdown timer showing 32:15 with a big "Hint" button, next to printed puzzle cards and an envelope on a wooden table
 Murder at Number 12|a magnifying glass over a dinner place card|red|a dinner party murder mystery kit: character booklets with illustrated portraits, sealed envelopes per course, candles on a table, a laptop showing "The answer, sealed"
 Nan's Rules|a fan of playing cards with a small teacup|red|a card game on a green felt table, fanned playing cards and piles, a small banner "Nan's rule: you may steal from the pile"
@@ -50,8 +50,8 @@ Our Street, the Board Game|a board game die with a tiny house on top|green|a Mon
 Lesson Notes|a grand piano with a small notepad|indigo|a list of piano students with avatars, one open showing "Working on: Clair de Lune", a paid badge, and a two-line note to parents
 Shot List|a camera with a checklist tag hanging from it|graphite|a checklist of photo groupings for a wedding with times, "Gran: seated" note, several ticked items
 Quote From the Van|a small white van with a speech bubble|blue|a recording waveform at the top and a neatly laid out quote below with parts, labour and total, and a Send button
-Freezer Map|a sample tube rack with a frosty glow|teal|a grid map of a freezer box with numbered slots, some filled in colours, a selected slot showing sample name, owner and date, a shelf selector
-Colour Formulas|a hair dye bowl with a brush|pink|a client card with a hair colour swatch, the formula (developer, timing), before and after photo placeholders, and a search box
+Freezer Map|a sample tube rack with a frosty glow|teal|a grid map of a freezer box with numbered slots, some filled in colors, a selected slot showing sample name, owner and date, a shelf selector
+Color Formulas|a hair dye bowl with a brush|pink|a client card with a hair color swatch, the formula (developer, timing), before and after photo placeholders, and a search box
 Tonight's Covers|a cloche dish cover with a small bell|orange|a list of tonight's table bookings with times, allergy badges (nuts, gluten) and a regulars star with "Last time: sea bass"
 Agenda Watch|a newspaper with a magnifying glass|graphite|a dropdown panel listing three council agendas, keywords highlighted (planning, bypass), each with a page number
 School Dates|a school satchel with a calendar page tucked in|blue|a dropdown panel listing upcoming school dates (Non-uniform day, Trip money due, Early finish) with small "to do" notes
@@ -59,7 +59,7 @@ What to Bring|a backpack with a small PE kit bag|yellow|a large macOS desktop wi
 Spelling Coach|a pencil with a gold star|yellow|a big friendly spelling screen with a speaker button, an answer field with large letters, and three stars at the top
 Explain, Don't Answer|a lightbulb with a small pencil|yellow|a photo of a maths homework sheet on the left and a step-by-step explanation on the right with "Hint 1 of 3" and a "Next hint" button
 Report Season|a stack of report cards with a red pen|red|a class list on the left and a drafted report comment on the right with an "In my voice" toggle
-Revision Timetable|a revision timetable with coloured blocks and a highlighter|purple|a week timetable with colourful subject blocks, a confidence slider per topic, and "Skipped Tuesday, moved to Thursday"
+Revision Timetable|a revision timetable with colored blocks and a highlighter|purple|a week timetable with colorful subject blocks, a confidence slider per topic, and "Skipped Tuesday, moved to Thursday"
 Letter Pile|an envelope with a small paperclip and a tick|teal|a list of scanned letters, each with sender, what it is, and a "Do by 14 Nov" badge for two of them
 Tax Shoebox|a shoebox full of paper receipts|orange|receipt photos sorted into tax categories with running totals, and a big "This year" summary
 Renewal Season|a calendar page with a small car and a house|teal|a macOS desktop widget listing renewals (Car, Home, Broadband) with dates and last year's price, one marked "Haggle now"

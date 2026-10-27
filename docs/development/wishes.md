@@ -188,7 +188,7 @@ Lamp makes no new ones.
 ## Credit
 
 A wish says where it came from in `credits.json` at its root (`Credits`): `upstream`, other people's work in it (name,
-author, an https address, the commit, the licence as an SPDX id or `LicenseRef-`, the licence file's path in the wish),
+author, an https address, the commit, the license as an SPDX id or `LicenseRef-`, the license file's path in the wish),
 which the agent writes when it brings such work in (`Agent.Rules.about`, in every kind's prompt and so every engine's),
 and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds to: a starter's copy begins it with the
 starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
@@ -204,10 +204,10 @@ Pictures `make_art` paints are marked as made with AI twice: in the PNG itself (
 window count ("3 pictures made with AI") while the files are there.
 
 Before a wish leaves the Mac (a shared file now, a published page too), `ShareCheck` decides whether it may: work under
-an open licence goes with its licence and credit; under a share-alike one (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) it goes
+an open license goes with its license and credit; under a share-alike one (GPL, LGPL, AGPL, MPL, CC BY-SA, ODbL) it goes
 and the remix stays under it, which a shared file satisfies by carrying the code and a published page says
 (`ShareCheck.notes`); under its own terms (`LicenseRef-`, an id Lamp doesn't know, non-commercial or no-derivatives) it
-goes, credited and named; with no licence it can be used here but the share is refused, naming it. A licence file the
+goes, credited and named; with no license it can be used here but the share is refused, naming it. A license file the
 credits name must still be in the wish. And nothing of the person's goes: what's staged is searched for the person's
 provider keys, the app's secrets and its token for Lamp's gateway (`ShareCheck.keptSecrets`, the values themselves) and
 for anything shaped like a key (a private key, the prefixes services give their keys), and a hit refuses the share,
@@ -218,13 +218,13 @@ never ship.
 
 A wish whose one app is a game drawn with three.js can be published as a page anyone plays in a browser (`Publish`,
 an experiment: Settings → Experimental, Lamp Dev only, since the page carries Lamp's own runtime, which needs a
-licence that lets anyone pass it on before every Lamp can publish). Its share menu has Publish as Web Page…, which puts
+license that lets anyone pass it on before every Lamp can publish). Its share menu has Publish as Web Page…, which puts
 the Publish card in the chat's place (`PublishCard`, `PublishCards`, `SidebarPublish`). It goes on GitHub Pages under the
 person's own account, through GitHub's `gh` and their sign-in there, never through Lamp's servers: the page costs Lamp
 nothing however often it's played, and it's the person's under GitHub's terms. Without `gh` the card's one button gets
 it; signed out, Sign In to GitHub… runs `gh auth login --web` in Terminal and the card checks again once that's done.
 Before anything goes up the card shows what will: the repository (the wish's name, made public; a name the account
-already has gets a number), the credit, the licence notes, the AI pictures and the size, all worked out by staging the
+already has gets a number), the credit, the license notes, the AI pictures and the size, all worked out by staging the
 page with its checks (`Publish.stage`). What goes up is Web/ as the app plays it with Lamp's credit bar over it ("Based on Slop New York by Mr.doob · Open in
 Lamp", settling into a thin line on the bottom edge after a few seconds, wrapping rather than hiding its link on a
 narrow screen). Open in Lamp is the wish's Share Link (`Publish.OpenInLamp`), once the person has made one: Publish never sends
@@ -235,7 +235,7 @@ someone without Lamp, whose Download Lamp carries the wish into the welcome, and
 wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
 the page too (a three.js game's as its page, `GameFiles`), offered in the README, and made by
 `Sharing.export`, so held to its checks. With them go credits.json with this wish at the end of the
-chain, a README with the credits and licences, and `.nojekyll`; the staged page is searched for secrets again. The push
+chain, a README with the credits and licenses, and `.nojekyll`; the staged page is searched for secrets again. The push
 signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built
 that very commit (an earlier build's "built" is the page as it was), saying so if it's still building after ten minutes.
 A repository is kept as soon as it's made, and a failed try keeps the page staged, so Publish tries again into the same

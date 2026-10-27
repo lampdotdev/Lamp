@@ -3182,7 +3182,7 @@ extension Template {
 
     /**
      * How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on your
-     * iPhone."), or what keeps this app from them, with a dot of its colour. Nothing while this app is alone, with no other app or copy open.
+     * iPhone."), or what keeps this app from them, with a dot of its color. Nothing while this app is alone, with no other app or copy open.
      * Give a peer name for that app's line alone. It takes the text style of where it's put (LocalTextStyle), so style it
      * as the rest of the app; or show LampWish's own `status` and `peer(id)?.status` in a composable of your own.
      */

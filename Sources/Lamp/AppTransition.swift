@@ -107,7 +107,7 @@ enum AppTransition {
     }
 }
 
-/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colours travelling
+/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colors traveling
 /// round it, bright enough to see at a glance across the desk, since a wish that looks still looks stuck. Where the
 /// person asked for less motion it stays still. The desk fades it out when the build is done.
 struct BuildingGlow: View {

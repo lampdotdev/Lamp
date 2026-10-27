@@ -5,7 +5,7 @@ enum Log {
     static func take() -> String { defer { lines = [] }; return lines.sorted().joined(separator: ", ") }
 }
 struct ContentView: View {
-    var body: some View { Row(title: "Milk", subtitle: "2 litres") }
+    var body: some View { Row(title: "Milk", subtitle: "2 liters") }
 }
 struct Row: View {
     let title: String

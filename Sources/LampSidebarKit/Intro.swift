@@ -253,7 +253,7 @@ extension ChatLook {
             .accessibilityElement(children: .combine)
         }
 
-        /// Where a part's mark is centred, which the line down its steps goes through.
+        /// Where a part's mark is centered, which the line down its steps goes through.
         static let markCentre = ChatLook.stepIndent + 8
 
         @ViewBuilder

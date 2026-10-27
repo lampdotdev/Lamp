@@ -6,7 +6,7 @@ import { createShareHandler, createFileHandler, memoryStore, readShare, imageInf
 import { createPageHandler } from "../lib/shared-wish-page.js";
 import { createCardHandler } from "../lib/wish-card.js";
 
-/** A plain PNG of one colour, as Lamp's pictures are PNGs or JPEGs. */
+/** A plain PNG of one color, as Lamp's pictures are PNGs or JPEGs. */
 function png(width, height) {
   const chunk = (type, data) => {
     const body = Buffer.concat([Buffer.from(type, "latin1"), data]);

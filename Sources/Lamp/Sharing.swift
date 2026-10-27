@@ -189,7 +189,7 @@ enum Sharing {
                 throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share games written in C++.")
             }
         }
-        // Others' work in it goes only with its licence and credit, and work with no licence doesn't go at all.
+        // Others' work in it goes only with its license and credit, and work with no license doesn't go at all.
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default
@@ -229,7 +229,7 @@ enum Sharing {
         carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
         carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
-        // Each licence the credits name goes with the work it covers, wherever the kind's own files left it.
+        // Each license the credits name goes with the work it covers, wherever the kind's own files left it.
         for source in credits.upstream {
             guard let path = source.licenseFile, Credits.isLicenceFile(path) else { continue }
             let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
@@ -262,11 +262,11 @@ enum Sharing {
 
         // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
         // like a key.
-        // A licence the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
+        // A license the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
         for source in credits.upstream {
             guard let path = source.licenseFile, !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) else { continue }
             throw ImportError("\(project.name) can't be shared.",
-                              detail: "The licence of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+                              detail: "The license of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
         }
         // Every app's: each of a wish's apps keeps its own secrets and token.
         let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
@@ -449,7 +449,7 @@ enum Sharing {
         /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
         /// files from before wishes carried it.
         var credits: Credits? = nil
-        /// The licence texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
+        /// The license texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
         var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
@@ -539,8 +539,8 @@ enum Sharing {
                                 name: package.name, identity: nil, description: nil, fileCount: 0)
             package.parts.append(Package.Part(folder: part.folder, package: read))
         }
-        // A licence inside one of the other apps' folders goes in with that app too: its install replaces what its folder
-        // held, the licence the wish's own install put there included.
+        // A license inside one of the other apps' folders goes in with that app too: its install replaces what its folder
+        // held, the license the wish's own install put there included.
         package.parts = package.parts.map { part in
             var app = part.package
             let inside = folder.appendingPathComponent(part.folder).standardizedFileURL.path + "/"
@@ -642,7 +642,7 @@ enum Sharing {
         var family: DeviceFamily?
         /// The folder the file had it in, which it's made in when that's a folder for its kind. Nil from before it was kept.
         var folder: String?
-        /// The licence texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
+        /// The license texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
         var licences: [String]?
         /// For files an earlier Lamp kept for the family alone: the folder on the wish's list they're now for
         /// (`claimKept`), written before anything else moves, so they're found from it at every step of the way.
@@ -763,9 +763,9 @@ enum Sharing {
         // the file itself from what it read, so nothing else a sender put there arrives.
         try AppDescription.write(package.description, for: project)
         // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
-        // each licence it names where it names it, when the kind's own files didn't already bring it.
+        // each license it names where it names it, when the kind's own files didn't already bring it.
         try Credits.arrive(package.credits, in: project)
-        // An update replaces what's there, so a licence whose text changed upstream never stays as it was; one the kind's
+        // An update replaces what's there, so a license whose text changed upstream never stays as it was; one the kind's
         // files already brought is the same text written again.
         for file in package.licences {
             let target = project.dir.appendingPathComponent(Sharing.relativePath(of: file, in: package.folder))

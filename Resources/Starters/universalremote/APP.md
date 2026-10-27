@@ -1,7 +1,7 @@
 Kind: companion, a remote for the household's TVs and speakers.
 Look: Apple's TV remote: pure black, flat graphite round keys, white SF Symbols, a big rounded touch surface with a
-clickpad ring, VOL and CH pills, Siri's colours swirling on the mic while it listens. Dark in light mode too: it's an
-object. App keys are the device's own icons where it shares them, else a coloured tile with the app's name.
+clickpad ring, VOL and CH pills, Siri's colors swirling on the mic while it listens. Dark in light mode too: it's an
+object. App keys are the device's own icons where it shares them, else a colored tile with the app's name.
 
 # Universal Remote
 

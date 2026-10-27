@@ -135,7 +135,7 @@ final class SkillsTests: XCTestCase {
     func testPromptsNameTheSkillsTheirShortRulesStandFor() {
         let moved: [String: [String]] = [
             "building-blocks": ["LampFolderWatcher(folder)", "LampSchedule.daily(", "LampWeatherAttribution", "LampSpotlight.index", "lampBackground()", "accessories()"],
-            "app-ai": ["SFSpeechRecognizer", "LampAI.when(", "decideEach", "requiresOnDeviceRecognition", "sanitising"],
+            "app-ai": ["SFSpeechRecognizer", "LampAI.when(", "decideEach", "requiresOnDeviceRecognition", "sanitizing"],
             "accounts": ["LampCalendar.events", "LampMail.inbox", "LampComputer.ask(", "Internet Accounts"],
             "app-intents": ["AppShortcutsProvider", "applicationName", "EntityQuery"],
             "share-extension": ["LampShareSheet", "LampShare.onReceive", "Edit Extensions"],

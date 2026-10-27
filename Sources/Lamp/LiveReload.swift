@@ -2356,7 +2356,7 @@ enum LiveReload {
             return "make such changes last, after the ones that can go in live have gone in, or in a request of their own."
         }
         if w.contains("initializer") || w.contains("method table") || w.contains("subclass") || w.contains("final") {
-            return "add a method to a class nothing subclasses, or put the new behaviour in a free function or a struct."
+            return "add a method to a class nothing subclasses, or put the new behavior in a free function or a struct."
         }
         if w.contains("swiftdata") || w.contains("@model") { return "keep SwiftData model files as they are, and change what reads them." }
         if w.contains("typealias") || w.contains("returns a") || w.contains("returns another") || w.contains("protocol") {
@@ -4213,7 +4213,7 @@ enum LiveSlots {
     }
 
     /// Members of the system's value types that are the same value at every read: their constants, and SwiftUI's
-    /// named colours. Named one by one, since a member like `.now` is made again at each read.
+    /// named colors. Named one by one, since a member like `.now` is made again at each read.
     private static let steadyMembers: [String: Set<String>] = {
         let numbers: Set<String> = ["zero", "infinity", "pi", "greatestFiniteMagnitude", "leastNonzeroMagnitude", "min", "max"]
         let colors: Set<String> = ["red", "orange", "yellow", "green", "mint", "teal", "cyan", "blue", "indigo", "purple", "pink",

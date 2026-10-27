@@ -51,8 +51,8 @@ final class CreditsTests: XCTestCase {
         XCTAssertEqual(again.credits?.remixOf.map(\.name), ["New York", "City", "Copy"])
     }
 
-    /// Work with no licence, a missing licence file or a key in the code keeps a wish from being shared; a share-alike
-    /// licence doesn't, and is named.
+    /// Work with no licence, a missing license file or a key in the code keeps a wish from being shared; a share-alike
+    /// license doesn't, and is named.
     func testWhatKeepsAWishFromBeingShared() throws {
         let saved = Sharing.knownSecrets
         defer { Sharing.knownSecrets = saved }
@@ -64,14 +64,14 @@ final class CreditsTests: XCTestCase {
         XCTAssertNil(share())
 
         try Credits.arrive(Credits(upstream: [Credits.Source(name: "Found Code", author: "Someone")]), in: project)
-        XCTAssertEqual(share(), "It uses Found Code by Someone, which came with no licence. It can still be used on this Mac.")
+        XCTAssertEqual(share(), "It uses Found Code by Someone, which came with no license. It can still be used on this Mac.")
 
         try Credits.arrive(Credits(upstream: [Credits.Source(name: "Engine", license: "GPL-3.0-or-later", licenseFile: "LICENSE-engine")]), in: project)
-        XCTAssertNotNil(share(), "its licence file is missing")
+        XCTAssertNotNil(share(), "its license file is missing")
         try Data("GPL".utf8).write(to: project.dir.appendingPathComponent("LICENSE-engine"))
         XCTAssertNil(share())
         XCTAssertEqual(ShareCheck.notes(for: Credits.load(project)).count, 1)
-        // The licence goes with the file, so the copy can be shared on.
+        // The license goes with the file, so the copy can be shared on.
         let copy = try app("copy")
         try Sharing.install(try opened(try exported(project)), into: copy)
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.dir.appendingPathComponent("LICENSE-engine").path))
@@ -98,7 +98,7 @@ final class CreditsTests: XCTestCase {
         }
 
         try Credits.arrive(Credits(upstream: [Credits.Source(name: "Engine", license: "GPL-3.0-or-later", licenseFile: "LICENSE-engine")]), in: project)
-        XCTAssertEqual(shown(), "Remix can't be shared. The licence of Engine is missing from it. Ask Lamp to put LICENSE-engine back.")
+        XCTAssertEqual(shown(), "Remix can't be shared. The license of Engine is missing from it. Ask Lamp to put LICENSE-engine back.")
 
         try Data("GPL".utf8).write(to: project.dir.appendingPathComponent("LICENSE-engine"))
         try Data("let key = \"sk-or-v1-made-up-key-for-the-test-0123456789\"\n".utf8).write(to: project.dir.appendingPathComponent("Sources/Key.swift"))
@@ -117,7 +117,7 @@ final class CreditsTests: XCTestCase {
     }
 
     /// A three.js game travels as its page and its Native.swift, without Lamp's runtime, as a file only a Lamp that
-    /// knows games opens, with its credits and its licence; the copy is a game again.
+    /// knows games opens, with its credits and its license; the copy is a game again.
     func testAGameIsSharedAsItsPage() throws {
         let fm = FileManager.default
         let game = try app("city")

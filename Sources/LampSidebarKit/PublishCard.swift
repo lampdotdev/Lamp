@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// Publish as a Web Page: what will go up and where, laid out to be read before anything leaves the Mac (the account and
-/// repository, the credit the page carries, what its licences ask, how much), then the page and what can be done with it.
+/// repository, the credit the page carries, what its licenses ask, how much), then the page and what can be done with it.
 /// Drawn from plain values, so the chat (in its place) and the gallery show the same card.
 public struct PublishCard: View {
     public enum Stage: Codable, Equatable {
@@ -10,7 +10,7 @@ public struct PublishCard: View {
         case preparing
         /// What's needed before anything can go up, with the one thing that fixes it.
         case needsGitHub(Need)
-        /// It can't be published, and why (a licence, a key in the code).
+        /// It can't be published, and why (a license, a key in the code).
         case refused(String)
         case ready
         /// Going up, with what it's doing now.

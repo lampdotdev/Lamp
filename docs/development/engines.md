@@ -121,7 +121,7 @@ A capability given to one engine must be given to all of them that can take it, 
   before Codex has saved the request). A run that hasn't gone 20 seconds after the interrupt is ended as Stop would
   end it. What the model was thinking or writing at that moment is lost; a message is the turn's once the resumed
   run's model is heard from.
-- **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognised in every
+- **What Lamp shows the user** (`TurnProgress.activity`, `ToolCall`): tool names must be recognized in every
   engine's spelling. Claude Code calls MCP tools `mcp__lamp__<name>`; `Engines.plainName` strips that.
   Codex reports them as `mcp_tool_call` items. A turn has one activity (`TurnProgress.activity`, and since when,
   `activitySince`), and every place that shows it draws it with `ChatLook.ActivityText`: a first build's last part, the line

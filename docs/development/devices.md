@@ -100,9 +100,9 @@ Roku (a package that isn't wrapped has no names, so `DeviceApps.removeEverywhere
 while it's still this wish's: `lastOnDevice` notes which app each device took last). Its
 mobile-control step reads `ecp-setting-mode` from device-info, which Roku's ECP page doesn't list but Rokus report, and
 asks only for Enabled, never Permissive. Its developer-mode step's button presses the remote's secret keys over ECP (`run`), which that
-setting allows; the licence and the password stay the person's, on the Roku. Its Do It for Me is the `roku-developer-mode` skill, all data: the same keys
+setting allows; the license and the password stay the person's, on the Roku. Its Do It for Me is the `roku-developer-mode` skill, all data: the same keys
 (pressed only while `developer-enabled` isn't true, and never again after a failure part way), then the person's
-installer, licence and password while Lamp waits for the Roku's restart, then what the step itself checks.
+installer, license and password while Lamp waits for the Roku's restart, then what the step itself checks.
 
 **Lamp's building blocks on devices** (`DeviceSupport`, DeviceSupport.swift): TVs and declared app kinds get `LampAI`,
 `LampStore` and `LampAssets` as Mac, iPhone and Android apps do, under the same names and with the same advice in their
@@ -154,19 +154,19 @@ phones alone (`refreshAppleDevices`) replaces only Apple's part of the list.
 Add a New Device and its Look Again, `network_devices`: `refreshDevices(everything: true)`), the look also finds what
 SSDP and the integrations don't, and every other look leaves the last of it as it was. Never at launch or on a timer.
 It sends one datagram (a byte to the discard port, 9) to each address of this Mac's own subnet, sixteen at a time,
-paced, so the Mac asks who has each one and its neighbour table fills (`Sweep`); no nmap, raw socket or admin. The
+paced, so the Mac asks who has each one and its neighbor table fills (`Sweep`); no nmap, raw socket or admin. The
 subnet is the default route's interface's (`Subnet.current`): the whole of a /24 or smaller, and on a bigger network
-only the 256 addresses around this Mac's (`Subnet.widest`), which the agent is told. Then it reads the neighbour table
-and the default route from the kernel's routing table by sysctl (`Neighbours`, what `arp -a` reads; macOS hides the
+only the 256 addresses around this Mac's (`Subnet.widest`), which the agent is told. Then it reads the neighbor table
+and the default route from the kernel's routing table by sysctl (`Neighbors`, what `arp -a` reads; macOS hides the
 table from a process without Local Network access, `swift test`'s helper included, so check it in Lamp or with
-`xctest` from a shell), marks a locally administered hardware address as randomised (`Vendors.isRandomised`: a phone's,
+`xctest` from a shell), marks a locally administered hardware address as randomized (`Vendors.isRandomised`: a phone's,
 tablet's or computer's private Wi‑Fi address), and looks up each other one's maker by its prefix (`Vendors`, the
 longest of nine, seven and six hex digits) in `Resources/vendors.xz`, made from the IEEE's MA-L, MA-M and MA-S
 registries by `scripts/update-vendors.sh` (names with their legal endings taken off, xz-compressed, about 375 KB; not
-nmap's list, which is under nmap's licence). Meanwhile it browses every Bonjour type (`_services._dns-sd._udp`), then
+nmap's list, which is under nmap's license). Meanwhile it browses every Bonjour type (`_services._dns-sd._udp`), then
 each type's services, resolving each with `dns_sd` to its host, IPv4 address and the record's model keys only
 (`Bonjour`, `BonjourService.modelKeys`; AirPlay's `md` isn't a model, a Cast device's is), with no connection to the
-device. Each address is one `NetworkHost`: hardware address and maker, randomised or not, this Mac, the gateway, its
+device. Each address is one `NetworkHost`: hardware address and maker, randomized or not, this Mac, the gateway, its
 Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
 Hosts are kept in memory only (`Store.hosts`).
 
@@ -179,15 +179,15 @@ never by the names they go by); then everything else, folded under Everything El
 Mac's other addresses, printers, Apple's devices (by the model their records give, `NetworkHost.apple`: an app can't
 reach them the way it reaches others), appliances and hosts that said nothing but their maker, each with the names it
 goes by on this Mac only and Set Up… (but the router and this Mac; a device found this way is known by
-`found:<address>#<hardware address>`, read from the neighbour table as Set Up… is pressed, so a conversation is reopened,
+`found:<address>#<hardware address>`, read from the neighbor table as Set Up… is pressed, so a conversation is reopened,
 linked to an integration's device and given a host's facts only for the same hardware, and one that began without a
 hardware address never is), whose setup note asks the agent to work out what it
-is and to say so plainly when nothing on the home network can reach it; and the hosts with randomised addresses that
+is and to say so plainly when nothing on the home network can reach it; and the hosts with randomized addresses that
 said nothing, counted and never named, since nothing tells one such phone from another. Bonjour also browses a few types
 whether the meta-query names them or not (`Bonjour.alwaysBrowse`: Cast, printers, a gadget's web page), since a
 sleeping device often misses that one answer. What each host is isn't worked out by a list of rules: `network_devices`
 gives the agent every host's facts (`HomeNetwork.facts`), with a few anchors (the gateway is the router, this Mac, a
-randomised address is a phone, tablet or computer, counted), and the agent labels them when the person asks, or when
+randomized address is a phone, tablet or computer, counted), and the agent labels them when the person asks, or when
 Set Up… asks it to learn one (`deviceSetupNote` adds that host's facts). Set Up… on one
 Lamp knows opens its window; on one it doesn't, it opens the device's setup conversation (`Store.setUpDevice`), one
 per device, whose first request is `Agent.deviceSetupRequest` (what the device said of itself). That conversation is
@@ -255,7 +255,7 @@ console before installs over the earlier EdgeHTML one (same family, newer versio
 
 **What's on the network, for an app** (`LampNetwork`, in LampSupport.swift): a wish's Mac or iPhone app finds the
 person's devices itself, for the ones Lamp has no block for. `requestAccess()` is the system's Local Network question,
-asked when the app chooses (after saying why, never at launch): a datagram to a neighbour has the system ask, and the
+asked when the app chooses (after saying why, never at launch): a datagram to a neighbor has the system ask, and the
 connection's path says whether it's allowed (`unsatisfiedReason == .localNetworkDenied`); the first time it waits for
 the person's answer, after that it says how things stand at once (`access` keeps the last). `find()` asks SSDP twice
 over, to the multicast group (a Mac) and to each address of the /24 (no multicast, so an iPhone app without Apple's
@@ -305,7 +305,7 @@ the kinds' places are `Places.pagePlaces`, the destinations of every row with on
 Android host is one APK for every Android place: its manifest has the phone's launcher and the TV's (the leanback
 launcher, a banner Lamp draws from the icon, no touch screen required), Android TV is its own `Destination`
 (`.androidTV`, opened in Lamp's TV emulator: `Destination.emulator`), and the remote reaches the page as a TV's does: the
-d-pad, OK and play/pause are a game's controller (`lampNativePad`), and for a screen Back, the media, colour and channel
+d-pad, OK and play/pause are a game's controller (`lampNativePad`), and for a screen Back, the media, color and channel
 keys are sent as the key codes Web/lamp.js reads on a TV, with Back on the first view leaving the app
 (`lampAndroid.exit`). The page's LampAI is answered by the Android app as the Mac's app answers it: Web/lamp.js
 finds `lampGatewayHost` (an AndroidX WebKit message listener for the page's own origin in its main frame,
@@ -356,7 +356,7 @@ keyboard, and it follows the last one used, with `onInput` to redraw), and `labe
 or trigger for it. The page never works out which device it's on: what it needs of one comes from the device's row in
 the table of devices (`Place.input`: its keyboard's names for keys, the controller that comes with it, the one controller
 layout its host supports, where it supports one), in the `lamp-device.js` Lamp writes into each copy of the page (`GamePage`, see
-[kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognised, what's printed on its buttons)
+[kinds of app](kinds-of-app.md)), and the controllers' layouts (how each is recognized, what's printed on its buttons)
 from Lamp's one list of them, `Controllers`, as `Web/lamp-controllers.js`. The keys a prompt names come from the same
 table `keyboardPad` reads, and the touch controls' from the one they're drawn
 with, so neither can drift. On a Switch controller a prompt names the letter printed on the button, which isn't the
@@ -433,7 +433,7 @@ first time a game is built (`installPreview`), with nothing to accept. The conso
 first goes on an Xbox (the setup window `WindowsSetup`): clang and lld (with clang's own headers) out of LLVM's release
 for Apple silicon, against its published SHA-256, and Microsoft's Windows SDK and C runtime fetched by xwin, which Lamp
 ships (built by build.sh with cargo, pinned and locked; a release needs it) and which checks Microsoft's packages
-against Microsoft's manifest. Microsoft's licence is the person's to accept, in the setup window, before xwin runs:
+against Microsoft's manifest. Microsoft's license is the person's to accept, in the setup window, before xwin runs:
 nothing of Microsoft's is passed on. Intel Macs make and play games, but can't put them on an Xbox (LLVM publishes no
 such build).
 

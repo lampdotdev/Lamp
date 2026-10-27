@@ -459,7 +459,7 @@ enum GameAndroid {
         } // a game
 
         // The keys of a TV's remote a WebView passes on as nothing, as the page reads them on a TV (Web/lamp.js's // a screen
-        // key codes): Back, the media, colour and channel keys. The arrows, OK and the digits reach the page by themselves. // a screen
+        // key codes): Back, the media, color and channel keys. The arrows, OK and the digits reach the page by themselves. // a screen
         private fun tvKey(code: Int) = when (code) { // a screen
             KeyEvent.KEYCODE_BACK -> 27; KeyEvent.KEYCODE_MEDIA_PLAY -> 415; KeyEvent.KEYCODE_MEDIA_PAUSE -> 19 // a screen
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> 10252; KeyEvent.KEYCODE_MEDIA_STOP -> 413 // a screen

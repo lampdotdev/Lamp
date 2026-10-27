@@ -6,8 +6,8 @@ description: The app's page in Chrome's side panel on the Mac (browser.json and 
 # A sidebar page that looks as if Apple made it
 
 The page sits in Chrome's side panel on the Mac, 320 to 420 points wide (about 360 most of the time), under Lamp's
-strip. Draw it as a Mac app draws a narrow list pane: Apple's grey grouped background, white rounded groups, rows with
-hairline separators that start where the words start, SF Pro, and one tint colour, used sparingly. That's the look
+strip. Draw it as a Mac app draws a narrow list pane: Apple's gray grouped background, white rounded groups, rows with
+hairline separators that start where the words start, SF Pro, and one tint color, used sparingly. That's the look
 for every app. An app stands out only through its tint and its content (its items' pictures, its words, how it
 sorts and groups them), the way Notes, Reminders and Podcasts share the system surfaces and are told apart by
 theirs. It isn't an iPhone layout and it isn't a copy of the window's own theme.
@@ -26,7 +26,7 @@ well as the best-known sites by name.
 ## The right-click item
 
 A right-click item is yours to add when the sidebar does something with the page it's beside, whatever that is: save
-it, explain it in plain words, summarise or translate it, check it, answer something about it. Put `"menu": "Explain
+it, explain it in plain words, summarize or translate it, check it, answer something about it. Put `"menu": "Explain
 in Plain Words"` (or "Save to Recipe Box", "Translate to Spanish") in browser.json: a few words saying what it does.
 Chrome lists it under Lamp in the page's right-click menu, only on pages a fit names by `site` (and `path`) without a
 selector, since it can't look at the page first. Choosing it opens the sidebar on this app and is the person's click:
@@ -77,14 +77,14 @@ Recipes", "Reading List"), what the answer is about for one that answers.
 
 - `<html data-tint="green" data-lamp-reads="page">`, then `/lamp.css`, then your `app.css`, then `/lamp.js` and
   `app.js` (never inline).
-- `/lamp.css` is the whole look, light and dark: colours, type, groups, rows, buttons, fields, the focus ring, and
-  the strip takes its colours from it. Choose the tint nearest the window's accent colour: `blue` (the default),
-  `green`, `orange`, `red`, `pink`, `purple`, `indigo`, `teal` or `brown`. Each is Apple's system colour, with
+- `/lamp.css` is the whole look, light and dark: colors, type, groups, rows, buttons, fields, the focus ring, and
+  the strip takes its colors from it. Choose the tint nearest the window's accent color: `blue` (the default),
+  `green`, `orange`, `red`, `pink`, `purple`, `indigo`, `teal` or `brown`. Each is Apple's system color, with
   text and button shades measured to read in both appearances.
-- `app.css` holds only what your own items need (a grid's columns, a picture's size). Never set colours, fonts,
+- `app.css` holds only what your own items need (a grid's columns, a picture's size). Never set colors, fonts,
   backgrounds, borders, shadows, radii or `--` variables there, and never margins, padding or widths on
   /lamp.css's parts (`.group`, `.segmented`, `.row`, …): they line up on one edge, and moving one breaks it. No
-  Georgia, no web font, no gradient, no coloured page, no card shadows, no hover effects, no hand cursor.
+  Georgia, no web font, no gradient, no colored page, no card shadows, no hover effects, no hand cursor.
 
 ## Lay out the page, top to bottom
 
@@ -103,7 +103,7 @@ A page that keeps things then has:
 The check before saving replaces the offer and the list while it's open (`hidden` on both), so the draft has the
 pane to itself. So does editing the settings.
 
-A page that answers (explains, summarises, translates, checks) has the answer in their place: a heading for what it's
+A page that answers (explains, summarizes, translates, checks) has the answer in their place: a heading for what it's
 about, then the answer in `.group`s (paragraphs, or rows for a list of points), hidden until there is one, and
 before the first answer one sentence in the empty state on what the button does.
 
@@ -123,7 +123,7 @@ worked in. Show it as one line, never as a form that stays open:
 The line gives each value short, with its unit (`W 30 in`, `D 12 in`, `$100`), one `span` each; a value not set yet
 is left out, and with nothing set the line says so ("No limits set") and the button says "Set…". Edit puts the
 fields in place of the offer and the list, as the check before saving does: a `.collection-header` naming them, a
-`.group` of `.field` rows (a choice such as inches or centimetres is a `.segmented` above them, part of the settings,
+`.group` of `.field` rows (a choice such as inches or centimeters is a `.segmented` above them, part of the settings,
 not a control of its own on the page), and a `.bottom-bar` with Cancel and Done. Done saves, redraws the line and the
 verdicts, and puts the list back.
 
@@ -157,8 +157,8 @@ with `.verdict` and one of `.bad`, `.good` or `.unknown`:
 - Several checks make one verdict, the worst: any that fails names it ("Too Wide", "Over Budget"; with more than
   one, the whole: "Too Large", "Doesn't Fit"), else any unknown ("Height Unknown"), else all well ("Fits").
 - What needs the person is what stands out: a problem is red (`.bad`, `xmark`), all well is the tint (`.good`,
-  `checkmark`) or nothing at all, unknown is grey (`.unknown`, `questionmark`). Never a grey or faint problem beside
-  a bold or coloured "Fits", and never two badges saying the same thing.
+  `checkmark`) or nothing at all, unknown is gray (`.unknown`, `questionmark`). Never a gray or faint problem beside
+  a bold or colored "Fits", and never two badges saying the same thing.
 - The check by check breakdown is not the row's: it's where the row opens (the window). Never a line per check in
   the row.
 
@@ -180,13 +180,13 @@ style="--sym:url(/symbols/fork.knife.png)"></span></span>`, chosen by kind (`fis
 `sunrise.fill` for breakfast, `leaf.fill` for a plant), else the app's one symbol.
 
 Symbols are SF Symbols the app draws: `/symbols/<name>.png` used as a mask, `<span class="sym"
-style="--sym:url(/symbols/drop.fill.png)"></span>`, sized by `font-size` and coloured by `color`, so one black
-picture works in light, dark and any tint. Don't add `?color=`: a colour baked in is wrong in the other appearance.
+style="--sym:url(/symbols/drop.fill.png)"></span>`, sized by `font-size` and colored by `color`, so one black
+picture works in light, dark and any tint. Don't add `?color=`: a color baked in is wrong in the other appearance.
 
 ## Every state, in the page
 
 A page that saves goes through all of these, an article or a link too: nothing is saved straight from the offer
-(choosing the app's right-click item, 8, is the one way past the check step). A page that explains, summarises,
+(choosing the app's right-click item, 8, is the one way past the check step). A page that explains, summarizes,
 translates or answers has Reading, its answer in place of 3 to 5, and a failure as in 6.
 
 1. **Ready**: the offer row, and the list (or the empty state: a symbol, a title such as "No Recipes Yet", and one
@@ -230,7 +230,7 @@ The app's nouns ("Saved to My Plants"), never Lamp's workings. Title Case for ti
   never inside one).
 - Pictures: `.thumb` (`--thumb` for its size; `.placeholder` for a symbol on the tint wash), `.grid` of `.card`
   (`.picture`, `.title-line`, `.meta`).
-- Controls: `button` (grey), `.primary` (the tint), `.tinted`, `.plain`, `.capsule`; `.segmented` with
+- Controls: `button` (gray), `.primary` (the tint), `.tinted`, `.plain`, `.capsule`; `.segmented` with
   `aria-pressed`; `.field` rows; `.bottom-bar`; `.selectable` on words people may copy (the rest isn't selectable,
   as in a Mac app).
 - Type: `h1` the collection or the answer's subject (20px bold), row titles 13px semibold, body 13px, meta 12px, nothing under 11px;
@@ -373,7 +373,7 @@ every state with `use_app` (a page that saves: read, check, cancel, read, save, 
 that answers: read, the answer, a failure; with a right-click item, also `use_app`'s `menu`), look at each, and judge
 the pictures as Apple would:
 
-1. Squint: a Mac list pane (grey ground, white rounded groups) or a web page (borders, boxes in boxes, a coloured
+1. Squint: a Mac list pane (gray ground, white rounded groups) or a web page (borders, boxes in boxes, a colored
    page, a big button bar)?
 2. Under the strip: one action, browser.json's verb, obvious what it does with the page, little height before the
    first item or the answer?
@@ -382,5 +382,5 @@ the pictures as Apple would:
 5. Each item as the window shows it, the urgent ones first, its row giving the facts people choose by?
 6. One verdict per row, and a problem the first thing the eye lands on, not the faintest?
 7. Settings a line with Edit, not an open form? Nothing kept on the page taller than the list?
-8. Dark: neutral grey, no outlines, the tint still readable?
+8. Dark: neutral gray, no outlines, the tint still readable?
 9. At 200%: nothing cut off without an ellipsis, no fact split across lines, the offer's title not squeezed away?

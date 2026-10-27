@@ -1,7 +1,7 @@
 Kind: screen, a family dashboard for the kitchen wall, at home on the Mac and shown on an iPad, an Android tablet or
 photo frame, a TV or an Xbox once it's put there.
 Look: warm paper (#F2EEE6) and black ink, condensed Archivo for labels and numbers, Instrument Serif for titles, one
-bright colour per person; a narrow rail of sections down the left with the clock at its foot.
+bright color per person; a narrow rail of sections down the left with the clock at its foot.
 
 # Home HQ
 
@@ -19,7 +19,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - **Chores** (`views/tasks.js`): a lane per person and Anyone, for the morning, after school or the evening; ticking one
   off gives a kid its stars, with Undo. Ticks start again each day.
 - **Shopping** (`views/shopping.js`): the list by aisle and by store, add from usuals and suggestions, tick off, clear.
-- **Photos** (`views/photos.js`): a slideshow with Auto, Cover, Pair, Collage and Polaroid layouts, and favourites,
+- **Photos** (`views/photos.js`): a slideshow with Auto, Cover, Pair, Collage and Polaroid layouts, and favorites,
   which come round more often.
 - **Photo frame and night clock** (`views/ambient.js`): after two minutes untouched it goes back to Today and then to a
   slideshow with the time and the next event, or at night (10 PM to 6 AM) a dim clock; a touch wakes it.
@@ -31,9 +31,9 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   copy of the screen follows. A family already made in the editor, and a calendar or album already chosen, are where
   the setup starts. A look at a fresh copy shows the welcome over the example family (`App.setup`,
   `DATA.isSetUp`, `settings.example`).
-- **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a colour each, Stars for those who
-  earn them, and pets, with a picture instead of a colour) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
-  they're changed. The editor's own picture and colour lists are at its top.
+- **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a color each, Stars for those who
+  earn them, and pets, with a picture instead of a color) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
+  they're changed. The editor's own picture and color lists are at its top.
 - **Settings** (Settings on the rail, the clock below it, or D): the weather's place, the family's own calendars and photos
   (only where the app around the page can read them: the Mac, iPhone and iPad), Set up my family while the example shows, the photo frame and
   night clock, and the credit. Keys: 1–5 the sections, A the photo frame, N the night clock, Escape or Back closes.
@@ -45,7 +45,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   dashboard's scripts in order (each adds to `window.App`). Plain ES5, no modules and no build step, so it runs in a
   TV's browser. Its viewport is the device's width: the page fills whatever it's on.
 - `Web/js/data.js`: `window.DATA`, the family and everything shown (shape below), and its saving.
-- `Web/js/app.js`: `App`: the time, formatting, people's colours (`App.pstyle`, `App.avatar`), calendar helpers
+- `Web/js/app.js`: `App`: the time, formatting, people's colors (`App.pstyle`, `App.avatar`), calendar helpers
   (`App.timedOn`, `App.allDayOn`, `App.nextEvent`, `App.leaveBy`), weather helpers (`App.weatherNow`, `App.hourly`,
   `App.deg` for °C or °F by the screen's language), the router (`App.register`, `App.go`; views are built once and
   rebuilt when `App.emit('data')` says the data changed), toasts, sheets, idle and modes, and `fit()`, which says
@@ -59,7 +59,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   family's calendars and photos through `LampNative` (`App.loadCalendars`, `App.loadPhotos`).
 - `Web/js/slideshow.js`: `App.Slideshow`, used by Photos, the Today tile and the photo frame.
 - `Web/js/icons.js`: the stroke icons (`App.icon('calendar', 24)`).
-- `Web/css/tokens.css` (colours, type sizes, the fonts in `Web/fonts/`), `Web/css/base.css` (the stage, rail, cards,
+- `Web/css/tokens.css` (colors, type sizes, the fonts in `Web/fonts/`), `Web/css/base.css` (the stage, rail, cards,
   sheets, the settings drawer, focus), and one file per view in `Web/css/views/`.
 - `Sources/Native.swift`: what the page asks of the Mac, iPhone or iPad: `calendars`, `events`, `albums` and `photos`
   (JPEGs at 1600 px as data URLs). Each runs only once the person turns it on in Settings, so the system asks for
@@ -91,7 +91,7 @@ either way up and a phone, and reflows for each.
 
 - `people`: `{ id, name, color, rgb, ink, age?, pet?, emoji? }` (an `age` makes someone who earns stars; `pet` one
   with no day in the calendar, drawn with its `emoji`). `ALL` is the ids of everyone but the pets (`DATA.humanIds`,
-  `App.humans`), as an event for the whole family has them; `family` is everyone's colour.
+  `App.humans`), as an event for the whole family has them; `family` is everyone's color.
 - `events`: `{ id, title, start, end (Dates), people: [ids], allDay?, loc?, notes?, travel? (minutes to get there) }`;
   `ex` marks an example, `cal` one from the family's shared calendar, which is everyone's: who goes is in its title for the
   family to read, never guessed. With the calendar on, Today shows the rest of the day as one list for everyone, and the
@@ -144,5 +144,5 @@ USB debugging?" prompt) rather than doing any of it.
 - The sections: the rail in `index.html`, a view in `js/views/` registered with `App.register`, its CSS in
   `css/views/`; Today's cards are in `views/home.js` (`.h-side` holds the photo, chores, shopping and tomorrow).
 - A countdown (to school, a trip, a birthday) or the week's chores at a glance: a card on Today, a date in `data.js`.
-- Colours and type: `css/tokens.css`. When the photo frame and night clock come on: `App.idle` in `app.js` and
+- Colors and type: `css/tokens.css`. When the photo frame and night clock come on: `App.idle` in `app.js` and
   `App.isNight`.

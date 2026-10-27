@@ -108,7 +108,7 @@ enum AndroidFiles {
 
     /// Where an Android app's code reaches beyond itself, in the words the review uses for a Mac app's: what its
     /// manifests ask Android for, what its Kotlin and Java do that the build file and manifest can't show, and the
-    /// libraries its build files bring in beyond the ones Lamp's catalogue offers.
+    /// libraries its build files bring in beyond the ones Lamp's catalog offers.
     static func detected(in package: Sharing.Package) -> [Sharing.Capability] {
         var manifests: [String] = [], kotlin = "", gradle = ""
         for file in package.sources {
@@ -228,8 +228,8 @@ enum AndroidFiles {
                            patterns: ["DexClassLoader", "PathClassLoader", "URLClassLoader", "System.loadLibrary", "System.load(", "Class.forName"]),
     ]
 
-    /// Libraries and build plugins the build files name that Lamp's catalogue doesn't offer, by their short name
-    /// ("retrofit"). A library from the catalogue is named through it (`libs.…`), or spelt out with its group.
+    /// Libraries and build plugins the build files name that Lamp's catalog doesn't offer, by their short name
+    /// ("retrofit"). A library from the catalog is named through it (`libs.…`), or spelt out with its group.
     static func libraries(in gradle: String) -> [String] {
         let catalogue = Template.androidVersionsCatalogue
         var known = Set(catalogue.matches(of: #/module\s*=\s*"([^"]+)"/#).map { String($0.1) })

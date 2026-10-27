@@ -2680,7 +2680,7 @@ enum Template {
         }
 
         /// An image as a symbol at that point size would be: a template, which a button tints as it does a symbol,
-        /// unless it's given a colour of its own.
+        /// unless it's given a color of its own.
         static func image(pointSize: CGFloat, weight: NSFont.Weight, color: NSColor? = nil,
                           description: String = "Customize This App") -> NSImage {
             let width = pointSize * line(weight)
@@ -5773,8 +5773,8 @@ enum Template {
         }
 
         /// The button that reloads the app for a change waiting on it, beside the wand: tinted glass in the accent
-        /// colour whose tint brightens and settles again, so it's seen without being in the way (a push button in
-        /// the accent colour before macOS 26). Its tint is all that moves: faded as a whole it would look disabled.
+        /// color whose tint brightens and settles again, so it's seen without being in the way (a push button in
+        /// the accent color before macOS 26). Its tint is all that moves: faded as a whole it would look disabled.
         /// A click asks Lamp to put the change in, by reopening the app as it was.
         @MainActor final class ReloadButton: NSButton {
             private var pulse: Timer?
@@ -5891,7 +5891,7 @@ enum Template {
 
         /// The wand floating over the app's own content: a dark disc with a white wand, legible over a game's night
         /// sky and a bright canvas alike, as the controls over a playing video are. The title bar's glass takes its
-        /// colours from the window's appearance, and over content of the other shade it all but disappeared.
+        /// colors from the window's appearance, and over content of the other shade it all but disappeared.
         @MainActor private final class FloatingWand: NSButton {
             convenience init() {
                 let image = LampGlyph.image(pointSize: 10, weight: .semibold)
@@ -5903,7 +5903,7 @@ enum Template {
                 wantsLayer = true
             }
 
-            /// The chat is open: the disc takes the accent colour.
+            /// The chat is open: the disc takes the accent color.
             var active = false { didSet { needsDisplay = true } }
 
             override var wantsUpdateLayer: Bool { true }
@@ -5977,8 +5977,8 @@ enum Template {
                 floating.active = open
             } else {
                 // A toggle that's on, as a toolbar's are drawn lit. In the window in front the lit glass is filled
-                // with the accent colour and draws the symbol white; behind, or with the app in the back, the glass
-                // is gray and the symbol is put in the accent colour itself, since a tint alone doesn't show there.
+                // with the accent color and draws the symbol white; behind, or with the app in the back, the glass
+                // is gray and the symbol is put in the accent color itself, since a tint alone doesn't show there.
                 // An accent symbol on the accent glass all but disappeared.
                 let inFront = NSApp.isActive && window.isMainWindow
                 wand.setButtonType(.pushOnPushOff)
@@ -6527,7 +6527,7 @@ enum Template {
             /// The rim inside the card, around the chat, where the pointer resizes it: the room around the card is its
             /// shadow, which clicks go through.
             static let rim: CGFloat = 6
-            /// The room around the card for its own shadow. The window's shadow drew a hard grey line round the card, as
+            /// The room around the card for its own shadow. The window's shadow drew a hard gray line round the card, as
             /// macOS outlines every window; this one is soft, and gone within the room, so clicks there reach what's
             /// behind (the app's own edge, beside it).
             static let shade: CGFloat = 14
@@ -7404,7 +7404,7 @@ enum Template {
                 try? #"{"error":"no window"}"#.write(to: folder.appendingPathComponent("motion.json"), atomically: true, encoding: .utf8)
                 return
             }
-            // Each frame is compared as it comes, as a small grey picture, so only those and the two full frames
+            // Each frame is compared as it comes, as a small gray picture, so only those and the two full frames
             // that differ most so far are kept: a window's full frames would add up to gigabytes.
             func small(_ image: CGImage) -> [UInt8] {
                 let w = 160, h = max(1, Int(160 * Double(image.height) / Double(max(image.width, 1))))
@@ -7655,13 +7655,13 @@ enum Template {
         /// The effect's layers, filling the window they're laid over and cut to its rounding. Core Animation runs
         /// them out of the app's process, so they keep moving while the app is busy taking the change in.
         ///
-        /// While the change is built, smoke in many colours curls up from the bottom edge, thick there and thinning as
+        /// While the change is built, smoke in many colors curls up from the bottom edge, thick there and thinning as
         /// it rises a third of the way up, with a faint glow round the edge: noticeable on any ground, and out of the way
         /// of most of the window. When the change goes in the smoke surges for a moment, then a level band of white,
         /// the window's width, whooshes from the bottom to the top with a soft gray shadow just ahead of it, covering the
         /// moment the new code draws and leaving the window clear behind it.
         @MainActor final class Look: NSView {
-            /// The colours the smoke mixes: blue, violet, pink, orange and teal.
+            /// The colors the smoke mixes: blue, violet, pink, orange and teal.
             static let hues: [NSColor] = [
                 NSColor(red: 0.25, green: 0.5, blue: 1, alpha: 1),
                 NSColor(red: 0.6, green: 0.38, blue: 1, alpha: 1),
@@ -7721,7 +7721,7 @@ enum Template {
 
             private func arrange() {
                 // Only blur, no line: each band of the glow is drawn just outside the window, where the window's own
-                // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colours.
+                // rounding cuts it off, so all that shows is its shadow coming in from the edge, going round the colors.
                 glowLayer.frame = bounds
                 glowLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
                 for (blur, strength) in [(CGFloat(54), Float(0.8)), (24, 1)] {
@@ -7745,7 +7745,7 @@ enum Template {
                     glowLayer.addSublayer(edge)
                 }
 
-                // Smoke rising from below the bottom edge, a stream of puffs for each colour. How far it rises goes with
+                // Smoke rising from below the bottom edge, a stream of puffs for each color. How far it rises goes with
                 // the window's height (speed times life, and the puffs growing), so it reaches about a third of the way
                 // up at any size.
                 wisps.frame = bounds
@@ -7770,7 +7770,7 @@ enum Template {
                 }
 
                 // The band: the window's width and level, white through its body, fading out below where it's been, and
-                // a narrow gray shadow just above its top edge, ahead of it. Its colours run from the bottom of the layer up.
+                // a narrow gray shadow just above its top edge, ahead of it. Its colors run from the bottom of the layer up.
                 let height = max(bounds.height * 0.4, 120), shadow: CGFloat = 24
                 band.frame = CGRect(x: 0, y: -height - shadow, width: bounds.width, height: height + shadow)
                 band.startPoint = CGPoint(x: 0.5, y: 0)
@@ -10276,7 +10276,7 @@ enum Template {
     ///     let here = try await LampLocation.current()          // Place: coordinates and "Street, Town"
     ///     let km = LampLocation.distance(from: here, to: there)
     ///     let office = try await LampLocation.find("1 Infinite Loop, Cupertino")
-    ///     LampLocation.shared.watch()                           // `.current` follows big moves (a few hundred metres)
+    ///     LampLocation.shared.watch()                           // `.current` follows big moves (a few hundred meters)
     ///     LampLocation.shared.watchVisits()                     // iPhone: `.visits`, where they stopped and for how long
     @MainActor
     final class LampLocation: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -10285,7 +10285,7 @@ enum Template {
         struct Place: Codable, Hashable {
             var latitude: Double
             var longitude: Double
-            var accuracy: Double      // metres
+            var accuracy: Double      // meters
             var date: Date
             var name: String?         // "Street, Town", when the map knows
         }
@@ -10438,12 +10438,12 @@ enum Template {
                          date: Date(), name: [mark.name, mark.locality].compactMap { $0 }.joined(separator: ", "))
         }
 
-        /// Kilometres between two places, as the crow flies.
+        /// Kilometers between two places, as the crow flies.
         static func distance(from a: Place, to b: Place) -> Double {
             CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) / 1000
         }
 
-        /// Keeps `current` up as the person moves a few hundred metres or more, sparing the battery.
+        /// Keeps `current` up as the person moves a few hundred meters or more, sparing the battery.
         func watch() {
             wantsMoves = true
             Task {
@@ -11158,7 +11158,7 @@ enum Template {
             return access
         }
 
-        /// A datagram to a neighbour, which is what has the system ask; its path says whether the network is allowed.
+        /// A datagram to a neighbor, which is what has the system ask; its path says whether the network is allowed.
         private static func probe(_ address: String) async -> Access {
             let connection = NWConnection(host: NWEndpoint.Host(address), port: 1900, using: .udp)
             return await withCheckedContinuation { continuation in
@@ -12383,9 +12383,9 @@ enum Template {
             setTimeout(poll, 1000);
           }
           poll();
-          // The page's own colours, so Lamp's strip above it is drawn in them and the two read as one.
+          // The page's own colors, so Lamp's strip above it is drawn in them and the two read as one.
           // Only a solid background goes: a gradient or a see-through one gives its first solid colour, or nothing, and
-          // with no background the strip keeps all of its own colours, so its words are never drawn on the wrong one.
+          // with no background the strip keeps all of its own colors, so its words are never drawn on the wrong one.
           function solid(value) {
             const m = /rgba?\\(([^)]*)\\)/.exec(value || '');
             if (!m) return '';
@@ -12417,12 +12417,12 @@ enum Template {
         })();
         """
 
-        /// `lamp.css`: the sidebar drawn as Apple draws a Mac app's narrow list pane, light and dark: the grouped grey
+        /// `lamp.css`: the sidebar drawn as Apple draws a Mac app's narrow list pane, light and dark: the grouped gray
         /// background, white rounded groups, rows whose separators start at the words, SF, and one tint, which the page
-        /// chooses with `<html data-tint="green">` among Apple's system colours (text and button shades measured to
+        /// chooses with `<html data-tint="green">` among Apple's system colors (text and button shades measured to
         /// read in both appearances). The parts (groups, rows, pictures, symbols as masks, buttons, fields, the bar at
         /// the foot) are described in the chrome-sidebar skill, and rearrange themselves at large text sizes. The
-        /// variables `--accent`, `--ink`, `--muted`, `--line` and `--bg` are plain colours because the strip above
+        /// variables `--accent`, `--ink`, `--muted`, `--line` and `--bg` are plain colors because the strip above
         /// the page takes them (`tellLook`).
         nonisolated fileprivate static let style = """
         :root{color-scheme:light dark;--bg:#f2f2f7;--surface:#ffffff;--ink:#1d1d1f;--muted:#6e6e73;--line:#dcdce0;--separator:rgba(60,60,67,.2);--tertiary:rgba(60,60,67,.3);--fill:rgba(120,120,128,.12);--fill-strong:rgba(120,120,128,.2);--hairline:rgba(0,0,0,.06);--raised:#ffffff;--raised-shadow:0 .5px 1px rgba(0,0,0,.12),0 2px 6px rgba(0,0,0,.06);--field:#c7c7cc;--danger:#d70015;--accent:var(--tint-text);--on-accent:var(--on-tint);--font:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;--title-font:var(--font);--title-size:1.25rem;--title-weight:700;--radius:12px;--control-radius:7px;--control-height:28px;--shadow:none;--gutter:16px}
@@ -16319,8 +16319,8 @@ enum Template {
 
     /// How the wish's other apps stand, ready to drop in: a line for each ("TV app connected", "Open the iPhone app on
     /// your iPhone."), or what keeps this app from them ("To reach the wish's other apps, allow Local Network…"), with a
-    /// dot of its colour. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
-    /// takes the font and colours of where it's put, so style it as the rest of the app; or show `LampWish`'s own
+    /// dot of its color. Nothing while this app is alone, with no other app or copy open. Give a peer name for that app's line alone. It
+    /// takes the font and colors of where it's put, so style it as the rest of the app; or show `LampWish`'s own
     /// `status` and `peer(_:)?.status` in a view of your own.
     struct LampWishStatus: View {
         @ObservedObject private var wish = LampWish.shared

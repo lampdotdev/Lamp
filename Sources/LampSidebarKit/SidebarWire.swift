@@ -164,7 +164,7 @@ public struct SidebarLine: Codable, Equatable, Identifiable {
     /// A card's other answer, drawn before its button (Keep Old Copy beside Remove Old Copy), sent as `decline`.
     public var declineButton: String?
     public var disabled: Bool?
-    /// An action line's button is the one thing to do next (Reload): drawn in the accent colour.
+    /// An action line's button is the one thing to do next (Reload): drawn in the accent color.
     public var prominent: Bool?
     /// A request's buttons: going back to how the app was around it, and taking it back to change it.
     public var canGoBack: Bool?
@@ -295,7 +295,7 @@ public struct SidebarBanner: Codable, Equatable {
 }
 
 /// A new app's first build, as its plan's parts: each a heading with its mark and how long it took, with what was said
-/// and done in it under it, the part going on with the turn's live line at its foot, the parts to come greyed, and
+/// and done in it under it, the part going on with the turn's live line at its foot, the parts to come grayed, and
 /// Lamp's own last part (building and opening it). Once the app is made each part folds to a line of its own, with the answer under them.
 public struct SidebarBuild: Codable, Equatable {
     public enum State: String, Codable { case done, now, later }

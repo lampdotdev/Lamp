@@ -152,7 +152,7 @@ private struct Answered: View {
                 }
             }
         }
-        // Set in, sized and coloured as the turn's steps are, since it now reads as one.
+        // Set in, sized and colored as the turn's steps are, since it now reads as one.
         .font(ChatLook.stepFont)
         .foregroundStyle(.secondary)
         .padding(.leading, ChatLook.stepIndent)

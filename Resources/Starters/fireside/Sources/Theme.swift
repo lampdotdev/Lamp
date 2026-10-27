@@ -155,7 +155,7 @@ enum SongArt {
     static let all: [(file: String, meaning: String)] = [
         ("campfire.png", "campfire: rousing singalongs with friends outdoors"),
         ("lantern.png", "lantern: hymns, spirituals, old folk songs about home and hope"),
-        ("harmonica.png", "harmonica: country, blues, cowboy and travelling songs"),
+        ("harmonica.png", "harmonica: country, blues, cowboy and traveling songs"),
         ("mug.png", "mug: cosy, easygoing, morning or kitchen songs"),
         ("pine.png", "pine tree: songs about land, mountains, the West, nature"),
         ("boat.png", "rowboat: songs about rivers, the sea, water, sailing, leaving"),

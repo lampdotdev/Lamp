@@ -1,5 +1,5 @@
 // The family's real things, each only once it's chosen in the settings drawer:
-// - the weather where they live, from Open-Meteo (open data: no key or account; its licence asks for the credit the
+// - the weather where they live, from Open-Meteo (open data: no key or account; its license asks for the credit the
 //   drawer shows), filling DATA.weather's 24 hours;
 // - their own calendars and photos, read by the app around the page on the Mac, iPhone or iPad (Sources/Native.swift).
 //   Elsewhere (a TV, Android, the Xbox, Lamp's preview) LampNative.available is false and the examples stay.

@@ -144,7 +144,7 @@ enum Provider {
 /// which shared this folder until Lamp Dev got its own) moves its keys into the Keychain and removes it.
 /// Keys are read once per launch.
 enum KeyStore {
-    /// Serialises the Keychain and file work; `cacheLock` guards only the cache, so a look at it never waits
+    /// Serializes the Keychain and file work; `cacheLock` guards only the cache, so a look at it never waits
     /// behind a Keychain prompt.
     private static let lock = NSLock()
     private static let cacheLock = NSLock()

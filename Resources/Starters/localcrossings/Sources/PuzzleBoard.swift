@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// The window: the map of the place in grey behind a sheet of newsprint, the masthead, and today's crossword
+/// The window: the map of the place in gray behind a sheet of newsprint, the masthead, and today's crossword
 /// with its clues. Before the paper is ready the same page shows the first launch's question, the paper being
 /// made, or what went wrong.
 struct PuzzleBoard: View {
@@ -247,7 +247,7 @@ struct PlaceSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Where should the puzzles come from?").font(Paper.serif(20))
-            TextField("Town or neighbourhood", text: $text)
+            TextField("Town or neighborhood", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { find() }
             if let problem {

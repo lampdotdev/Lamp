@@ -46,7 +46,7 @@
             p.fav = !p.fav;
             heart();
             App.emit('data');
-            App.toast(p.fav ? 'Added to favourites · it’ll show up more often' : 'Removed from favourites', { icon: 'heart', ms: 2500 });
+            App.toast(p.fav ? 'Added to favorites · it’ll show up more often' : 'Removed from favorites', { icon: 'heart', ms: 2500 });
           }
         });
       }

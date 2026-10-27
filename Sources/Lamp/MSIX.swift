@@ -152,7 +152,7 @@ enum MSIX {
         """
     }
 
-    /// The app's icon centred on its tile's colour at a logo's size, or the colour alone: the same picture a declared
+    /// The app's icon centered on its tile's color at a logo's size, or the color alone: the same picture a declared
     /// kind's icons are (`DeviceSupport.iconPNG`).
     private static func logo(_ icon: NSImage?, width: Int, height: Int) -> Data {
         DeviceSupport.iconPNG(icon, width: width, height: height)

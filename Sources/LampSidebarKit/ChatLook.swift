@@ -5,7 +5,7 @@ import AppKit
 /// extension), so the two are drawn by the same code and can't drift apart. Each takes plain values: what a line
 /// says and how it stands, never Lamp's own state.
 public enum ChatLook {
-    /// A request's bubble, on the right, as Messages draws what you sent: white words on the accent colour.
+    /// A request's bubble, on the right, as Messages draws what you sent: white words on the accent color.
     /// A request still waiting its turn is the same bubble, faded.
     public struct UserBubble: View {
         let text: String
@@ -38,7 +38,7 @@ public enum ChatLook {
             self.keep = keep
         }
 
-        /// In a grey bubble on the left, as Messages draws the other person's. Answers run longer than a text
+        /// In a gray bubble on the left, as Messages draws the other person's. Answers run longer than a text
         /// message, so the bubble may take most of the width, leaving room on the right to tell it from a request.
         public var body: some View {
             content
@@ -92,7 +92,7 @@ public enum ChatLook {
                 Divider()
             case .table(let columns, let header, let rows):
                 // Top-aligned: lining cells up by their first baselines cost several times as much to lay out, and
-                // a cell's first line sits level with its neighbours' either way. The cells can't be selected, for
+                // a cell's first line sits level with its neighbors' either way. The cells can't be selected, for
                 // the same cost: a selectable text in each would make a table the slowest thing in the chat.
                 Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 4) {
                     GridRow {
@@ -294,7 +294,7 @@ public enum ChatLook {
     }
 
     /// What the agent said about how the work was going ("The layout's in. Now the timer."), once its turn is over
-    /// and the line is among the turn's steps: grey like them. While the turn goes on it's a message like any other
+    /// and the line is among the turn's steps: gray like them. While the turn goes on it's a message like any other
     /// (`AgentText`).
     public struct ProgressLine: View {
         let text: String
@@ -317,7 +317,7 @@ public enum ChatLook {
     /// The progress line's mark, which also tells the sidebar a status line is one (`SidebarLine.symbol`).
     public static let progressSymbol = "ellipsis.bubble"
 
-    /// The agent's steps (what it ran, read, checked) are told in small grey words under its bubbles, as Messages
+    /// The agent's steps (what it ran, read, checked) are told in small gray words under its bubbles, as Messages
     /// says a message was delivered: there, but quieter than what's said.
     public static let stepFont = Font.subheadline
     /// Steps line up with the words in the agent's bubbles.
@@ -483,7 +483,7 @@ public enum ChatLook {
         }
     }
 
-    /// The line that ends a turn ("Worked for 8s"), small and centred, the way Messages marks the time between
+    /// The line that ends a turn ("Worked for 8s"), small and centered, the way Messages marks the time between
     /// messages.
     public struct SummaryLine: View {
         let text: String
@@ -615,7 +615,7 @@ public enum ChatLook {
         static var fieldShape: RoundedRectangle { RoundedRectangle(cornerRadius: height / 2, style: .continuous) }
     }
 
-    /// A round button beside the message box: the accent colour for Send and Stop, plain for the rest.
+    /// A round button beside the message box: the accent color for Send and Stop, plain for the rest.
     public struct Round: ButtonStyle {
         let prominent: Bool
         @Environment(\.isEnabled) private var isEnabled

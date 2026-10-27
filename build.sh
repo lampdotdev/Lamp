@@ -95,7 +95,7 @@ mkdir -p "$APP/Contents/Frameworks"
 ditto "$(dirname "$BIN")/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
 # xwin (MIT or Apache-2.0, github.com/Jake-Shadle/xwin) fetches Microsoft's Windows SDK on the person's Mac, once they've
-# accepted Microsoft's licence there, for Xbox games (WindowsTools.swift). It publishes no build for a Mac, so it's built
+# accepted Microsoft's license there, for Xbox games (WindowsTools.swift). It publishes no build for a Mac, so it's built
 # here from its published crate, pinned and with its own lock file, and cached in vendor/. A release can't go without it.
 XWIN_VERSION="0.10.0"
 XWIN="vendor/xwin-$XWIN_VERSION/bin/xwin"

@@ -13,7 +13,7 @@ struct Candidate: Codable, Hashable {
     var facts: String
 }
 
-/// Turns a neighbourhood into candidate answers. Every clue here is true, since it says nothing the map didn't:
+/// Turns a neighborhood into candidate answers. Every clue here is true, since it says nothing the map didn't:
 /// a street is "___ Street", a place named in more than one word has its most distinctive word taken out
 /// ("Late ___ Cafe"), a one-word name is clued by what it is and where.
 enum Answers {
