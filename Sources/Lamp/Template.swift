@@ -17702,16 +17702,15 @@ enum Template {
 
         /// The run counts once it's finished: one iOS cut short is still due, and runs again at the next wake.
         /// While it runs nothing starts another (`running`).
-        @discardableResult private func fire() -> Task<Void, Never> {
-            if let running { return running }
-            // The task's closure only calls `run`: a body that touched `running` itself read, to Swift before 6.4, as
-            // a closure of the task's own optional type, and failed.
-            let task = Task<Void, Never> { @MainActor [weak self] in
+        /// Starts a run, unless one is going: `running` is the task either way. Shaped as the Mac's is (the task
+        /// assigned, nothing returned): a function that made a task and returned it read, to Swift before 6.4, as a
+        /// closure of the task's own optional type, and failed.
+        private func fire() {
+            guard running == nil else { return }
+            running = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.run()
             }
-            running = task
-            return task
         }
 
         /// One run: the work, the time it finished, and the next one armed.
@@ -17759,7 +17758,8 @@ enum Template {
             askForTime()
             var runs: [Task<Void, Never>] = []
             for schedule in all.values {
-                if let running = schedule.running { runs.append(running) } else if schedule.due <= Date() { runs.append(schedule.fire()) }
+                if schedule.running == nil, schedule.due <= Date() { schedule.fire() }
+                if let running = schedule.running { runs.append(running) }
             }
             for run in runs { await run.value }
             askForTime()
