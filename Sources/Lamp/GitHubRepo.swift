@@ -210,6 +210,17 @@ enum GitHubRepo {
         !credits.upstream.contains { ShareCheck.licence($0.license) == .shareAlike && !ShareCheck.isDataLicence($0.license) }
     }
 
+    /// Whether two shared-file manifests say the same, apart from when each was made (`exportedAt`).
+    static func manifestsMatch(_ a: Data, _ b: Data) -> Bool {
+        func fields(_ data: Data) -> NSDictionary? {
+            guard var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+            json.removeValue(forKey: "exportedAt")
+            return json as NSDictionary
+        }
+        guard let first = fields(a), let second = fields(b) else { return false }
+        return first == second
+    }
+
     // MARK: Putting it up
 
     /// Puts the staged tree in `repo` (made, if it's new, public or private as asked) as one commit on top of what's
@@ -268,9 +279,14 @@ enum GitHubRepo {
             let added = await Subprocess.run(git, ["add", "-A"], cwd: clone, timeout: 120)
             guard added.ok else { throw Failure(message: "Couldn't prepare the repository: \(added.output.trimmed.suffix(200))") }
             // Unchanged when nothing but the export's own marks differ: the shared file's manifest says when it was made,
-            // and the file is zipped afresh each time. Those go up only with a real change.
+            // and the file is zipped afresh each time. The manifest's other fields matter (which device an app opens on),
+            // so it's compared with only its time left out; the archive follows the manifest.
             if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp"], cwd: clone, timeout: 60).ok {
-                return (Repo(repo: repo, url: url, license: license), false)
+                let before = await Subprocess.run(git, ["show", "HEAD:lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
+                if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")),
+                   manifestsMatch(Data(before.output.utf8), after) {
+                    return (Repo(repo: repo, url: url, license: license), false)
+                }
             }
             let committed = await Subprocess.run(git, identity + ["commit", "-q", "-m", "Update \(project.name) from Lamp"], cwd: clone, timeout: 120)
             guard committed.ok else { throw Failure(message: "Couldn't prepare the repository: \(committed.output.trimmed.suffix(200))") }
