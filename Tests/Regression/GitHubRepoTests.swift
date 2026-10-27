@@ -50,11 +50,20 @@ final class GitHubRepoTests: XCTestCase {
         let file = try Sharing.open(staged.folder.appendingPathComponent("tally.lampapp"))
         defer { try? fm.removeItem(at: file.folder) }
         XCTAssertEqual(file.credits?.remixOf.last?.url, "https://github.com/someone/tally")
+        // Opened here as the same wish and shared on as a file, it still says where it lives; put on another repository,
+        // it lives there now.
+        let link = Credits.Remix(name: "Tally", wish: file.credits?.remixOf.last?.wish)
+        XCTAssertEqual(file.credits?.remixed(from: link).remixOf.last?.url, "https://github.com/someone/tally")
+        var moved = link
+        moved.url = "https://github.com/else/tally"
+        XCTAssertEqual(file.credits?.remixed(from: moved).remixOf.last?.url, "https://github.com/else/tally")
     }
 
     func testARepositoryAddressIsReadAsGitTakesIt() {
         XCTAssertEqual(RepoImport.source(from: "https://github.com/someone/tally"), RepoImport.Source(owner: "someone", name: "tally"))
         XCTAssertEqual(RepoImport.source(from: " github.com/someone/tally.git/ "), RepoImport.Source(owner: "someone", name: "tally"))
+        XCTAssertEqual(RepoImport.source(from: "git@github.com:someone/tally.git"), RepoImport.Source(owner: "someone", name: "tally"))
+        XCTAssertEqual(RepoImport.source(from: "ssh://git@github.com/someone/tally.git"), RepoImport.Source(owner: "someone", name: "tally"))
         XCTAssertEqual(RepoImport.source(from: "https://github.com/someone/tally/tree/feature/x")?.ref, "feature/x")
         XCTAssertEqual(RepoImport.source(from: "https://github.com/someone/tally/commit/199f010cf9b35eb58ec934d95eba1ab977c880c1")?.ref,
                        "199f010cf9b35eb58ec934d95eba1ab977c880c1")

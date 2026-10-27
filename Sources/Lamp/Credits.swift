@@ -168,11 +168,14 @@ struct Credits: Codable, Equatable {
 
     /// The chain with one more wish at its end. The same wish shared again (an update, a second share) stays one link,
     /// named as it's called now, and only when it's already the last: a wish that came back after another took it on
-    /// is a link of its own.
+    /// is a link of its own. A link that knows where the wish lives keeps that when the share names no place (a wish
+    /// opened from its repository and shared on as a file), and takes the new place when it does.
     func remixed(from remix: Remix) -> Credits {
         var result = self
         if let last = result.remixOf.last, last.sameWish(as: remix) {
-            result.remixOf[result.remixOf.count - 1] = remix
+            var link = remix
+            if link.url == nil { link.url = last.url }
+            result.remixOf[result.remixOf.count - 1] = link
         } else {
             result.remixOf.append(remix)
         }

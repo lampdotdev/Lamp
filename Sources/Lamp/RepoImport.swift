@@ -17,10 +17,15 @@ enum RepoImport {
     }
 
     /// The repository an address names: `https://github.com/owner/name`, with or without the scheme or `.git`, a
-    /// branch or tag after `/tree/`, a commit after `/commit/`. Nil for anything else.
+    /// branch or tag after `/tree/`, a commit after `/commit/`; or git's own way of naming it over SSH
+    /// (`git@github.com:owner/name.git`, `ssh://git@github.com/owner/name.git`), which a clone's remote often is.
+    /// Nil for anything else.
     static func source(from text: String) -> Source? {
         var line = text.trimmed
         guard !line.isEmpty, line.count <= 400 else { return nil }
+        for ssh in ["ssh://git@github.com/", "git@github.com:"] where line.lowercased().hasPrefix(ssh) {
+            line = "https://github.com/" + line.dropFirst(ssh.count)
+        }
         if !line.contains("://") { line = "https://" + line }
         guard let url = URL(string: line), let host = url.host?.lowercased(), host == "github.com" || host == "www.github.com",
               ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return nil }
@@ -78,11 +83,12 @@ enum RepoImport {
         let ref = Sandbox.quoted(source.ref ?? "HEAD")
         let command = "git init -q && git remote add origin \(remote) && git fetch -q --depth 1 origin \(ref) && git checkout -q --detach FETCH_HEAD"
         let said = Said()
-        // Ten minutes is plenty for a wish; a repository that takes longer isn't one, and is let go.
+        // Ten minutes is plenty for a wish; a repository that takes longer isn't one, and is let go: git and whatever it
+        // started with it, not only the shell they run under, which would leave them holding the output open.
         let status = await Versions.git(command, cwd: tree, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
             Task {
                 try? await Task.sleep(for: .seconds(600))
-                if process.isRunning { process.terminate() }
+                Subprocess.terminateTree(process)
             }
         }, onLine: { said.add($0) })
         guard status == 0 else {
