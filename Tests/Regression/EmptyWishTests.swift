@@ -72,6 +72,34 @@ final class EmptyWishTests: XCTestCase {
 
     }
 
+    /// The mark that keeps a wish with no app from being a draft is written before anything is taken away: when it can't
+    /// be (here a folder stands where it goes), the app stays, its files untouched, and `remove_app` says why, never
+    /// that the app went or that the person kept it open.
+    func testAnAppStaysWhenTheWishsMarkCantBeWritten() async throws {
+        let root = try newRoot()
+        let draft = try Template.draft(name: "Kept \(UUID().uuidString.prefix(8))", in: root)
+        var store = Store(testingAt: root)
+        let first = try await call(store, "make_app_for", ["kind": "app", "made": "native", "devices": ["mac"]],
+                                   on: try XCTUnwrap(store.projects.first { $0.id == draft.id }))
+        XCTAssertFalse(first.failed, first.text)
+        let mark = draft.dir.appendingPathComponent(Parts.wishOnly)
+        try FileManager.default.removeItem(at: mark)
+        try FileManager.default.createDirectory(at: mark, withIntermediateDirectories: false)
+        store = Store(testingAt: root)
+        let wish = try XCTUnwrap(store.projects.first { $0.id == draft.id })
+        let mac = draft.dir.appendingPathComponent("Mac")
+        let files = try FileManager.default.contentsOfDirectory(atPath: mac.path).sorted()
+
+        let removed = try await call(store, "remove_app", ["app": "Mac"], on: wish)
+        XCTAssertTrue(removed.failed, removed.text)
+        XCTAssertFalse(removed.text.contains("kept it open"), removed.text)
+        XCTAssertTrue(removed.text.contains("couldn't"), removed.text)
+        XCTAssertEqual((try? FileManager.default.contentsOfDirectory(atPath: mac.path))?.sorted(), files, "its files are all still there")
+        let after = try XCTUnwrap(Store(testingAt: root).projects.first { $0.id == draft.id })
+        XCTAssertFalse(after.holdsApp, "never a draft")
+        XCTAssertEqual(Parts.load(after).map(\.platform), [.mac])
+    }
+
     /// A wish whose app is a web app, a kind a Lamp of layout 2 doesn't know, says layout 3, so that Lamp leaves it alone
     /// rather than find no app in it and write one into its own folder.
     func testAWishWithAWebAppIsLeftAloneByALampFromBefore() throws {

@@ -1935,10 +1935,28 @@ final class Store: ObservableObject {
     /// wish's: its chat, meta.json and the rest of `.lamp/` but the app's runtime, its history, icon, description and
     /// attachments, and its other apps' folders; from then on every app of the wish is in a folder of its own
     /// (`holdsApp`). The last app too: the wish stays, its own folder marked as only the wish's (`Parts.wishOnly`) so it's
-    /// never taken for a draft, until `make_app_for` gives it another app.
-    private func takeAway(_ app: LampProject) async -> Bool {
-        guard let app = current(app), let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }),
-              await quit(app, for: turns[wish.id]) else { return false }
+    /// never taken for a draft, until `make_app_for` gives it another app. The mark is written, and read back, before
+    /// anything is forgotten or deleted: a wish whose files were gone and whose mark wasn't would be a draft, so when it
+    /// can't be written the app stays as it is and the reason is said.
+    enum TakenAway: Equatable {
+        case done
+        /// The person kept it open on this Mac, where it asked about unsaved work.
+        case keptOpen
+        /// What stopped it, with nothing taken away.
+        case failed(String)
+    }
+
+    private func takeAway(_ app: LampProject) async -> TakenAway {
+        guard let app = current(app), let wish = projects.first(where: { $0.id == (app.partOf ?? app.id) }) else {
+            return .failed("Lamp can't find that app.")
+        }
+        guard await quit(app, for: turns[wish.id]) else { return .keptOpen }
+        // Once its own folder holds no app, it's only the wish's, whether or not another app is left in a folder.
+        if !app.isPart || !wish.hasScaffold {
+            let mark = wish.dir.appendingPathComponent(Parts.wishOnly)
+            do { try AppFolder.write(Data(Parts.wishOnlyText.utf8), to: mark, in: wish.dir) } catch { return .failed(error.localizedDescription) }
+            guard Parts.isWishOnly(wish.dir) else { return .failed("\(Parts.wishOnly) in the wish's folder isn't a plain file.") }
+        }
         // The wish no longer should have it: taken away, it isn't made again at the next turn. Only here: a restore has
         // already given the wish the list its version had (`Versions.restoreFiles`), which forgetting leaves alone.
         setApps(wish, wish.apps.filter { !Parts.lists($0, app) })
@@ -1948,19 +1966,15 @@ final class Store: ObservableObject {
             AppFolder.remove(app.dir, in: wish.dir)
         } else {
             let fm = FileManager.default
-            let kept = Set([".lamp", ".git", ".gitignore", "icon.json", AppDescription.file, Attachments.folder] + Parts.folders(in: wish.dir))
+            let kept = Set([".lamp", ".git", ".gitignore", "icon.json", AppDescription.file, Attachments.folder, Parts.wishOnly] + Parts.folders(in: wish.dir))
             for name in (try? fm.contentsOfDirectory(atPath: wish.dir.path)) ?? [] where !kept.contains(name) {
                 AppFolder.remove(wish.dir.appendingPathComponent(name), in: wish.dir)
             }
             for name in ["runtime", "live"] { AppFolder.remove(wish.dir.appendingPathComponent(".lamp/" + name), in: wish.dir) }
         }
-        // Once its own folder holds no app, it's only the wish's, whether or not another app is left in a folder.
-        if !app.isPart || !wish.hasScaffold {
-            try? AppFolder.write(Data(Parts.wishOnlyText.utf8), to: wish.dir.appendingPathComponent(Parts.wishOnly), in: wish.dir)
-        }
         reload()
         refreshOpenApps()
-        return true
+        return .done
     }
 
     /// How an app leaves its wish: reversibly (taken away, or gone with a version restored without it), when Undo or a
@@ -6074,8 +6088,12 @@ final class Store: ObservableObject {
         case .success(.remove(let member)):
             guard let id = member.id, let app = apps(of: wish).first(where: { $0.id == id }) else { return (404, ["error": "Lamp can't find that app."]) }
             let name = Parts.name(of: app)
-            guard await takeAway(app) else {
+            switch await takeAway(app) {
+            case .done: break
+            case .keptOpen:
                 return (200, ["text": "\(name.prefix(1).uppercased() + name.dropFirst()) is still there: the person kept it open. Tell them it has to close first."])
+            case .failed(let why):
+                return (500, ["error": "Lamp couldn't take \(name) away: \(why) Nothing was taken away. Tell the person in a sentence."])
             }
             log(wish, .status, "\(wish.name) no longer has \(name).")
             let left = apps(of: wish).isEmpty ? " The wish has no apps now: it keeps its name, chat and history, and `make_app_for` gives it a new one."
