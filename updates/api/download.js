@@ -20,5 +20,8 @@ export async function GET(request) {
   const asset = await github(`/repos/${REPO}/releases/assets/${dmg.id}`, "application/octet-stream", "manual");
   const location = asset.headers.get("location");
   if (!location) return new Response("Couldn't get the download", { status: 502 });
-  return Response.redirect(location, 302);
+  // Kept a minute at the CDN: each request here costs two calls against the GitHub token's hourly budget, which a flood
+  // could spend, leaving every Lamp without updates until it refills. GitHub's signed link lives five minutes, so a
+  // copy a minute old still works.
+  return new Response(null, { status: 302, headers: { Location: location, "Cache-Control": "public, s-maxage=60" } });
 }

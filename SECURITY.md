@@ -21,6 +21,9 @@ few days and keep you posted while it's fixed. We're glad to credit you in the r
 Bugs in the coding agents Lamp bundles or drives (pi, Claude Code, Codex, llama.cpp) belong with those
 projects, unless the problem is in how Lamp runs them.
 
+A review of all of the above as it stood when the code was published, with what each endpoint checks and what's
+still to do, is in [docs/development/security-review-2026-10.md](docs/development/security-review-2026-10.md).
+
 ## How Lamp handles your data
 
 Lamp runs on your Mac, and so does the agent. Lamp's own commands over an app's folder run in that app's
