@@ -102,7 +102,7 @@
     else body = '<div class="chips setup-results">' + F.calendars.map(function (c) {
       return '<button class="chip' + (F.calendar && F.calendar.id === c.id ? ' is-on' : '') + '" data-cal="' + App.esc(c.id) + '">' + App.esc(App.calendarLabel(F.calendars, c)) + '</button>';
     }).join('') + (F.listed ? '' : '<button class="chip chip--ghost" data-cals>Choose another</button>') + '</div>';
-    return head('Your family calendar', 'The one you all share. An event is for whoever its title names, like “Maya soccer”; the rest are for everyone.') +
+    return head('Your family calendar', 'The one you all share. Its events show for the whole family.') +
       body + actions('Next', { skip: !F.calendar });
   }
 

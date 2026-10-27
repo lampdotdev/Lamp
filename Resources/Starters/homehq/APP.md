@@ -91,8 +91,9 @@ either way up and a phone, and reflows for each.
   with no day in the calendar, drawn with its `emoji`). `ALL` is the ids of everyone but the pets (`DATA.humanIds`,
   `App.humans`), as an event for the whole family has them; `family` is everyone's colour.
 - `events`: `{ id, title, start, end (Dates), people: [ids], allDay?, loc?, notes?, travel? (minutes to get there) }`;
-  `ex` marks an example, `cal` one from the family's calendar, which is for whoever its title names by first name
-  ("Maya soccer"), else for everyone (`peopleIn` in `Web/js/live.js`).
+  `ex` marks an example, `cal` one from the family's shared calendar, which is everyone's: who goes is in its title for the
+  family to read, never guessed. With the calendar on, Today shows the rest of the day as one list for everyone, and the
+  example events are hidden (`App.events`).
 - `routines` (morning, after school, evening by hour), `chores`: `{ id, r, who (a person or 'any'), title, emoji,
   stars, done, doneBy?, overdue? }`, `stars` and `week` (each kid's last seven days).
 - `stores`, `catOrder` (aisle order per store), `groceries`: `{ id, name, cat, qty, store, done, note }`, `catalog`

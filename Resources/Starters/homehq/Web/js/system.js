@@ -89,7 +89,7 @@
     var chosen = D.settings.calendars;
     // Turned on at another screen: this one shows what that one reads.
     if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
-    // The family's one calendar: an event goes to whoever its title names, else to everyone (js/live.js).
+    // The family's one shared calendar: its events are everyone's (js/live.js).
     var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? D.settings.calendarName || chosen[0] : 'All calendars') + '</p>' : '';
     if (S.calendars) body += grid(S.calendars.map(function (c) {
       return btn('data-cal="' + App.esc(c.id) + '"', App.calendarLabel(S.calendars, c), !!chosen && chosen.length === 1 && chosen[0] === c.id);

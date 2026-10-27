@@ -55,26 +55,8 @@
   };
 
   // ------------------------------------------------------------ calendars
-  // An event is for whoever its title names, by first name ("Maya soccer", "Sam & Ava dentist", "Ava's recital");
-  // one that names nobody is for everyone. Pets aren't matched: a vet visit is the family's.
-  // Letters and digits of any script, where the screen's browser knows them (an older TV's may not).
-  var LETTER = (function () { try { return new RegExp('[\\p{L}\\p{N}]', 'u'); } catch (e) { return /[0-9A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u0590-\u06FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/; } })();
-  // Whether the title has the name on its own: not inside a longer word ("Sam" isn't in "Samsung"), a possessive
-  // ("Ava's") and names of any script or with a hyphen ("Ann-Marie") included.
-  function names(title, name) {
-    var t = title.toLowerCase(), n = name.trim().toLowerCase();
-    if (!n) return false;
-    for (var i = t.indexOf(n); i > -1; i = t.indexOf(n, i + 1)) {
-      var before = t.charAt(i - 1), after = t.charAt(i + n.length);
-      if ((!before || !LETTER.test(before)) && (!after || !LETTER.test(after))) return true;
-    }
-    return false;
-  }
-  function peopleIn(title) {
-    var named = App.humans().filter(function (p) { return names(title || '', p.name); });
-    return named.length ? named.map(function (p) { return p.id; }) : D.ALL.slice();
-  }
-
+  // Every event of the family's shared calendar is the family's: who goes is in the title, for the family to read, not
+  // for the screen to guess ("June conference" isn't June's).
   // A calendar as the family sees it: its name, and where it's from when another has the same name ("Family · iCloud").
   // The list is what LampNative's "calendars" gives: { id, title, source }.
   App.calendarLabel = function (list, c) {
@@ -101,7 +83,7 @@
       if (!App.readsCalendars() || JSON.stringify(D.settings.calendars) !== asked) return;
       D.events = D.events.filter(function (e) { return !e.cal; }).concat(list.map(function (e) {
         return { id: 'k' + e.id, cal: true, title: e.title, start: new Date(e.start), end: new Date(e.end), allDay: !!e.allDay,
-                 loc: e.loc || undefined, notes: e.notes || undefined, people: peopleIn(e.title) };
+                 loc: e.loc || undefined, notes: e.notes || undefined, people: D.ALL.slice() };
       }));
       App.emit('data');
     }, function () {});
