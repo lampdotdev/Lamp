@@ -6529,11 +6529,13 @@ final class Store: ObservableObject {
     /// A place never built for has nothing old on it.
     private func placesToUpdate(of app: LampProject) -> [Destination] {
         guard app.platform.choosesPlace, app.holdsApp, app.scaffolded else { return [] }
-        // A build from before each place had its own record has only its built copy to show for it.
+        // A build from before each place had its own record has only its built copy to show for it, which says which place
+        // it was for only where no other place shares it: Android's phone and TV places build one APK.
+        let androids = app.openPlaces.filter(\.isAndroid).count
         return app.openPlaces.filter { place in
             let there = app.at(place)
-            return place != app.destination && (Runtime.builtFingerprint(there) != nil || FileManager.default.fileExists(atPath: there.builtURL.path))
-                && Runtime.behind(app, at: place)
+            let copy = !(place.isAndroid && androids > 1) && FileManager.default.fileExists(atPath: there.builtURL.path)
+            return place != app.destination && (Runtime.builtFingerprint(there) != nil || copy) && Runtime.behind(app, at: place)
         }
     }
 
@@ -6576,16 +6578,19 @@ final class Store: ObservableObject {
         // (`placesIdle`, and a request sent ends it first), so taking them away again takes nobody else's.
         let before = Set(chats.flatMap { (logs[$0] ?? []).map(\.id) })
         let fingerprint = Runtime.fingerprint(there)
+        // What the place had before: put back when the new build doesn't reach it, so it stays behind.
+        let had = Runtime.builtFingerprint(there)
         var reached = true
         // A failed build's details stay, under Agent Details, saying why the place is still behind.
         var built = true
-        if await build(there, inPlace: false) == nil, !turn.stopped {
+        if await build(there, inPlace: false) == nil {
             placesFailed[app.id + "/" + place.rawValue] = nil
-            let problem = await install(there, inFront: false, saysReady: false, quiet: true)
-            // The record says what the place has, not what was built for it: a build that didn't reach it is taken back.
-            if !turn.stopped, problem != nil || turn.didNotOpen {
-                Runtime.forgetBuilt(there)
-                reached = false
+            let problem = turn.stopped ? nil : await install(there, inFront: false, saysReady: false, quiet: true)
+            // The record says what the place has, not what was built for it: a build that didn't reach it, a request having
+            // stopped it before or during the install included, is taken back.
+            if turn.stopped || problem != nil || turn.didNotOpen {
+                if let had { Runtime.markBuilt(there, from: had) } else { Runtime.forgetBuilt(there) }
+                reached = turn.stopped
             }
         } else if !turn.stopped {
             placesFailed[app.id + "/" + place.rawValue] = fingerprint
