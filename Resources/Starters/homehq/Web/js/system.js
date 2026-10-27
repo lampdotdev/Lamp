@@ -88,7 +88,7 @@
     if (!native()) return '';
     var chosen = D.settings.calendars;
     // Turned on at another screen: this one shows what that one reads.
-    if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
+    if (chosen && !App.readsCalendars() && !S.calendars) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-here', 'Read it here'), btn('data-cal-off', 'Stop showing it')]));
     // The family's one shared calendar: its events are everyone's (js/live.js).
     var body = chosen ? '<p class="demo-line">' + App.esc(chosen.length === 1 ? D.settings.calendarName || chosen[0] : 'All calendars') + '</p>' : '';
     if (S.calendars) body += grid(S.calendars.map(function (c) {
@@ -158,7 +158,13 @@
     }
     if (b.hasAttribute('data-place-clear')) { D.settings.place = null; App.exampleWeather(); App.emit('data'); return App.openSettings(); }
     // This screen reads the family's calendar from now on (the one that did may be gone), and shares it with the others.
-    if (b.hasAttribute('data-cal-here')) { D.settings.calendarsBy = App.me(); App.emit('data'); App.loadCalendars(); return App.openSettings(); }
+    // This screen reads the family's calendar from now on (the one that did may be gone): chosen from its own list, since
+    // a calendar's id is the device's own.
+    if (b.hasAttribute('data-cal-here')) {
+      LampNative.call('calendars', {}).then(function (list) { S.calendars = list; App.openSettings(); },
+        function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });
+      return;
+    }
     if (b.hasAttribute('data-cal-on')) {
       LampNative.call('calendars', {}).then(function (names) { S.calendars = names; App.openSettings(); },
         function () { App.toast('Calendars aren’t allowed. Turn them on in System Settings → Privacy.', { icon: 'calendar' }); });

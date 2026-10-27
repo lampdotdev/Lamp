@@ -151,7 +151,13 @@
     D.chores = chores;
     D.edited.people = true; D.edited.chores = true;
     if (F.place) D.settings.place = { name: F.place.name, lat: F.place.lat, lon: F.place.lon };
-    if (F.calendar) { D.settings.calendars = [F.calendar.id]; D.settings.calendarName = F.calendar.title; D.settings.calendarsBy = App.me(); }
+    // A calendar chosen from this device's own list is read here from now on. The one already chosen, left as it was,
+    // stays with the device that reads it (its id may be that device's alone); deselected, the calendar is off.
+    if (F.calendar && (F.listed || F.calendar.id !== F.prefilled)) {
+      D.settings.calendars = [F.calendar.id]; D.settings.calendarName = F.calendar.title; D.settings.calendarsBy = App.me();
+    } else if (!F.calendar && F.prefilled) {
+      D.settings.calendars = null;
+    }
     if (F.album != null) { D.settings.album = F.album; D.settings.albumBy = App.me(); }
     D.settings.example = false;
     F = null;
@@ -183,6 +189,7 @@
     if (D.settings.calendars && D.settings.calendars.length === 1) {
       F.calendar = { id: D.settings.calendars[0], title: D.settings.calendarName || D.settings.calendars[0], source: '' };
       F.calendars = [F.calendar];
+      F.prefilled = F.calendar.id;
     }
     var scope = window.Lamp ? Lamp.scope : null;
     App.sheet('<div class="setup-body">' + html() + '</div>', {

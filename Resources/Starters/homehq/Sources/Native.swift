@@ -69,7 +69,9 @@ enum Calendars {
     static func events(in chosen: [String], days: Int) async throws -> [[String: String]] {
         try await authorize()
         return await Task.detached {
-            let calendars = store.calendars(for: .event).filter { chosen.contains($0.calendarIdentifier) || chosen.contains($0.title) }
+            // [] (saved by an earlier version) is every calendar; otherwise the ones chosen, and none when nothing matches.
+            let all = store.calendars(for: .event)
+            let calendars = chosen.isEmpty ? all : all.filter { chosen.contains($0.calendarIdentifier) || chosen.contains($0.title) }
             guard !calendars.isEmpty else { return [] }
             let now = Date()
             let from = Calendar.current.date(byAdding: .day, value: -7, to: Calendar.current.startOfDay(for: now)) ?? now
