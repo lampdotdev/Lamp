@@ -14649,8 +14649,9 @@ enum Template {
 
         /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
         /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
-        /// (`LampStore.shared`); an app from before says none, which counts as 1.
-        private static let wire = 5
+        /// (`LampStore.shared`), 6 the wish's own collections, shared by all its apps; an app from before says none, which
+        /// counts as 1.
+        private static let wire = 6
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
@@ -15057,7 +15058,8 @@ enum Template {
             // again whichever was open meanwhile.
             for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
             // And what its shared collections add up to, so each asks the other for what differs.
-            for id in arrived where wire(of: id) >= 5 && Self.app(of: id) == me { sendSums(to: id) }
+            let sharing = Set(storePeers)
+            for id in arrived where sharing.contains(id) { sendSums(to: id) }
             if !arrived.isEmpty { fetchFiles() }
         }
 
@@ -15839,7 +15841,7 @@ enum Template {
             // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
             if beats % 12 == 0 { for each in copies(for: nil) where wire(of: each) >= 2 { share([:], to: each, extra: ["sum": digest()]) } }
             // And its shared collections, and a shared file asked of a copy that has gone quiet is asked again.
-            if beats % 12 == 0 { for each in storeCopies { sendSums(to: each) } }
+            if beats % 12 == 0 { for each in storePeers { sendSums(to: each) } }
             if beats % 12 == 6 { fetchFiles() }
             // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
@@ -16677,11 +16679,16 @@ enum Template {
             var held: Int
         }
 
-        /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name.
+        /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name, and
+        /// one of the wish's own, shared by all its apps rather than this app's copies, has "wish:" before the name.
         nonisolated static func isCollection(_ name: String) -> Bool {
-            let plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
+            var plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
+            if plain.hasPrefix("wish:") { plain = String(plain.dropFirst(5)) }
             return (1...64).contains(plain.utf8.count) && plain != "__proto__" && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
         }
+        /// One of the wish's own collections (`LampStore.shared(name, wish: true)`): every app of the wish keeps it, not only
+        /// this app's copies.
+        nonisolated static func isWishWide(_ name: String) -> Bool { (name.hasPrefix("files:") ? String(name.dropFirst(6)) : name).hasPrefix("wish:") }
         nonisolated fileprivate static func isItemID(_ id: String) -> Bool { (1...128).contains(id.utf8.count) && id != "__proto__" }
 
         // What `LampStore.shared` and `LampStore.sharedFiles` call, and the bridge to the page an app of Lamp's own is
@@ -16704,7 +16711,7 @@ enum Template {
         /// item set to what it is already changes nothing. False, with why in the app's log, when none was set.
         @discardableResult
         func putItems(in name: String, _ given: [(String, Any?)]) -> Bool {
-            let what = "LampStore.shared(\"\(name.hasPrefix("files:") ? String(name.dropFirst(6)) : name)\")"
+            let what = "LampStore.shared(\"\(name.hasPrefix("files:") ? String(name.dropFirst(6)) : name)\")".replacingOccurrences(of: "(\"wish:", with: "(\"")
             guard Self.isCollection(name) else {
                 fputs("\(what): a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\", and not __proto__.\n", stderr)
                 return false
@@ -16758,7 +16765,7 @@ enum Template {
             guard !changed.isEmpty else { return !failed }
             keepValues()
             itemsChanged(name, changed, from: copy)
-            for each in storeCopies { shareItems(name, sets, to: each) }
+            for each in storePeers where shares(name, with: each) { shareItems(name, sets, to: each) }
             return !failed
         }
 
@@ -16791,21 +16798,30 @@ enum Template {
 
         // MARK: Between copies
 
-        /// The other copies of this app open now that speak 5: a collection is this app's own, never another app's of the
-        /// wish, so it goes only to them and is taken only from them.
-        private var storeCopies: [String] { me.isEmpty ? [] : copies(for: me).filter { $0 != copy && wire(of: $0) >= 5 } }
+        /// Who this copy shares collections with now: the other copies of this app that speak 5, which share all of them,
+        /// and the copies of the wish's other apps that speak 6, which share only the wish's own (`shares`).
+        private var storePeers: [String] {
+            guard !me.isEmpty else { return [] }
+            return copies(for: nil).filter { $0 != copy && wire(of: $0) >= (Self.app(of: $0) == me ? 5 : 6) }
+        }
+
+        /// Whether a collection goes to another copy and is taken from it: this app's own collections only between its own
+        /// copies, never another app's of the wish; the wish's own between every app of it.
+        private func shares(_ name: String, with peer: String) -> Bool {
+            !me.isEmpty && peer != copy && (Self.app(of: peer) == me || Self.isWishWide(name))
+        }
 
         private func heardStore(_ m: [String: Any], from peer: String) {
-            guard !me.isEmpty, Self.app(of: peer) == me, peer != copy else { return }
+            guard !me.isEmpty, peer != copy else { return }
             switch m["op"] as? String {
             case "items":
-                guard let name = m["s"] as? String, Self.isCollection(name), let given = m["items"] as? [String: Any] else { return }
+                guard let name = m["s"] as? String, Self.isCollection(name), shares(name, with: peer), let given = m["items"] as? [String: Any] else { return }
                 mergeItems(name, given, from: peer)
             case "sum":
                 // Asks for each sixteenth of a collection where the other has something this one doesn't.
                 let theirs = m["sums"] as? [String: String] ?? [:]
                 var asks: [String: [Int]] = [:]
-                for (name, sum) in theirs where Self.isCollection(name) {
+                for (name, sum) in theirs where Self.isCollection(name) && shares(name, with: peer) {
                     let mine = sums(name)
                     let parts = Self.parts(sum)
                     let differ = (0..<16).filter { parts[$0] != 0 && parts[$0] != mine[$0] }
@@ -16813,14 +16829,14 @@ enum Template {
                 }
                 if !asks.isEmpty { storeMessage(["op": "ask", "asks": asks], to: peer) }
             case "ask":
-                for (name, buckets) in m["asks"] as? [String: [Int]] ?? [:] where Self.isCollection(name) {
+                for (name, buckets) in m["asks"] as? [String: [Int]] ?? [:] where Self.isCollection(name) && shares(name, with: peer) {
                     let wanted = Set(buckets)
                     let list = (collections[name] ?? [:]).filter { wanted.contains(Int(Self.fnv($0.key) & 15)) }.mapValues(\.entry)
                     if !list.isEmpty { shareItems(name, list, to: peer) }
                 }
             case "file":
                 // Another copy asks for a shared file's bytes: sent when this one has them as they are now.
-                guard let name = m["s"] as? String, name.hasPrefix("files:"), let id = m["id"] as? String, let sum = m["sum"] as? String,
+                guard let name = m["s"] as? String, name.hasPrefix("files:"), shares(name, with: peer), let id = m["id"] as? String, let sum = m["sum"] as? String,
                       let meta = item(in: name, id: id) as? [String: Any], meta["sum"] as? String == sum,
                       FileManager.default.fileExists(atPath: bytesURL(name, id: id, sum: sum).path) else { return }
                 if !(filesToSend[peer] ?? []).contains(where: { $0.collection == name && $0.id == id }) { filesToSend[peer, default: []].append((name, id)) }
@@ -16882,7 +16898,7 @@ enum Template {
             keepValues()
             if !changed.isEmpty { itemsChanged(name, changed, from: peer) } else if !collectionsUnsaved.isEmpty { saveCollectionsSoon() }
             // Passed on as values are: to the copies open now that the one it came from may not reach.
-            for each in storeCopies where each != peer && !taken.isEmpty {
+            for each in storePeers where each != peer && !taken.isEmpty && shares(name, with: each) {
                 if directs[each]?.ready == true || (relayPresent[peer] == nil && relayPresent[each] != nil) { shareItems(name, taken, to: each) }
             }
         }
@@ -16921,7 +16937,7 @@ enum Template {
         /// Tells another copy what each sixteenth of each collection adds up to.
         private func sendSums(to peer: String) {
             var said: [String: String] = [:]
-            for name in collections.keys where !(collections[name] ?? [:]).isEmpty {
+            for name in collections.keys where !(collections[name] ?? [:]).isEmpty && shares(name, with: peer) {
                 said[name] = sums(name).map { String(format: "%08x", $0) }.joined()
             }
             if !said.isEmpty { storeMessage(["op": "sum", "sums": said], to: peer) }
@@ -17014,8 +17030,8 @@ enum Template {
         /// Asks for the shared files this copy lacks, each of one other copy at a time: the one that set it first, then each
         /// of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes.
         private func fetchFiles() {
-            let sources = storeCopies
-            guard !sources.isEmpty else { return }
+            let open = storePeers
+            guard !open.isEmpty else { return }
             let now = Date()
             var here = 0
             for (name, list) in collections where name.hasPrefix("files:") {
@@ -17024,6 +17040,8 @@ enum Template {
             for (name, list) in collections.sorted(by: { $0.key < $1.key }) where name.hasPrefix("files:") {
                 for (id, item) in list.sorted(by: { $0.key < $1.key }) {
                     guard let meta = item.entry.value as? [String: Any], let sum = meta["sum"] as? String, let size = meta["size"] as? Int else { continue }
+                    let sources = open.filter { shares(name, with: $0) }
+                    guard !sources.isEmpty else { continue }
                     let key = name + "\t" + id
                     if fileURL(in: name, id: id) != nil { fileAsks[key] = nil; fileTries[key] = nil; continue }
                     if let ask = fileAsks[key], sources.contains(ask.peer), now.timeIntervalSince(ask.at) < 60 { continue }
@@ -17060,7 +17078,7 @@ enum Template {
 
         /// A shared file's bytes from another copy: kept when they're the file as it is now.
         private func sharedFileArrived(_ name: String, id: String, data: Data, from peer: String) {
-            guard Self.app(of: peer) == me else { return }
+            guard shares(name, with: peer) else { return }
             let key = name + "\t" + id
             fileAsks[key] = nil
             guard name.hasPrefix("files:"), Self.isCollection(name), let meta = item(in: name, id: id) as? [String: Any],
@@ -17131,13 +17149,19 @@ enum Template {
     ///                                       // its items become exactly these
     ///     groceries.onChange { id, item, from in … }   // item nil when deleted; from == wish.me for this app's own copies
     ///
+    /// With `wish: true` the list is the wish's own rather than this app's: every app of the wish keeps it the same (a Mac
+    /// app and the iPhone app beside it sharing one calendar), each reading and changing it with the same name.
+    ///
+    ///     @ObservedObject var events = LampStore.shared("events", of: Event.self, wish: true)
+    ///
     /// An item is at most `LampWish.itemLimit` (8 KB) as JSON, and everything the app shares at most
     /// `LampWish.sharedLimit` (1 MB, thousands of small items); pictures and other big things go in `sharedFiles`.
     extension LampStore {
-        @MainActor static func shared<T: Codable & Identifiable>(_ name: String, of type: T.Type) -> Shared<T> {
-            if let existing = sharedLists[name] as? Shared<T> { return existing }
-            let list = Shared<T>(name: name)
-            sharedLists[name] = list
+        @MainActor static func shared<T: Codable & Identifiable>(_ name: String, of type: T.Type, wish: Bool = false) -> Shared<T> {
+            let key = wish ? "wish:" + name : name
+            if let existing = sharedLists[key] as? Shared<T> { return existing }
+            let list = Shared<T>(name: key)
+            sharedLists[key] = list
             return list
         }
 
@@ -17214,11 +17238,13 @@ enum Template {
         ///     photos.delete("IMG_0042.jpg")
         ///     photos.onChange { name, from in … }
         ///
-        /// A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB).
-        @MainActor static func sharedFiles(_ name: String) -> SharedFiles {
-            if let existing = sharedFolders[name] { return existing }
-            let folder = SharedFiles(name: name)
-            sharedFolders[name] = folder
+        /// A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB). With `wish: true` the files are the
+        /// wish's own, kept by every app of it, as `shared(_:of:wish:)`'s are.
+        @MainActor static func sharedFiles(_ name: String, wish: Bool = false) -> SharedFiles {
+            let key = wish ? "wish:" + name : name
+            if let existing = sharedFolders[key] { return existing }
+            let folder = SharedFiles(name: key)
+            sharedFolders[key] = folder
             return folder
         }
 

@@ -129,7 +129,7 @@ final class WishClaims: @unchecked Sendable {
 enum WishRooms {
     /// What this Lamp's apps of a wish say to each other, numbered as LampSupport.swift, LampSupport.kt and lamp.js number
     /// it (`wire` in each): an app in the room that says less was built by an earlier Lamp.
-    static let wire = 5
+    static let wire = 6
 
     /// The room's key at the relay: never a TV app's game key (the app's id), so a credential says which it is for.
     static func key(for wish: LampProject) -> String { "wish:" + wish.id }
