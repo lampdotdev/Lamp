@@ -49,6 +49,29 @@ final class SetupGuideTests: XCTestCase {
         }
     }
 
+    /// Roku's guide does the Roku integration's developer-mode step with the same keys, in the same order, that the
+    /// step's own button presses (which people have done on a Roku), and waits for exactly what the step checks, so it
+    /// never hands back before the step itself would pass.
+    func testRokusGuideMatchesItsIntegrationsStep() throws {
+        let data = try Data(contentsOf: Self.repository.appendingPathComponent("Resources/Devices/roku.json"))
+        let roku = try JSONDecoder().decode(Integration.self, from: data)
+        let step = try XCTUnwrap(roku.steps.first { $0.id == "developer-mode" })
+        let host = SetupGuides.Host(row: "roku", system: roku.identity.os, steps: Set(roku.steps.map(\.id)),
+                                    fields: Set(roku.steps.compactMap { $0.field?.key }), integration: true)
+        let guide = try XCTUnwrap(SetupGuides.find("developer-mode", in: host, skills: shipped)).get()
+        XCTAssertEqual(guide.connection, "http")
+        let presses = try XCTUnwrap(guide.steps.first { $0.kind == .request })
+        XCTAssertEqual(presses.run, step.run)
+        XCTAssertNotNil(presses.unless, "the keys aren't pressed when developer mode is on already")
+        XCTAssertNotNil(presses.failed, "a failure part way says which keys to press")
+        guard case .http(let until)? = guide.steps.first(where: { $0.kind == .wait })?.until else { return XCTFail("no wait") }
+        XCTAssertEqual(until, step.check)
+        XCTAssertTrue(guide.steps.contains { $0.kind == .rejoin })
+        XCTAssertEqual(guide.steps.last?.kind, .handoff)
+        // Only the developer-mode step has a guide: the password is the person's.
+        XCTAssertNil(SetupGuides.find("password", in: host, skills: shipped))
+    }
+
     // MARK: Which guide
 
     private func skill(_ name: String, row: String = "roku", system: String? = nil, step: String = "developer-mode", connection: String = "webos-second-screen") -> Skills.Skill {
@@ -550,6 +573,49 @@ final class SetupGuideTests: XCTestCase {
         guided.retry()
         await guided.finished()
         XCTAssertEqual(device.sequences, 1)
+    }
+
+    /// A wait whose check reads a port that isn't open yet (a Roku's installer on port 80, after the Roku already says
+    /// developer mode is on) goes on waiting while the device answers where `reach` reads it: a closed port isn't the
+    /// device going away, so the guide doesn't stop with a failure.
+    func testAWaitGoesOnWhileAPortIsntOpenYet() async throws {
+        let integration = try JSONDecoder().decode(Integration.self, from: Data("""
+        {"id": "simulated", "name": "Simulated", "maker": "Lamp", "find": [{"ssdp": "lamp:simulated"}],
+         "identity": {"os": "Simulated OS", "id": {"http": {"port": 8060, "path": "/query/device-info"}, "xml": "serial"},
+                      "model": {"http": {"port": 8060, "path": "/query/device-info"}, "xml": "model"}},
+         "steps": [{"id": "developer-mode", "title": "Turn on developer mode", "check": [{"tcp": 8060}]}]}
+        """.utf8))
+        var device = Device(id: "simulated:PORT", kind: .other, maker: "Lamp", model: "Simulated", modelID: "SIM-1",
+                            name: "Simulated Device", os: "Simulated OS", osVersion: "1.0", reach: .network)
+        device.address = "192.168.1.20"
+        var installerAsked = 0
+        var runner = IntegrationRunner(integration: integration, device: device)
+        runner.send = { request, _, _, _ in
+            guard request.port == 80 else {
+                return DeviceHTTP.Answer(status: 200, body: Data("<device-info><developer-enabled>true</developer-enabled></device-info>".utf8))
+            }
+            // The installer's port opens on the third look.
+            installerAsked += 1
+            if installerAsked < 3 { throw URLError(.cannotConnectToHost) }
+            return DeviceHTTP.Answer(status: 200, body: Data())
+        }
+        let steps = try SetupSteps.parse(skill: """
+        ```lamp-setup
+        {"connection": "http", "reach": [{"http": {"port": 8060, "path": "/query/device-info"}}], "steps": [
+          {"do": "wait", "every": 1, "doing": "Waiting…", "done": "Developer mode is on",
+           "until": [{"http": {"port": 8060, "path": "/query/device-info"}, "xml": "developer-enabled", "equals": "true"},
+                     {"http": {"port": 80, "path": "/"}}]},
+          {"do": "handoff", "ask": "Type the password."}
+        ]}
+        ```
+        """).get()
+        let guided = GuidedSetup()
+        guided.start(steps, name: "Simulated Device", step: "developer-mode", connect: { HTTPSetupConnection(runner: runner, reach: steps.reach) }, onFinish: {})
+        await guided.finished()
+        XCTAssertNil(guided.failure, "a port that wasn't open yet stopped the guide")
+        XCTAssertEqual(guided.lines.map(\.text), ["Developer mode is on"])
+        XCTAssertEqual(installerAsked, 3)
+        XCTAssertTrue(guided.handedBack)
     }
 
     private func assertThrows(_ expected: SetupConnectionError, _ body: () async throws -> Void, line: UInt = #line) async {

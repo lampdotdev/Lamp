@@ -328,7 +328,14 @@ final class HTTPSetupConnection: SetupConnection {
         switch await runner.evaluate(conditions) {
         case .holds: return true
         case .waiting: return false
-        case .away: throw SetupConnectionError.unreachable
+        case .away:
+            // A port the check reads that isn't open yet (a Roku's installer, while it starts) doesn't make the device
+            // away: only `reach` says that. While the device answers there, the check just doesn't hold yet.
+            switch await runner.evaluate(reach) {
+            case .holds, .waiting: return false
+            case .away: throw SetupConnectionError.unreachable
+            case .rejected(let why): throw SetupConnectionError.rejected(why)
+            }
         case .rejected(let why): throw SetupConnectionError.rejected(why)
         }
     }
