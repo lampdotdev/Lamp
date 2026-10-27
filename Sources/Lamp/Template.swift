@@ -3849,6 +3849,8 @@ enum Template {
         static var note: String { value("note") }
         /// Lamp's own bundle id.
         static var host: String { value("host") }
+        /// Whether that Lamp is on this Mac at all.
+        static var isInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: host) != nil }
         /// The folder of Lamp's apps, and this app's in it.
         static var apps: String { value("apps") }
         /// Its folder: under its own name, or for a part of a wish (an app beside a TV app) inside its wish's. An app
@@ -5732,7 +5734,9 @@ enum Template {
         }
 
         /// Whether Lamp's experiment is on (Settings → Experimental): a file Lamp keeps beside the apps' folders.
-        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") }
+        /// On while Lamp has written its mark beside the apps, and on a Mac with no Lamp at all (the app was built from its
+        /// code, or Lamp was removed): there the wand opens the chat's own way into Lamp (`RemixPanel`).
+        static var isOn: Bool { FileManager.default.fileExists(atPath: LampInstall.apps + "/.magic") || !LampInstall.isInstalled }
 
         @MainActor private static func detach(from window: NSWindow) {
             while let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.view.identifier == identifier }) {
@@ -6202,7 +6206,7 @@ enum Template {
         @MainActor static func openFromMenu() {
             if LampMagic.isOn, frontWindow() == nil, LampMenuBar.isInstalled { return LampMenuBar.customize() }
             guard LampMagic.isOn, let window = frontWindow(), !window.isMiniaturized else {
-                NSWorkspace.shared.open(LampInstall.link("edit"))
+                NSWorkspace.shared.open(LampInstall.isInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
                 return
             }
             window.makeKeyAndOrderFront(nil)
@@ -7055,7 +7059,8 @@ enum Template {
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
         @MainActor private static func fallback() {
             UserDefaults.standard.set(false, forKey: openKey)
-            NSWorkspace.shared.open(LampInstall.link("edit"))
+            // Lamp's window, or on a Mac without Lamp, its site.
+            NSWorkspace.shared.open(LampInstall.isInstalled ? LampInstall.link("edit") : URL(string: "https://lamp.dev/")!)
         }
     }
 

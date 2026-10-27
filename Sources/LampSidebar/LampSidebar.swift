@@ -76,8 +76,16 @@ final class Link: ChatLink {
     private var buffer = Data()
     private var since = Date()
 
+    private var lookedForLamp = Date.distantPast
+
     private override init() {
         super.init()
+        // What the chat offers on a Mac without Lamp, from what Lamp wrote into this extension as it installed the app.
+        let info = Bundle.main.infoDictionary ?? [:]
+        remix = RemixOffer(name: info["CFBundleName"] as? String ?? "this app",
+                           about: (info["LampAbout"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                           suggestions: RemixIdea.from(plist: info["LampSuggestions"]),
+                           shareLink: (info["LampShareLink"] as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) })
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated { Link.shared.tryConnecting() }
         }
@@ -87,6 +95,12 @@ final class Link: ChatLink {
     private func tryConnecting() {
         guard fd < 0 else { return }
         lampAway = Date().timeIntervalSince(since) > 3
+        // Whether Lamp is on this Mac at all, asked of macOS now and then while Lamp is away: an app built from its
+        // code, or kept after Lamp was removed, gets the remix panel rather than a wait for Lamp.
+        if lampAway, Date().timeIntervalSince(lookedForLamp) > 5, let host = Bundle.main.object(forInfoDictionaryKey: "LampHost") as? String {
+            lookedForLamp = Date()
+            lampInstalled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: host) != nil
+        }
         guard let port = (Bundle.main.object(forInfoDictionaryKey: "LampPort") as? NSNumber)?.uint16Value else { return }
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard socket >= 0 else { return }
@@ -150,6 +164,12 @@ final class Link: ChatLink {
 
     override func closeChat() { Host.closeChat() }
     override func startMove() { Host.startMove() }
+
+    /// The request goes to the wish's page, or Lamp's site, in the browser: Lamp isn't here to take it.
+    override func continueWithLamp(_ ask: String) {
+        guard let offer = remix, let url = RemixLink.url(for: offer, ask: ask) else { return }
+        NSWorkspace.shared.open(url)
+    }
 
     /// Starts Lamp when it isn't open, by its link, without bringing it in front.
     override func openLamp() {

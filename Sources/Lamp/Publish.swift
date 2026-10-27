@@ -137,7 +137,8 @@ enum Publish {
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 
-        try Data(withCreditBar(html, credits: credits, open: open).utf8).write(to: index)
+        try Data(withCreditBar(html, credits: credits, open: open, suggestions: RemixSuggestions.load(project) ?? RemixOffer.fallback,
+                               name: project.name, about: AppDescription.description(of: project)).utf8).write(to: index)
         try Data(readme(for: project, credits: chain, url: url, open: open).utf8).write(to: site.appendingPathComponent("README.md"))
         // Served as files are, with nothing taken out for Jekyll (folders that start with _ included).
         try Data().write(to: site.appendingPathComponent(".nojekyll"))
@@ -163,7 +164,8 @@ enum Publish {
     /// The page with Lamp's credit bar over it: what it's based on, linked, and Open in Lamp. It starts at the top in the
     /// middle, over the game's loading, and after a few seconds settles into a thin line on the bottom edge, where a
     /// game's own controls rarely are, so it never sits over a button the game draws.
-    static func withCreditBar(_ html: String, credits: Credits, open: OpenInLamp) -> String {
+    static func withCreditBar(_ html: String, credits: Credits, open: OpenInLamp, suggestions: [RemixIdea] = RemixOffer.fallback,
+                              name: String = "", about: String? = nil) -> String {
         var parts: [String] = []
         if let source = credits.upstream.first {
             let name = source.url.map { "<a href=\"\(escaped($0))\" target=\"_blank\" rel=\"noopener\">\(escaped(source.name))</a>" } ?? escaped(source.name)
@@ -179,15 +181,59 @@ enum Publish {
         } else {
             parts.append("<a href=\"https://lamp.dev\" target=\"_blank\" rel=\"noopener\">Made with Lamp</a>")
         }
+        // Remix…: a panel over the page with three things to change and a box for the player's own words. Continue with
+        // Lamp opens the wish's Share Link page with the request (which gives this exact wish, with Lamp or by getting
+        // it), or Lamp's site with a request that names the game. Nothing leaves the page until that press.
+        parts.append("<a href=\"#\" id=\"lamp-remix-open\">Remix…</a>")
+        let offer = RemixOffer(name: name, about: about, suggestions: suggestions, shareLink: open.link)
+        let target: [String: Any] = ["link": open.link?.absoluteString as Any, "request": RemixLink.request(for: offer, ask: "{ask}")]
+        let targetJSON = (try? JSONSerialization.data(withJSONObject: target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let buttons = offer.suggestions.map { "<button type=\"button\" class=\"lamp-remix-pick\">\(escaped($0.text))</button>" }.joined()
+        let panel = """
+            <div id="lamp-remix" hidden>
+              <div class="lamp-remix-head">Make \(escaped(name.isEmpty ? "it" : name)) yours<button type="button" id="lamp-remix-close" aria-label="Close">×</button></div>
+              <p>Say what you'd change. Lamp makes the change and keeps your data.</p>
+              \(buttons)
+              <textarea id="lamp-remix-ask" rows="3" placeholder="Or say it your way"></textarea>
+              <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
+              <p class="lamp-remix-note">\(open.link == nil ? "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version and changes it as you ask." : "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask.")</p>
+            </div>
+            <script type="application/json" id="lamp-remix-target">\(targetJSON.replacingOccurrences(of: "<", with: "\\u003c"))</script>
+            <script>
+            (function(){var o=document.getElementById('lamp-remix-open'),p=document.getElementById('lamp-remix'),a=document.getElementById('lamp-remix-ask'),g=document.getElementById('lamp-remix-go');
+            if(!o||!p||!a||!g)return;var t=JSON.parse(document.getElementById('lamp-remix-target').textContent||'{}');
+            o.addEventListener('click',function(e){e.preventDefault();p.hidden=!p.hidden;if(!p.hidden)a.focus();});
+            document.getElementById('lamp-remix-close').addEventListener('click',function(){p.hidden=true;});
+            var picks=p.querySelectorAll('.lamp-remix-pick');for(var i=0;i<picks.length;i++)picks[i].addEventListener('click',function(e){a.value=e.currentTarget.textContent;g.disabled=false;a.focus();});
+            a.addEventListener('input',function(){g.disabled=!a.value.trim();});
+            g.addEventListener('click',function(){var ask=a.value.trim().slice(0,\(RemixLink.askLimit));if(!ask)return;
+              var u=new URL(t.link||'https://lamp.dev/');u.searchParams.set('ask',t.link?ask:String(t.request||'{ask}').replace('{ask}',ask));window.open(u.href,'_blank','noopener');});})();
+            </script>
+            """
         let bar = """
 
             <div id="lamp-credit">\(parts.joined(separator: " · "))</div>
+            \(panel)
             <style>
             #lamp-credit{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;width:max-content;
               max-width:calc(100vw - 24px);box-sizing:border-box;text-align:center;font:500 12px/1.4 -apple-system,system-ui,sans-serif;color:#fff;
               background:rgba(0,0,0,.6);padding:5px 14px;border-radius:999px;transition:all .8s;pointer-events:none}
             #lamp-credit a{color:#fff;text-decoration:underline;pointer-events:auto}
             #lamp-credit.settled{top:auto;bottom:0;font-size:10px;padding:1px 10px;border-radius:6px 6px 0 0;background:rgba(0,0,0,.45);opacity:.8}
+            #lamp-remix{position:fixed;right:12px;bottom:28px;z-index:2147483647;width:min(320px,calc(100vw - 24px));box-sizing:border-box;padding:14px 16px;
+              border-radius:14px;background:rgba(20,20,22,.94);color:#fff;font:13px/1.45 -apple-system,system-ui,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+            #lamp-remix[hidden]{display:none}
+            #lamp-remix .lamp-remix-head{display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:600;margin-bottom:4px}
+            #lamp-remix .lamp-remix-head button{background:none;border:0;color:#fff;font-size:18px;cursor:pointer;opacity:.7}
+            #lamp-remix p{margin:0 0 10px;opacity:.8}
+            #lamp-remix .lamp-remix-note{margin:10px 0 0;font-size:11px;opacity:.6}
+            #lamp-remix .lamp-remix-pick{display:block;width:100%;text-align:left;margin:0 0 6px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.18);
+              background:rgba(255,255,255,.08);color:#fff;font:inherit;cursor:pointer}
+            #lamp-remix .lamp-remix-pick:hover{background:rgba(255,255,255,.16)}
+            #lamp-remix textarea{display:block;width:100%;box-sizing:border-box;margin:6px 0 10px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.18);
+              background:rgba(255,255,255,.08);color:#fff;font:inherit;resize:vertical}
+            #lamp-remix #lamp-remix-go{display:block;width:100%;padding:9px 12px;border-radius:8px;border:0;background:#f0a04b;color:#1a1a1a;font:600 13px/1 -apple-system,system-ui,sans-serif;cursor:pointer}
+            #lamp-remix #lamp-remix-go[disabled]{opacity:.45;cursor:default}
             </style>
             <script>setTimeout(function(){var c=document.getElementById('lamp-credit');if(c)c.className='settled'},8000)</script>
 

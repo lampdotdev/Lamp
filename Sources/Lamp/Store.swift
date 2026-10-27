@@ -4091,6 +4091,7 @@ final class Store: ObservableObject {
                 // Not of a copy the person kept open: it's the version before this one.
                 if crashes[project.id] == nil, !owner.keptOpen { keepPicture(of: project, version: head) }
                 titleVersions(project, limit: 1)
+                Task { await RemixSuggestions.refresh(project) }
             }
             versionsRevision += 1
         }

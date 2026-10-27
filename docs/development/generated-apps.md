@@ -270,6 +270,21 @@ own history, which holds every version and the chat's attachments. The repositor
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to), as a
 published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them.
 
+On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
+(`LampMagic.isOn` when `LampInstall.isInstalled` is false) and the chat beside the app is the sidebar extension with
+nothing to connect to: once Lamp has been away a few seconds and macOS says no Lamp is installed (`Link.lampInstalled`,
+from the `LampHost` Lamp wrote into the extension's Info.plist), it shows `RemixPanel` (LampSidebarKit): the app's name
+and line, three things to change and a box; Continue with Lamp opens the wish's Share Link page with the request as
+`ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js), or lamp.dev with a request that names the app
+(`RemixLink`), since without the link Lamp makes its own version. The three things come from `RemixSuggestions`: written by
+the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
+stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
+`LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
+(`RemixOffer.fallback`). A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
+Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
+goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
+and goes into an app only as Lamp installs it (`Sidebar.install`).
+
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About
 window shows it under the app's name ("Based on Slop New York by Mr.doob (MIT)", linked), so no app code is needed and an
