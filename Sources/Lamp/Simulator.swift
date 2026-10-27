@@ -110,6 +110,11 @@ enum Simulator {
         if show { await self.show(udid) }
     }
 
+    /// Whether the simulator is booted now.
+    static func isBooted(_ udid: String) async -> Bool {
+        await Subprocess.run(DeveloperTools.path("simctl"), ["list", "devices", "booted", "-j"], mergeErrors: false, timeout: 30).output.contains("\"\(udid)\"")
+    }
+
     static func install(_ app: URL, on udid: String) async throws {
         let result = await Subprocess.run(DeveloperTools.path("simctl"), ["install", udid, app.path], timeout: 120)
         guard result.ok else { throw Failure(message: "Couldn't put the app on the simulator: \(result.output.trimmed)") }

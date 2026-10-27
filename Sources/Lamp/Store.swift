@@ -154,6 +154,16 @@ struct LampProject: Identifiable, Hashable {
         let places = openPlaces
         return places.contains(chosen) ? chosen : places[0]
     }
+    /// The app as it would be with Try On pointing at another of its places, for building or opening it there without
+    /// moving Try On: the device chosen belongs to Try On's place, so elsewhere it's that place's own (the simulator of
+    /// the family chosen, the emulator, the TV preview).
+    func at(_ place: Destination) -> LampProject {
+        guard place != destination, openPlaces.contains(place) else { return self }
+        var there = self
+        there.chosen = place
+        there.device = nil
+        return there
+    }
     /// On iOS now: the simulator, or the person's phone. The rest of Lamp's phone work follows this, and an
     /// app for both goes through it only while that's where it opens.
     var onIOS: Bool { destination == .ios }
@@ -678,6 +688,8 @@ final class Store: ObservableObject {
         var warming: Task<Void, Never>?
         /// A build of Lamp's is under way (a look's, or the turn's end's): no change of the agent's is put in meanwhile.
         var building = false
+        /// This hold only keeps the wish's other places current (`updatePlaces`): a request sent meanwhile ends it.
+        var updatingPlaces = false
         /// Nil for a simulator/Mac turn; false until the chosen phone acknowledges opening the app.
         var phoneReady: Bool?
         var allowAll = false                // "Allow all for this turn"
@@ -3213,6 +3225,8 @@ final class Store: ObservableObject {
             saveChat(project)
         }
         queued[project.id, default: []].append(QueuedMessage(text: prompt, attachments: files, card: card, pointed: pointed))
+        // Keeping the wish's other places current gives way to a request: they're tried again once it's done.
+        for app in apps(of: wish(of: project)) where turns[app.id]?.updatingPlaces == true { turns[app.id]?.cancel() }
         startQueued(project)
         saveWaiting()
     }
@@ -3636,6 +3650,7 @@ final class Store: ObservableObject {
                 offerHeldDrawing(project)
                 startQueued(project)
                 installHeldIcons(for: [project.id])
+                if turns[project.id] == nil { updatePlaces(of: project) }
             }
             return
         }
@@ -3651,6 +3666,8 @@ final class Store: ObservableObject {
         // it closed came and went with the app taken, so it's looked at again now the app is free. A wish's turn held
         // its other apps too.
         installHeldIcons(for: Set([project.id] + parts(of: project).map(\.id)))
+        // Whatever the hold changed (a request, Undo, a restore, an update for this Lamp) reaches the wish's other places.
+        if turns[project.id] == nil { updatePlaces(of: project) }
     }
 
     /// The offer to draw the icon that was wanted while the turn had the app, made now it's over: the last
@@ -5023,7 +5040,7 @@ final class Store: ObservableObject {
             return
         }
         if project.onAndroid {
-            if await isAndroidRunning(project) {
+            if await isAndroidRunning(project), !Runtime.sourcesChanged(project) {
                 await Emulator.bringForward()
                 return
             }
@@ -5039,13 +5056,14 @@ final class Store: ObservableObject {
         if project.onIOS {
             // Running already: bring the simulator forward. Otherwise build (if needed) and launch.
             let toSimulator = project.device == nil
-            if toSimulator, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
-            // An app for both reuses a build only when it was made for this place from this code (the
-            // place is part of the fingerprint), else it's built again. Whether this Lamp made it is read from that
+            // An app of several places whose copy there is older than its code is built again first (below).
+            let behind = project.platform.choosesPlace && Runtime.sourcesChanged(project)
+            if toSimulator, !behind, let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id { await Simulator.show(running.udid); return }
+            // An app of several places (an app for both, a game, a screen) reuses a build only when it was made for this
+            // place from this code (each place keeps what its build was made from), else it's built again. Whether this Lamp made it is read from that
             // build itself, not from `stamps`, which for an app for both is its Mac copy's: a build with no stamp, or
             // an older Lamp's, is built again, so the wish's other apps stop showing it as out of date.
-            if FileManager.default.fileExists(atPath: project.builtURL.path), BuildStamp.read(project.builtURL, in: project)?.isOutdated(for: project) == false,
-               !(project.platform == .universal && Runtime.sourcesChanged(project)) {
+            if FileManager.default.fileExists(atPath: project.builtURL.path), BuildStamp.read(project.builtURL, in: project)?.isOutdated(for: project) == false, !behind {
                 guard begin(project) != nil else { return }
                 defer { finish(project) }
                 await installReportingCrash(project)
@@ -5067,6 +5085,12 @@ final class Store: ObservableObject {
         if intentsBack || shareBack, !busy.contains(project.id),
            macCopies(of: project).isEmpty {
             if await updateForThisForge(project, because: "Signing \(project.name) for your Apple team…") { return }
+        }
+        // The Mac copy of an app of several places, older than its code (built for another place since): built and
+        // installed now, its open copy taking the change as any change goes in (`install`).
+        if project.platform.choosesPlace, Runtime.sourcesChanged(project), !busy.contains(project.id) {
+            await run(project)
+            return
         }
         if let running = macCopies(of: project).first {
             // Ask the app to show a window (opening a new one if all were closed); see LampWindows. The app
@@ -5092,7 +5116,7 @@ final class Store: ObservableObject {
             return
         }
         guard FileManager.default.fileExists(atPath: project.installedURL.path),
-              !(project.platform == .universal && Runtime.sourcesChanged(project)) else {
+              !(project.platform.choosesPlace && Runtime.sourcesChanged(project)) else {
             await run(project)
             return
         }
@@ -6431,6 +6455,239 @@ final class Store: ObservableObject {
     /// The wish each part being rebuilt by `rebuildParts` belongs to, so Stop in the wish's chat reaches it.
     private var rebuildingFor: [String: String] = [:]
 
+    // MARK: Every place kept current
+
+    /// The places of each app, by its id, whose copy is older than its code (`placesToUpdate`): Try On says so beside them (`TryOnMenu`).
+    @Published private(set) var placesBehind: [String: Set<Destination>] = [:]
+    /// Wishes whose places are being kept current now.
+    private var updatingPlaces: Set<String> = []
+    /// The places each app's chat was last told it couldn't reach, so the line isn't said again for every change.
+    private var unreachedTold: [String: Set<Destination>] = [:]
+    /// Wishes with a place behind that may come within reach (a simulator booted, the emulator started), looked at again
+    /// now and then (`retryPlaces`).
+    private var placesWaiting: Set<String> = []
+    private var placesRetry: Task<Void, Never>?
+    /// The code a place's background build failed on, by app and place: not tried again until the code changes, which
+    /// opening it there does whatever this says.
+    private var placesFailed: [String: String] = [:]
+    /// The wait before keeping a wish's places current, by wish: a run of requests builds each place once, after the last.
+    private var placesDelay: [String: Task<Void, Never>] = [:]
+    /// How many times each wish's unreached places have been looked at again, so a simulator never booted isn't asked for forever.
+    private var placesRetries: [String: Int] = [:]
+    /// How long the wish is left alone after a change before its other places are built.
+    private static let placesSettle: Duration = .seconds(20)
+
+    /// Keeps every place of a wish's apps on its latest code. After anything that changed the wish (a request, Undo, a
+    /// restore, an update for this Lamp), each place Try On doesn't point at whose build is older than the code is built
+    /// and put where Lamp can reach it now, out of sight as a starter's first build is: this Mac's copy, the booted
+    /// simulator's, the running emulator's. Nothing is opened that wasn't open, and a copy open there takes the change as a
+    /// request's would (`install`'s `quiet`). The places it can't reach are said in one line; they get the change when
+    /// they're next reachable (`retryPlaces`) or opened there (`open`). A request sent meanwhile ends it (`send`).
+    func updatePlaces(of project: LampProject, retrying: Bool = false) {
+        let wish = self.wish(of: project)
+        refreshPlacesBehind(wish)
+        guard setup.hasBuildTools, !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
+              apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
+        // Started by a change, not a retry: the places out of reach get their tries afresh.
+        if !retrying { placesRetries[wish.id] = nil }
+        // Each change waits out the one before: only the last of a run of requests builds every place.
+        placesDelay[wish.id]?.cancel()
+        placesDelay[wish.id] = Task {
+            try? await Task.sleep(for: Self.placesSettle)
+            guard !Task.isCancelled else { return }
+            placesDelay[wish.id] = nil
+            guard placesIdle(wish), updatingPlaces.insert(wish.id).inserted else { return }
+            var unreached: [String: Set<Destination>] = [:]
+            var stopped = false
+            for app in apps(of: wish) {
+                for place in placesToUpdate(of: app) where placesFailed[app.id + "/" + place.rawValue] != Runtime.fingerprint(app.at(place)) {
+                    guard placesIdle(wish), let now = current(app) else { stopped = true; break }
+                    // An install that didn't get there (the simulator shut down meanwhile, adb refused it) counts as out of reach.
+                    if await reaches(now, place), await update(now, at: place) { continue }
+                    unreached[app.id, default: []].insert(place)
+                }
+                if stopped { break }
+            }
+            updatingPlaces.remove(wish.id)
+            refreshPlacesBehind(wish)
+            guard !stopped else { return }
+            for app in apps(of: wish) { tellUnreached(app, unreached[app.id] ?? []) }
+            // A TV or an Xbox gets it when Play puts the app there: putting it there now would take its screen over.
+            if unreached.values.contains(where: { $0.contains { $0 != .tv && $0 != .device } }), placesRetries[wish.id, default: 0] < 5 {
+                placesWaiting.insert(wish.id); retryPlaces()
+            } else { placesWaiting.remove(wish.id) }
+        }
+    }
+
+    /// Nothing else has the wish or any of its apps, and no request waits.
+    private func placesIdle(_ wish: LampProject) -> Bool {
+        apps(of: wish).allSatisfy { turns[$0.id] == nil && (queued[$0.id] ?? []).isEmpty } && turns[wish.id] == nil
+            && (queued[wish.id] ?? []).isEmpty && exists(wish)
+    }
+
+    /// The places of an app, other than where Try On points, that have had a build and whose build is older than the code.
+    /// A place never built for has nothing old on it.
+    private func placesToUpdate(of app: LampProject) -> [Destination] {
+        guard app.platform.choosesPlace, app.holdsApp, app.scaffolded else { return [] }
+        // A build from before each place had its own record has only its built copy to show for it, which says which place
+        // it was for only where no other place shares it: Android's phone and TV places build one APK.
+        let androids = app.openPlaces.filter(\.isAndroid).count
+        Runtime.recordAndroidBuiltBefore(app)
+        return app.openPlaces.filter { place in
+            let there = app.at(place)
+            let copy = !(place.isAndroid && androids > 1) && FileManager.default.fileExists(atPath: there.builtURL.path)
+            return place != app.destination && (Runtime.builtFingerprint(there) != nil || copy) && Runtime.behind(app, at: place)
+        }
+    }
+
+    private func refreshPlacesBehind(_ wish: LampProject) {
+        for app in apps(of: wish) {
+            let behind = Set(placesToUpdate(of: app))
+            if placesBehind[app.id, default: []] != behind { placesBehind[app.id] = behind.isEmpty ? nil : behind }
+        }
+    }
+
+    /// Whether Lamp can put a build on a place now without opening anything there: this Mac always; the simulator when
+    /// the app is open on it or it's booted; Android when the app is open there or Lamp's emulator of that place is
+    /// running. A TV and an Xbox aren't: putting an app on one opens it there, over whatever it shows.
+    private func reaches(_ app: LampProject, _ place: Destination) async -> Bool {
+        switch place {
+        case .mac: return true
+        case .ios:
+            if let running = simulatorApps[app.id], Simulator.isRunning(pid: running.pid) { return true }
+            let family = app.family, chosen = app.simulator
+            guard let udid = await Task.detached(operation: { Simulator.device(family, preferring: chosen) }).value else { return false }
+            return await Simulator.isBooted(udid)
+        case .android, .androidTV:
+            if await openAndroidCopy(app, on: place) != nil { return true }
+            guard AndroidTools.isReady, Emulator.runningKind() == place.emulator else { return false }
+            return await Emulator.running() != nil
+        case .tv, .device: return false
+        }
+    }
+
+    /// One place built and put where it's reached, under a hold of its own, saying nothing in the chat but what went wrong
+    /// in putting it there.
+    /// False when the build was made but didn't reach the place: its record is taken back, so the place stays behind.
+    @discardableResult private func update(_ app: LampProject, at place: Destination) async -> Bool {
+        guard let turn = begin(app) else { return true }
+        turn.updatingPlaces = true
+        defer { finish(app) }
+        let there = app.at(place)
+        let chats = Set([app.id, wish(of: app).id])
+        // Every status and detail line added meanwhile is this work's own: nothing else has the wish while it runs
+        // (`placesIdle`, and a request sent ends it first), so taking them away again takes nobody else's.
+        let before = Set(chats.flatMap { (logs[$0] ?? []).map(\.id) })
+        let fingerprint = Runtime.fingerprint(there)
+        // What the place had before: put back when the new build doesn't reach it, so it stays behind.
+        let had = Runtime.builtFingerprint(there)
+        var reached = true
+        // A failed build's details stay, under Agent Details, saying why the place is still behind.
+        var built = true
+        if await build(there, inPlace: false) == nil {
+            placesFailed[app.id + "/" + place.rawValue] = nil
+            let problem = turn.stopped ? nil : await install(there, inFront: false, saysReady: false, quiet: true)
+            // The record says what the place has, not what was built for it: a build that didn't reach it, a request having
+            // stopped it before or during the install included, is taken back.
+            if turn.stopped || problem != nil || turn.didNotOpen {
+                if let had { Runtime.markBuilt(there, from: had) } else { Runtime.forgetBuilt(there) }
+                reached = turn.stopped
+            }
+        } else if !turn.stopped {
+            placesFailed[app.id + "/" + place.rawValue] = fingerprint
+            built = false
+        }
+        for chat in chats {
+            func routine(_ line: LogLine) -> Bool { line.kind == .status || line.kind == .detail && built }
+            guard let lines = logs[chat], lines.contains(where: { !before.contains($0.id) && routine($0) }) else { continue }
+            logs[chat] = lines.filter { before.contains($0.id) || !routine($0) }
+            if let owner = projects.first(where: { $0.id == chat }) { saveChat(owner) }
+        }
+        return reached
+    }
+
+    /// The one line on the places a change couldn't reach, said when they differ from what the chat was last told.
+    private func tellUnreached(_ app: LampProject, _ places: Set<Destination>) {
+        guard unreachedTold[app.id, default: []] != places else { return }
+        unreachedTold[app.id] = places
+        guard !places.isEmpty else { return }
+        let ordered = app.openPlaces.filter(places.contains)
+        let one = ordered.count == 1
+        log(app, .status, "Couldn't reach \(GameKit.spoken(ordered)) now: \(one ? "it gets" : "they get") this change when \(one ? "it's" : "they're") next on, or when you open \(placeName(app)) there.")
+    }
+
+    /// Looks again, every couple of minutes, at the wishes with a place out of reach that may come within it.
+    private func retryPlaces() {
+        guard placesRetry == nil else { return }
+        placesRetry = Task {
+            while !placesWaiting.isEmpty {
+                try? await Task.sleep(for: .seconds(120))
+                for id in placesWaiting {
+                    guard let wish = projects.first(where: { $0.id == id }) else { placesWaiting.remove(id); continue }
+                    // A few tries, then it waits for the next change or for being opened there.
+                    placesRetries[id, default: 0] += 1
+                    placesWaiting.remove(id)
+                    updatePlaces(of: wish, retrying: true)
+                }
+            }
+            placesRetry = nil
+        }
+    }
+
+    /// A place kept current on the simulator: the copy open there opens again with the change, as a look would open it;
+    /// one that isn't open is only put on the booted simulator, for next time.
+    private func quietlyOnSimulator(_ project: LampProject, owner: Turn) async -> String? {
+        if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id {
+            return await installOnSimulator(project, owner: owner, inFront: false, early: false)
+        }
+        let family = project.family, chosen = project.simulator
+        guard let udid = await Task.detached(operation: { Simulator.device(family, preferring: chosen) }).value,
+              await Simulator.isBooted(udid) else { return "The simulator isn't on." }
+        await finishSimulatorBundle(project)
+        do {
+            try await Simulator.install(project.builtURL, on: udid)
+            if let key = wishKey(for: project) { await Simulator.tellApp(wishKey: key, bundleID: project.bundleID, on: udid) }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// The app's copy open on Android, only when it's on the place asked for. Its phone and TV places share one package,
+    /// and Lamp's phone and TV emulators one serial, so a copy open on the TV emulator is no copy on the phone's place:
+    /// updating it there would close the TV emulator to start the phone's.
+    private func openAndroidCopy(_ app: LampProject, on place: Destination) async -> AndroidRun? {
+        guard let open = androidApps[app.id], await isAndroidRunning(app) else { return nil }
+        let tv: Bool
+        if open.serial == Emulator.serial {
+            guard let kind = Emulator.runningKind() else { return nil }
+            tv = kind == .tv
+        } else {
+            guard let device = devices.first(where: { $0.udid == open.serial }) else { return nil }
+            tv = device.features.contains("tv")
+        }
+        return tv == (place == .androidTV) ? open : nil
+    }
+
+    /// A place kept current on Android: the copy open there opens again where it was, as any change does; one that isn't
+    /// open is only put on Lamp's running emulator, for next time.
+    private func quietlyOnAndroid(_ project: LampProject, owner: Turn) async -> String? {
+        if let open = await openAndroidCopy(project, on: project.destination) {
+            var there = project
+            there.device = open.serial == Emulator.serial ? nil : open.serial
+            return await installOnAndroid(there, owner: owner, inFront: false)
+        }
+        guard Emulator.runningKind() == project.destination.emulator, let serial = await Emulator.running() else { return "The emulator isn't on." }
+        let package = Template.androidPackage(for: project)
+        do {
+            try await Adb.install(project.builtURL, package: package, on: serial)
+            await Adb.tellApp(Template.androidInstallValues(for: project, onDevice: false, wishKey: wishKey(for: project)), package: package, on: serial)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     /// Goes back to the version before the current one. Like any restore, this is itself a new version.
     func undo(_ project: LampProject) async {
         guard begin(project) != nil else { return }
@@ -6740,6 +6997,8 @@ final class Store: ObservableObject {
         // Stop pressed, or the app deleted, while they were written: there's no build yet for Stop to end.
         guard exists(project) else { return "The app was deleted." }
         if let owner, owner.stopped || turns[project.id] !== owner { return "Stopped." }
+        // An APK from before each place had its own record is accounted for before this build writes the first of them.
+        Runtime.recordAndroidBuiltBefore(project)
         // Taken before the build, so an edit made while it runs still counts as a change afterwards.
         let fingerprint = Runtime.fingerprint(project)
         // A TV app has nothing to compile: its files are copied where the preview and the packages read them.
@@ -7326,16 +7585,18 @@ final class Store: ObservableObject {
     /// `saysReady` false keeps "… is ready" out of the chat, for a reopen in the middle of a request (`reloadInTurn`),
     /// whose end says what the request came to.
     /// `onDevice`: a look the agent asked to see on the device itself, which a kind with a preview otherwise opens there.
+    /// `quiet` is a place Try On doesn't point at, kept current in the background (`updatePlaces`): nothing is opened
+    /// that wasn't open, and a copy that is open takes the change as a request's would.
     private func install(_ project: LampProject, inFront: Bool = true, fresh: Bool = false, reload: Bool = false,
-                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false) async -> String? {
-        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice)
+                         early: Bool = false, saysReady: Bool = true, onDevice: Bool = false, quiet: Bool = false) async -> String? {
+        let crash = await installNow(project, inFront: inFront, fresh: fresh, reload: reload, early: early, saysReady: saysReady, onDevice: onDevice, quiet: quiet)
         // Whatever didn't put the change into the open app (it waits for Reload, was kept open, reopened, failed)
         // lets the glow go; a reopened copy gets the light once its window is up (`AppTransition.landWhenShown`).
         AppTransition.end(project)
         return crash
     }
 
-    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool) async -> String? {
+    private func installNow(_ project: LampProject, inFront: Bool, fresh: Bool, reload: Bool, early: Bool, saysReady: Bool, onDevice: Bool, quiet: Bool) async -> String? {
         guard exists(project), project.holdsApp else { return nil }
         // The turn this install belongs to, taken before the icon wait: a Stop during it can end the turn
         // and start the next one's, which must not inherit this launch.
@@ -7355,6 +7616,7 @@ final class Store: ObservableObject {
         if project.onAndroid {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            if quiet { return await quietlyOnAndroid(project, owner: owner) }
             let problem = await installOnAndroid(project, owner: owner, inFront: inFront)
             upgradeIconArt(project)
             return problem
@@ -7362,6 +7624,7 @@ final class Store: ObservableObject {
         if project.onIOS {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            if quiet { return await quietlyOnSimulator(project, owner: owner) }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
             let problem = if inFront, let udid = project.device {
@@ -7413,7 +7676,8 @@ final class Store: ObservableObject {
         // them to press Reload, in the app's title bar or the chat (`awaitReload`). Open App, Undo and Reload itself
         // ask for the reopen, and an app that's closed just gets the build. Not in a new app's first turn: nobody is
         // using it yet, and it's built in passes for the person to watch each one go in (`present`), so it reopens.
-        if !reload, asksBeforeReopening(project, owner: owner) {
+        // A place kept current in the background never closes the copy open there: it waits for Reload, as a request's does.
+        if !reload, asksBeforeReopening(project, owner: owner) || quiet && isRunning(project) {
             awaitReload(project, owner: owner)
             owner?.outcomes.append(.held)
             return nil
@@ -7469,6 +7733,12 @@ final class Store: ObservableObject {
             log(project, .error, ErrorMessages.installFailed(error.localizedDescription))
             owner?.didNotOpen = true
             noteOpened(false, for: project)
+            return nil
+        }
+        // Kept current in the background while it was closed: it's in place for when it's next opened.
+        if quiet, !wasOpen {
+            stamps[project.id] = BuildStamp.read(project.installedURL)
+            refreshOpenApps()
             return nil
         }
         // An app with a widget gets its card, once: the widget is built, and adding it is the person's to do.
