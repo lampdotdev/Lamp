@@ -3302,11 +3302,11 @@ extension Agent {
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`), as `prompt(platform:…)` takes it.
     static func tvPrompt(skills: [String: Skills.Skill] = Skills.all, part: String? = nil, alone: Bool = false) -> String {
         let rules = part == nil
-            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound,
+            ? [Rules.tvEdit, Rules.ask, Rules.shell, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.tvPhoneApps, Rules.webAI, Rules.webSound,
                Rules.icon, Rules.about, Rules.tvAttachments, Rules.tvLogs, Rules.tvTry, Rules.appMd, Rules.audience,
                Skills.index(Skills.offered(.tv), from: skills), Rules.begin, Rules.finish]
-            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, Rules.webAI, Rules.webSound, Rules.tvLogs, Rules.tvTry,
-               alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
+            : [Rules.tvEdit, Rules.tvFrameworks, Rules.tvThree, Rules.tvDesign, Rules.tvKeys, Rules.tvData, Rules.tvPhone, alone ? "" : Rules.tvPhoneApps, Rules.webAI, Rules.webSound, Rules.tvLogs,
+               Rules.tvTry, alone ? "" : Rules.tvParts, Skills.index(Skills.offered(.tv), from: skills)]
         let header = part.map { Rules.partHeader("a TV app (HTML, CSS and JavaScript in Web/, the same files for Samsung and LG TVs, with no build step)", folder: $0) }
             ?? Rules.tvHeader
         return (header + "\n\nRules:\n" + rules.joined())
@@ -3384,9 +3384,15 @@ extension Agent.Rules {
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
     what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
     the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. An iPhone app of the wish's own (`make_app_for`) joins as a player too, and suits what a page does \
-    poorly, such as the phone's hardware or data the phone keeps; an Android app sends the TV app messages through \
-    `LampWish` but has no `LampController`, so game controls on an Android phone are a page.
+    first for one. An app of the wish's own on the iPhone (`make_app_for`) suits what a page does poorly, such as the \
+    phone's hardware or data the phone keeps.
+    """
+
+    /// How the wish's own phone apps join the TV app: said only where it may have them beside it, so the one app of a
+    /// wish is told nothing of other apps' building blocks.
+    static let tvPhoneApps = """
+    - An iPhone app of the wish's own joins the TV app's game as a player too; an Android app sends the TV app \
+    messages through `LampWish` but has no `LampController`, so game controls on an Android phone are a page.
     """
 
     /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone
