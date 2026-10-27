@@ -17,7 +17,8 @@ no game runtime: the TV rules say how it loads three.js, and it makes its own re
 A 3D game is made this way by default, on every device Lamp has a host for a page on, the Mac included. 3D in Swift,
 in a Mac app made natively (because the person asked for native, or the app was made so), is the scene-3d skill's
 (RealityKit through LampSceneView); native 3D on iPhone, iPad or Apple TV is written with that device's own
-frameworks. The game skill holds what every game needs
+frameworks. A game whose play is flat is better made in 2D with Phaser (the 2d-game skill), which also runs where a
+TV's browser has no WebGL 2. The game skill holds what every game needs
 (the frame loop, controls, sound, saves); read it too.
 
 ## The renderer
@@ -32,7 +33,7 @@ from its own `requestAnimationFrame`, moving by the time since the last frame.
 The three.js Lamp ships asks the browser only for a WebGL 2 context and stops with an error when it gets none, so
 WebGL 2 comes before anything else here: check on the device that a canvas gives one (log whether
 `canvas.getContext('webgl2')` returns a context, and read the log with `look_at_app` and `on_device`). Most browsers
-have it; not every Samsung TV does. Where it's missing, make the game another way (2D on a canvas, or native on that
+have it; not every Samsung TV does. Where it's missing, make the game another way (2D with Phaser, which draws with WebGL 1 or a plain canvas, or native on that
 device) or tell the person why 3D in a page can't run there.
 
 ## Models, light and materials

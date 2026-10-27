@@ -6,14 +6,15 @@ description: Games, 2D or 3D, made either way - the frame loop, controls (a cont
 # Games
 
 A game is something played in real time, rather than used. What follows holds for every game, whichever way it's
-made; each part then names the tools for each make. For a game in 3D, open the 3d-game skill too (or scene-3d for
-RealityKit in Swift).
+made; each part then names the tools for each make. For a game in 2D, open the 2d-game skill too (Phaser or SpriteKit,
+and which to choose); for one in 3D, the 3d-game skill (or scene-3d for RealityKit in Swift).
 
 The tools Lamp has for games:
 
-- **Web**: Lamp's game runtime, `Web/lamp-game.js`, with three.js, in a game `make_app_for` made with `kind` "game".
-  It's a game's default make, 2D or 3D, wherever Lamp has a host for a page, and the same on every one of them. Read lamp-game.js first, all of it: its comments are the whole
-  interface. Below, "Web" means this runtime.
+- **Web**: Lamp's game runtime, `Web/lamp-game.js`, with Phaser for 2D (through `Web/lamp-phaser.js`) or three.js for
+  3D, in a game `make_app_for` made with `kind` "game". It's a game's default make, 2D or 3D, wherever Lamp has a host
+  for a page, and the same on every one of them. Read lamp-game.js first, all of it (and lamp-phaser.js for 2D): their
+  comments are the whole interface. Below, "Web" means this runtime.
 - **A game played with phones on a Samsung or LG TV**: for now a TV app's page (`kind` "app", the phone-controllers
   skill), since the runtime has no `Lamp.controllers` yet. It has no lamp-game.js: it follows the TV rules and lamp.js
   instead. Its frame loop is its own `requestAnimationFrame`, moving everything by the time since the last frame;
@@ -22,8 +23,9 @@ The tools Lamp has for games:
   Web/three (the TV rules say how to load it, and the 3d-game skill how to keep it light). The rest of this skill
   holds for it wherever it doesn't name the runtime.
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
-  in LampSupport.swift: a game made natively, where the person asked for that or the device has no host for a page
-  (an Apple TV). For 3D in Swift, LampSceneView (the scene-3d skill) is for a Mac app made natively; a native 3D game
+  in LampSupport.swift: a game made natively, where the person asked for that, it needs what only Apple's apps have
+  (Game Center, a widget, a place inside an app of theirs) or the device has no host for a page (an Apple TV). It stays
+  on Apple's devices: it can't go to Android, the Xbox, a TV's browser or the web later. For 3D in Swift, LampSceneView (the scene-3d skill) is for a Mac app made natively; a native 3D game
   on iPhone, iPad or Apple TV writes its own 3D with that device's frameworks (RealityKit or SceneKit).
 - **Native Android**: Lamp has no game help in Kotlin yet: write the game's own frame loop on a SurfaceView or a
   Canvas, and its controls, sound and saves with Android's own APIs.
@@ -35,7 +37,8 @@ The tools Lamp has for games:
 Everything that moves is moved by the time since the last frame, never by a fixed step per frame: devices draw at
 different rates, and a slow frame must not slow the game.
 
-- Web (the runtime): `game({ renderer, init, frame })` from lamp-game.js; move by `f.dt`. Never requestAnimationFrame, timers, the
+- Web (the runtime): `game({ renderer, init, frame })` from lamp-game.js, moving by `f.dt`; in 2D, Phaser's scenes
+  through `phaser({ scenes })` from lamp-phaser.js, moving by `update`'s `delta`, on the same one loop. Never requestAnimationFrame, timers, the
   clock, Math.random or localStorage: `random()`, `save()` and `load()` from the runtime let Lamp's preview replay a
   play exactly.
   Physics is the one exception to moving by `f.dt`: it steps at a fixed 1/60 s inside the frame, through `fixedStep`
@@ -49,7 +52,7 @@ different rates, and a slow frame must not slow the game.
 Controls follow the input the player has, not the device: the same player may pick up an Xbox, PlayStation or
 Switch controller, the keyboard or the touch screen, and switch while playing.
 
-- **Web**: lamp-game.js reads all of them as one pad, `f.pads[0]`. Write the controls once, as actions mapped to the
+- **Web**: lamp-game.js reads all of them as one pad, `f.pads[0]` (`pad()` in a Phaser scene). Write the controls once, as actions mapped to the
   pad (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), and read the pad
   through them. `input()` says what the player holds (`kind` is `controller`, with its `family`: `xbox`,
   `playstation`, `switch` or `other`; or `keyboard`, or `touch`); `onInput(draw)` draws now and again each time they

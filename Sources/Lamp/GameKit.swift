@@ -2,8 +2,8 @@ import AppKit
 import CryptoKit
 import Foundation
 
-/// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js and played through Lamp's game
-/// runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
+/// Games: Lamp's own kind of app (`Platform.game`), a page in `Web/` drawn with three.js, or with Phaser for a 2D game
+/// (`web/lamp-phaser.js` over the runtime), and played through Lamp's game runtime (`web/lamp-game.js`) wherever the game has been put (`LampProject.places`). Its home is the Mac: a Mac app in
 /// the person's Apps like any other, the page in a web view of the app's own inside a little Swift of Lamp's
 /// (`LampWebGame.swift` and `LampPage.swift`, with LampSupport.swift, so it has the wand, the chat beside it and LampAI).
 /// The same page goes on an iPhone or iPad through that app, on Android in Lamp's Android app (`GameAndroid`), and on the
@@ -111,6 +111,54 @@ enum GameKit {
     static func isMade(_ dir: URL) -> Bool {
         FileManager.default.fileExists(atPath: dir.appendingPathComponent(marker).path)
             || DeviceApps.integrationID(in: dir).map { DeviceApps.appKind($0)?.lamp == kind } == true
+            || isXboxWebGame(dir)
+    }
+
+    /// Whether a folder holds a game made as the Xbox's web app before games were a kind of their own: the web app's
+    /// marker, a page in Web/, and the agent's own line that it's a game (capabilities.json's `game`, or icon.json's,
+    /// which it wrote for every game before capabilities.json asked). Not three.js alone: it draws scenes that aren't
+    /// games, and a game may draw without it. An Xbox app of menus and pages has none of these and stays the Xbox's.
+    static func isXboxWebGame(_ dir: URL) -> Bool {
+        guard DeviceApps.integrationID(in: dir) == xbox,
+              FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(webFolder)/index.html").path) else { return false }
+        if Template.Capabilities.load(dir.appendingPathComponent(Template.Capabilities.file)).game == true { return true }
+        struct Icon: Decodable { let game: Bool? }
+        let icon = AppFile.read(dir.appendingPathComponent("icon.json"), inFolder: dir).flatMap { try? JSONDecoder().decode(Icon.self, from: $0) }
+        return icon?.game == true
+    }
+
+    /// Whether a game made as the Xbox's web app (`isXboxWebGame`) still runs its own loop and input rather than Lamp's
+    /// game runtime: none of its page's own files load lamp-game.js. The preview's scripted plays need `game()`, so such a
+    /// page is looked at and used in the page preview it had as the Xbox's web app, until it's moved onto the runtime.
+    static func ownsLoop(_ project: LampProject) -> Bool {
+        guard isGame(project), engine(project) == .web, isXboxWebGame(project.dir) else { return false }
+        let page = project.dir.appendingPathComponent(webFolder)
+        guard let walk = FileManager.default.enumerator(at: page, includingPropertiesForKeys: [.isRegularFileKey]) else { return true }
+        let lamps: Set<String> = ["lamp-game.js", "lamp.js", "lamp-controllers.js", "lamp-device.js"]
+        for case let url as URL in walk {
+            if url.hasDirectoryPath, url.lastPathComponent.hasPrefix("three") { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lamps.contains(url.lastPathComponent),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if text.contains("lamp-game.js") { return false }
+        }
+        return true
+    }
+
+    /// A meta.json from before games were a kind of their own, of a game made as the Xbox's web app (`isXboxWebGame`):
+    /// a three.js game now, at home on the Mac, with the Xbox one of its places and its console still the one chosen
+    /// there, so it goes on as a game and is updated. Only meta.json changes: the code, its versions, chat and icon are
+    /// as they were, and the folder reads as a game in every version of it (`isMade`), so a restore keeps it one.
+    static func migratedWebGame(_ project: LampProject) -> LampProject? {
+        // A wish with other apps in folders is left as it is: its Xbox app is one of several, the person's to change.
+        guard project.platform == .device, project.integration == xbox, project.partFolders.isEmpty, isXboxWebGame(project.dir) else { return nil }
+        var game = project
+        game.platform = .game
+        game.engine = Engine.web.rawValue
+        game.places = [.mac, .device]
+        game.chosen = .mac
+        game.integration = integration(for: game)
+        game.apps = game.apps.map { $0.kind == .device && ($0.integration == nil || $0.integration == xbox) ? WishApp(kind: .game) : $0 }
+        return game
     }
 
     /// A meta.json from before games were a kind of their own: a device app of the Xbox's game kind. It's a game now,
@@ -147,9 +195,14 @@ enum GameKit {
         return found.sorted { $0.0 < $1.0 }
     }()
 
-    /// A three.js game's: the Swift around its page, and Lamp's runtime the page plays through.
+    /// A web game's: the Swift around its page, Lamp's runtime the page plays through, and the runtime's Phaser half, for
+    /// a 2D game (written in every game, so the agent can read it before the game uses it; Phaser itself only then).
     static let webFiles: [(path: String, text: String)] = read([("Sources/LampGame.swift", "apple/LampWebGame.swift"),
-                                                                 ("\(webFolder)/lamp-game.js", "web/lamp-game.js")])
+                                                                 ("\(webFolder)/lamp-game.js", "web/lamp-game.js"),
+                                                                 (phaserRuntime, "web/lamp-phaser.js")])
+    /// Where Lamp puts the runtime's Phaser half, and Phaser beside it.
+    static let phaserRuntime = "\(webFolder)/lamp-phaser.js"
+    static let phaserFolder = "\(webFolder)/phaser"
 
     /// Lamp's common host for a page on Apple's devices (a three.js game's and a screen's: serving and showing it, LampAI
     /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
@@ -252,7 +305,8 @@ enum GameKit {
         // A C++ game made before three.js games is the kit's alone, played on the Xbox and in the preview.
         guard engine(project) == .web else { return files.map { "\(folder)/\($0.name)" } + ["\(folder)/kit.stamp", marker] }
         return webFiles.map(\.path) + [page?.path ?? "Sources/LampPage.swift", "\(webFolder)/lamp.js", controllersFile] + DeviceSupport.threeFiles.map { "\(webFolder)/three/\($0.name)" }
-            + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" } + common
+            + DeviceSupport.rapierFiles.map { "\(rapierFolder)/\($0.name)" }
+            + DeviceSupport.phaserFiles.map { "\(phaserFolder)/\($0.name)" } + common
             + GameAndroid.paths(for: project)
     }
 
@@ -262,7 +316,7 @@ enum GameKit {
         let engine = engine(project)
         if engine == .web {
             try Template.put(Template.lampSupportSwift(for: project), at: project.dir.appendingPathComponent("Sources/LampSupport.swift"), for: project)
-            guard webFiles.count == 2, !DeviceSupport.threeFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
+            guard webFiles.count == 3, !DeviceSupport.threeFiles.isEmpty, !DeviceSupport.phaserFiles.isEmpty else { throw Failure(message: "This copy of Lamp is missing its game kit.") }
             for file in webFiles { try Template.write(file.text, to: file.path, for: project) }
             // The controllers lamp-game.js names buttons for. The device the page is on isn't written here: each copy of
             // the page gets its own (`GamePage`).
@@ -278,6 +332,14 @@ enum GameKit {
                 }
             } else {
                 AppFolder.remove(project.dir.appendingPathComponent(rapierFolder), in: project.dir)
+            }
+            // Phaser while the page draws with it, and taken away once it doesn't.
+            if DeviceSupport.usesPhaser(project, page: webFolder) {
+                for file in DeviceSupport.phaserFiles {
+                    try Template.put(file.contents, at: project.dir.appendingPathComponent("\(phaserFolder)/\(file.name)"), for: project)
+                }
+            } else {
+                AppFolder.remove(project.dir.appendingPathComponent(phaserFolder), in: project.dir)
             }
             // On the Xbox, Lamp's building blocks for its web apps (the controller's keys and rumble in its host); elsewhere
             // the page loads nothing from it.
@@ -296,7 +358,7 @@ enum GameKit {
             if project.hasAndroid { try GameAndroid.write(for: project) }
             try Template.write(webBuildSh, to: "build.sh", for: project, executable: true)
             try Template.write(webPackageSwift, to: "Package.swift", for: project)
-            try Template.write("A game made with Lamp: a page drawn with three.js in Web/.\nengine: web\n", to: marker, for: project)
+            try Template.write("A game made with Lamp: a page drawn with three.js or Phaser in Web/.\nengine: web\n", to: marker, for: project)
             return
         }
         // A C++ game: the kit, as Lamp had it before three.js games, for the Xbox and the preview.
@@ -313,7 +375,7 @@ enum GameKit {
     /// Takes Lamp's game files out of an app that's no longer a game, so its next kind builds without them; the
     /// game's own code in Game/ is the agent's to move and delete.
     static func remove(from project: LampProject) {
-        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", controllersFile, "\(webFolder)/three", rapierFolder, marker] {
+        for path in [folder, "Sources/LampGame.swift", "\(webFolder)/lamp-game.js", phaserRuntime, controllersFile, "\(webFolder)/three", rapierFolder, phaserFolder, marker] {
             AppFolder.remove(project.dir.appendingPathComponent(path), in: project.dir)
         }
         removePage(from: project)
@@ -348,8 +410,8 @@ enum GameKit {
     static let webAppMd = """
     # {{NAME}}
 
-    A game built and changed with Lamp: a page in Web/ drawn with three.js and played through Lamp's game runtime
-    (Web/lamp-game.js), its models, pictures and sounds beside it. It's a Mac app played in its own window, and goes on
+    A game built and changed with Lamp: a page in Web/ drawn with three.js (or Phaser, for 2D) and played through Lamp's
+    game runtime (Web/lamp-game.js), its models, pictures and sounds beside it. It's a Mac app played in its own window, and goes on
     an iPhone, an iPad or an Xbox too once it's put there. Lamp plays it in a preview on the Mac to try it.
 
     ## What it does
@@ -701,11 +763,12 @@ extension Agent {
     /// device line (`DeviceNote`, `Rules.gamePlaces`), since Claude Code and Codex keep the prompt a conversation began
     /// with, and a place may be given at any time.
     static func gamePrompt(for project: LampProject) -> String {
-        let web = GameKit.engine(project) == .web
-        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell, web ? Rules.gameWebKit : Rules.gameKit,
-                     web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
-                     web ? Rules.gameWebAssets : Rules.gameAssets, Rules.gameTry, Rules.appMd, Rules.audience, Skills.index(Skills.offered(.game)),
-                     Rules.begin, Rules.finish]
+        let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project)
+        // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
+        let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound]
+        let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
+                     web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
+                     Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
         return (Rules.gameHeader + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -713,11 +776,11 @@ extension Agent {
     }
 
     /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
-    /// without those about the wish as a whole. A game made beside other apps is three.js, as every new game is.
+    /// without those about the wish as a whole. A game made beside other apps is a page, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
-        return (Rules.partHeader("a game drawn with three.js in Web/, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
+        return (Rules.partHeader("a game drawn with three.js or Phaser in Web/, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -726,6 +789,24 @@ extension Agent {
 }
 
 extension Agent.Rules {
+    static let gameOwnLoop = """
+    - This game's page was made for the Xbox before Lamp had a game runtime: it runs its own loop and reads the controller \
+    and keyboard itself. Keep it that way and change what's asked within it. Moving it onto `game()` from Web/lamp-game.js \
+    (read all of it first) rewrites its loop, its input and its sound: do that only when the person asks for something \
+    that needs it, and once it's done its looks are the preview's scripted plays.
+
+    """
+
+    static let gameOwnLoopTry = """
+    - `look_at_app` opens the page in the Xbox preview on this Mac, a 1920x1080 window running it in this Mac's browser, and \
+    shows you a picture of it with its screen as text and what its console printed; it's the preview, not the person's \
+    Xbox, so never say how it runs on the Xbox itself. `use_app` clicks, types and presses keys there: the arrows, enter, \
+    back (Escape), space, a-z and 0-9, with `amount` in seconds to hold one (a game's move), then shows it again. Try it by \
+    playing it. `look_at_app` with `on_device` opens it where Try On points (its window on this Mac, or the Xbox) and \
+    shows that screen and its log.
+
+    """
+
     /// How a game's or a screen's places are given while the wish has other apps too: its own word with them, and the
     /// other apps the person keeps, named apart where they're for a device it's also on.
     static func placesAmongApps(_ word: String, verb: String) -> String {
@@ -772,9 +853,9 @@ extension Agent.Rules {
     }
 
     static var gameWebEdit: String { """
-    - The game is a page drawn with three.js: make the change the user asks for by editing its files in Web/ \
+    - The game is a page drawn with three.js, or with Phaser for a 2D game: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
-    Web/lamp-game.js, Web/lamp-controllers.js, Web/lamp.js, Web/three/ and Web/rapier/ are Lamp's (written before every build), and so are Sources/ but for \
+    Web/lamp-game.js, Web/lamp-phaser.js, Web/lamp-controllers.js, Web/lamp.js, Web/three/, Web/rapier/ and Web/phaser/ are Lamp's (written before every build), and so are Sources/ but for \
     Sources/Native.swift, build.sh, Package.swift and Lamp/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
     builds by itself when you look and, at the end of your turn, opens the game where Try On points (the Mac, a \
     simulator, an Android emulator or device, a TV or the Xbox), so don't run a build, a server or a browser yourself, \
@@ -802,7 +883,14 @@ extension Agent.Rules {
 
     static let gameWebKit = """
     - Writing the game: read Web/lamp-game.js first, all of it; it's Lamp's runtime and the whole interface to the \
-    device. index.html loads lamp.js, then the import map for three.js (`three` and `three/addons/`, from Web/three: \
+    device. A 2D game (a platformer, a top-down or side-on shooter, an arcade, racing or puzzle game played in real time) is \
+    drawn with Phaser 3 instead of three.js: choose 2D or 3D from what the person asked for as you begin, and for 2D read \
+    Web/lamp-phaser.js too, all of it, and the 2d-game skill. Such a game calls `phaser({ scenes, pixelArt, physics })` \
+    from lamp-phaser.js instead of game(), its scenes are Phaser's, and the pad is `pad()` read in a scene's update; \
+    everything below about the clock, the pad, the controls' names, rumble, the log and sound holds for it too, and \
+    what's said of three.js and the renderer doesn't. index.html's import map has `phaser` (from Web/phaser, which Lamp \
+    puts there once the page imports it). \
+    For 3D, index.html loads lamp.js, then the import map for three.js (`three` and `three/addons/`, from Web/three: \
     the WebGL build and its addons such as GLTFLoader; `three/webgpu` and `three/tsl`, node materials drawing with \
     WebGL 2, are added once the page imports them, and only a heavy scene needs them; nothing else is there, so no \
     Draco or KTX2 files; physics is Rapier, `@dimforge/rapier3d-compat` mapped to ./rapier/rapier.js, put in Web/rapier/ \

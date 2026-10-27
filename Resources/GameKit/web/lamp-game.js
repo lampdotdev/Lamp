@@ -1,4 +1,5 @@
-// Lamp's game runtime for a game drawn with three.js. Lamp writes this file before every build; don't edit it.
+// Lamp's game runtime for a game drawn with three.js, or with Phaser for a 2D game (lamp-phaser.js, which runs Phaser's
+// scenes through this). Lamp writes this file before every build; don't edit it.
 //
 // The game is two functions, init and frame, given to game(): the runtime runs them about 60 times a second wherever
 // the game is played (on the Mac and on an iPhone or iPad in Lamp's app around the page, on the Xbox in its web host),
@@ -568,11 +569,14 @@ function readPads() {
     }
 }
 
+// What the frame function returns is handed back: in the preview a promise from it (lamp-phaser.js's, while a scene
+// loads) is waited for before the next frame.
 function step(dt) {
     readPads();
     time += dt;
-    frameFunction({ dt, time, number, width: WIDTH, height: HEIGHT, pads });
+    const said = frameFunction({ dt, time, number, width: WIDTH, height: HEIGHT, pads });
     number++;
+    return said;
 }
 
 // MARK: The frame rate, measured on the device
@@ -640,7 +644,8 @@ function fit() {
 // the buttons the touch controls show (BUTTON.A | BUTTON.B | BUTTON.MENU unless given; BUTTON.RSTICK adds a right stick),
 // or `false` for a page that draws touch controls of its own. `keyboard: false` is for a page that reads the keys itself:
 // the keyboard then isn't the first pad as well, so a key isn't heard twice. The preview's script is the first pad either way.
-// The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called).
+// The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called). A 2D
+// game calls phaser() from lamp-phaser.js instead, which calls this with Phaser's canvas.
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
 export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false }) {
     renderer = given;
@@ -701,7 +706,7 @@ async function runPreview() {
             window.__lampAdvance(1000 / 60);
             renderer.info.reset();
             renderer.info.autoReset = false;
-            try { step(1 / 60); } catch (e) { log(`Error: ${e.message}`); post({ done: true, failed: e.message, logs }); return; }
+            try { const waiting = step(1 / 60); if (waiting && waiting.then) await waiting; } catch (e) { log(`Error: ${e.message}`); post({ done: true, failed: e.message, logs }); return; }
             const info = renderer.info.render;
             mostCalls = Math.max(mostCalls, info.calls);
             mostTriangles = Math.max(mostTriangles, info.triangles);

@@ -115,9 +115,12 @@ HandmadeMath (https://github.com/HandmadeMath/HandmadeMath, public domain), cglt
 MIT, Copyright (c) 2018-2021 Johannes Kuhlmann) and stb_image (https://github.com/nothings/stb, MIT or public domain,
 Copyright (c) 2017 Sean Barrett).
 
-## Libraries for games and web apps
+## Libraries for games' pages
 
-Lamp writes these into the games and web apps it makes, each with its license in full beside it
-(Resources/WebLibraries/<name>/LICENSE and NOTICE.md): three.js (https://github.com/mrdoob/three.js, MIT, Copyright ©
-2010-2026 three.js authors) and Rapier (https://github.com/dimforge/rapier, the npm package @dimforge/rapier3d-compat,
-Apache License 2.0, Copyright 2020 Dimforge EURL), into a game whose page imports it.
+Lamp writes these into the pages of the games it makes, each with its license beside it
+(Resources/WebLibraries/<name>/NOTICE.md says which release and how it was checked): three.js
+(https://github.com/mrdoob/three.js, MIT, Copyright © 2010-2026 three.js authors), for 3D, and Phaser
+(https://github.com/phaserjs/phaser, MIT, Copyright (c) 2024 Richard Davey, Phaser Studio Inc.), for 2D, only into a
+game that draws with it, and Rapier (https://github.com/dimforge/rapier, the npm package
+@dimforge/rapier3d-compat, Apache License 2.0, Copyright 2020 Dimforge EURL), for physics, only into a game that
+imports it.

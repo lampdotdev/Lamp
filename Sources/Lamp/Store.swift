@@ -375,6 +375,19 @@ struct LogLine: Identifiable, Codable, Equatable {
         return (lines.map(\.upgraded), skipped && !keepAside(data, of: file) ? data : nil)
     }
 
+    /// Adds a line of Lamp's to a chat on disk that isn't loaded yet (a wish changed as it's read). A chat holding lines
+    /// this Lamp can't read is left alone.
+    static func noteInChat(_ text: String, at dir: URL) {
+        let file = dir.appendingPathComponent(".lamp/chat.json")
+        var lines: [LogLine] = []
+        if FileManager.default.fileExists(atPath: file.path) {
+            guard let data = try? Data(contentsOf: file), let read = try? JSONDecoder().decode([LogLine].self, from: data) else { return }
+            lines = read
+        }
+        lines.append(LogLine(kind: .status, text: text, at: Date()))
+        if let data = try? JSONEncoder().encode(lines) { try? data.write(to: file, options: .atomic) }
+    }
+
     private struct Readable: Decodable {
         let line: LogLine?
         init(from decoder: Decoder) throws { line = try? LogLine(from: decoder) }
@@ -1118,6 +1131,12 @@ final class Store: ObservableObject {
         // A game made before games were a kind of their own reads as one now, and is kept so.
         if let game = GameKit.migrated(project) {
             try? Template.saveMeta(game)
+            return game
+        }
+        // A game made as the Xbox's web app is a game now, at home on the Mac. Said in its chat once it's saved: a save
+        // that failed leaves the wish as it was, to be moved at the next read.
+        if let game = GameKit.migratedWebGame(project), (try? Template.saveMeta(game)) != nil {
+            LogLine.noteInChat("\(game.name) is a game now: it plays on this Mac as well as your Xbox.", at: dir)
             return game
         }
         // The layout meta.json says follows the files, whatever took the app in the wish's own folder away or brought it
@@ -5366,9 +5385,10 @@ final class Store: ObservableObject {
             return await BrowserPreview.use(project, actions: actions, page: request["page"] as? String, selection: request["selection"] as? String)
         }
         // A game is played in the preview, wherever else it's played: the same moves give the same frames.
-        if GameKit.isGame(project) { return await useOnGame(project, actions: actions) }
-        // A page with the remote's focus and keys (a screen) is used in the TV preview, wherever it's shown.
-        if project.platform.target.looksInTVPreview { return await useOnTV(project, actions: actions, json: json) }
+        if GameKit.isGame(project), !GameKit.ownsLoop(project) { return await useOnGame(project, actions: actions) }
+        // A page with the remote's focus and keys (a screen, a game made for the Xbox with a loop of its own) is used in
+        // the page preview, wherever it's shown.
+        if project.platform.target.looksInTVPreview || GameKit.ownsLoop(project) { return await useOnTV(project, actions: actions, json: json) }
         if project.onIOS { return await useOnSimulator(project, actions: actions, json: json) }
         if project.onAndroid { return await useOnAndroid(project, actions: actions, json: json) }
         if project.onTV { return await useOnTV(project, actions: actions, json: json) }
@@ -8096,7 +8116,8 @@ final class Store: ObservableObject {
         let stale = project.hasDevice && previewBuilt[project.id] != Runtime.builtFingerprint(project)
         if changed || stale || !TVPreview.isOpen(project) || reopen {
             // A page looked at in the preview (a screen) not pointed at a TV opens there by itself; its install is its Mac or iPad app's.
-            let problem = project.platform.target.looksInTVPreview && !project.onTV ? await openDevicePreview(project, folder: TVTemplate.webFolder)
+            let problem = (project.platform.target.looksInTVPreview || GameKit.ownsLoop(project)) && !project.onTV
+                ? await openDevicePreview(project, folder: TVTemplate.webFolder)
                 : await install(project, inFront: false, early: true)
             turn.look.installed[project.id] = true
             if let problem { return (200, ["text": "The app didn't open in the \(device) preview on this Mac.\n\n\(problem)"]) }
@@ -11539,7 +11560,11 @@ final class Store: ObservableObject {
 
         try? await writeOwnFiles(project, all: false)
         // A game is played in the preview on this Mac; only a look asked to be on the Xbox goes there.
-        if GameKit.isGame(project), !onDevice { return await lookAtGame(project, turn: turn, motion: motion) }
+        if GameKit.isGame(project), !onDevice {
+            // One made for the Xbox with a loop of its own can't play the preview's script: it's looked at as a page is.
+            if GameKit.ownsLoop(project) { return await lookOnTV(project, turn: turn, changed: Runtime.sourcesChanged(project), reopen: reopen) }
+            return await lookAtGame(project, turn: turn, motion: motion)
+        }
         // A page with the remote's focus and keys (a screen) is looked at in the TV preview, wherever it's shown, with no
         // build of the app around it. Pointed at a TV it goes the TV app's way below, which stages the page before it opens
         // the preview, at any shape the agent asks for.

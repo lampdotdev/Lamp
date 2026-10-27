@@ -1,13 +1,14 @@
 import AppKit
 
 /// Try On's choices, as one list: where the wish opens now and on what (a tick on where Play puts it), and for a kind
-/// whose places are given one at a time (a game, a screen) each place it hasn't got yet. The chat's bar draws it in its
+/// whose places are given one at a time (a game, a screen) each place it hasn't got yet; any other kind reaches another
+/// device as one more app of the wish (`another`). The chat's bar draws it in its
 /// device button (`SidebarTryOn`) and the desk in a wish's menu, so the two never offer different things. A choice is
 /// named by its `id` and done by `Store.tryOn(_:_:)`.
 struct TryOnMenu: Equatable {
     struct Item: Equatable, Identifiable {
         /// What choosing it does, for `Store.tryOn`: "mac", "family:ipad", "simulator:<udid>", "phone:<udid>", "pair:<udid>", "emulator",
-        /// "emulator:tv", "android:<serial>", "androidtv:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", or "settings", "look" and "localnetwork".
+        /// "emulator:tv", "android:<serial>", "androidtv:<serial>", "preview", "tv:<id>", "device:<id>", "add:<place>", "another", or "settings", "look" and "localnetwork".
         let id: String
         let title: String
         let symbol: String
@@ -23,14 +24,17 @@ struct TryOnMenu: Equatable {
     }
 
     let sections: [Section]
-    /// The symbol for where Play puts it now, for the chat's button.
-    let symbol: String
+    /// The symbol for where Play puts it now, for the chat's button: nil for a wish that opens nowhere itself.
+    let symbol: String?
 
     /// Every kind's places but a Mac app's alone, which has only this Mac: a game's or a screen's (`places`), a TV app's,
     /// a device app's, an Android app's, and an Apple app's simulators and phones.
     @MainActor static func make(for project: LampProject, store: Store) -> TryOnMenu? {
-        // A wish whose apps are all in folders of their own opens nowhere itself: each app has its own menu.
-        guard project.holdsApp else { return nil }
+        // A wish whose apps are all in folders of their own opens nowhere itself: each app has its own menu, and the wish
+        // has only the way to one more app.
+        guard project.holdsApp else {
+            return project.isPart || project.partFolders.isEmpty ? nil : TryOnMenu(sections: [Section(title: nil, items: [another])], symbol: nil)
+        }
         guard project.platform.addsPlaces else { return choices(for: project, store: store) }
         let places = project.openPlaces, verb = ScreenKit.isScreen(project) ? "Show" : "Play"
         // A place whose copy is older than the code says so, and that opening it there brings it up to date.
@@ -135,6 +139,12 @@ extension TryOnMenu {
         return Section(title: nil, items: items)
     }
 
+    /// One more app of the wish, for another device: the wish's chat is asked for it, as the person would ask
+    /// (`Store.tryOn`), and the agent asks which device and whether it's a second app or this one changed.
+    static let another = Item(id: "another", title: "Add an App for Another Device…", symbol: "plus")
+    /// What choosing it says in the wish's chat, as the person's request.
+    static let anotherRequest = "Add an app for another device to this wish."
+
     /// The places of a kind given its places by what it is, not one at a time: nil for a Mac app, which has only this Mac.
     @MainActor static func choices(for project: LampProject, store: Store) -> TryOnMenu? {
         guard project.platform.target.places != [.mac] else { return nil }
@@ -214,6 +224,8 @@ extension TryOnMenu {
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
             sections.append(Section(title: nil, items: [Item(id: "check:iphone", title: "Check iPhone & iPad Setup…", symbol: "checklist")]))
         }
+        // A kind not given places one at a time reaches another device as one more app of the wish, asked for in its chat.
+        if !project.isPart { sections.append(Section(title: nil, items: [another])) }
         sections.append(look)
         let symbol = sections.flatMap(\.items).first(where: \.checked)?.symbol ?? (project.onTV ? "tv" : project.onAndroid ? "smartphone" : "iphone")
         return TryOnMenu(sections: sections, symbol: symbol)
@@ -239,6 +251,12 @@ extension Store {
         case "tv": setTVDevice(project, value)
         case "device": setDeviceAppDevice(project, value)
         case "add": if let place = Destination(rawValue: value) { addPlace(project, place) }
+        case "another":
+            // As asking for it in the chat, which comes forward with the request in it.
+            let wish = wish(of: project)
+            send(TryOnMenu.anotherRequest, to: wish)
+            showChat(wish.id)
+            return
         case "settings":
             // Every device Lamp knows, with where its setup stands, is in Settings → Building.
             NSApp.activate()
