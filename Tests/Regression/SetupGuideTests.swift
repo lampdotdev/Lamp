@@ -17,8 +17,11 @@ final class SetupGuideTests: XCTestCase {
         XCTAssertEqual(steps.connection, "webos-second-screen")
         XCTAssertEqual(steps.steps.first?.kind, .connect)
         XCTAssertEqual(steps.steps.last?.kind, .passphrase)
-        // Whatever the person does on the TV that Lamp can't see is theirs to confirm.
-        XCTAssertTrue(steps.steps.contains { $0.kind == .confirm })
+        // Whatever the person does on the TV that Lamp can't see is theirs to confirm, and their Continue claims nothing
+        // as done: no "You turned Dev Mode Status on" when they may only have clicked.
+        let confirms = steps.steps.filter { $0.kind == .confirm }
+        XCTAssertFalse(confirms.isEmpty)
+        for confirm in confirms { XCTAssertNil(confirm.done, confirm.ask ?? "") }
         for place in Places.builtIn {
             for name in place.setupSkills.values {
                 let skill = try XCTUnwrap(shipped[name], "\(place.name) names \(name), which Lamp doesn't ship")

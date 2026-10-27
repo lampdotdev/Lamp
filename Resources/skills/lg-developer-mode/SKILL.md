@@ -1,42 +1,52 @@
 ---
 name: lg-developer-mode
-description: How Lamp walks the person through turning on Developer Mode on their LG TV (webOS) the way LG supports - opening the Developer Mode app's page in the LG Content Store and then the app itself on the TV, while the person installs it, signs in and turns its switches on with their own remote. Lamp's TV setup follows the steps below when the person clicks Do It for Me.
+description: How Lamp walks the person through turning on Developer Mode on their LG TV (webOS) the way LG supports - opening the Developer Mode app's page in the LG Content Store and then the app itself on the TV, while the person installs it, restarts the TV when asked, signs in and turns its switches on with their own remote. Lamp's TV setup follows the steps below when the person clicks Do It for Me.
 ---
 
 # Turning on Developer Mode on an LG TV
 
 LG lets a TV take the person's own apps once its Developer Mode app is installed, signed in to a free LG developer
-account and switched on. Lamp can't do that for them and mustn't try: installing an app, signing in and turning the
-switches on are the person's, on the TV, with its remote. What Lamp does is put the right screen in front of them at
-each step and say in one short line what to press.
+account and switched on. Lamp can't do that for them and mustn't try: installing an app, restarting the TV, signing in
+and turning the switches on are the person's, on the TV, with its remote. What Lamp does is put the right screen in
+front of them at each step and say in one short line what to do.
 
-Lamp reaches the TV over its second-screen socket, the protocol LG's Connect SDK publishes: `wss://<address>:3001`
-(the TV's own certificate, trusted for that address alone), or `ws://<address>:3000` on older TVs. The TV asks the
-person to allow Lamp once; the key it hands back is kept with the TV, so later connections don't ask again. Requests
-that open or list apps need that key, and fail with 401 without it.
+What happens on the TV, in order:
+
+1. The person installs Developer Mode from the LG Content Store.
+2. On some TVs the app shows no Sign In until the TV has been fully restarted (unplugged, not just turned off with
+   the remote, which only puts it to sleep). Until then its switches can be turned on but nothing works.
+3. The person signs in with their LG developer account and turns Dev Mode Status on; the TV restarts.
+4. In Developer Mode again, the person turns Key Server on and types the passphrase it shows into Lamp.
+
+A TV that was set up before may show Developer Mode already signed in, with Dev Mode Status on: then only Key Server
+and the passphrase are left.
+
+Lamp reaches the TV over its second-screen socket, the protocol LG's Connect SDK publishes: `wss://<address>:3001`,
+the TV's own certificate kept with the key the TV hands back once the person lets Lamp in. Later connections offer
+that key, to a TV showing the same certificate only, and the TV doesn't ask again. Requests that open or list apps
+need the key, and fail with 401 without it.
 
 ## What Lamp never does
 
 - Press the remote's buttons for the person, install the app silently, or sign in for them.
 - See the LG account's password or the passphrase in any conversation: the passphrase is typed into the setup window
   and goes only to the TV's key server (port 9991), exactly as typed (it's case-sensitive).
-- Say a step happened that it can't see. Lamp sees that the TV let it in and that the app is installed; that the
-  person signed in, turned a switch on or that the TV restarted is theirs to confirm.
+- Say a step happened that it can't see. Lamp sees that the TV let it in and that the app is installed; a restart, a
+  sign-in or a switch is the person's to do, and Lamp says nothing of it as done: the person's Continue only moves on.
 - Open anything but the LG Content Store's page for Developer Mode and the Developer Mode app.
 
 ## Not yet checked on a real TV
 
-- `com.palmdts.devmode` as the Developer Mode app's id, and the store query below (the Connect SDK's form) as the
-  way to open its page on webOS 10. Lamp can't tell from the TV's answer whether the page opened, so the line said
-  then always says what to do if the store opened on its front page instead.
-- That opening the app by its id brings Developer Mode up.
+- That the store query below (the Connect SDK's form) opens Developer Mode's own page rather than the store's front
+  page. The TV only says it opened the store, so the line said then always says what to do on the front page.
 
 ## The steps
 
 Lamp's setup reads this block and follows it in order. `{name}` is the TV's name. A step is one of: `connect` (let
 Lamp in; asks on the TV the first time), `request` (send one request; `failed` is said and the setup goes on when
 `continueOnFailure`), `wait` (ask the TV every `every` seconds until `until.path` holds `until.contains`), `confirm`
-(the person says they've done it, with `button`), and `passphrase` (the setup window's own passphrase step).
+(the person clicks `button` once they've done it; a confirm has no `done`, since Lamp didn't see it happen), and
+`passphrase` (the setup window's own passphrase step).
 
 ```lamp-setup
 {
@@ -78,10 +88,30 @@ Lamp in; asks on the TV the first time), `request` (send one request; `failed` i
     },
     {
       "do": "confirm",
-      "ask": "On the TV, sign in with your LG developer account, then turn Dev Mode Status on. The TV restarts. Click Continue once it's back on.",
+      "ask": "If Developer Mode shows no Sign In, restart the TV fully: unplug it for 30 seconds, plug it back in and turn it on. Click Continue when the TV is on and Developer Mode shows Sign In, or is already signed in.",
+      "button": "Continue"
+    },
+    {
+      "do": "connect",
+      "doing": "Connecting to {name}…",
+      "ask": "If the TV asks, choose Accept.",
+      "done": "Connected to {name}",
+      "refused": "{name} didn't let Lamp in. Click Try Again, then choose Accept on the TV."
+    },
+    {
+      "do": "request",
+      "uri": "ssap://system.launcher/launch",
+      "payload": { "id": "com.palmdts.devmode" },
+      "doing": "Opening Developer Mode on {name}…",
+      "done": "Asked {name} to open Developer Mode",
+      "failed": "{name} couldn't open Developer Mode. On the TV, open it from your apps.",
+      "continueOnFailure": true
+    },
+    {
+      "do": "confirm",
+      "ask": "In Developer Mode, sign in with your LG developer account, then turn Dev Mode Status on. The TV restarts. Click Continue once it's back on. If it's already signed in with Dev Mode Status on, click Continue now.",
       "button": "Continue",
-      "link": { "title": "Get an LG Developer Account", "url": "https://webostv.developer.lge.com/" },
-      "done": "You turned Dev Mode Status on"
+      "link": { "title": "Get an LG Developer Account", "url": "https://webostv.developer.lge.com/" }
     },
     {
       "do": "connect",
@@ -101,7 +131,7 @@ Lamp in; asks on the TV the first time), `request` (send one request; `failed` i
     },
     {
       "do": "passphrase",
-      "ask": "On the TV, turn Key Server on. Type the passphrase it shows below exactly as shown, then click Connect."
+      "ask": "In Developer Mode, turn Key Server on. Type the passphrase it shows below exactly as shown, then click Connect."
     }
   ]
 }
