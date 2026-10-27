@@ -49,9 +49,10 @@ final class SidebarTintTests: XCTestCase {
     private func ratio(_ a: String, _ b: String) -> Double {
         func luminance(_ hex: String) -> Double {
             let value = Int(hex.dropFirst(), radix: 16) ?? 0
-            return [16, 8, 0].map { Double((value >> $0) & 255) / 255 }
-                .map { $0 <= 0.03928 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4) }
-                .enumerated().map { [0.2126, 0.7152, 0.0722][$0.offset] * $0.element }.reduce(0, +)
+            let shifts: [Int] = [16, 8, 0], weights: [Double] = [0.2126, 0.7152, 0.0722]
+            let channels: [Double] = shifts.map { shift in Double((value >> shift) & 255) / 255 }
+            let linear: [Double] = channels.map { c in c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+            return zip(linear, weights).reduce(0.0) { sum, pair in sum + pair.0 * pair.1 }
         }
         let x = luminance(a), y = luminance(b)
         return (max(x, y) + 0.05) / (min(x, y) + 0.05)
