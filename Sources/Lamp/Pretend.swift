@@ -11,6 +11,8 @@ import Foundation
 /// - `tools-fail`: as `tools`, but the first install closes halfway with nothing installed; trying again works.
 /// - `xcode`: the full Xcode app and every step of setting it up for iPhone apps (below), and the icon
 ///   tools that come with it.
+/// - `git`: git, which a Mac without the Command Line Tools doesn't have: a game or a screen is then made with no
+///   versions, which it gets once git is back (`Versions.hasGit`).
 /// - `watch`: any Apple Watch simulator to open an iPhone app's watch app on, and the watchOS to make one.
 /// - any other word: a command Lamp looks for on the PATH (`uv`, `mflux-generate`, `mlx_lm.server`), and for
 ///   `claude` and `codex` the copies in the Claude and ChatGPT apps too, so Lamp uses its own copy (or

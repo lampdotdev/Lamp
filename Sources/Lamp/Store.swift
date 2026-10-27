@@ -3771,6 +3771,8 @@ final class Store: ObservableObject {
                 project = current(project) ?? project
                 if newApp { showEarly(project, in: owner) }
             }
+            // Made before git was on this Mac (a game or a screen, before Apple's tools): its first version is saved now.
+            await saveFirstVersion(of: project)
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
             if let head = await Versions.head(project) {
                 mark(asked, sentFrom: head, in: project)
@@ -4198,8 +4200,9 @@ final class Store: ObservableObject {
             }
         }
         // The change is in the app either way. Without a version of its own it can't be gone back to by
-        // itself, and the person should know that rather than find it out from Undo.
-        if unsaved { log(project, .error, ErrorMessages.versionNotSaved) }
+        // itself, and the person should know that rather than find it out from Undo. Not on a Mac with no git yet,
+        // where nothing has versions until Apple's tools come (`saveFirstVersion`).
+        if unsaved, Versions.hasGit { log(project, .error, ErrorMessages.versionNotSaved) }
         for app in [project] + parts(of: project) where crashes[app.id] != nil {
             log(project, .error, ErrorMessages.quitsAfterLaunch(app.isPart ? placeName(app) : project.name))
         }
@@ -4302,6 +4305,9 @@ final class Store: ObservableObject {
     /// regenerates LampSupport.swift, designs the icon (icon.json) while the agent works, and saves the
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
+        // No git yet (a game or a screen made before Apple's tools): whether what its apps are built from has changed since
+        // their last build stands in for git's word.
+        guard Versions.hasGit else { return apps(of: project).contains { Runtime.sourcesChanged($0) } }
         var output = ""
         let ignored = "':!Sources/LampSupport.swift' ':!\(Template.sceneSupportPath)' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
             + Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
@@ -6632,9 +6638,9 @@ final class Store: ObservableObject {
         Task {
             defer { preparingStarters = false }
             await startersInstall?.value
-            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them gets
-            // its first version when they arrive.
-            if setup.hasBuildTools { await saveStartersFirstVersions() }
+            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them, or a game
+            // made before them, gets its first version when they arrive.
+            if setup.hasBuildTools { await saveFirstVersions() }
             // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
             // Known by instance, not folder: a starter deleted and added back meanwhile takes the same folder
             // name, and is a new one to build.
@@ -6642,22 +6648,27 @@ final class Store: ObservableObject {
             while let next = nextStarterToPrepare(excluding: tried) {
                 tried.insert(next.instance)
                 // Again for each: one put back on the desk meanwhile gets its first version before its build.
-                if setup.hasBuildTools { await saveStartersFirstVersions() }
+                if setup.hasBuildTools { await saveFirstVersions() }
                 await prepare(next)
             }
         }
     }
 
-    /// Each starter's first version, "From Lamp", which Undo and Versions go back to: made once Apple's tools are
-    /// there, since git is one of them, and tried again on a later launch for one where it didn't take.
-    private func saveStartersFirstVersions() async {
-        for project in projects where Starters.isStarter(project)
-            && !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) {
-            if !(await initRepo(project, message: "From Lamp")) {
-                try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
-                NSLog("Lamp couldn't save the first version of \(project.name)")
-            }
+    /// A wish's first version, made once Apple's tools are there, since git is one of them (`initRepo` makes none without
+    /// it): before the wish's next turn, when the tools arrive (`prepareStarters`), and on a later launch for one where it
+    /// didn't take. A starter's is "From Lamp", which Undo and Versions go back to.
+    private func saveFirstVersion(of project: LampProject) async {
+        guard Versions.hasGit, project.scaffolded,
+              !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) else { return }
+        if !(await initRepo(project, message: Starters.isStarter(project) ? "From Lamp" : "Scaffold")) {
+            try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
+            NSLog("Lamp couldn't save the first version of \(project.name)")
         }
+    }
+
+    /// Every wish's first version still to be saved, once Apple's tools (and so git) are there.
+    private func saveFirstVersions() async {
+        for project in projects { await saveFirstVersion(of: project) }
     }
 
     /// A starter that's never been built and that nothing else is working on.
@@ -11154,7 +11165,7 @@ final class Store: ObservableObject {
         await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
         for capability in Capability.allCases {
-            reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
+            reply[capability.rawValue] = readyFor(project) && AppAI.resolve(capability, for: project).tier != .none
         }
         return (200, reply)
     }

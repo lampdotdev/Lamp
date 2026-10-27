@@ -79,6 +79,7 @@ enum Versions {
     /// the shim, and not looked for again once found.
     nonisolated(unsafe) private static var gitFound = false
     static var hasGit: Bool {
+        if Pretend.isMissing("git") { return false }
         if gitFound { return true }
         let fm = FileManager.default
         var places = ["/Library/Developer/CommandLineTools/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
