@@ -456,6 +456,36 @@ being kept when nothing older can make room, and only a value that doesn't fit b
 first knew its own name takes the name once it does. Nothing here decides what goes in values or who talks to whom: that's
 the agent's, from the `wish-links` skill.
 
+Values suit a few small things; what every **copy** of one app shows (a shopping list, chores, a calendar, photos on a
+screen open on a Mac, a kitchen iPad, a TV and an Android frame) goes in the app's **shared collections**, built on the
+same block and kept the same on every copy of it: `LampStore.shared(name)` (`items`/`all`, `put`, `get`, `delete`,
+`publish`, `onChange`; `LampStore.Shared` in Swift, `LampShared` in Kotlin, an object in lamp.js) and
+`LampStore.sharedFiles(name)`. A collection is the app's own, never another app's of the wish. Each copy keeps every
+item with its setting's time, as a value is kept (`c: [ms, n, peer]`, on the values' clock, a deletion kept a month
+without its value), and copies merge item by item, so two copies that changed different items while apart keep both.
+What they say is one sealed message, `{"t":"store", op, …}`, through the room with `to` and `from` as `values`
+(`Relay.fromMember` passes it only to a member that speaks 5) or straight: `items` (a collection's settings, a few at a
+time within 12 KB), `sum` (as copies meet and once a minute, what each sixteenth of each collection adds up to: the
+bucket is FNV-1a 32 of the id's UTF-8, low four bits; its number the XOR of FNV-1a 32 of `id\0ms\0n\0peer`; 128 hex
+digits a collection), `ask` (the sixteenths that differ where the other has something, answered with their items) and
+`file`. So two copies that meet send only what differs, and a setting lost on the way is made up within a minute.
+Settings taken from one copy are passed on as values are (`pass`). Limits are sized for real lists: an item 8 KB as
+JSON, everything an app sets 1 MB (each id and its value or 32 bytes, deletions included), what it holds from others
+twice that times the wish's apps, the oldest deletions let go first, and 32 collections. `publish(items)` is for what one
+copy can read and the others can't (a Mac's or an iPad's calendars through `LampNative`): this copy's items become
+exactly these, an unchanged one setting nothing and an item another copy set last left alone. A shared file is an item
+of the collection `files:<name>` saying its size, type and checksum (SHA-256, the first 16 bytes in hex); its bytes are
+kept beside what the app keeps of the wish (Swift: Application Support, by the wish's tag and the copy; Kotlin: beside
+the kept file; lamp.js: in memory, so a TV asks again each time it opens), and a copy without them asks one other copy
+that has them (`file`: the one that set it first, then each in turn, two at a time of each, again after a minute
+without them or when that copy closes), which sends them as a wish's file with `ch: "store:<collection>"`, taken by the
+store rather than the app's `onFile` and kept only when the checksum matches. 64 MB a file, 256 MB in all. Swift keeps
+the collections in UserDefaults by the wish's tag, Kotlin in a file beside the kept one, lamp.js in localStorage. A page
+hosted by an app of Lamp's own (`hosted`) mirrors the app's collections: it asks for one (`shared`), is told it whole and
+then as it changes (`items`), and puts, publishes and fetches a file's bytes through the app (`LampPageWish`,
+`GameAndroid.pageWish`). `WishSharedStoreTests` has a Swift app and a TV page, copies of one app, each change different
+items before they meet, then end with both and with the Swift copy's file on the page.
+
 Besides messages and values, a wish's apps send each other **files** (`LampWish.sendFile`, `onFile` in Swift and Kotlin;
 `Lamp.wish.sendFile`, `onFile` in lamp.js): up to 64 MB to one app open now, in pieces under the controllers' flow
 (`ControllerWire`: 64 KB a piece, never more than 512 KB past what the receiver has acknowledged, two at a time each way
@@ -479,13 +509,14 @@ On a TV every piece goes through lamp.js's own AES-GCM, so a big file is slow th
 two Swift apps through the room and straight, and between a TV page and a Mac app; `WishRoomTests` holds the relay to
 them.
 
-What a wish's apps say to each other is numbered (`wire` in each library: 4 since copies, 3 brought files and a game's
-controls, 2 values; an app from before says none,
+What a wish's apps say to each other is numbered (`wire` in each library: 5 since shared collections, 4 brought copies,
+3 files and a game's controls, 2 values; an app from before says none,
 which counts as 1). Each says its number in its join, to the relay and on a direct link, and the relay passes each
 member's on (`welcome`, `joined`). An open app whose number differs is **out of date** (`outOfDate`), still open, so
 messages still go, with a reason: "The TV app is out of date. Open it from Lamp on your Mac to update it.", or, for one
 newer than this one, "This app is older than the TV app. Open it from Lamp on your Mac to update it."; values go only to
-an app that speaks 2 or more, files and a game's controls only to one that speaks 3. The builder's note says when an app in the room was built by an earlier Lamp
+an app that speaks 2 or more, files and a game's controls only to one that speaks 3, shared collections only to one
+that speaks 5 (an older copy keeps its own and catches up once it's rebuilt). The builder's note says when an app in the room was built by an earlier Lamp
 (`WishRooms.wire`). Opening such an app from Lamp builds it again: a Mac or iPhone app of several is stamped with a
 fingerprint of the block (`LampWishVersion`, `BuildStamp.isOutdated(for:)`), an Android one is compared by its
 LampSupport.kt (`Template.androidWishOutdated`), and a TV app is put on its TV afresh whenever it's opened. Raise `wire`

@@ -1021,8 +1021,9 @@ extension Template {
         const val valueLimit = 8 * 1024
         const val valuesLimit = 64 * 1024
         /** What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-         *  2 brought values, 3 files, 4 copies of one app on several devices; an app from before says none, which counts as 1. */
-        private const val wire = 4
+         *  2 brought values, 3 files, 4 copies of one app on several devices, 5 shared collections (`LampStore.shared`); an
+         *  app from before says none, which counts as 1. */
+        private const val wire = 5
 
         private val appsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
         private val peersFlow = kotlinx.coroutines.flow.MutableStateFlow<List<Peer>>(emptyList())
@@ -1393,6 +1394,7 @@ extension Template {
                 unnamed.isNotEmpty()
             }
             if (named) keepValues()
+            if (me.isNotEmpty()) nameUnnamedItems()
             // Every copy open either way, this one aside: an app is open while any copy of it is.
             val open = if (closed) emptySet() else (relayPresent.keys + directs.filterValues { it.ready }.keys) - copy
             for (id in open) if (openSince[id] == null) { openSince[id] = relayPresent[id]?.second ?: now; arrived.add(id) }
@@ -1452,6 +1454,9 @@ extension Template {
             // A copy that has just come is told every value this one has, and tells this one its own, so the two agree
             // again whichever was open meanwhile.
             for (id in arrived) if (wireOf(id) >= 2) share(valuesLock.withLock { entries.toMap() }, id)
+            // And what its shared collections add up to, so each asks the other for what differs.
+            for (id in arrived) if (wireOf(id) >= 5 && appOf(id) == me) sendSums(id)
+            if (arrived.isNotEmpty()) fetchFiles()
         }
 
         /** What another open copy speaks: 1 for an app from before values, which says nothing of it. */
@@ -1773,7 +1778,7 @@ extension Template {
             var moved = System.currentTimeMillis()
         }
         /** A file coming in, held at its size from the start, so it never needs room for more than one copy of it. */
-        private class Incoming(val name: String, val type: String, val size: Int, val via: Direct?) {
+        private class Incoming(val name: String, val type: String, val size: Int, val via: Direct?, val channel: String = "") {
             val data = ByteArray(size)
             var got = 0
             /** When its last piece came: a file that stops coming ends, as one that stops going does. */
@@ -1785,7 +1790,7 @@ extension Template {
         private val incoming = mutableMapOf<String, Incoming>()
         private val fileListeners = mutableListOf<(String, LampFile) -> Unit>()
 
-        private fun startFile(transfer: LampTransfer, bytes: ByteArray, type: String, given: String) {
+        private fun startFile(transfer: LampTransfer, bytes: ByteArray, type: String, given: String, channel: String = "") {
             // One copy: the one named, else the one opened last.
             val peer = if ('.' in given) given else peer(given)?.copies?.lastOrNull()?.id ?: given
             val name = transfer.name
@@ -1807,6 +1812,7 @@ extension Template {
             }
             val via = directs[peer]?.takeIf { it.ready }
             val start = JSONObject().put("t", "file").put("id", transfer.id).put("name", name.take(200)).put("type", type.take(100)).put("size", bytes.size)
+            if (channel.isNotEmpty()) start.put("ch", channel)
             if (!fileMessage(start, peer, via)) return failed("$title isn't reachable now.")
             val key = "$peer\t${transfer.id}"
             transfer.cancelling = {
@@ -1872,12 +1878,14 @@ extension Template {
             when (m.optString("t")) {
                 "file" -> {
                     val size = m.optInt("size", -1)
-                    val takes = lock.withLock { fileListeners.isNotEmpty() } && m.optString("ch").isEmpty()
+                    // A shared file's bytes (`LampStore.sharedFiles`) are the store's; any other is the app's own `onFile`.
+                    val channel = m.optString("ch")
+                    val takes = channel.startsWith("store:") || (lock.withLock { fileListeners.isNotEmpty() } && channel.isEmpty())
                     if (size !in 0..fileLimit || key in incoming || incoming.keys.count { it.startsWith(peer + "\t") } >= fileTransfers || !takes) {
                         fileMessage(JSONObject().put("t", "file-refuse").put("id", id).put("reason", if (takes) "The file is too big to take now." else "This app takes no files."), peer, via)
                         return
                     }
-                    val file = Incoming(m.optString("name", "file"), m.optString("type"), size, via)
+                    val file = Incoming(m.optString("name", "file"), m.optString("type"), size, via, channel)
                     incoming[key] = file
                     if (size == 0) finished(key, id, file, peer)
                 }
@@ -1925,6 +1933,7 @@ extension Template {
         private fun finished(key: String, id: Int, file: Incoming, peer: String) {
             incoming.remove(key)
             if (file.size == 0) fileMessage(JSONObject().put("t", "file-ack").put("id", id).put("got", 0), peer, file.via)
+            if (file.channel.startsWith("store:")) return sharedFileArrived(file.channel.removePrefix("store:"), file.name, file.data, peer)
             val done = LampFile(file.name, file.type, file.data, peer)
             val handlers = lock.withLock { fileListeners.toList() }
             for (handler in handlers) try { handler(appOf(peer), done) } catch (e: Exception) { Log.e("LampWish", "a file handler failed: ${e.message}") }
@@ -1934,6 +1943,467 @@ extension Template {
         private fun dropFiles(reason: String, gone: (String, Direct?) -> Boolean) {
             for ((key, file) in outgoing.toList()) if (gone(key, file.via)) { outgoing.remove(key); file.transfer.end(LampTransfer.State.Failed(reason)) }
             for ((key, file) in incoming.toList()) if (gone(key, file.via)) incoming.remove(key)
+        }
+
+        // MARK: Shared collections
+
+        // What `LampStore.shared` and `LampStore.sharedFiles` keep: every copy of the app keeps each collection on its
+        // device, and copies that meet merge them item by item, as they merge values (each item's latest setting wins, a
+        // deleted one kept a month without its value). As copies meet, and once a minute, each tells the other what each
+        // sixteenth of each collection adds up to, and asks for the sixteenths where they differ. A shared file is an item
+        // saying its size, type and checksum; a copy without its bytes asks one that has them, which sends them as a file.
+        // The same in LampSupport.swift and lamp.js. Under `valuesLock`, with the values' clock.
+        const val itemLimit = 8 * 1024
+        const val sharedLimit = 1024 * 1024
+        const val sharedFilesLimit = 256 * 1024 * 1024
+        private const val collectionsLimit = 32
+        private class SharedItem(val entry: Entry, val held: Int)
+        private val collections = mutableMapOf<String, MutableMap<String, SharedItem>>()
+        private val collectionListeners = mutableMapOf<String, MutableList<(List<Pair<String, Any?>>, String) -> Unit>>()
+        @Volatile private var collectionsRestored = false
+        private var collectionsSaving = false
+        /** A shared file's bytes asked of another copy ("collection\tid"), of whom and when; how often each was asked; and
+         *  the files other copies asked of this one, waiting to go, by copy. On the main thread. */
+        private val fileAsks = mutableMapOf<String, Pair<String, Long>>()
+        private val fileTries = mutableMapOf<String, Int>()
+        private val filesToSend = mutableMapOf<String, MutableList<Pair<String, String>>>()
+        private val filesSending = mutableMapOf<String, Int>()
+        internal val sharedLists = mutableMapOf<String, Any>()
+
+        /** A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name. */
+        fun isCollection(name: String): Boolean {
+            val plain = name.removePrefix("files:")
+            return plain.length in 1..64 && plain != "__proto__" && plain.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "-_." }
+        }
+        private fun isItemID(id: String): Boolean = id.toByteArray().size in 1..128 && id != "__proto__"
+
+        // What `LampStore.shared` and `LampStore.sharedFiles` call, and the bridge to the page Lamp's Android app is around:
+        // use those rather than these.
+
+        /** The items of a collection now, deleted ones left out, by id. */
+        fun items(name: String): List<Pair<String, Any>> {
+            start(); ensureCollections()
+            return valuesLock.withLock { (collections[name] ?: emptyMap<String, SharedItem>()).mapNotNull { (id, item) -> item.entry.value?.let { id to copyOf(it)!! } } }.sortedBy { it.first }
+        }
+
+        private fun item(name: String, id: String): Any? = valuesLock.withLock { collections[name]?.get(id)?.entry?.value }
+
+        /** An item as the collection holds it now (a copy), null when it has none or it was deleted. */
+        fun itemNow(name: String, id: String): Any? = copyOf(item(name, id))
+
+        /** Hears every change to a collection, a batch at a time, on the main thread: each item's id and its value (null when
+         *  deleted), and the app that made them (`me` for this app's own copies). */
+        fun onItems(name: String, handler: (List<Pair<String, Any?>>, String) -> Unit) { lock.withLock { collectionListeners.getOrPut(name) { mutableListOf() }.add(handler) } }
+
+        private fun canon(v: Any?): String = when (v) {
+            is JSONObject -> v.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canon(v.opt(it)) }
+            is JSONArray -> (0 until v.length()).joinToString(",", "[", "]") { canon(v.opt(it)) }
+            else -> plain(JSONArray().put(v).toString()).removeSurrounding("[", "]")
+        }
+
+        /** Sets items (null deletes one), here at once and in every other copy now if it's open, else when they next meet. An
+         *  item set to what it is already changes nothing. False, with why in the app's log, when one wasn't set. */
+        fun putItems(name: String, given: List<Pair<String, Any?>>): Boolean {
+            start(); ensureCollections()
+            val what = "LampStore.shared(\"${name.removePrefix("files:")}\")"
+            if (!isCollection(name)) { Log.e("LampStore", "$what: a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\"."); return false }
+            val sets = mutableMapOf<String, Entry>()
+            val changed = mutableListOf<Pair<String, Any?>>()
+            var failed = false
+            valuesLock.withLock {
+                if (collections[name] == null && collections.size >= collectionsLimit) { Log.e("LampStore", "$what: an app shares at most $collectionsLimit collections."); return false }
+                dropExpiredItems()
+                var held = collections.values.sumOf { list -> list.values.sumOf { it.held } }
+                for ((id, value) in given) {
+                    if (!isItemID(id)) { Log.e("LampStore", "$what: an item's id is 1 to 128 bytes; \"${id.take(40)}\" wasn't set."); failed = true; continue }
+                    val had = collections[name]?.get(id)
+                    val kept: Any? = if (value == null || value == JSONObject.NULL) null else try {
+                        JSONArray(JSONArray().put(LampAI.jsonValue(value)).toString()).opt(0)?.takeIf { it != JSONObject.NULL }
+                    } catch (e: Exception) { Log.e("LampStore", "$what: the item \"$id\" wasn't set: ${e.message}"); failed = true; continue }
+                    val size = kept?.let(::sizeOf) ?: 32
+                    if (size > itemLimit) { Log.e("LampStore", "$what: the item \"$id\" is $size bytes as JSON, and wasn't set: an item is at most $itemLimit."); failed = true; continue }
+                    if (kept == null && had?.entry?.value == null) continue
+                    if (kept != null && had?.entry?.value != null && canon(had.entry.value) == canon(kept)) continue
+                    val need = id.toByteArray().size + maxOf(32, size)
+                    if (held - (had?.held ?: 0) + need > sharedLimit) {
+                        Log.e("LampStore", "$what: the item \"$id\" wasn't set: the app's shared collections would pass $sharedLimit bytes (a deleted item counts 32 bytes for a month)."); failed = true; continue
+                    }
+                    held += need - (had?.held ?: 0)
+                    val now = System.currentTimeMillis()
+                    clock = if (now > clock.first) now to 0 else if (clock.second < Entry.counts) clock.first to clock.second + 1 else clock.first + 1 to 0
+                    val entry = Entry(kept, clock.first, clock.second, copy)
+                    collections.getOrPut(name) { mutableMapOf() }[id] = SharedItem(entry, need)
+                    sets[id] = entry
+                    changed.add(id to kept)
+                }
+            }
+            if (changed.isEmpty()) return !failed
+            keepValues()
+            itemsChanged(name, changed, copy)
+            for (each in storeCopies()) shareItems(name, sets, each)
+            return !failed
+        }
+
+        /** Makes this copy's items of a collection exactly these: each set, and an item this copy set last that isn't among
+         *  them deleted. */
+        fun publishItems(name: String, given: List<Pair<String, Any>>): Boolean {
+            ensureCollections()
+            val ids = given.map { it.first }.toSet()
+            val mine = copy
+            val gone = valuesLock.withLock { (collections[name] ?: emptyMap<String, SharedItem>()).filter { (id, item) -> id !in ids && item.entry.value != null && item.entry.peer == mine }.keys.toList() }
+            return putItems(name, given.map { it.first to (it.second as Any?) } + gone.map { it to null })
+        }
+
+        private fun itemsChanged(name: String, changed: List<Pair<String, Any?>>, peer: String) {
+            saveCollectionsSoon()
+            val from = appOf(peer)
+            scope.launch(Dispatchers.Main) {
+                if (name.startsWith("files:")) for ((id, _) in changed) dropStaleBytes(name, id)
+                val handlers = lock.withLock { collectionListeners[name]?.toList() ?: emptyList() }
+                val given = changed.map { (id, value) -> id to copyOf(value) }
+                for (handler in handlers) try { handler(given, from) } catch (e: Exception) { Log.e("LampStore", "a shared collection's handler failed: ${e.message}") }
+                if (name.startsWith("files:")) fetchFiles()
+            }
+        }
+
+        /** Items set before this app knew its own name take it now, so two copies' settings never tie. */
+        private fun nameUnnamedItems() {
+            val named = valuesLock.withLock {
+                var any = false
+                for (list in collections.values) for ((id, item) in list.entries.toList()) if (item.entry.peer.isEmpty()) {
+                    list[id] = SharedItem(Entry(item.entry.value, item.entry.ms, item.entry.n, copy), item.held); any = true
+                }
+                any
+            }
+            if (named) saveCollectionsSoon()
+        }
+
+        /** The other copies of this app open now that speak 5: a collection is this app's own, never another app's of the
+         *  wish, so it goes only to them and is taken only from them. */
+        private fun storeCopies(): List<String> {
+            val mine = me
+            if (mine.isEmpty()) return emptyList()
+            val self = copy
+            return copiesFor(mine).filter { it != self && wireOf(it) >= 5 }
+        }
+
+        private fun heardStore(m: JSONObject, from: String) {
+            if (me.isEmpty() || appOf(from) != me || from == copy) return
+            ensureCollections()
+            when (m.optString("op")) {
+                "items" -> { val name = m.optString("s"); if (isCollection(name)) m.optJSONObject("items")?.let { mergeItems(name, it, from) } }
+                "sum" -> {
+                    val theirs = m.optJSONObject("sums") ?: return
+                    val asks = JSONObject()
+                    for (name in theirs.keys()) {
+                        val sum = theirs.opt(name) as? String ?: continue
+                        if (!isCollection(name) || sum.length != 128) continue
+                        val mine = sums(name)
+                        val differ = (0 until 16).filter { val part = sum.substring(it * 8, it * 8 + 8).toLongOrNull(16)?.toInt() ?: 0; part != 0 && part != mine[it] }
+                        if (differ.isNotEmpty()) asks.put(name, JSONArray(differ))
+                    }
+                    if (asks.length() > 0) storeSay(JSONObject().put("op", "ask").put("asks", asks), from)
+                }
+                "ask" -> {
+                    val asks = m.optJSONObject("asks") ?: return
+                    for (name in asks.keys()) {
+                        if (!isCollection(name)) continue
+                        val list = asks.optJSONArray(name) ?: continue
+                        val wanted = (0 until list.length()).map { list.optInt(it, -1) }.toSet()
+                        val chosen = valuesLock.withLock { (collections[name] ?: emptyMap<String, SharedItem>()).filterKeys { (fnv(it) and 15) in wanted }.mapValues { it.value.entry } }
+                        if (chosen.isNotEmpty()) shareItems(name, chosen, from)
+                    }
+                }
+                "file" -> {
+                    val name = m.optString("s"); val id = m.optString("id"); val sum = m.optString("sum")
+                    val meta = item(name, id) as? JSONObject ?: return
+                    if (!name.startsWith("files:") || meta.optString("sum") != sum || !bytesFile(name, id, sum).exists()) return
+                    val queue = filesToSend.getOrPut(from) { mutableListOf() }
+                    if (queue.none { it.first == name && it.second == id }) queue.add(name to id)
+                    sendFiles(from)
+                }
+            }
+        }
+
+        /** Items another copy sent, each taken when it's later than what this one has, so whatever order they come in,
+         *  every copy ends with the same; what's held from others is bounded as values are. */
+        private fun mergeItems(name: String, given: JSONObject, from: String) {
+            val changed = mutableListOf<Pair<String, Any?>>()
+            val taken = mutableMapOf<String, Entry>()
+            var removedAny = false
+            valuesLock.withLock {
+                if (collections[name] == null && collections.size >= collectionsLimit * 2) return
+                dropExpiredItems()
+                val most = sharedLimit * 2 * maxOf(2, roster.size)
+                var held = collections.values.sumOf { list -> list.values.sumOf { it.held } }
+                val old = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
+                val removals by lazy {
+                    collections.flatMap { (n, list) -> list.filterValues { it.entry.value == null }.map { Triple(n, it.key, it.value.entry) } }
+                        .sortedWith { a, b -> if (b.third.isLater(a.third)) -1 else if (a.third.isLater(b.third)) 1 else 0 }
+                }
+                var next = 0
+                fun oldestRemoval(except: String): Pair<String, String>? {
+                    while (next < removals.size) {
+                        val (n, id, _) = removals[next++]
+                        if (!(n == name && id == except) && collections[n]?.get(id)?.entry?.value == null && collections[n]?.containsKey(id) == true) return n to id
+                    }
+                    return null
+                }
+                for (id in given.keys().asSequence().toList().sorted()) {
+                    if (!isItemID(id)) continue
+                    val entry = Entry.from(given.opt(id)) ?: continue
+                    if (entry.ms > clock.first || (entry.ms == clock.first && entry.n > clock.second)) clock = entry.ms to entry.n
+                    val had = collections[name]?.get(id)
+                    if (had != null && !entry.isLater(had.entry)) continue
+                    val size = entry.value?.let(::sizeOf) ?: 32
+                    if (size > itemLimit * 2) continue
+                    val need = id.toByteArray().size + maxOf(32, size)
+                    // A deletion too old to keep, or with no room left to keep it, still deletes; a value with no room is left.
+                    fun dropOnly() {
+                        if (entry.value != null || had == null) return
+                        collections[name]?.remove(id)
+                        held -= had.held
+                        removedAny = true
+                        if (had.entry.value != null) changed.add(id to null)
+                    }
+                    if (entry.value == null && entry.ms < old) { dropOnly(); continue }
+                    while (held - (had?.held ?: 0) + need > most) {
+                        val (n, gone) = oldestRemoval(id) ?: break
+                        collections[n]?.remove(gone)?.let { held -= it.held; removedAny = true }
+                    }
+                    if (held - (had?.held ?: 0) + need > most) { dropOnly(); continue }
+                    held += need - (had?.held ?: 0)
+                    collections.getOrPut(name) { mutableMapOf() }[id] = SharedItem(entry, need)
+                    taken[id] = entry
+                    changed.add(id to entry.value)
+                }
+            }
+            keepValues()
+            if (changed.isNotEmpty()) itemsChanged(name, changed, from) else if (removedAny) saveCollectionsSoon()
+            if (taken.isEmpty()) return
+            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            val ways = routes
+            val inRoom = relayed
+            for (each in storeCopies()) {
+                if (each == from) continue
+                if (each in ways || (from !in inRoom && each in inRoom)) shareItems(name, taken, each)
+            }
+        }
+
+        private fun shareItems(name: String, list: Map<String, Entry>, peer: String) {
+            var batch = JSONObject()
+            var size = 0
+            fun flush() {
+                if (batch.length() == 0) return
+                storeSay(JSONObject().put("op", "items").put("s", name).put("items", batch), peer)
+                batch = JSONObject()
+                size = 0
+            }
+            for ((id, entry) in list.toSortedMap()) {
+                val json = entry.json()
+                val bytes = plain(json.toString()).toByteArray().size + plain(JSONObject.quote(id)).toByteArray().size + 2
+                if (size + bytes > 12 * 1024) flush()
+                batch.put(id, json)
+                size += bytes
+            }
+            flush()
+        }
+
+        private fun storeSay(body: JSONObject, peer: String) {
+            body.put("t", "store")
+            val direct = routes[peer]
+            val current = link
+            if (direct != null) direct.send(plain(body.toString()), seal = true)
+            else if (peer in relayed && current != null && current.sealer != null) toRoom(current, plain(body.put("to", peer).toString()))
+        }
+
+        private fun sendSums(peer: String) {
+            ensureCollections()
+            val said = JSONObject()
+            val names = valuesLock.withLock { collections.filterValues { it.isNotEmpty() }.keys.toList() }
+            for (name in names) said.put(name, sums(name).joinToString("") { String.format("%08x", it) })
+            if (said.length() > 0) storeSay(JSONObject().put("op", "sum").put("sums", said), peer)
+        }
+
+        /** Each sixteenth of a collection (by its ids) as one number: every item's id and when it was set, hashed and
+         *  combined, so two copies with the same items say the same, in every language Lamp's apps are written in. */
+        private fun sums(name: String): IntArray {
+            val parts = IntArray(16)
+            valuesLock.withLock {
+                for ((id, item) in collections[name] ?: emptyMap<String, SharedItem>()) {
+                    parts[fnv(id) and 15] = parts[fnv(id) and 15] xor fnv("$id\u0000${item.entry.ms}\u0000${item.entry.n}\u0000${item.entry.peer}")
+                }
+            }
+            return parts
+        }
+
+        /** FNV-1a over UTF-8, 32 bits. */
+        private fun fnv(text: String): Int {
+            var hash = 0x811C9DC5.toInt()
+            for (byte in text.toByteArray(Charsets.UTF_8)) hash = (hash xor (byte.toInt() and 0xff)) * 16777619
+            return hash
+        }
+
+        // Shared files: their bytes kept beside what the app keeps of the wish, named by the file and its checksum.
+        private val bytesFolder: File? get() = keptFile?.let { File(it.parentFile, it.nameWithoutExtension + "-files").apply { mkdirs() } }
+        private fun bytesFile(name: String, id: String, sum: String): File =
+            File(bytesFolder ?: File(LampInstall.context.filesDir, "lamp"), hex(MessageDigest.getInstance("SHA-256").digest("$name\u0000$id".toByteArray(Charsets.UTF_8)).copyOf(16)) + "-" + sum)
+        private fun checksum(bytes: ByteArray): String = hex(MessageDigest.getInstance("SHA-256").digest(bytes).copyOf(16))
+
+        /** Keeps a file in a shared files' collection: its bytes on this device, and an item saying what it is. */
+        fun putFile(name: String, id: String, bytes: ByteArray, type: String): Boolean {
+            start(); ensureCollections()
+            if (bytes.size > fileLimit) { Log.e("LampStore", "LampStore.sharedFiles: \"$id\" is too big to share: 64 MB at most."); return false }
+            val total = valuesLock.withLock {
+                collections.filterKeys { it.startsWith("files:") }.entries.sumOf { (n, list) -> list.entries.sumOf { (x, item) -> if (n == name && x == id) 0 else (item.entry.value as? JSONObject)?.optInt("size") ?: 0 } }
+            }
+            if (total + bytes.size > sharedFilesLimit) { Log.e("LampStore", "LampStore.sharedFiles: \"$id\" wasn't kept: the app's shared files would pass 256 MB."); return false }
+            val sum = checksum(bytes)
+            val file = bytesFile(name, id, sum)
+            if (!file.exists()) try {
+                val next = File(file.parentFile, file.name + ".new")
+                next.writeBytes(bytes)
+                if (!next.renameTo(file)) { file.delete(); next.renameTo(file) }
+            } catch (e: Exception) { Log.e("LampStore", "LampStore.sharedFiles: couldn't keep \"$id\": ${e.message}"); return false }
+            return putItems(name, listOf(id to JSONObject().put("size", bytes.size).put("type", type.take(100)).put("sum", sum)))
+        }
+
+        /** A shared file's bytes on this device, once they're here. */
+        fun fileOf(name: String, id: String): File? {
+            val sum = (item(name, id) as? JSONObject)?.optString("sum")?.takeIf { it.isNotEmpty() } ?: return null
+            return bytesFile(name, id, sum).takeIf { it.exists() }
+        }
+
+        private fun dropStaleBytes(name: String, id: String) {
+            val sum = (item(name, id) as? JSONObject)?.optString("sum") ?: ""
+            val prefix = bytesFile(name, id, "").name
+            for (each in bytesFolder?.listFiles() ?: emptyArray()) if (each.name.startsWith(prefix) && each.name != prefix + sum) each.delete()
+        }
+
+        /** Asks for the shared files this copy lacks, each of one other copy at a time: the one that set it first, then each
+         *  of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes. On the main
+         *  thread. */
+        private fun fetchFiles() {
+            val sources = storeCopies()
+            if (sources.isEmpty()) return
+            val now = System.currentTimeMillis()
+            val all = valuesLock.withLock { collections.filterKeys { it.startsWith("files:") }.toSortedMap().mapValues { it.value.toSortedMap().mapValues { e -> e.value.entry } } }
+            var here = 0L
+            for ((name, list) in all) for ((id, entry) in list) { val size = (entry.value as? JSONObject)?.optInt("size") ?: 0; if (fileOf(name, id) != null) here += size }
+            for ((name, list) in all) for ((id, entry) in list) {
+                val meta = entry.value as? JSONObject ?: continue
+                val sum = meta.optString("sum").takeIf { it.isNotEmpty() } ?: continue
+                val size = meta.optInt("size")
+                val key = "$name\t$id"
+                if (fileOf(name, id) != null) { fileAsks.remove(key); fileTries.remove(key); continue }
+                val ask = fileAsks[key]
+                if (ask != null && ask.first in sources && now - ask.second < 60_000) continue
+                if (here + size > sharedFilesLimit * 2L) return
+                val tries = fileTries[key] ?: 0
+                val order = if (entry.peer in sources) listOf(entry.peer) + sources.filter { it != entry.peer } else sources
+                val source = order[tries % order.size]
+                if (fileAsks.values.count { it.first == source && now - it.second < 60_000 } >= 2) continue
+                fileTries[key] = tries + 1
+                fileAsks[key] = source to now
+                here += size
+                storeSay(JSONObject().put("op", "file").put("s", name).put("id", id).put("sum", sum), source)
+            }
+        }
+
+        /** The files another copy asked for, two at a time. On the main thread. */
+        private fun sendFiles(peer: String) {
+            while ((filesSending[peer] ?: 0) < 2) {
+                val queue = filesToSend[peer] ?: return
+                val (name, id) = queue.removeFirstOrNull() ?: return
+                if (queue.isEmpty()) filesToSend.remove(peer)
+                val file = fileOf(name, id) ?: continue
+                val meta = item(name, id) as? JSONObject ?: continue
+                val bytes = try { file.readBytes() } catch (e: Exception) { continue }
+                val transfer = LampTransfer(nextFile.getAndUpdate { if (it >= Int.MAX_VALUE - 1) 1 else it + 1 }, id, bytes.size)
+                startFile(transfer, bytes, meta.optString("type"), peer, "store:$name")
+                if (transfer.state.value != LampTransfer.State.Sending) continue
+                filesSending[peer] = (filesSending[peer] ?: 0) + 1
+                scope.launch(Dispatchers.Main) {
+                    try { transfer.finished() } catch (e: Exception) {}
+                    filesSending[peer] = (filesSending[peer] ?: 1) - 1
+                    sendFiles(peer)
+                }
+            }
+        }
+
+        /** A shared file's bytes from another copy: kept when they're the file as it is now. On the main thread. */
+        private fun sharedFileArrived(name: String, id: String, bytes: ByteArray, from: String) {
+            if (appOf(from) != me) return
+            val key = "$name\t$id"
+            fileAsks.remove(key)
+            val meta = item(name, id) as? JSONObject
+            val sum = meta?.optString("sum")
+            if (meta == null || !name.startsWith("files:") || !isCollection(name) || sum != checksum(bytes)) return fetchFiles()
+            val file = bytesFile(name, id, sum)
+            try {
+                val next = File(file.parentFile, file.name + ".new")
+                next.writeBytes(bytes)
+                if (!next.renameTo(file)) { file.delete(); next.renameTo(file) }
+            } catch (e: Exception) { return }
+            fileTries.remove(key)
+            val handlers = lock.withLock { collectionListeners[name]?.toList() ?: emptyList() }
+            for (handler in handlers) try { handler(listOf(id to copyOf(meta)), appOf(from)) } catch (e: Exception) { Log.e("LampStore", "a shared collection's handler failed: ${e.message}") }
+            fetchFiles()
+        }
+
+        /** Under `valuesLock`. */
+        private fun dropExpiredItems() {
+            val old = System.currentTimeMillis() - 30L * 24 * 3600 * 1000
+            for (list in collections.values) list.entries.removeAll { it.value.entry.value == null && it.value.entry.ms <= old }
+        }
+
+        private val collectionsFile: File? get() = keptFile?.let { File(it.parentFile, it.nameWithoutExtension + "-shared.json") }
+
+        /** Written a moment after a change, so a burst of them is written once, whole, to a file beside it that then takes
+         *  its place. */
+        private fun saveCollectionsSoon() {
+            valuesLock.withLock { if (collectionsSaving) return; collectionsSaving = true }
+            scope.launch {
+                kotlinx.coroutines.delay(1000)
+                val file = collectionsFile
+                val text = valuesLock.withLock {
+                    collectionsSaving = false
+                    dropExpiredItems()
+                    JSONObject().apply {
+                        for ((name, list) in collections) if (list.isNotEmpty()) put(name, JSONObject().apply { for ((id, item) in list) put(id, item.entry.json()) })
+                    }.toString()
+                }
+                if (file == null) return@launch
+                try {
+                    file.parentFile?.mkdirs()
+                    val next = File(file.parentFile, file.name + ".new")
+                    next.writeText(text)
+                    if (!next.renameTo(file)) { file.delete(); next.renameTo(file) }
+                } catch (e: Exception) { Log.e("LampStore", "couldn't keep the shared collections: ${e.message}") }
+            }
+        }
+
+        /** What was kept on the device, read the first time it's needed, so an item put as the app opens is put over it. */
+        private fun ensureCollections() {
+            if (collectionsRestored) return
+            ensureValues()
+            valuesLock.withLock {
+                if (collectionsRestored) return
+                collectionsRestored = true
+                val kept = try { collectionsFile?.takeIf { it.exists() }?.let { JSONObject(it.readText()) } } catch (e: Exception) { null } ?: return
+                for (name in kept.keys()) {
+                    if (!isCollection(name)) continue
+                    val given = kept.optJSONObject(name) ?: continue
+                    val list = collections.getOrPut(name) { mutableMapOf() }
+                    for (id in given.keys()) {
+                        if (!isItemID(id)) continue
+                        val entry = Entry.from(given.opt(id)) ?: continue
+                        val had = list[id]
+                        if (had == null || entry.isLater(had.entry)) list[id] = SharedItem(entry, id.toByteArray().size + maxOf(32, entry.value?.let(::sizeOf) ?: 32))
+                    }
+                }
+                dropExpiredItems()
+            }
         }
 
         // MARK: Lamp's room
@@ -2094,6 +2564,7 @@ extension Template {
                 "apps" -> setRoster(jsonList(m.optJSONArray("apps")))
                 "message" -> deliver(m.optString("from"), if (m.isNull("data")) null else m.opt("data"))
                 "values" -> m.optString("from").takeIf(::isName)?.let { heardValues(m, it) }
+                "store" -> m.optString("from").takeIf(::isName)?.let { heardStore(m, it) }
                 "file", "file-ack", "file-refuse", "file-cancel" -> m.optString("from").takeIf(::isName)?.let { heardFile(m, it, null) }
                 "undelivered" -> {
                     // Said once for each app until the room changes: the code that sent it can't tell otherwise.
@@ -2147,6 +2618,9 @@ extension Template {
             if (beats % 12 == 0 && peersFlow.value.isNotEmpty()) keep()
             // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
             if (beats % 12 == 0) for (each in copiesFor(null)) if (wireOf(each) >= 2) share(emptyMap(), each, JSONObject().put("sum", digest()))
+            // And its shared collections; a shared file asked of a copy that has gone quiet is asked again.
+            if (beats % 12 == 0) for (each in storeCopies()) sendSums(each)
+            if (beats % 12 == 6) fetchFiles()
             rebuild()
             val mine = addresses()
             if (mine != networks) { networks = mine; lookAgain() } else reach()
@@ -2371,6 +2845,7 @@ extension Template {
                 }
                 "message" -> if (direct.ready && m.has("data")) deliver(direct.peer, if (m.isNull("data")) null else m.opt("data"))
                 "values" -> if (direct.ready) heardValues(m, direct.peer)
+                "store" -> if (direct.ready) heardStore(m, direct.peer)
                 "file", "file-ack", "file-refuse", "file-cancel" -> if (direct.ready) heardFile(m, direct.peer, direct)
             }
         }
@@ -2741,6 +3216,141 @@ extension Template {
             androidx.compose.material3.Text(text)
         }
     }
+
+    /**
+     * A list the app keeps the same on every copy of it: the same app open on a Mac, an iPad, a TV and an Android photo
+     * frame shows one shopping list, one set of chores, one calendar. Each copy keeps the items on its device, so it works
+     * alone and with Lamp closed, and copies merge them item by item whenever they meet, through Lamp or straight on the home
+     * network: two copies that changed different items while apart both keep both; where two changed the same item, the
+     * later change wins in both.
+     *
+     *     val groceries = LampStore.shared<Grocery>("groceries") { it.id }   // Grocery: @Serializable, with an id
+     *     val items by groceries.items.collectAsState()   // List<Grocery>, by id; follows changes here and on other copies
+     *     groceries.put(item)                             // add, or replace the one with the same id: false (with why) if not
+     *     groceries.delete(item.id)
+     *     groceries.get(id)
+     *     groceries.publish(events)                       // what this copy read for the copies that can't: its items become
+     *                                                     // exactly these
+     *     groceries.onChange { id, item, from -> }        // item null when deleted; from == LampWish.me for this app's copies
+     *
+     * An item is at most `LampWish.itemLimit` (8 KB) as JSON, and everything the app shares at most `LampWish.sharedLimit`
+     * (1 MB, thousands of small items); pictures and other big things go in `LampStore.sharedFiles`.
+     */
+    class LampShared<T> internal constructor(val name: String, private val serializer: KSerializer<T>, private val idOf: (T) -> Any) {
+        private val itemsFlow = kotlinx.coroutines.flow.MutableStateFlow<List<T>>(emptyList())
+        private val byID = java.util.concurrent.ConcurrentHashMap<String, T>()
+        private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, T?, String) -> Unit>()
+        /** Held while the store is written or read and what's read here follows it, so a write on one thread and a change
+         *  heard on another never leave this holding the older of the two. */
+        private val cache = Any()
+        val items: kotlinx.coroutines.flow.StateFlow<List<T>> get() = itemsFlow
+
+        private fun show() { itemsFlow.value = byID.keys.sorted().mapNotNull { byID[it] } }
+
+        /** What the collection holds now, so a write here reads back before its change is heard. Under `cache`. */
+        private fun reload() {
+            val now = LampWish.items(name).toMap()
+            byID.keys.retainAll(now.keys)
+            for ((id, value) in now) decode(value, id)?.let { byID[id] = it }
+            show()
+        }
+
+        init {
+            synchronized(cache) { reload() }
+            LampWish.onItems(name) { changed, from ->
+                // Each item as the collection holds it now, not as the change said: a later put of the same id, already
+                // read back here, is never undone by an earlier change heard after it.
+                val said = synchronized(cache) {
+                    changed.map { (id, _) -> id to LampWish.itemNow(name, id)?.let { decode(it, id) }.also { item -> if (item != null) byID[id] = item else byID.remove(id) } }
+                        .also { show() }
+                }
+                for ((id, item) in said) for (listener in listeners) listener(id, item, from)
+            }
+        }
+
+        /** Adds the item, or replaces the one with the same id, here and on every copy. Read back at once; `onChange`
+         *  hears it a moment later, on the main thread. */
+        fun put(item: T): Boolean = put(listOf(item))
+        fun put(items: List<T>): Boolean = synchronized(cache) {
+            val kept = LampWish.putItems(name, items.map { idOf(it).toString() to encode(it) })
+            // All kept: just these change; one turned down, the whole collection is read again.
+            if (kept) { for (item in items) byID[idOf(item).toString()] = item; show() } else reload()
+            kept
+        }
+        /** Makes the items this copy put exactly these: each put, and each it put before that isn't among them deleted. */
+        fun publish(items: List<T>): Boolean = synchronized(cache) { LampWish.publishItems(name, items.map { idOf(it).toString() to encode(it) }).also { reload() } }
+        fun delete(id: Any): Boolean = synchronized(cache) {
+            LampWish.putItems(name, listOf(id.toString() to null)).also { if (it) { byID.remove(id.toString()); show() } }
+        }
+        fun get(id: Any): T? = byID[id.toString()]
+        fun all(): List<T> = itemsFlow.value
+        val count: Int get() = itemsFlow.value.size
+        /** Hears each change, on the main thread: the item's id, the item (null when deleted), and which app made it. */
+        fun onChange(handler: (id: String, item: T?, from: String) -> Unit) { listeners.add(handler) }
+
+        private fun encode(item: T): Any = JSONArray("[" + LampStore.json.encodeToString(serializer, item) + "]").get(0)
+        private fun decode(value: Any, id: String): T? = try {
+            LampStore.json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(serializer), JSONArray().put(value).toString()).firstOrNull()
+        } catch (e: Exception) {
+            Log.e("LampStore", "LampStore.shared(\"$name\"): skipped the item \"$id\", which couldn't be read; it's kept as it is. Give new properties defaults. Error: ${e.message}")
+            null
+        }
+    }
+
+    /** A file of `LampStore.sharedFiles`: `isHere` once its bytes are on this device. */
+    data class LampSharedFile(val name: String, val size: Int, val type: String, val isHere: Boolean)
+
+    /**
+     * Files the app keeps the same on every copy of it: what a copy that can read them puts here reaches every other copy,
+     * which keeps the bytes on its device, including copies that open later.
+     *
+     *     val photos = LampStore.sharedFiles("photos")
+     *     photos.put("IMG_0042.jpg", bytes, "image/jpeg")   // the same bytes again change nothing
+     *     val files by photos.files.collectAsState()        // List<LampSharedFile>: name, size, type, isHere
+     *     photos.get("IMG_0042.jpg")                         // ByteArray, once it's here
+     *     photos.file("IMG_0042.jpg")                        // its File on this device, once it's here
+     *     photos.delete("IMG_0042.jpg")
+     *     photos.onChange { name, from -> }
+     *
+     * A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB).
+     */
+    class LampSharedFiles internal constructor(val name: String) {
+        private val key = "files:$name"
+        private val filesFlow = kotlinx.coroutines.flow.MutableStateFlow<List<LampSharedFile>>(emptyList())
+        private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, String) -> Unit>()
+        val files: kotlinx.coroutines.flow.StateFlow<List<LampSharedFile>> get() = filesFlow
+
+        init {
+            reload()
+            LampWish.onItems(key) { changed, from ->
+                reload()
+                for ((id, _) in changed) for (listener in listeners) listener(id, from)
+            }
+        }
+
+        fun put(name: String, bytes: ByteArray, type: String): Boolean = LampWish.putFile(key, name, bytes, type).also { reload() }
+        fun get(name: String): ByteArray? = file(name)?.let { try { it.readBytes() } catch (e: Exception) { null } }
+        fun file(name: String): File? = LampWish.fileOf(key, name)
+        fun delete(name: String): Boolean = LampWish.putItems(key, listOf(name to null)).also { reload() }
+        /** Hears each change, on the main thread: the file's name, and which app made it. Heard again when its bytes arrive. */
+        fun onChange(handler: (name: String, from: String) -> Unit) { listeners.add(handler) }
+
+        private fun reload() {
+            filesFlow.value = LampWish.items(key).map { (id, value) ->
+                val meta = value as? JSONObject ?: JSONObject()
+                LampSharedFile(id, meta.optInt("size"), meta.optString("type"), LampWish.fileOf(key, id) != null)
+            }
+        }
+    }
+
+    inline fun <reified T> LampStore.shared(name: String, noinline id: (T) -> Any): LampShared<T> = sharedList(name, serializer<T>(), id)
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T> LampStore.sharedList(name: String, serializer: KSerializer<T>, id: (T) -> Any): LampShared<T> =
+        synchronized(LampWish.sharedLists) { LampWish.sharedLists.getOrPut(name) { LampShared(name, serializer, id) } as LampShared<T> }
+
+    fun LampStore.sharedFiles(name: String): LampSharedFiles =
+        synchronized(LampWish.sharedLists) { LampWish.sharedLists.getOrPut("files:$name") { LampSharedFiles(name) } as LampSharedFiles }
 
     /**
      * Keeps the app's data safe across launches and across changes to the app, in a SQLite database in the app's own

@@ -735,7 +735,10 @@ enum Agent {
         only ever add to it: new properties must be optional (or decoded with decodeIfPresent and a default), and \
         never rename, remove or retype a saved property. If you must restructure, decode the old shape and convert \
         it. An app made before LampStore may keep data elsewhere; keep reading it from there, or move it over \
-        without losing anything.
+        without losing anything. Data that should be the same wherever the app is open (one shopping list on the \
+        Mac, the kitchen iPad and the TV): `LampStore.shared("groceries", of: Grocery.self)` (`items`, `put`, \
+        `delete`, `publish`, `onChange`), merged item by item between the app's copies on the home network, and \
+        `LampStore.sharedFiles("photos")` for pictures one copy reads for the others; open the `wish-links` skill first.
         """
 
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look

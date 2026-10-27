@@ -219,7 +219,7 @@ final class WishPageTests: XCTestCase {
         settle(context)
         try handshake(context)
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv",
-                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 4]],
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 5]],
                           "apps": [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
                                    ["peer": "mac", "kind": "mac", "name": "the Mac app"]]])
         deliver(context, ["t": "apps", "apps": roster])
@@ -240,7 +240,7 @@ final class WishPageTests: XCTestCase {
         let apps: [[String: Any]] = [["peer": "tv", "kind": "tv", "name": "the TV app"], ["peer": "iphone", "kind": "iphone", "name": "the iPhone app"],
                                      ["peer": "android", "kind": "android", "name": "the Android app", "waiting": true]]
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": apps,
-                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 4]]])
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 5]]])
         XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(), "The Android app isn't ready yet.")
         XCTAssertEqual(context.evaluateScript("view.text()")?.toString(), "iPhone app connected|The Android app isn't ready yet.")
         deliver(context, ["t": "left", "peer": "iphone"])
@@ -325,10 +325,10 @@ final class WishPageTests: XCTestCase {
         XCTAssertEqual(context.evaluateScript("[early, odd, big, unnamed].join(',')")?.toString(), "true,false,false,false",
                        "set with nobody there, and refused when it can't be a value")
         let join = try handshake(context)
-        XCTAssertEqual(join["wire"] as? Int, 4, "the page says what it speaks")
+        XCTAssertEqual(join["wire"] as? Int, 5, "the page says what it speaks")
         let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
-                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 4]]])
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 5]]])
         let pushed = try XCTUnwrap(try sentItems(context).dropFirst(before).map(opened).first { $0["t"] as? String == "values" })
         XCTAssertEqual(pushed["to"] as? String, "iphone")
         let list = try XCTUnwrap((pushed["values"] as? [String: Any])?["list"] as? [String: Any])
@@ -379,7 +379,7 @@ final class WishPageTests: XCTestCase {
             return items
         }
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
-                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 4]]])
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 5]]])
         _ = try said()
         XCTAssertEqual(context.evaluateScript("proto")?.toBool(), false)
         let later = Int(Date().timeIntervalSince1970 * 1000) + 60_000
@@ -416,7 +416,7 @@ final class WishPageTests: XCTestCase {
         try handshake(context)
         let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
-                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 4]]])
+                          "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1, "wire": 5]]])
         let frames = sentItems(context).dropFirst(before)
         let values = try frames.map(opened).filter { $0["t"] as? String == "values" }
         XCTAssertEqual(values.reduce(0) { $0 + (($1["values"] as? [String: Any])?.count ?? 0) }, 100, "every value went")
@@ -567,7 +567,7 @@ final class WishPageTests: XCTestCase {
         let before = sentItems(context).count
         deliver(context, ["t": "welcome", "role": "peer", "peer": "tv", "apps": roster,
                           "peers": [["peer": "iphone", "kind": "iphone", "name": "the iPhone app", "device": "iPhone", "since": 1],
-                                    ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 1, "wire": 5]]])
+                                    ["peer": "android", "kind": "android", "name": "the Android app", "device": "Android", "since": 1, "wire": 6]]])
         XCTAssertEqual(context.evaluateScript("var p = Lamp.wish.peer('iphone'); p.open + '|' + p.status.state + '|' + p.status.reason")?.toString(),
                        "true|outOfDate|The iPhone app is out of date. Open it from Lamp on your Mac to update it.")
         XCTAssertEqual(context.evaluateScript("Lamp.wish.peer('android').status.reason")?.toString(),

@@ -421,7 +421,48 @@ enum GameAndroid {
                     watching[id] = scope.launch { transfer.sent.combine(transfer.state) { _, _ -> }.collect { tellTransfer(id) } }
                 }
                 "cancel" -> transfers[call.optInt("id")]?.cancel()
+                // The shared collections the page uses (LampStore.shared in lamp.js), which this app keeps: told whole once,
+                // then as they change.
+                "shared" -> {
+                    val name = call.optString("s")
+                    if (!LampWish.isCollection(name)) return
+                    hearItems(name)
+                    tellItems(name, LampWish.items(name).map { it.first to (it.second as Any?) }, true, LampWish.me)
+                }
+                "put", "publish" -> {
+                    val list = json(call.optString("items")) as? JSONArray ?: return
+                    val given = (0 until list.length()).mapNotNull { i ->
+                        val pair = list.optJSONArray(i)?.takeIf { it.length() == 2 } ?: return@mapNotNull null
+                        val id = pair.opt(0) as? String ?: return@mapNotNull null
+                        id to pair.opt(1)?.takeIf { it != JSONObject.NULL }
+                    }
+                    val name = call.optString("s")
+                    val kept = if (call.optString("op") == "put") LampWish.putItems(name, given)
+                        else LampWish.publishItems(name, given.mapNotNull { (id, value) -> value?.let { id to it } })
+                    // Turned down (past a limit): the page, which showed it at once, is told the collection as it really is.
+                    if (!kept) tellItems(name, LampWish.items(name).map { it.first to (it.second as Any?) }, true, LampWish.me)
+                }
+                "putFile" -> {
+                    val bytes = try { Base64.decode(call.optString("data"), Base64.DEFAULT) } catch (e: Exception) { return }
+                    val kept = LampWish.putFile(call.optString("s"), call.optString("id"), bytes, call.optString("type"))
+                    if (call.has("ask")) tell(JSONObject().put("t", "fileDone").put("ask", call.optInt("ask")).put("ok", kept))
+                }
+                "fileBytes" -> {
+                    val file = LampWish.fileOf(call.optString("s"), call.optString("id"))
+                    val bytes = try { file?.readBytes() } catch (e: Exception) { null }
+                    tell(JSONObject().put("t", "fileBytes").put("ask", call.optInt("ask")).put("data", bytes?.let { Base64.encodeToString(it, Base64.NO_WRAP) } ?: JSONObject.NULL))
+                }
             }
+        }
+
+        private fun tellItems(name: String, items: List<Pair<String, Any?>>, whole: Boolean, from: String) {
+            val said = JSONObject()
+            val here = JSONObject()
+            for ((id, value) in items) {
+                said.put(id, value ?: JSONObject.NULL)
+                if (name.startsWith("files:")) here.put(id, LampWish.fileOf(name, id) != null)
+            }
+            tell(JSONObject().put("t", "items").put("s", name).put("items", said).put("whole", whole).put("from", from).put("here", here))
         }
 
         private fun listen() {
@@ -491,6 +532,12 @@ enum GameAndroid {
             private var current: WeakReference<LampPageWish>? = null
             private var heardWish = false
             private var heardFiles = false
+            private val heardItems = mutableSetOf<String>()
+
+            private fun hearItems(name: String) {
+                if (!heardItems.add(name)) return
+                LampWish.onItems(name) { changed, from -> current?.get()?.tellItems(name, changed, false, from) }
+            }
 
             /** Answers the page at `origin`, the game's own, in its main frame: no other page or frame reaches the wish. */
             fun attach(web: WebView, origin: String) {

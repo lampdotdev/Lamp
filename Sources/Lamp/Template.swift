@@ -14525,9 +14525,9 @@ enum Template {
         @Published private(set) var values: [String: Any] = [:]
 
         /// What the wish's apps say to each other, numbered: an app that says another number was built by another Lamp.
-        /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices; an app from before says
-        /// none, which counts as 1.
-        private static let wire = 4
+        /// 2 brought values, 3 files and a game's controls, 4 copies of one app on several devices, 5 shared collections
+        /// (`LampStore.shared`); an app from before says none, which counts as 1.
+        private static let wire = 5
         /// The wish's other apps open now.
         var peers: [Peer] { apps.filter(\.isOpen) }
         var state: State { status.state }
@@ -14602,6 +14602,18 @@ enum Template {
         /// Started anywhere, so a file sent after a relaunch isn't taken for one from before still on its way.
         private var nextFile = Int.random(in: 1..<(1 << 30))
         private var fileListeners: [(String, LampFile) -> Void] = []
+        /// The app's shared collections (`LampStore.shared`, `LampStore.sharedFiles`), by name and item id, each item as
+        /// it was last set here or by another copy: see "Shared collections" below.
+        private var collections: [String: [String: SharedItem]] = [:]
+        private var collectionListeners: [String: [([(String, Any?)], String) -> Void]] = [:]
+        private var collectionsUnsaved: Set<String> = []
+        private var collectionsSaving = false
+        /// A shared file's bytes asked of another copy ("collection\tid"), of whom and when; how often each was asked; and
+        /// the files other copies asked of this one, waiting to go, by copy.
+        private var fileAsks: [String: (peer: String, at: Date)] = [:]
+        private var fileTries: [String: Int] = [:]
+        private var filesToSend: [String: [(collection: String, id: String)]] = [:]
+        private var filesSending: [String: Int] = [:]
         /// Which app a peer name is a copy of.
         private static func app(of peer: String) -> String { peer.split(separator: ".", maxSplits: 1).first.map(String.init) ?? peer }
         private static func newCopyID() -> String { String((0..<8).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! }) }
@@ -14634,6 +14646,7 @@ enum Template {
         private init() {
             restoreValues()
             restore()
+            restoreCollections()
             open()
             reach()
             beat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -14852,6 +14865,7 @@ enum Template {
                 for (key, entry) in entries where entry.peer.isEmpty { entries[key]?.peer = copy }
                 keepValues()
             }
+            if !me.isEmpty { nameUnnamedItems() }
             // Every copy open either way, this one aside: an app is open while any copy of it is.
             var open: Set<String> = []
             if !closed {
@@ -14919,6 +14933,9 @@ enum Template {
             // A copy that has just come is told every value this one has, and tells this one its own, so the two agree
             // again whichever was open meanwhile.
             for id in arrived where wire(of: id) >= 2 && !entries.isEmpty { share(entries, to: id) }
+            // And what its shared collections add up to, so each asks the other for what differs.
+            for id in arrived where wire(of: id) >= 5 && Self.app(of: id) == me { sendSums(to: id) }
+            if !arrived.isEmpty { fetchFiles() }
         }
 
         /// What another open copy speaks: 1 for an app from before values, which says nothing of it.
@@ -15340,7 +15357,7 @@ enum Template {
             switch m["t"] as? String {
             case "file":
                 let channel = m["ch"] as? String ?? ""
-                let takes = channel.hasPrefix("pad") ? pads.contains { $0.owner.object != nil } : !fileListeners.isEmpty
+                let takes = channel.hasPrefix("store:") || (channel.hasPrefix("pad") ? pads.contains { $0.owner.object != nil } : !fileListeners.isEmpty)
                 let coming = incoming.keys.filter { $0.hasPrefix(peer + "\t") }.count
                 guard let size = m["size"] as? Int, size >= 0, size <= LampFiles.largest, incoming[key] == nil, coming < LampFiles.transfers, takes else {
                     fileMessage(["t": "file-refuse", "id": id, "reason": takes ? "The file is too big to take now." : "This app takes no files."], to: peer, via: direct)
@@ -15395,7 +15412,9 @@ enum Template {
             incoming[key] = nil
             if file.size == 0, let id = Int(key.split(separator: "\t").last ?? "") { fileMessage(["t": "file-ack", "id": id, "got": 0], to: peer, via: file.via) }
             let done = LampFile(name: file.name, type: file.type, data: file.data, copy: peer)
-            if file.channel.hasPrefix("pad") {
+            if file.channel.hasPrefix("store:") {
+                sharedFileArrived(String(file.channel.dropFirst(6)), id: file.name, data: file.data, from: peer)
+            } else if file.channel.hasPrefix("pad") {
                 for pad in pads where pad.owner.object != nil { pad.file(peer, file.channel, done) }
             } else {
                 for listener in fileListeners { listener(Self.app(of: peer), done) }
@@ -15609,6 +15628,9 @@ enum Template {
             case "values":
                 guard let from = m["from"] as? String, Self.isName(from) else { return }
                 heardValues(m, from: from)
+            case "store":
+                guard let from = m["from"] as? String, Self.isName(from) else { return }
+                heardStore(m, from: from)
             case "pad":
                 guard let from = m["from"] as? String, let pad = m["m"] as? [String: Any] else { return }
                 heardPad(pad, from: from)
@@ -15693,6 +15715,9 @@ enum Template {
             if beats % 12 == 0, !peers.isEmpty { keep() }
             // Once a minute each open copy is told what this one's values add up to, so one that missed a setting asks.
             if beats % 12 == 0 { for each in copies(for: nil) where wire(of: each) >= 2 { share([:], to: each, extra: ["sum": digest()]) } }
+            // And its shared collections, and a shared file asked of a copy that has gone quiet is asked again.
+            if beats % 12 == 0 { for each in storeCopies { sendSums(to: each) } }
+            if beats % 12 == 6 { fetchFiles() }
             // A copy without the wish's key keeps saying why (`open`) rather than "Connecting…".
             if Self.key != nil { rebuild() }
             reach()
@@ -16089,6 +16114,8 @@ enum Template {
                 for listener in messageListeners { listener(Self.app(of: direct.peer), data, direct.peer) }
             case "values" where direct.ready:
                 heardValues(m, from: direct.peer)
+            case "store" where direct.ready:
+                heardStore(m, from: direct.peer)
             case "pad" where direct.ready:
                 if let pad = m["m"] as? [String: Any] { heardPad(pad, from: direct.peer) }
             case let kind? where direct.ready && kind.hasPrefix("file"):
@@ -16500,6 +16527,621 @@ enum Template {
         let data: Data
         /// Which copy of the app sent it ("screen.k3j9x0ab"), to send one back to that copy alone.
         var copy = ""
+    }
+
+    // MARK: - Shared collections
+
+    /// What `LampStore.shared` and `LampStore.sharedFiles` keep, carried by `LampWish`: every copy of the app (the same app
+    /// open on a Mac, an iPad, a TV and an Android frame) keeps each collection on its device, and copies that meet, through
+    /// Lamp's room or straight, merge them item by item as they merge values: each item's latest setting wins, and a deleted
+    /// one is kept for a month without its value, so an older setting from a copy that was away can't bring it back. Two
+    /// copies that changed different items while apart both keep both. A collection is sent in pieces within a message's
+    /// size, and only the parts that differ: as copies meet, and once a minute, each tells the other what each sixteenth of
+    /// each collection adds up to (`sum`), and asks for the sixteenths where they differ (`ask`). A shared file is an item
+    /// saying its size, type and checksum; a copy without its bytes asks one that has them, which sends them as a file.
+    extension LampWish {
+        /// An item, as JSON.
+        static let itemLimit = 8 * 1024
+        /// Everything this app sets in its shared collections, items and their deletions (32 bytes each, as for values).
+        static let sharedLimit = 1024 * 1024
+        /// Every shared file's bytes together.
+        static let sharedFilesLimit = 256 * 1024 * 1024
+        static let collectionsLimit = 32
+
+        private struct SharedItem {
+            var entry: Entry
+            /// What it takes of `sharedLimit`: its id, and its value as JSON or at least 32 bytes, which a deletion takes.
+            var held: Int
+        }
+
+        /// A collection's name: letters, digits, "-", "_" and "."; a shared files' collection is "files:" and such a name.
+        nonisolated static func isCollection(_ name: String) -> Bool {
+            let plain = name.hasPrefix("files:") ? String(name.dropFirst(6)) : name
+            return (1...64).contains(plain.utf8.count) && plain != "__proto__" && plain.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
+        }
+        nonisolated fileprivate static func isItemID(_ id: String) -> Bool { (1...128).contains(id.utf8.count) && id != "__proto__" }
+
+        // What `LampStore.shared` and `LampStore.sharedFiles` call, and the bridge to the page an app of Lamp's own is
+        // around (`LampPageWish`): use those rather than these.
+
+        /// The items of a collection now, deleted ones left out, by id.
+        func items(in name: String) -> [(id: String, value: Any)] {
+            (collections[name] ?? [:]).compactMap { id, item in item.entry.value.map { (id, $0) } }.sorted { $0.id < $1.id }
+        }
+
+        func item(in name: String, id: String) -> Any? { collections[name]?[id]?.entry.value }
+
+        /// Hears every change to a collection, a batch at a time: each item's id and its value (nil when deleted), and the
+        /// app that made them (`me` for a change made here or by another copy of this app).
+        func onItems(in name: String, _ handler: @escaping ([(String, Any?)], String) -> Void) {
+            collectionListeners[name, default: []].append(handler)
+        }
+
+        /// Sets items (nil deletes one), here at once and in every other copy now if it's open, else when they next meet. An
+        /// item set to what it is already changes nothing. False, with why in the app's log, when none was set.
+        @discardableResult
+        func putItems(in name: String, _ given: [(String, Any?)]) -> Bool {
+            let what = "LampStore.shared(\"\(name.hasPrefix("files:") ? String(name.dropFirst(6)) : name)\")"
+            guard Self.isCollection(name) else {
+                fputs("\(what): a collection's name is 1 to 64 letters, digits, \"-\", \"_\" or \".\", and not __proto__.\n", stderr)
+                return false
+            }
+            guard collections[name] != nil || collections.count < Self.collectionsLimit else {
+                fputs("\(what): an app shares at most \(Self.collectionsLimit) collections.\n", stderr)
+                return false
+            }
+            dropExpiredItems()
+            var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.held } }
+            var sets: [String: Entry] = [:], changed: [(String, Any?)] = [], failed = false
+            for (id, value) in given {
+                guard Self.isItemID(id) else {
+                    fputs("\(what): an item's id is 1 to 128 bytes; \"\(id.prefix(40))\" wasn't set.\n", stderr)
+                    failed = true
+                    continue
+                }
+                let had = collections[name]?[id]
+                var kept: Any?, size = 32
+                if let value, !(value is NSNull) {
+                    guard JSONSerialization.isValidJSONObject([value]), let data = try? JSONSerialization.data(withJSONObject: [value], options: .sortedKeys) else {
+                        fputs("\(what): the item \"\(id)\" holds something JSON can't, and wasn't set.\n", stderr)
+                        failed = true
+                        continue
+                    }
+                    size = Self.size(of: value)
+                    guard size <= Self.itemLimit else {
+                        fputs("\(what): the item \"\(id)\" is \(size) bytes as JSON, and wasn't set: an item is at most \(Self.itemLimit).\n", stderr)
+                        failed = true
+                        continue
+                    }
+                    if let old = had?.entry.value, (try? JSONSerialization.data(withJSONObject: [old], options: .sortedKeys)) == data { continue }
+                    kept = ((try? JSONSerialization.jsonObject(with: data)) as? [Any])?.first
+                } else if had?.entry.value == nil {
+                    continue
+                }
+                let need = id.utf8.count + max(32, size)
+                guard held - (had?.held ?? 0) + need <= Self.sharedLimit else {
+                    fputs("\(what): the item \"\(id)\" wasn't set: the app's shared collections would pass \(Self.sharedLimit) bytes (a deleted item counts 32 bytes for a month).\n", stderr)
+                    failed = true
+                    continue
+                }
+                held += need - (had?.held ?? 0)
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                clock = now > clock.ms ? (now, 0) : clock.n < Self.counts ? (clock.ms, clock.n + 1) : (clock.ms + 1, 0)
+                let entry = Entry(value: kept, ms: clock.ms, n: Int(clock.n), peer: copy)
+                collections[name, default: [:]][id] = SharedItem(entry: entry, held: need)
+                sets[id] = entry
+                changed.append((id, kept))
+            }
+            guard !changed.isEmpty else { return !failed }
+            keepValues()
+            itemsChanged(name, changed, from: copy)
+            for each in storeCopies { shareItems(name, sets, to: each) }
+            return !failed
+        }
+
+        /// Makes this copy's items of a collection exactly these: each set (an unchanged one changes nothing), and an item this
+        /// copy set last that isn't among them deleted. For what a copy reads that the others can't (calendars, an album),
+        /// published again each time it's read; items another copy set are left as they are.
+        @discardableResult
+        func publishItems(in name: String, _ given: [(String, Any)]) -> Bool {
+            let ids = Set(given.map(\.0))
+            let gone = (collections[name] ?? [:]).filter { !ids.contains($0.key) && $0.value.entry.value != nil && $0.value.entry.peer == copy }.map { ($0.key, nil as Any?) }
+            return putItems(in: name, given.map { ($0.0, $0.1 as Any?) } + gone)
+        }
+
+        private func itemsChanged(_ name: String, _ changed: [(String, Any?)], from peer: String) {
+            collectionsUnsaved.insert(name)
+            saveCollectionsSoon()
+            if name.hasPrefix("files:") { for (id, _) in changed { dropStaleBytes(name, id: id) } }
+            for listener in collectionListeners[name] ?? [] { listener(changed, Self.app(of: peer)) }
+            if name.hasPrefix("files:") { fetchFiles() }
+        }
+
+        /// Items set before this app knew its own name take it now, so two copies' settings never tie.
+        private func nameUnnamedItems() {
+            for (name, list) in collections where list.values.contains(where: { $0.entry.peer.isEmpty }) {
+                for (id, item) in list where item.entry.peer.isEmpty { collections[name]?[id]?.entry.peer = copy }
+                collectionsUnsaved.insert(name)
+                saveCollectionsSoon()
+            }
+        }
+
+        // MARK: Between copies
+
+        /// The other copies of this app open now that speak 5: a collection is this app's own, never another app's of the
+        /// wish, so it goes only to them and is taken only from them.
+        private var storeCopies: [String] { me.isEmpty ? [] : copies(for: me).filter { $0 != copy && wire(of: $0) >= 5 } }
+
+        private func heardStore(_ m: [String: Any], from peer: String) {
+            guard !me.isEmpty, Self.app(of: peer) == me, peer != copy else { return }
+            switch m["op"] as? String {
+            case "items":
+                guard let name = m["s"] as? String, Self.isCollection(name), let given = m["items"] as? [String: Any] else { return }
+                mergeItems(name, given, from: peer)
+            case "sum":
+                // Asks for each sixteenth of a collection where the other has something this one doesn't.
+                let theirs = m["sums"] as? [String: String] ?? [:]
+                var asks: [String: [Int]] = [:]
+                for (name, sum) in theirs where Self.isCollection(name) {
+                    let mine = sums(name)
+                    let parts = Self.parts(sum)
+                    let differ = (0..<16).filter { parts[$0] != 0 && parts[$0] != mine[$0] }
+                    if !differ.isEmpty { asks[name] = differ }
+                }
+                if !asks.isEmpty { storeMessage(["op": "ask", "asks": asks], to: peer) }
+            case "ask":
+                for (name, buckets) in m["asks"] as? [String: [Int]] ?? [:] where Self.isCollection(name) {
+                    let wanted = Set(buckets)
+                    let list = (collections[name] ?? [:]).filter { wanted.contains(Int(Self.fnv($0.key) & 15)) }.mapValues(\.entry)
+                    if !list.isEmpty { shareItems(name, list, to: peer) }
+                }
+            case "file":
+                // Another copy asks for a shared file's bytes: sent when this one has them as they are now.
+                guard let name = m["s"] as? String, name.hasPrefix("files:"), let id = m["id"] as? String, let sum = m["sum"] as? String,
+                      let meta = item(in: name, id: id) as? [String: Any], meta["sum"] as? String == sum,
+                      FileManager.default.fileExists(atPath: bytesURL(name, id: id, sum: sum).path) else { return }
+                if !(filesToSend[peer] ?? []).contains(where: { $0.collection == name && $0.id == id }) { filesToSend[peer, default: []].append((name, id)) }
+                sendFiles(to: peer)
+            default:
+                break
+            }
+        }
+
+        /// Items another copy sent, each taken when it's later than what this one has, so whatever order they come in,
+        /// every copy ends with the same. What's held from other copies is bounded as values are: to what every app of the
+        /// wish could set between them, twice over, the oldest deletions let go first when a flood needs room.
+        private func mergeItems(_ name: String, _ given: [String: Any], from peer: String) {
+            guard collections[name] != nil || collections.count < Self.collectionsLimit * 2 else { return }
+            dropExpiredItems()
+            let most = Self.sharedLimit * 2 * max(2, roster.count)
+            var held = collections.values.reduce(0) { $0 + $1.values.reduce(0) { $0 + $1.held } }
+            var removals: [(String, String)]? = nil, next = 0
+            func oldestRemoval(except id: String) -> (String, String)? {
+                if removals == nil {
+                    removals = collections.flatMap { name, list in list.filter { $0.value.entry.value == nil }.map { (name, $0.key, $0.value.entry) } }
+                        .sorted { $1.2.isLater(than: $0.2) }.map { ($0.0, $0.1) }
+                }
+                while let list = removals, next < list.count {
+                    let each = list[next]
+                    next += 1
+                    if each != (name, id), collections[each.0]?[each.1]?.entry.value == nil { return each }
+                }
+                return nil
+            }
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            var changed: [(String, Any?)] = [], taken: [String: Entry] = [:]
+            for (id, json) in given.sorted(by: { $0.key < $1.key }) {
+                guard Self.isItemID(id), let entry = Entry(json) else { continue }
+                if (entry.ms, Int64(entry.n)) > (clock.ms, clock.n) { clock = (entry.ms, Int64(entry.n)) }
+                let had = collections[name]?[id]
+                if let had, !entry.isLater(than: had.entry) { continue }
+                let size = entry.value.map(Self.size(of:)) ?? 32
+                if size > Self.itemLimit * 2 { continue }
+                let need = id.utf8.count + max(32, size)
+                // A deletion too old to keep, or with no room left to keep it, still deletes; a value with no room is left.
+                func dropOnly() {
+                    guard entry.value == nil, let had = collections[name]?.removeValue(forKey: id) else { return }
+                    held -= had.held
+                    collectionsUnsaved.insert(name)
+                    if had.entry.value != nil { changed.append((id, nil)) }
+                }
+                if entry.value == nil, entry.ms < old { dropOnly(); continue }
+                while held - (had?.held ?? 0) + need > most, let gone = oldestRemoval(except: id), let removal = collections[gone.0]?.removeValue(forKey: gone.1) {
+                    held -= removal.held
+                    collectionsUnsaved.insert(gone.0)
+                }
+                if held - (had?.held ?? 0) + need > most { dropOnly(); continue }
+                held += need - (had?.held ?? 0)
+                collections[name, default: [:]][id] = SharedItem(entry: entry, held: need)
+                taken[id] = entry
+                changed.append((id, entry.value))
+            }
+            keepValues()
+            if !changed.isEmpty { itemsChanged(name, changed, from: peer) } else if !collectionsUnsaved.isEmpty { saveCollectionsSoon() }
+            // Passed on as values are: to the copies open now that the one it came from may not reach.
+            for each in storeCopies where each != peer && !taken.isEmpty {
+                if directs[each]?.ready == true || (relayPresent[peer] == nil && relayPresent[each] != nil) { shareItems(name, taken, to: each) }
+            }
+        }
+
+        /// Sends items to another copy, the straight way when there is one, else through Lamp's room, a few at a time so each
+        /// message stays within what a message may be.
+        private func shareItems(_ name: String, _ list: [String: Entry], to peer: String) {
+            var batch: [String: Any] = [:], size = 0
+            func flush() {
+                guard !batch.isEmpty else { return }
+                storeMessage(["op": "items", "s": name, "items": batch], to: peer)
+                batch = [:]
+                size = 0
+            }
+            for (id, entry) in list.sorted(by: { $0.key < $1.key }) {
+                let json = entry.json
+                let bytes = Self.json([id: json])?.count ?? 0
+                if size + bytes > 12 * 1024 { flush() }
+                batch[id] = json
+                size += bytes
+            }
+            flush()
+        }
+
+        private func storeMessage(_ body: [String: Any], to peer: String) {
+            var frame = body
+            frame["t"] = "store"
+            if let direct = directs[peer], direct.ready {
+                if let json = Self.json(frame) { sealed(json, on: direct) }
+            } else if relayPresent[peer] != nil {
+                frame["to"] = peer
+                if let json = Self.json(frame) { say(json) }
+            }
+        }
+
+        /// Tells another copy what each sixteenth of each collection adds up to.
+        private func sendSums(to peer: String) {
+            var said: [String: String] = [:]
+            for name in collections.keys where !(collections[name] ?? [:]).isEmpty {
+                said[name] = sums(name).map { String(format: "%08x", $0) }.joined()
+            }
+            if !said.isEmpty { storeMessage(["op": "sum", "sums": said], to: peer) }
+        }
+
+        /// Each sixteenth of a collection (by its ids) as one number: every item's id and when it was set, hashed and
+        /// combined, so two copies with the same items say the same, in every language Lamp's apps are written in.
+        private func sums(_ name: String) -> [UInt32] {
+            var parts = [UInt32](repeating: 0, count: 16)
+            for (id, item) in collections[name] ?? [:] {
+                parts[Int(Self.fnv(id) & 15)] ^= Self.fnv("\(id)\u{0}\(item.entry.ms)\u{0}\(item.entry.n)\u{0}\(item.entry.peer)")
+            }
+            return parts
+        }
+
+        nonisolated private static func parts(_ sum: String) -> [UInt32] {
+            let chars = Array(sum.utf8)
+            guard chars.count == 128 else { return [UInt32](repeating: 0, count: 16) }
+            return (0..<16).map { UInt32(String(decoding: chars[($0 * 8)..<($0 * 8 + 8)], as: UTF8.self), radix: 16) ?? 0 }
+        }
+
+        /// FNV-1a over UTF-8, 32 bits.
+        nonisolated private static func fnv(_ text: String) -> UInt32 {
+            var hash: UInt32 = 2166136261
+            for byte in text.utf8 { hash = (hash ^ UInt32(byte)) &* 16777619 }
+            return hash
+        }
+
+        // MARK: Shared files
+
+        /// Where a shared file's bytes are kept on this device, with the checksum they have in their name.
+        private func bytesURL(_ name: String, id: String, sum: String) -> URL {
+            bytesFolder.appendingPathComponent(Self.hex(Data(SHA256.hash(data: Data("\(name)\u{0}\(id)".utf8))).prefix(16)) + "-" + sum)
+        }
+
+        private var bytesFolder: URL {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "app").appendingPathComponent("Lamp shared files")
+                .appendingPathComponent((Self.keptKey ?? "LampWish") + "." + copyID)
+            try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+            return base
+        }
+
+        nonisolated private static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
+        nonisolated fileprivate static func checksum(_ data: Data) -> String { hex(Data(SHA256.hash(data: data)).prefix(16)) }
+
+        /// Keeps a file in a shared files' collection: its bytes on this device, and an item saying what it is.
+        @discardableResult
+        func putFile(in name: String, id: String, data: Data, type: String) -> Bool {
+            guard data.count <= LampFiles.largest else {
+                fputs("LampStore.sharedFiles: \"\(id)\" is too big to share: 64 MB at most.\n", stderr)
+                return false
+            }
+            let others = (collections[name] ?? [:]).filter { $0.key != id }.compactMap { ($0.value.entry.value as? [String: Any])?["size"] as? Int }.reduce(0, +)
+            let all = collections.filter { $0.key.hasPrefix("files:") && $0.key != name }.values
+                .flatMap { $0.values.compactMap { ($0.entry.value as? [String: Any])?["size"] as? Int } }.reduce(0, +)
+            guard others + all + data.count <= Self.sharedFilesLimit else {
+                fputs("LampStore.sharedFiles: \"\(id)\" wasn't kept: the app's shared files would pass \(Self.sharedFilesLimit / 1024 / 1024) MB.\n", stderr)
+                return false
+            }
+            let sum = Self.checksum(data)
+            let meta: [String: Any] = ["size": data.count, "type": String(type.prefix(100)), "sum": sum]
+            let url = bytesURL(name, id: id, sum: sum)
+            if !FileManager.default.fileExists(atPath: url.path) {
+                do { try data.write(to: url, options: .atomic) } catch {
+                    fputs("LampStore.sharedFiles: couldn't keep \"\(id)\": \(error.localizedDescription)\n", stderr)
+                    return false
+                }
+            }
+            return putItems(in: name, [(id, meta)])
+        }
+
+        /// A shared file's bytes on this device, once they're here.
+        func fileURL(in name: String, id: String) -> URL? {
+            guard let sum = (item(in: name, id: id) as? [String: Any])?["sum"] as? String else { return nil }
+            let url = bytesURL(name, id: id, sum: sum)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+
+        /// The bytes of a file as it was before, once it changed or went.
+        private func dropStaleBytes(_ name: String, id: String) {
+            let sum = (item(in: name, id: id) as? [String: Any])?["sum"] as? String
+            let prefix = bytesURL(name, id: id, sum: "").lastPathComponent
+            for each in (try? FileManager.default.contentsOfDirectory(atPath: bytesFolder.path)) ?? []
+            where each.hasPrefix(prefix) && each != prefix + (sum ?? "") {
+                try? FileManager.default.removeItem(at: bytesFolder.appendingPathComponent(each))
+            }
+        }
+
+        /// Asks for the shared files this copy lacks, each of one other copy at a time: the one that set it first, then each
+        /// of the others in turn, two at a time of each, asked again when one goes quiet for a minute or closes.
+        private func fetchFiles() {
+            let sources = storeCopies
+            guard !sources.isEmpty else { return }
+            let now = Date()
+            var here = 0
+            for (name, list) in collections where name.hasPrefix("files:") {
+                for (id, item) in list { if let size = (item.entry.value as? [String: Any])?["size"] as? Int, fileURL(in: name, id: id) != nil { here += size } }
+            }
+            for (name, list) in collections.sorted(by: { $0.key < $1.key }) where name.hasPrefix("files:") {
+                for (id, item) in list.sorted(by: { $0.key < $1.key }) {
+                    guard let meta = item.entry.value as? [String: Any], let sum = meta["sum"] as? String, let size = meta["size"] as? Int else { continue }
+                    let key = name + "\t" + id
+                    if fileURL(in: name, id: id) != nil { fileAsks[key] = nil; fileTries[key] = nil; continue }
+                    if let ask = fileAsks[key], sources.contains(ask.peer), now.timeIntervalSince(ask.at) < 60 { continue }
+                    guard here + size <= Self.sharedFilesLimit * 2 else { return }
+                    let tries = fileTries[key] ?? 0
+                    let order = sources.contains(item.entry.peer) ? [item.entry.peer] + sources.filter { $0 != item.entry.peer } : sources
+                    let source = order[tries % order.count]
+                    guard fileAsks.values.filter({ $0.peer == source && now.timeIntervalSince($0.at) < 60 }).count < 2 else { continue }
+                    fileTries[key] = tries + 1
+                    fileAsks[key] = (source, now)
+                    here += size
+                    storeMessage(["op": "file", "s": name, "id": id, "sum": sum], to: source)
+                }
+            }
+        }
+
+        /// The files another copy asked for, two at a time.
+        private func sendFiles(to peer: String) {
+            while (filesSending[peer] ?? 0) < 2, var queue = filesToSend[peer], !queue.isEmpty {
+                let (name, id) = queue.removeFirst()
+                filesToSend[peer] = queue.isEmpty ? nil : queue
+                guard let url = fileURL(in: name, id: id), let data = try? Data(contentsOf: url),
+                      let meta = item(in: name, id: id) as? [String: Any] else { continue }
+                let transfer = sendFile(data, name: id, type: meta["type"] as? String ?? "", to: peer, channel: "store:" + name)
+                guard transfer.state == .sending else { continue }
+                filesSending[peer, default: 0] += 1
+                Task { @MainActor [weak self] in
+                    try? await transfer.finished()
+                    self?.filesSending[peer, default: 1] -= 1
+                    self?.sendFiles(to: peer)
+                }
+            }
+        }
+
+        /// A shared file's bytes from another copy: kept when they're the file as it is now.
+        private func sharedFileArrived(_ name: String, id: String, data: Data, from peer: String) {
+            guard Self.app(of: peer) == me else { return }
+            let key = name + "\t" + id
+            fileAsks[key] = nil
+            guard name.hasPrefix("files:"), Self.isCollection(name), let meta = item(in: name, id: id) as? [String: Any],
+                  let sum = meta["sum"] as? String, Self.checksum(data) == sum else { return fetchFiles() }
+            let url = bytesURL(name, id: id, sum: sum)
+            guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+            fileTries[key] = nil
+            for listener in collectionListeners[name] ?? [] { listener([(id, meta)], Self.app(of: peer)) }
+            fetchFiles()
+        }
+
+        // MARK: Kept on the device
+
+        private func dropExpiredItems() {
+            let old = Int64(Date().timeIntervalSince1970 * 1000) - Self.removalsKept
+            for (name, list) in collections where list.values.contains(where: { $0.entry.value == nil && $0.entry.ms <= old }) {
+                collections[name] = list.filter { $0.value.entry.value != nil || $0.value.entry.ms > old }
+                collectionsUnsaved.insert(name)
+            }
+        }
+
+        /// Written a moment after a change, so a burst of them is written once.
+        private func saveCollectionsSoon() {
+            guard !collectionsSaving else { return }
+            collectionsSaving = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in MainActor.assumeIsolated { self?.saveCollections() } }
+        }
+
+        private func saveCollections() {
+            collectionsSaving = false
+            guard let keptKey = Self.keptKey else { return }
+            for name in collectionsUnsaved {
+                let list = collections[name] ?? [:]
+                UserDefaults.standard.set(list.isEmpty ? nil : Self.json(list.mapValues(\.entry.json)), forKey: keptKey + ".shared." + name)
+            }
+            collectionsUnsaved = []
+            UserDefaults.standard.set(collections.filter { !$0.value.isEmpty }.keys.sorted(), forKey: keptKey + ".shared")
+        }
+
+        private func restoreCollections() {
+            guard let keptKey = Self.keptKey else { return }
+            for name in UserDefaults.standard.stringArray(forKey: keptKey + ".shared") ?? [] where Self.isCollection(name) {
+                guard let data = UserDefaults.standard.data(forKey: keptKey + ".shared." + name),
+                      let kept = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
+                var list: [String: SharedItem] = [:]
+                for (id, json) in kept where Self.isItemID(id) {
+                    guard let entry = Entry(json) else { continue }
+                    list[id] = SharedItem(entry: entry, held: id.utf8.count + max(32, entry.value.map(Self.size(of:)) ?? 32))
+                }
+                collections[name] = list
+            }
+            dropExpiredItems()
+        }
+    }
+
+    /// A list the app keeps the same on every copy of it: the same app open on a Mac, an iPad, a TV and an Android photo
+    /// frame shows one shopping list, one set of chores, one calendar. Each copy keeps the items on its device, so it
+    /// works alone and with Lamp closed, and copies merge them item by item whenever they meet, through Lamp or straight
+    /// on the home network: two copies that changed different items while apart both keep both; where two changed the
+    /// same item, the later change wins in both.
+    ///
+    ///     @ObservedObject var groceries = LampStore.shared("groceries", of: Grocery.self)   // Grocery: Codable & Identifiable
+    ///     groceries.items                   // [Grocery], by id; the view follows changes made here or on another copy
+    ///     groceries.put(item)               // add, or replace the one with the same id: false (with why in the log) if not
+    ///     groceries.delete(item.id)
+    ///     groceries.get(id)
+    ///     groceries.publish(events)         // what this copy read (calendars, an album) for the copies that can't:
+    ///                                       // its items become exactly these
+    ///     groceries.onChange { id, item, from in … }   // item nil when deleted; from == wish.me for this app's own copies
+    ///
+    /// An item is at most `LampWish.itemLimit` (8 KB) as JSON, and everything the app shares at most
+    /// `LampWish.sharedLimit` (1 MB, thousands of small items); pictures and other big things go in `sharedFiles`.
+    extension LampStore {
+        @MainActor static func shared<T: Codable & Identifiable>(_ name: String, of type: T.Type) -> Shared<T> {
+            if let existing = sharedLists[name] as? Shared<T> { return existing }
+            let list = Shared<T>(name: name)
+            sharedLists[name] = list
+            return list
+        }
+
+        @MainActor private static var sharedLists: [String: AnyObject] = [:]
+        @MainActor private static var sharedFolders: [String: SharedFiles] = [:]
+
+        @MainActor final class Shared<T: Codable & Identifiable>: ObservableObject {
+            let name: String
+            @Published private(set) var items: [T] = []
+            private var byID: [String: T] = [:]
+            private var listeners: [(String, T?, String) -> Void] = []
+
+            fileprivate init(name: String) {
+                self.name = name
+                let wish = LampWish.shared
+                for (id, value) in wish.items(in: name) { if let item = Self.decode(value, id: id, in: name) { byID[id] = item } }
+                items = byID.keys.sorted().compactMap { byID[$0] }
+                wish.onItems(in: name) { [weak self] changed, from in self?.heard(changed, from: from) }
+            }
+
+            /// Adds the item, or replaces the one with the same id, here and on every copy.
+            @discardableResult func put(_ item: T) -> Bool { put([item]) }
+
+            @discardableResult func put(_ items: [T]) -> Bool {
+                LampWish.shared.putItems(in: name, items.compactMap { item in Self.encode(item).map { ("\(item.id)", $0) } })
+            }
+
+            /// Makes the items this copy put exactly these: each put, and each it put before that isn't among them deleted.
+            @discardableResult func publish(_ items: [T]) -> Bool {
+                LampWish.shared.publishItems(in: name, items.compactMap { item in Self.encode(item).map { ("\(item.id)", $0) } })
+            }
+
+            func delete(_ id: T.ID) { LampWish.shared.putItems(in: name, [("\(id)", nil)]) }
+            func get(_ id: T.ID) -> T? { byID["\(id)"] }
+            func all() -> [T] { items }
+            var count: Int { items.count }
+
+            /// Hears each change: the item's id, the item (nil when deleted), and which app made it (`LampWish.shared.me`
+            /// for this app's own copies, this one included).
+            func onChange(_ handler: @escaping (_ id: String, _ item: T?, _ from: String) -> Void) { listeners.append(handler) }
+
+            private func heard(_ changed: [(String, Any?)], from: String) {
+                var said: [(String, T?)] = []
+                for (id, value) in changed {
+                    let item = value.flatMap { Self.decode($0, id: id, in: name) }
+                    byID[id] = item
+                    said.append((id, item))
+                }
+                items = byID.keys.sorted().compactMap { byID[$0] }
+                for (id, item) in said { for listener in listeners { listener(id, item, from) } }
+            }
+
+            private static func encode(_ item: T) -> Any? {
+                LampStore.encode(item).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8), options: .fragmentsAllowed) }
+            }
+
+            private static func decode(_ value: Any, id: String, in name: String) -> T? {
+                guard let data = try? JSONSerialization.data(withJSONObject: [value]) else { return nil }
+                do { return try LampStore.decoder.decode([T].self, from: data).first } catch {
+                    fputs("LampStore.shared(\"\(name)\"): skipped the item \"\(id)\", which couldn't be read; it's kept as it is. Make the type decode it (add new properties as optionals). Error: \(error)\n", stderr)
+                    return nil
+                }
+            }
+        }
+
+        /// Files the app keeps the same on every copy of it: what a copy that can read them (a Mac's photo album) puts here
+        /// reaches every other copy, which keeps the bytes on its device, including copies that open later.
+        ///
+        ///     @ObservedObject var photos = LampStore.sharedFiles("photos")
+        ///     photos.put("IMG_0042.jpg", data, type: "image/jpeg")   // the same bytes again change nothing
+        ///     photos.files                     // [SharedFile]: .name, .size, .type, .isHere (its bytes are on this device)
+        ///     photos.get("IMG_0042.jpg")       // Data, once it's here
+        ///     photos.url("IMG_0042.jpg")       // its file on this device, once it's here
+        ///     photos.delete("IMG_0042.jpg")
+        ///     photos.onChange { name, from in … }
+        ///
+        /// A file is at most 64 MB, all of them `LampWish.sharedFilesLimit` (256 MB).
+        @MainActor static func sharedFiles(_ name: String) -> SharedFiles {
+            if let existing = sharedFolders[name] { return existing }
+            let folder = SharedFiles(name: name)
+            sharedFolders[name] = folder
+            return folder
+        }
+
+        struct SharedFile: Identifiable, Equatable {
+            let name: String
+            let size: Int
+            let type: String
+            /// Its bytes are on this device.
+            let isHere: Bool
+            var id: String { name }
+        }
+
+        @MainActor final class SharedFiles: ObservableObject {
+            let name: String
+            @Published private(set) var files: [SharedFile] = []
+            private var listeners: [(String, String) -> Void] = []
+            private var key: String { "files:" + name }
+
+            fileprivate init(name: String) {
+                self.name = name
+                LampWish.shared.onItems(in: "files:" + name) { [weak self] changed, from in
+                    guard let self else { return }
+                    self.reload()
+                    for (id, _) in changed { for listener in self.listeners { listener(id, from) } }
+                }
+                reload()
+            }
+
+            @discardableResult func put(_ name: String, _ data: Data, type: String) -> Bool {
+                LampWish.shared.putFile(in: key, id: name, data: data, type: type)
+            }
+            func get(_ name: String) -> Data? { url(name).flatMap { try? Data(contentsOf: $0) } }
+            func url(_ name: String) -> URL? { LampWish.shared.fileURL(in: key, id: name) }
+            func delete(_ name: String) { LampWish.shared.putItems(in: key, [(name, nil)]) }
+
+            /// Hears each change: the file's name, and which app made it. Heard again when its bytes arrive here.
+            func onChange(_ handler: @escaping (_ name: String, _ from: String) -> Void) { listeners.append(handler) }
+
+            private func reload() {
+                let wish = LampWish.shared
+                files = wish.items(in: key).map { id, value in
+                    let meta = value as? [String: Any] ?? [:]
+                    return SharedFile(name: id, size: meta["size"] as? Int ?? 0, type: meta["type"] as? String ?? "", isHere: wish.fileURL(in: key, id: id) != nil)
+                }
+            }
+        }
     }
 
     // MARK: - Mac building blocks
