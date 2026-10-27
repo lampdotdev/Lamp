@@ -161,6 +161,16 @@ struct Target {
         var refines: Platform? = nil
         /// Why it can't be shared as a file yet, or nil.
         let shareRefusal: String?
+        /// Its build script makes the app on a Mac with Apple's Command Line Tools and nothing of Lamp's, so a repository
+        /// of it builds with `./build.sh`. False where the build is Xcode's from a project Lamp keeps, signed for the
+        /// person's team, or Lamp's own.
+        var buildsAlone = false
+
+        func buildingAlone() -> Recipe {
+            var copy = self
+            copy.buildsAlone = true
+            return copy
+        }
     }
 
     /// What a kind is as one of a wish's other apps, in a folder of the wish's (`Parts`).

@@ -168,12 +168,19 @@ enum Sharing {
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
     /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in. A wish of several apps travels whole:
     /// the app at its root as any app does, and each other app in its folder (`Parts`), as an app of its kind.
-    static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
-        // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
-        // other apps are read off its folder, as Lamp lists them.
+    /// How a wish's apps go in a shared file: one at the root and the others in their folders (see `export`, which
+    /// says why it's the one it is). What Put on GitHub lays its repository out by too, so the two never differ.
+    static func layout(of project: LampProject) -> (root: LampProject, parts: [LampProject]) {
         var wish = project
         wish.partFolders = Parts.folders(in: project.dir)
         let found = Parts.load(wish)
+        let root = wish.holdsApp ? project : (found.first { $0.dir.lastPathComponent == Parts.folder(for: $0.platform) } ?? found.first ?? project)
+        return (root, found.filter { $0.id != root.id })
+    }
+
+    static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
+        // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
+        // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
         // be taken away: a wish whose apps are all in folders of their own travels with one of them at the root, so any
         // Lamp that opens format 10 opens it whole. The wish's apps know each other by their folders, and the app at a
@@ -181,8 +188,7 @@ enum Sharing {
         // kind's: an iPhone app made for the Mac too, still in iPhone/, would come out as another app than the one the
         // others talk to. Every app of a wish is of its own family, so only a wish's one app can lack such a folder, and
         // no other app talks to it.
-        let root = wish.holdsApp ? project : (found.first { $0.dir.lastPathComponent == Parts.folder(for: $0.platform) } ?? found.first ?? project)
-        let parts = found.filter { $0.id != root.id }
+        let (root, parts) = layout(of: project)
         for app in [root] + parts {
             if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
             if app.platform == .game, GameKit.engine(app) != .web {

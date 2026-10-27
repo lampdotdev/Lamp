@@ -18,10 +18,12 @@ enum GitHubRepo {
         var errorDescription: String? { message }
     }
 
-    /// A repository that's up.
+    /// A repository that's up, and whether it carries the MIT license the person chose: an update keeps to that choice.
+    /// Nil from a Lamp before the choice was kept, read as no license.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
         var url: String
+        var license: Bool? = nil
     }
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
@@ -76,20 +78,25 @@ enum GitHubRepo {
             throw Failure(message: "Couldn't unpack \(project.name)'s files.")
         }
         try fm.copyItem(at: shared, to: tree.appendingPathComponent(fileName))
-        // Lamp's own files, so the code builds as it is: the shared file leaves them out because the Lamp that opens
-        // it writes its own.
-        for path in ownedPaths(in: project) {
-            let to = tree.appendingPathComponent(path)
-            guard !fm.fileExists(atPath: to.path) else { continue }
-            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: project.dir.appendingPathComponent(path), to: to)
+        // Lamp's own files for each of the wish's apps, where the shared file put that app (`Sharing.layout`: one at the
+        // root, the others in their folders), so the code builds as it is: the shared file leaves them out because
+        // the Lamp that opens it writes its own.
+        let (root, parts) = Sharing.layout(of: project)
+        for (app, folder) in [(root, "")] + parts.map { ($0, $0.dir.lastPathComponent + "/") } {
+            for path in ownedPaths(in: app) {
+                let to = tree.appendingPathComponent(folder + path)
+                guard !fm.fileExists(atPath: to.path) else { continue }
+                try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: app.dir.appendingPathComponent(path), to: to)
+            }
         }
         try Data(".build/\nbuild/\n.lamp/\n".utf8).write(to: tree.appendingPathComponent(".gitignore"))
         // The file's credits.json ends the chain with this wish, for whoever opens it; the README is this wish's own, so it
         // names what the wish was remixed from, not itself.
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
-        try Data(readme(for: project, credits: credits, open: open).utf8).write(to: tree.appendingPathComponent("README.md"))
+        let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty)
+        try Data(readme(for: project, credits: credits, open: open, build: build).utf8).write(to: tree.appendingPathComponent("README.md"))
 
         let leaks = ShareCheck.secrets(in: tree, known: Sharing.knownSecrets(project))
         if let first = leaks.first {
@@ -135,8 +142,16 @@ enum GitHubRepo {
         return DeviceSupport.isSupport(relative, in: project)
     }
 
+    /// What the README can say about building the repository: whether the app at its root builds with its own script
+    /// and Apple's tools alone (`Recipe.buildsAlone`), what that app is, and whether the wish has other apps, which Lamp builds.
+    struct Build {
+        var alone: Bool
+        var app: String
+        var others: Bool
+    }
+
     /// The repository's README: what the wish is, how to remix it with Lamp, how to build it, and what it's based on.
-    static func readme(for project: LampProject, credits: Credits, open: Publish.OpenInLamp) -> String {
+    static func readme(for project: LampProject, credits: Credits, open: Publish.OpenInLamp, build: Build) -> String {
         var text = "# \(project.name)\n\n"
         if let line = AppDescription.description(of: project) { text += line + "\n\n" }
         text += "Made with [Lamp](https://lamp.dev), a Mac app that builds apps from a description and changes them as you ask.\n\n"
@@ -149,9 +164,14 @@ enum GitHubRepo {
                 + "you get this exact wish, yours to change by asking, with the credits below kept. The code here is what that file holds."
             if open.link == nil { text += " Don't have Lamp? [Get it](https://lamp.dev)." }
         }
-        text += "\n\n## Build it yourself\n\n"
-        text += "With Apple's Command Line Tools installed (`xcode-select --install`):\n\n```bash\n./build.sh\n```\n\n"
-        text += "The AI inside the app, and anything it does with other apps or devices, goes through Lamp, so those need Lamp open on the same Mac.\n\n"
+        if build.alone {
+            text += "\n\n## Build it yourself\n\n"
+            text += "With Apple's Command Line Tools installed (`xcode-select --install`):\n\n```bash\n./build.sh\n```\n\n"
+            if build.others { text += "That builds \(build.app); the wish's other apps, in their folders, are built by Lamp.\n\n" }
+            text += "The AI inside the app, and anything it does with other apps or devices, goes through Lamp, so those need Lamp open on the same Mac.\n\n"
+        } else {
+            text += "\n\n## Building it\n\nLamp builds this kind of app: it needs Xcode and signing on your Mac, which Lamp sets up. Open it in Lamp, above.\n\n"
+        }
         text += Publish.creditsSection(credits)
         return text
     }
@@ -211,7 +231,7 @@ enum GitHubRepo {
             guard made.ok else { throw Failure(message: "GitHub didn't make \(repo): \(made.output.trimmed.suffix(200))") }
             // Kept as soon as it's made, so a try that fails after this goes on with the same repository rather than
             // leaving this one behind and making another.
-            keep(Repo(repo: repo, url: url), for: project)
+            keep(Repo(repo: repo, url: url, license: license), for: project)
         }
         let git = fm.isExecutableFile(atPath: "/opt/homebrew/bin/git") ? "/opt/homebrew/bin/git" : "/usr/bin/git"
         let identity = ["-c", "user.name=\(login)", "-c", "user.email=\(login)@users.noreply.github.com"]
@@ -247,8 +267,10 @@ enum GitHubRepo {
             }
             let added = await Subprocess.run(git, ["add", "-A"], cwd: clone, timeout: 120)
             guard added.ok else { throw Failure(message: "Couldn't prepare the repository: \(added.output.trimmed.suffix(200))") }
-            if await Subprocess.run(git, ["diff", "--cached", "--quiet"], cwd: clone, timeout: 60).ok {
-                return (Repo(repo: repo, url: url), false)
+            // Unchanged when nothing but the export's own marks differ: the shared file's manifest says when it was made,
+            // and the file is zipped afresh each time. Those go up only with a real change.
+            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp"], cwd: clone, timeout: 60).ok {
+                return (Repo(repo: repo, url: url, license: license), false)
             }
             let committed = await Subprocess.run(git, identity + ["commit", "-q", "-m", "Update \(project.name) from Lamp"], cwd: clone, timeout: 120)
             guard committed.ok else { throw Failure(message: "Couldn't prepare the repository: \(committed.output.trimmed.suffix(200))") }
@@ -257,7 +279,7 @@ enum GitHubRepo {
         step("Uploading…")
         let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:main"], cwd: work, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
-        return (Repo(repo: repo, url: url), true)
+        return (Repo(repo: repo, url: url, license: license), true)
     }
 }
 
@@ -276,7 +298,8 @@ enum GitHubRepo {
         var kept: GitHubRepo.Repo?
         var copied = false
         var icon: Data?
-        /// The choices made before it goes up the first time.
+        /// The choices made before it goes up the first time. Once it's up, `license` is the repository's (`Repo.license`):
+        /// an update never adds a license the person left out, nor takes away one they chose.
         var isPrivate = false
         var license = true
 
@@ -296,7 +319,8 @@ enum GitHubRepo {
 
     func open(_ project: LampProject) {
         guard cards[project.id] == nil else { return }
-        cards[project.id] = Card(kept: GitHubRepo.kept(for: project))
+        let kept = GitHubRepo.kept(for: project)
+        cards[project.id] = Card(kept: kept, license: kept.map { $0.license ?? false } ?? true)
         Task { cards[project.id]?.icon = await Sharing.sharedIcon(of: project) }
         prepare(project)
     }
@@ -322,7 +346,7 @@ enum GitHubRepo {
                 cards[project.id]?.login = login
                 cards[project.id]?.repo = repo
                 cards[project.id]?.staged = staged
-                if !GitHubRepo.canOfferLicense(staged.credits) { cards[project.id]?.license = false }
+                if cards[project.id]?.kept == nil, !GitHubRepo.canOfferLicense(staged.credits) { cards[project.id]?.license = false }
                 cards[project.id]?.stage = .ready
             } catch {
                 set(project, .refused(((error as? LocalizedError)?.recoverySuggestion).map { "\(error.localizedDescription) \($0)" } ?? error.localizedDescription))
