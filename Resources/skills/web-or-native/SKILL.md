@@ -20,8 +20,8 @@ person's own devices. Those are the facts, and the only place they're kept; this
 Make an app native wherever the table gives the device a native app: it has the device's own look, feel and
 controls. Choose web only when:
 
-- **one app is meant to be shared across several devices or brands**: several people's phones as controllers for a
-  TV app, one app on TVs of different makers; or
+- **the person wants one app shared across several devices or brands**, because they said so or answered so when
+  you asked: several people's phones as controllers for a TV app, one app on TVs of different makers; or
 - **native is out of reach there**: the table has no native app for the device, or what the person wants can't be
   built that way.
 
@@ -31,8 +31,9 @@ the wish has unasked.
 - **A make the person names is theirs.** When they ask for a web app, or a native one, make it that way wherever Lamp
   can build it, even where you'd have chosen the other; say in a sentence what that costs only when it matters.
 - **Devices found on the network can suggest web, never choose it.** A Samsung TV and an iPhone in the house aren't a
-  request for one app shared between them: when sharing one app across them seems to be what the person wants, say
-  so or ask, and never switch to web silently.
+  request for one app shared between them. Choose web on that ground only once the person has made clear they want
+  one app shared across them; when you can't tell, ask them (one line, about people and devices) before choosing,
+  and never switch to web silently.
 - **Separate apps that talk don't need web.** The wish's apps reach each other through `LampWish` on whichever
   devices they're on, however each is made (the wish-links skill): an iPhone app and its Android TV app can both be
   native.

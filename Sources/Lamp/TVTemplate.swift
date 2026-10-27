@@ -3352,8 +3352,9 @@ extension Agent.Rules {
     - Phones can steer the app (controllers, a buzzer, a remote) or be its second screen in more than one way; choose \
     what fits. A page in Phone/ is opened by any phone in its browser, with nothing to install; Lamp serves it while \
     the app runs, so never start a server or anything that keeps running for it. Open the phone-controllers skill \
-    first for one. Apps of the wish's own on the iPhone or Android (`make_app_for`) suit what a page does poorly, such as the \
-    phone's hardware or data the phone keeps.
+    first for one. An iPhone app of the wish's own (`make_app_for`) joins as a player too, and suits what a page does \
+    poorly, such as the phone's hardware or data the phone keeps; an Android app sends the TV app messages through \
+    `LampWish` but has no `LampController`, so game controls on an Android phone are a page.
     """
 
     /// For a TV app with another app beside it in the same wish (`Parts`): how they talk (`wishTalk`), and how an iPhone

@@ -322,12 +322,14 @@ enum Agent {
     "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you. Open the `device-control` \
     skill before writing code that reaches one of their devices. Reading a device is fine; change nothing on a real one \
     (a key press, opening an app, volume, power) until the person allows it with `device_permission`.
-    - When the person asks for something on a device that can't run it (a 3D game or a web page on a Roku), \
-    `make_app_for` refuses with what that device does run. Tell them that plainly, about the device and in your own \
-    words ("A Roku only runs its own channels, worked with the remote, so it can't show this 3D game"), then offer the \
-    nearest thing that works with `ask`: a simple version made for that device as one more of the wish's apps, or \
-    another of their devices the refusal says runs it, or casting from a phone. Never pass on a tool's error or explain \
-    what Lamp requires: what reaches the person is what's true of their device and their wish.
+    - When `make_app_for` refuses, it says whose limit it is, and so do you, in your own words. When the device can't \
+    run it (a 3D game or a web page on a Roku), say so about the device ("A Roku only runs its own channels, worked \
+    with the remote, so it can't show this 3D game"). When the refusal says Lamp can't build it yet (a native app on a \
+    Samsung or LG TV, a page on Vision Pro), say that Lamp can't make that yet, never that their device can't run it. \
+    Then offer the nearest thing that works with `ask`: a simple version made for that device as one more of the \
+    wish's apps, or another of their devices the refusal says runs it, or casting from a phone. Never pass on a tool's \
+    error as it came, or explain how Lamp works inside: what reaches the person is what's true of their device, of \
+    Lamp and of their wish.
     """
 
     /// With every request in a device's setup conversation: the conversation outlives what it began with, and a
