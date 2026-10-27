@@ -63,7 +63,7 @@
 
   function share(dry) {
     if (taking) return;
-    if (D.edited.people) sync('people', D.people.map(function (p, i) { return Object.assign(plain(p, ['id', 'name', 'color', 'rgb', 'ink', 'age']), { order: i }); }), null, dry);
+    if (D.edited.people) sync('people', D.people.map(function (p, i) { return Object.assign(plain(p, ['id', 'name', 'color', 'rgb', 'ink', 'age', 'pet', 'emoji']), { order: i }); }), null, dry);
     if (D.edited.chores || D.cleared) sync('chores', D.chores.map(function (c) { return plain(c, ['id', 'r', 'who', 'title', 'emoji', 'stars']); }), null, dry);
     sync('groceries', D.groceries.map(function (g) { return plain(g, GROCERY); }).filter(function (g) { return !g.ex || original[g.id] !== json(g); }),
          exampleIds(D.examples.groceries), dry);
@@ -76,7 +76,8 @@
     sync('stars', Object.keys(D.stars).map(function (k) { return { id: k, stars: D.stars[k], week: D.week[k] || [0, 0, 0, 0, 0, 0, 0] }; }), null, dry);
     sync('settings', [{ id: 'place', value: D.settings.place }, { id: 'calendars', value: D.settings.calendars },
                       { id: 'calendarsBy', value: D.settings.calendarsBy || null }, { id: 'album', value: D.settings.album },
-                      { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'cleared', value: D.cleared }], null, dry);
+                      { id: 'albumBy', value: D.settings.albumBy || null }, { id: 'calendarPeople', value: D.settings.calendarPeople || {} },
+                      { id: 'cleared', value: D.cleared }], null, dry);
     sync('favs', D.photos.filter(function (p) { return p.fav; }).map(function (p) { return { id: p.id || p.seed }; }), null, dry);
     if (!dry) publishCalendar();
   }
@@ -120,16 +121,21 @@
 
   // ------------------------------------------------------------ what the copies have, into DATA
   function take() {
-    var examplesBack = false;
+    var examplesBack = false, reread = false, newPlace = false;
     taking = true;
     try {
       var settings = {};
       S.settings.all().forEach(function (s) { settings[s.id] = s.value; });
-      ['place', 'calendars', 'calendarsBy', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
+      var whose = JSON.stringify(D.settings.calendarPeople || {}), where = JSON.stringify(D.settings.place || null);
+      ['place', 'calendars', 'calendarsBy', 'calendarPeople', 'album', 'albumBy'].forEach(function (k) { if (k in settings) D.settings[k] = settings[k]; });
+      // Whose each calendar is, changed on another screen: the copy that reads them reads them again with it.
+      // A place chosen on another screen: its weather here too.
+      newPlace = where !== JSON.stringify(D.settings.place || null);
+      reread = App.readsCalendars() && whose !== JSON.stringify(D.settings.calendarPeople || {});
       if (settings.cleared && !D.cleared) D.clearExamples();
 
       var people = S.people.all().sort(function (a, b) { return a.order - b.order; });
-      if (people.length) { D.people = people; D.edited.people = true; D.ALL = people.map(function (p) { return p.id; }); }
+      if (people.length) { D.people = people; D.edited.people = true; D.ALL = D.humanIds(); }
 
       var chores = S.chores.all();
       if (chores.length || D.cleared) { D.chores = chores; D.edited.chores = true; }
@@ -170,6 +176,8 @@
     share(true);
     // The album turned off on another copy: back to the examples, as on the copy where it was turned off.
     if (examplesBack) App.loadPhotos();
+    if (reread) App.loadCalendars();
+    if (newPlace) App.loadWeather();
     App.emit('data');
     App.rerender();
   }

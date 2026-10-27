@@ -12,11 +12,13 @@
 
   function changed(what) {
     D.edited[what] = true;
-    D.ALL = D.people.map(function (p) { return p.id; });
+    D.ALL = D.humanIds();
     App.emit('data');
     App.rerender();
   }
   function paint(p, c) { p.color = c[0]; p.rgb = c[1]; p.ink = c[2]; }
+  App.colors = COLORS; App.paint = paint;   // for the first-run setup (js/views/setup.js)
+  var PETS = ['🐶', '🐱', '🐰', '🐹', '🐦', '🐟'];
   function colorOf(p) { for (var i = 0; i < COLORS.length; i++) if (COLORS[i][0] === p.color) return i; return 0; }
 
   // ------------------------------------------------------------ family
@@ -29,11 +31,12 @@
           '<button class="ed-swatch" data-color aria-label="Colour" style="' + App.pstyle(p) + '">' + App.avatar(p, 44) + '</button>' +
           '<input class="ed-name" data-name value="' + App.esc(p.name) + '" placeholder="Name" maxlength="24">' +
           '<button class="chip' + (kid ? ' is-on' : '') + '" data-kid>' + App.icon('star', 18, kid ? 'i--fill' : '') + 'Stars</button>' +
+          '<button class="chip' + (p.pet ? ' is-on' : '') + '" data-pet>' + (p.pet ? p.emoji || '🐾' : '🐾') + 'Pet</button>' +
           (D.people.length > 1 ? '<button class="icon-btn" data-remove aria-label="Remove">' + App.icon('x', 22) + '</button>' : '') +
           '</div>';
       }).join('') + '</div>' +
       (D.people.length < 8 ? '<button class="btn btn--ghost ed-add" data-add>' + App.icon('plus', 22) + 'Add someone</button>' : '') +
-      '<p class="ed-note">A colour each; Stars for someone who earns them for chores.</p>' +
+      '<p class="ed-note">A colour each; Stars for someone who earns them for chores. A pet has no day of its own in the calendar; tap its picture for another.</p>' +
       '</div>';
   }
 
@@ -53,7 +56,15 @@
           if (!b) return;
           if (b.hasAttribute('data-close')) return;
           var p = person(b);
-          if (b.hasAttribute('data-color') && p) { paint(p, COLORS[(colorOf(p) + 1) % COLORS.length]); changed('people'); again(); }
+          if (b.hasAttribute('data-color') && p) {
+            if (p.pet) p.emoji = PETS[(PETS.indexOf(p.emoji) + 1) % PETS.length];
+            else paint(p, COLORS[(colorOf(p) + 1) % COLORS.length]);
+            changed('people'); again();
+          }
+          if (b.hasAttribute('data-pet') && p) {
+            if (p.pet) { delete p.pet; delete p.emoji; } else { p.pet = true; p.emoji = PETS[0]; }
+            changed('people'); again();
+          }
           if (b.hasAttribute('data-kid') && p) {
             if (D.stars[p.id] != null) { delete D.stars[p.id]; delete D.week[p.id]; delete p.age; }
             else { D.stars[p.id] = 0; D.week[p.id] = [0, 0, 0, 0, 0, 0, 0]; p.age = 8; }

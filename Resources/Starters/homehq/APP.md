@@ -23,11 +23,17 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   which come round more often.
 - **Photo frame and night clock** (`views/ambient.js`): after two minutes untouched it goes back to Today and then to a
   slideshow with the time and the next event, or at night (10 PM to 6 AM) a dim clock; a touch wakes it.
-- **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a colour each, and Stars for those who
-  earn them) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
+- **First run** (`views/setup.js`): a screen that isn't set up opens on a welcome: Set up my family, or Show me an
+  example. The setup asks who's at home (people and pets, who earns stars), where they live, which calendars to show
+  and whose each is, an album, and a few chores to start; finishing takes the examples away for good, and every other
+  copy of the screen follows. A look at a fresh copy shows the welcome over the example family (`App.setup`,
+  `DATA.isSetUp`, `settings.example`).
+- **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a colour each, Stars for those who
+  earn them, and pets, with a picture instead of a colour) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
   they're changed. The editor's own picture and colour lists are at its top.
 - **Settings** (the clock at the foot of the rail, or D): the weather's place, the family's own calendars and photos
-  (only where the app around the page can read them: the Mac, iPhone and iPad), Clear Examples, the photo frame and
+  (only where the app around the page can read them: the Mac, iPhone and iPad; each calendar on or off and whose it
+  is), Set up my family while the example shows, the photo frame and
   night clock, and the credit. Keys: 1–5 the sections, A the photo frame, N the night clock, Escape or Back closes.
   A remote's arrows move between the buttons and OK presses one (`Web/lamp.js`).
 
@@ -46,6 +52,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   and the settings drawer.
 - `Web/js/sync.js`: the family's data the same on every copy of the screen (below).
 - `Web/js/views/editor.js`: the Family and Chores sheets.
+- `Web/js/views/setup.js`: the welcome and the first-run setup.
 - `Web/js/live.js`: the real weather (Open-Meteo, open data with no key: `App.findPlaces`, `App.loadWeather`), and the
   family's calendars and photos through `LampNative` (`App.loadCalendars`, `App.loadPhotos`).
 - `Web/js/slideshow.js`: `App.Slideshow`, used by Photos, the Today tile and the photo frame.
@@ -80,8 +87,9 @@ either way up and a phone, and reflows for each.
 
 `DATA` in `Web/js/data.js`:
 
-- `people`: `{ id, name, color, rgb, ink, age? }` (an `age` makes a kid, who earns stars). `ALL` is their ids;
-  `family` is everyone's colour.
+- `people`: `{ id, name, color, rgb, ink, age?, pet?, emoji? }` (an `age` makes someone who earns stars; `pet` one
+  with no day in the calendar, drawn with its `emoji`). `ALL` is the ids of everyone but the pets (`DATA.humanIds`,
+  `App.humans`), as an event for the whole family has them; `family` is everyone's colour.
 - `events`: `{ id, title, start, end (Dates), people: [ids], allDay?, loc?, notes?, travel? (minutes to get there) }`;
   `ex` marks an example, `cal` one from the family's calendars.
 - `routines` (morning, after school, evening by hour), `chores`: `{ id, r, who (a person or 'any'), title, emoji,
@@ -92,9 +100,11 @@ either way up and a phone, and reflows for each.
   with `hi` and `lo`; `example` until a place is chosen.
 - `photos`: `{ seed or src, o ('l' or 'p'), date 'YYYY-MM-DD', place, from (a person), tag (photos taken together),
   fav }`.
-- `settings`: `place` ({ name, lat, lon }), `calendars` (null off, [] all, or names), `album` (null off, or its id).
+- `settings`: `place` ({ name, lat, lon }), `calendars` (null off, [] all, or names), `calendarPeople` (whose each
+  calendar is, by name: a person's id or 'all'; one not given goes to whoever it's named after, else everyone),
+  `album` (null off, or its id), `example` (this screen chose the example family over the welcome; not shared).
 
-Examples are made afresh on each device at each launch, relative to today, until Clear Examples; they're never
+Examples are made afresh on each device at each launch, relative to today, until the family is set up; they're never
 shared. What the family changes is the same on every copy of the screen (the Mac, the kitchen iPad, the TV, the
 frame) through Lamp's shared collections, merged item by item (`Web/js/sync.js`, `LampStore.shared` in lamp.js):
 `people`, `chores`, `groceries`, `events`, `ticks` (one per chore per day), `stars`, `settings` (one item per

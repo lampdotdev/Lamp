@@ -55,8 +55,12 @@
   };
 
   // ------------------------------------------------------------ calendars
-  // Each calendar's events go to the person it's named after ("Maya's soccer" → Maya), else to everyone.
+  // Each calendar's events go to whoever it was given to (Settings, or the setup), else to the person it's named after
+  // ("Maya's soccer" → Maya), else to everyone.
   function personFor(calendar) {
+    var given = (D.settings.calendarPeople || {})[calendar];
+    if (given === 'all') return D.ALL.slice();
+    if (given && App.person(given) !== D.family) return [given];
     var name = (calendar || '').toLowerCase();
     var p = D.people.filter(function (x) { return name.indexOf(x.name.toLowerCase()) > -1; })[0];
     return p ? [p.id] : D.ALL.slice();

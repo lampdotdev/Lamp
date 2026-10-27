@@ -91,7 +91,15 @@
     if (chosen && !App.readsCalendars()) return sec('Calendars', '<p class="demo-line">From another screen</p>' + grid([btn('data-cal-on', 'Read them here'), btn('data-cal-off', 'Stop showing them')]));
     var body = chosen ? '' : grid([btn('data-cal-on', 'Show my calendars')]);
     if (chosen && S.calendars) {
-      body += grid(S.calendars.map(function (c) { return btn('data-cal="' + App.esc(c) + '"', c, !chosen.length || chosen.indexOf(c) > -1); }));
+      // Each calendar on or off, and whose it is.
+      var given = D.settings.calendarPeople || {};
+      body += '<div class="demo-cals">' + S.calendars.map(function (c) {
+        var on = !chosen.length || chosen.indexOf(c) > -1;
+        return '<div class="demo-cal">' + btn('data-cal="' + App.esc(c) + '"', c, on) +
+          (on ? '<select class="demo-who" data-cal-who="' + App.esc(c) + '" aria-label="Whose">' + [['all', 'Everyone']].concat(App.humans().map(function (p) { return [p.id, p.name]; })).map(function (w) {
+            return '<option value="' + w[0] + '"' + (w[0] === (given[c] || 'all') ? ' selected' : '') + '>' + App.esc(w[1]) + '</option>';
+          }).join('') + '</select>' : '') + '</div>';
+      }).join('') + '</div>';
       body += grid([btn('data-cal-off', 'Stop showing them')]);
     } else if (chosen) {
       body += grid([btn('data-cal-off', 'Stop showing them')]);
@@ -114,7 +122,7 @@
       '<div class="demo-head"><div><div class="label label--light">Home HQ</div><h2 class="serif">Settings</h2></div><button class="demo-x" data-demo-close>' + App.icon('x', 28) + '</button></div>' +
       weatherSec() + calendarsSec() + photosSec() +
       sec('Your family', grid([btn('data-family', 'Family'), btn('data-chores', 'Chores')])) +
-      (D.hasExamples() ? sec('Examples', grid([btn('data-clear', 'Clear examples')])) : '') +
+      (D.isSetUp() ? '' : sec('Example family', grid([btn('data-setup', 'Set up my family')]))) +
       sec('Screen', grid([btn('data-mode="ambient"', 'Photo frame'), btn('data-mode="night"', 'Night clock')])) +
       '<p class="demo-note">Based on <a href="' + UPSTREAM + '" target="_blank" rel="noopener">photo-frame-dashboard</a> by <a href="https://wesbos.com" target="_blank" rel="noopener">Wes Bos</a> (MIT)</p>' +
       '</div>';
@@ -181,17 +189,18 @@
     if (b.hasAttribute('data-album-off')) { D.settings.album = null; App.loadPhotos(); App.emit('data'); return App.openSettings(); }
     if (b.hasAttribute('data-family')) { closeSettings(); return App.editFamily(); }
     if (b.hasAttribute('data-chores')) { closeSettings(); return App.editChores(); }
-    if (b.hasAttribute('data-clear')) {
-      D.clearExamples();
-      App.loadCalendars(); App.loadPhotos();
-      App.emit('data'); App.rerender();
-      return App.openSettings();
-    }
+    if (b.hasAttribute('data-setup')) { closeSettings(); return App.setup('family'); }
     if (d.mode) { closeSettings(); App.setMode(d.mode); }
   }
 
   App.on('ready', function () {
     $('#demo').addEventListener('click', settingsClick);
+    $('#demo').addEventListener('change', function (e) {
+      var c = e.target.getAttribute('data-cal-who');
+      if (c == null) return;
+      D.settings.calendarPeople = Object.assign({}, D.settings.calendarPeople, (function (o) { o[c] = e.target.value; return o; })({}));
+      App.emit('data'); App.loadCalendars();
+    });
     $('#demo').addEventListener('keydown', function (e) { if (e.target.hasAttribute('data-place-q') && e.keyCode === 13) { e.preventDefault(); findPlace(); } });
     $('#railClock').addEventListener('click', App.openSettings);
     if (window.Lamp && Lamp.onBack) Lamp.onBack(function () {
