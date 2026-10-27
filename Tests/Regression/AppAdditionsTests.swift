@@ -165,6 +165,52 @@ final class AppAdditionsTests: XCTestCase {
         _ = store
     }
 
+    /// An older waiting app changed into another kind is that app changed: its entry takes the new kind, and no app of
+    /// the old one stays to be made.
+    func testAnOlderWaitingAppChangedIntoAnotherKindReplacesIt() async throws {
+        let (_, made) = try macWish()
+        var wish = made
+        wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .android, needs: "Android Studio")]
+        try Template.saveMeta(wish)
+        let store = Store(testingAt: root)
+        let (status, answer) = await store.agentKind(["made": "web", "devices": ["mac", "ipad"], "app": "Android"], for: try XCTUnwrap(store.current(wish)))
+        XCTAssertEqual(status, 200, "\(answer)")
+        let apps = try XCTUnwrap(store.current(wish)).apps
+        XCTAssertEqual(apps.map(\.folder), [".", "Android"])
+        XCTAssertFalse(apps.contains { $0.kind == .android }, "\(apps)")
+    }
+
+    /// Cancelling one of two waiting apps of a family, one from an earlier Lamp's list, takes away that one alone.
+    func testCancellingOneWaitingAppLeavesTheOther() async throws {
+        let (_, made) = try macWish()
+        var wish = made
+        wish.apps = [WishApp(kind: .mac, folder: "."), WishApp(kind: .android, needs: "Android Studio"),
+                     WishApp(kind: .android, needs: "Android Studio", folder: "Android2")]
+        try Template.saveMeta(wish)
+        let store = Store(testingAt: root)
+        let (status, answer) = await store.agentRemove(["app": "Android2"], for: try XCTUnwrap(store.current(wish)))
+        XCTAssertEqual(status, 200, "\(answer)")
+        XCTAssertEqual(try XCTUnwrap(store.current(wish)).apps.map(\.folder), [".", "Android"])
+    }
+
+    /// Shared files an earlier Lamp kept for an older waiting app's family go with it when it's given its folder, even
+    /// when the folder they had is taken now (iPhone/ there, so iPhone2/).
+    func testAnOlderWaitingAppsKeptFilesFollowItsNewFolder() async throws {
+        var wish = try Template.scaffold(name: "Remote", platform: .tv, in: root)
+        wishes.append(wish)
+        wish.apps = [WishApp(kind: .tv, folder: "."), WishApp(kind: .iphone, needs: "Xcode")]
+        try Template.saveMeta(wish)
+        try FileManager.default.createDirectory(at: wish.dir.appendingPathComponent("iPhone"), withIntermediateDirectories: true)
+        let family = Sharing.waitingFolder(in: wish.dir, for: .iphone)
+        try FileManager.default.createDirectory(at: family, withIntermediateDirectories: true)
+        try #"{"platform":"iphone","folder":"iPhone"}"#.write(to: family.appendingPathComponent("lamp-part.json"), atomically: true, encoding: .utf8)
+        let store = Store(testingAt: root)
+        let given = try XCTUnwrap(store.givingWaitingAppsFolders(try XCTUnwrap(store.current(wish))))
+        XCTAssertEqual(given.apps.map(\.folder), [".", "iPhone2"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: family.path))
+        XCTAssertEqual(Sharing.keptFolder(in: wish.dir, for: .iphone, slot: "iPhone2"), "iPhone")
+    }
+
     /// The planner alone: a wish with no app gets its first, and an app still to be made counts as one the wish has.
     func testAWaitingAppCountsAsAnApp() throws {
         let waiting = AppKinds.member(waiting: WishApp(kind: .mac, needs: "Xcode", folder: "Mac"))
