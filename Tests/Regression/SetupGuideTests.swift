@@ -49,6 +49,29 @@ final class SetupGuideTests: XCTestCase {
         }
     }
 
+    /// Roku's guide does the Roku integration's developer-mode step with the same keys, in the same order, that the
+    /// step's own button presses (which people have done on a Roku), and waits for exactly what the step checks, so it
+    /// never hands back before the step itself would pass.
+    func testRokusGuideMatchesItsIntegrationsStep() throws {
+        let data = try Data(contentsOf: Self.repository.appendingPathComponent("Resources/Devices/roku.json"))
+        let roku = try JSONDecoder().decode(Integration.self, from: data)
+        let step = try XCTUnwrap(roku.steps.first { $0.id == "developer-mode" })
+        let host = SetupGuides.Host(row: "roku", system: roku.identity.os, steps: Set(roku.steps.map(\.id)),
+                                    fields: Set(roku.steps.compactMap { $0.field?.key }), integration: true)
+        let guide = try XCTUnwrap(SetupGuides.find("developer-mode", in: host, skills: shipped)).get()
+        XCTAssertEqual(guide.connection, "http")
+        let presses = try XCTUnwrap(guide.steps.first { $0.kind == .request })
+        XCTAssertEqual(presses.run, step.run)
+        XCTAssertNotNil(presses.unless, "the keys aren't pressed when developer mode is on already")
+        XCTAssertNotNil(presses.failed, "a failure part way says which keys to press")
+        guard case .http(let until)? = guide.steps.first(where: { $0.kind == .wait })?.until else { return XCTFail("no wait") }
+        XCTAssertEqual(until, step.check)
+        XCTAssertTrue(guide.steps.contains { $0.kind == .rejoin })
+        XCTAssertEqual(guide.steps.last?.kind, .handoff)
+        // Only the developer-mode step has a guide: the password is the person's.
+        XCTAssertNil(SetupGuides.find("password", in: host, skills: shipped))
+    }
+
     // MARK: Which guide
 
     private func skill(_ name: String, row: String = "roku", system: String? = nil, step: String = "developer-mode", connection: String = "webos-second-screen") -> Skills.Skill {

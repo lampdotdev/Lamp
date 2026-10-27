@@ -42,7 +42,8 @@ final class SkillsTests: XCTestCase {
                                            "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
                                            "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
                                            "scripting", "game", "icloud-sync", "wish-links", "device-control", "web-or-native",
-                                           "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode"])
+                                           "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
+                                           "roku-developer-mode"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
@@ -266,7 +267,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, phone-controllers, phone-pages, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {
