@@ -55,6 +55,10 @@ struct Place: Equatable {
     /// What a game's page on it is told about it (`GamePage`), so the game names a key or a button the way the player's
     /// own does; nil when Lamp doesn't know, which a page there can't be built without.
     let input: Input?
+    /// The skill that does a setup step for the person on a device of this row (Do It for Me), by the system the device
+    /// runs, as a TV reports it ("webOS"): one row can cover devices that set up differently, and a system with no
+    /// skill here has its steps said in words only.
+    var setupSkills: [String: String] = [:]
 
     /// The device's input as a game's page is told it. Every field is a fact about the device; one left out is what a
     /// web view with a PC keyboard and no controller of its own has (`generic`).
@@ -130,7 +134,8 @@ enum Places {
               skills: ["tv-design"], input: .generic),
         Place(id: "tv", name: "Samsung / LG TV", words: ["tv"], destination: .tv,
               web: .init(host: .tvBrowser, reach: "Lamp installs it on each of the person's TVs once it's set up for apps (in the TV preview on this Mac before that)"),
-              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs", skills: ["tv-design"], input: .generic),
+              native: nil, noNative: "Lamp makes no native apps for Samsung or LG TVs", skills: ["tv-design"], input: .generic,
+              setupSkills: ["webOS": "lg-developer-mode"]),
     ]
 
     /// Where a page can open: every place one of Lamp's web hosts is, in the table's order, and last an integration's own
@@ -195,6 +200,11 @@ enum Places {
     static func named(_ word: String, in table: [Place] = all) -> Place? {
         let word = word.trimmed.lowercased()
         return table.first { $0.id == word || $0.words.contains(word) }
+    }
+
+    /// The skill that sets up a device of this row running this system, when Lamp ships it.
+    static func setupSkill(row id: String, system: String, skills: [String: Skills.Skill] = Skills.all) -> Skills.Skill? {
+        builtIn.first { $0.id == id }?.setupSkills[system].flatMap { skills[$0] }
     }
 
     // MARK: What the agent is told

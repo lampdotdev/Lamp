@@ -56,6 +56,7 @@ enum TVs {
         let all = kept().filter { $0.id != id }
         try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
         try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        try? FileManager.default.removeItem(at: WebOSSocket.clientKeyURL(id))
     }
 
     /// Reconnect: the TV's connection is made again from its setup window, for one reset or whose developer mode was
@@ -63,6 +64,7 @@ enum TVs {
     /// now; a Samsung TV's id is read again over a new connection, and its certificates still fit when it's the same.
     static func reconnect(_ id: String) {
         try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        try? FileManager.default.removeItem(at: WebOSSocket.clientKeyURL(id))
         guard var record = kept().first(where: { $0.id == id }) else { return }
         guard record.isSamsung else { WebOS.forgetHost(record.address); return }
         record.duid = nil
