@@ -27,7 +27,7 @@ make an Android app for my phone", "make me a journal" in a wish that has a time
 `make_app_for` or writing anything, with `ask`: one question, two answers, in their words. Adding an app is theirs to
 choose, so ask even when the request sounds clear; it costs them one click.
 
-- Question: "Add a journal as a second app, or turn the timer into a journal?"
+- Question, ten words at most: "A second app, or turn the timer into a journal?"
 - Answers: "A second app" (one more app beside the one they have) and "Change the timer" (the app they have, changed).
 
 End your turn after asking: their answer is the next message. Don't ask again when the message is already their answer
