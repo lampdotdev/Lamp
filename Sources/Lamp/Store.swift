@@ -2353,7 +2353,7 @@ final class Store: ObservableObject {
         let target = current.platform.target
         // A game in C++, made before three.js games, is played on the Xbox alone.
         if GameKit.isGame(current), GameKit.engine(current) == .native, wanted.filter({ $0 != .mac }) != [.device] {
-            return "This game is written in C++ for the Xbox, and is played there alone. A three.js game, a new wish, plays everywhere."
+            return "This game is written in C++ for the Xbox, and is played there alone. A new web game can run on other devices Lamp supports."
         }
         // A game's and a screen's home is the Mac, kept whatever's asked (a C++ game's is the Xbox alone, above).
         let native = GameKit.isGame(current) && GameKit.engine(current) == .native

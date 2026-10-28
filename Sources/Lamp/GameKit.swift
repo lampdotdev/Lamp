@@ -35,7 +35,7 @@ enum GameKit {
     /// Whether the app is a game.
     static func isGame(_ project: LampProject) -> Bool { project.platform == .game }
 
-    /// What a game is written for: a page drawn with three.js (`web`, the start for most games: the model writes it
+    /// What a game is written for: a page on Lamp's game runtime (`web`, the start for most games: the model writes it
     /// best, and it runs in every place's web view), or C++ on the kit (`native`, for a heavy 3D game that needs an
     /// Xbox's whole power). Its folder's mark says which, so a version restored brings the engine with it; a draft's is
     /// its meta.json's; a game made before engines (the mark says nothing of one) is native, as every game was then.
@@ -48,10 +48,10 @@ enum GameKit {
         return project.engine.flatMap(Engine.init(rawValue:)) ?? (DeviceApps.isScaffolded(project.dir) ? .native : .web)
     }
 
-    /// The engine a new game is made with: three.js. C++ on the kit is only what games made before three.js games are.
+    /// The engine a new game is made with: a page on the runtime. C++ on the kit is only what games made before three.js games are.
     static func engine(for devices: Set<String>) -> Engine { .web }
 
-    /// The Xbox integration's kind a game goes there as: its web app's for three.js, its game kind's for C++.
+    /// The Xbox integration's kind a game goes there as: its web app's for a web game, its game kind's for C++.
     static func xboxKind(for engine: Engine) -> String { engine == .web ? xbox : xboxKind }
 
     // MARK: Where it's played
@@ -59,7 +59,7 @@ enum GameKit {
     /// A list of devices that makes a game: "game" with any of its places, or the Xbox's game kind a naming call from
     /// before games were a kind of their own gave.
     static func claims(_ devices: Set<String>) -> Bool {
-        // A new game is three.js: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
+        // A new game is a web game: the C++ kind's own word ("xbox-one:game") makes nothing new. Where it's played is
         // given apart, as its places: "mac" beside "game" is a Mac app.
         devices == ["game"]
     }
@@ -145,7 +145,7 @@ enum GameKit {
     }
 
     /// A meta.json from before games were a kind of their own, of a game made as the Xbox's web app (`isXboxWebGame`):
-    /// a three.js game now, at home on the Mac, with the Xbox one of its places and its console still the one chosen
+    /// a web game now, at home on the Mac, with the Xbox one of its places and its console still the one chosen
     /// there, so it goes on as a game and is updated. Only meta.json changes: the code, its versions, chat and icon are
     /// as they were, and the folder reads as a game in every version of it (`isMade`), so a restore keeps it one.
     static func migratedWebGame(_ project: LampProject) -> LampProject? {
@@ -204,7 +204,7 @@ enum GameKit {
     static let phaserRuntime = "\(webFolder)/lamp-phaser.js"
     static let phaserFolder = "\(webFolder)/phaser"
 
-    /// Lamp's common host for a page on Apple's devices (a three.js game's and a screen's: serving and showing it, LampAI
+    /// Lamp's common host for a page on Apple's devices (a web game's and a screen's: serving and showing it, LampAI
     /// through the app, and `LampNative` calls of the device); and where those calls are answered, the app's own Swift, written only
     /// when the app has none yet.
     static let page: (path: String, text: String)? = read([("Sources/LampPage.swift", "apple/LampPage.swift")]).first
@@ -397,7 +397,7 @@ enum GameKit {
         if (try? String(contentsOf: own, encoding: .utf8)) == native.text { AppFolder.remove(own, in: project.dir) }
     }
 
-    /// Where a three.js game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
+    /// Where a web game's page is: the folder an Xbox web app keeps its page in, so the game goes on the Xbox as one.
     static let webFolder = "Web"
     /// Where Rapier goes in a game whose page imports it, by the name its import map gives it.
     static let rapierFolder = "\(webFolder)/rapier"
@@ -563,7 +563,7 @@ enum GameKit {
 
     """
 
-    /// A three.js game's Package.swift: the Swift around its page, with no library of the game's.
+    /// A web game's Package.swift: the Swift around its page, with no library of the game's.
     static let webPackageSwift = """
     // swift-tools-version:5.9
     import PackageDescription
@@ -576,7 +576,7 @@ enum GameKit {
 
     """
 
-    /// A three.js game's build.sh: the Swift around its page for the Mac or the iPhone and iPad simulator, its page copied
+    /// A web game's build.sh: the Swift around its page for the Mac or the iPhone and iPad simulator, its page copied
     /// into the app (Contents/Resources/Web on the Mac, Web/ at an iOS bundle's top), where the app's web view reads it;
     /// for Android, Lamp's Android app around the page, built by Gradle (`GameAndroid.buildSteps`).
     static var webBuildSh: String {
@@ -799,9 +799,9 @@ enum GameKit {
                       sound: sound.map { String($0.dropFirst("Lamp sound: ".count)) })
     }
 
-    // MARK: The three.js preview
+    // MARK: The web game preview
 
-    /// Where a three.js game's page is copied for the preview: Lamp's own folder, never the app's, which the agent's
+    /// Where a web game's page is copied for the preview: Lamp's own folder, never the app's, which the agent's
     /// commands can change while the preview reads it.
     static func stagingFolder(_ project: LampProject) -> URL {
         Edition.supportFolder.appendingPathComponent("Game Builds").appendingPathComponent(project.id)
@@ -832,7 +832,7 @@ enum GameKit {
         return page
     }
 
-    /// Plays the script on a three.js game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
+    /// Plays the script on a web game's page, as `play` does on a C++ game's preview, from the copy `stageWeb` made.
     @MainActor static func playWeb(_ project: LampProject, script given: [String]) async throws -> Played {
         let script = Privacy.sharesPictures ? given : given.filter { !$0.hasPrefix("shot ") }
         let page = stagingFolder(project).appendingPathComponent("web")
@@ -927,7 +927,7 @@ extension Agent {
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
         let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
-        return (Rules.partHeader("a game drawn with three.js or Phaser in Web/, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
+        return (Rules.partHeader("a game drawn in a page in Web/ on Lamp's game runtime, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: "Mac")
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac")
@@ -1000,7 +1000,7 @@ extension Agent.Rules {
     }
 
     static var gameWebEdit: String { """
-    - The game is a page drawn with three.js, or with Phaser for a 2D game: make the change the user asks for by editing its files in Web/ \
+    - The game is a page on Lamp's game runtime, drawn as the game skill says: make the change the user asks for by editing its files in Web/ \
     (index.html, game.js and any other .js modules, and the models, pictures and sounds it loads, beside them). \
     Web/lamp-game.js, Web/lamp-phaser.js, Web/lamp-controllers.js, Web/lamp.js, Web/three/, Web/rapier/ and Web/phaser/ are Lamp's (written before every build), and so are Sources/ but for \
     Sources/Native.swift, build.sh, Package.swift and Lamp/ (the apps around the page): read lamp-game.js, never edit or delete any of them. Lamp \
@@ -1012,7 +1012,7 @@ extension Agent.Rules {
     goes wherever the table of devices gives a web host); it stays the same game, and the wish's other apps stay as they are.
     """ }
 
-    /// How a page (a three.js game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the
+    /// How a page (a web game's, a screen's) reaches what only the app around it can: `LampNative`, answered by the
     /// app's own Swift, and LampAI through the app (LampPage.swift).
     static let pageNative = """
     - The person's own things (their mail, calendar, reminders, contacts, photos, where they are) are read by the app \
@@ -1034,32 +1034,21 @@ extension Agent.Rules {
 
     static let gameWebKit = """
     - Writing the game: read Web/lamp-game.js first, all of it; it's Lamp's runtime and the whole interface to the \
-    device. A 2D game (a platformer, a top-down or side-on shooter, an arcade, racing or puzzle game played in real time) is \
-    drawn with Phaser 3 instead of three.js: choose 2D or 3D from what the person asked for as you begin, and for 2D read \
-    Web/lamp-phaser.js too, all of it, and the 2d-game skill. Such a game calls `phaser({ scenes, pixelArt, physics })` \
-    from lamp-phaser.js instead of game(), its scenes are Phaser's, and the pad is `pad()` read in a scene's update; \
-    everything below about the clock, the pad, the controls' names, rumble, the log and sound holds for it too, and \
-    what's said of three.js and the renderer doesn't. index.html's import map has `phaser` (from Web/phaser, which Lamp \
-    puts there once the page imports it). \
-    For 3D, index.html loads lamp.js, then the import map for three.js (`three` and `three/addons/`, from Web/three: \
-    the WebGL build and its addons such as GLTFLoader; `three/webgpu` and `three/tsl`, node materials drawing with \
-    WebGL 2, are added once the page imports them, and only a heavy scene needs them; nothing else is there, so no \
-    Draco or KTX2 files; physics is Rapier, `@dimforge/rapier3d-compat` mapped to ./rapier/rapier.js, put in Web/rapier/ \
-    once the import map names it: the 3d-game skill says when a game needs it and how), then \
-    game.js as a module: keep that. game.js makes a `THREE.WebGLRenderer({ antialias: true })` and calls \
-    `game({ renderer, init, frame, touch })` once: Lamp sizes the canvas to 1920x1080 and fits it to the window or \
-    screen, runs `init` once (it may be async, to load models with `GLTFLoader().loadAsync('ship.glb')` or sounds), \
-    then `frame(f)` about 60 times a second, which moves things by `f.dt` and ends with `renderer.render(scene, \
-    camera)`. Never call requestAnimationFrame, setTimeout or setInterval for the game, nor read the clock, \
-    Math.random or localStorage: use `f.dt`, `f.time`, `random()`, `save(name, value)` and `load(name)` from \
-    lamp-game.js, so Lamp's preview replays a play exactly. The controller is `f.pads[0]` (lx, ly, rx, ry -1 to 1 \
-    with up positive and the dead zone out; lt and rt 0 to 1; buttons as BUTTON.A… bits in down, pressed and \
-    released), the same wherever it's played: a controller connected to the device, the Mac's keyboard (WASD or the \
-    arrows the left stick, IJKL the right, Space or Enter A, Esc B, F X, R Y, Q and E the bumpers, Z and C the \
-    triggers, P Menu, Tab View) or the touch controls Lamp draws on a phone or tablet (a left stick, and the buttons \
-    `touch` names: BUTTON.A | BUTTON.B | BUTTON.MENU unless you say otherwise, BUTTON.RSTICK for a right stick; keep \
-    a game playable with those few on a phone). B is the game's, for back or cancel, and Menu for pause. Draw text \
-    and menus as HTML over the canvas (a fixed div, large type) or into the scene; the preview pictures both. \
+    device. Choose 2D or 3D from what the person asked for as you begin, then read the game skill and the 2d-game or \
+    3d-game skill with `read_skill` before writing any of it: they say what the page draws with, how index.html loads \
+    it, how game.js starts the runtime, where the game sets itself up and how each frame runs. index.html loads lamp.js, \
+    then the scaffold's import map, then game.js as a module: keep that. The runtime fits the 1920x1080 stage to the \
+    window or screen and runs the game's frames about 60 times a second. Never call requestAnimationFrame, setTimeout or \
+    setInterval for the game, nor read the clock, Math.random or localStorage: move things by the frame's time and use \
+    `random()`, `save(name, value)` and `load(name)` from lamp-game.js, so Lamp's preview replays a play exactly. The \
+    controller is the runtime's pad (lx, ly, rx, ry -1 to 1 with up positive and the dead zone out; lt and rt 0 to 1; \
+    buttons as BUTTON.A… bits in down, pressed and released; the skill says where a game reads it), the same wherever \
+    it's played: a controller connected to the device, the Mac's keyboard (WASD or the arrows the left stick, IJKL the \
+    right, Space or Enter A, Esc B, F X, R Y, Q and E the bumpers, Z and C the triggers, P Menu, Tab View) or the touch \
+    controls Lamp draws on a phone or tablet (a left stick, and the buttons `touch` names: BUTTON.A | BUTTON.B | \
+    BUTTON.MENU unless you say otherwise, BUTTON.RSTICK for a right stick; keep a game playable with those few on a \
+    phone). B is the game's, for back or cancel, and Menu for pause. Draw text and menus as HTML over the canvas (a \
+    fixed div, large type) or in the game's own drawing; the preview pictures both. \
     The player may hold an Xbox, PlayStation or Switch controller, the keyboard or the touch screen, and switches as \
     they play, so never write a key's or a button's name: write the controls once, as actions mapped to the pad \
     (`const CONTROLS = { jump: BUTTON.A, pause: BUTTON.MENU, move: STICK.LEFT, gas: TRIGGER.RT }`), read the pad \
@@ -1071,9 +1060,8 @@ extension Agent.Rules {
     page that reads the keys itself (`keyboard: false`) names its own keys by their codes, `label('KeyH')`. Shake \
     the controller with `rumble(0, low, high, seconds)`. Log events with `log()`, a line per event, never per \
     frame. Where it's played, the log says every ten seconds how many frames a second it really gets there and at \
-    what size it's drawn; when frames run slow, Lamp draws it smaller and scales it up to the screen by itself \
-    (`sharp: true` in game() keeps 1920x1080), so size anything drawn off-screen from `renderer.getSize()`, not \
-    1920x1080. Plain modern JavaScript, nothing loaded from the network.
+    what size it's drawn; when frames run slow, Lamp may draw it smaller and scale it up to the screen (the 3d-game \
+    skill says how a game sizes what it draws off-screen then). Plain modern JavaScript, nothing loaded from the network.
     """
 
     static let gameWebSound = """
@@ -1082,7 +1070,8 @@ extension Agent.Rules {
     code with `sound.tone({ wave, from, to, attack, hold, release, volume })` (a square or triangle wave sliding up \
     for a jump or a pickup, down for a fall or a loss, noise for a hit or an explosion, a few milliseconds of attack \
     so nothing clicks) unless the person gave sound files, which go in Web/ and load with `await sound.load('hit.wav')`. \
-    Make or load every sound once in init, then `sound.play(s, { volume, pan, pitch })` as things happen, varying \
+    Make or load every sound once, as the game sets itself up (the 2d-game or 3d-game skill says where), never during \
+    play, then `sound.play(s, { volume, pan, pitch })` as things happen, varying \
     pitch a little (0.9 to 1.1, from random()) for one heard often; `{ loop: true }` for a sound that lasts, changed \
     with `sound.set` and ended with `sound.stop`. Music is optional and quiet (`sound.music(s, 0.35)`) under effects \
     at 0.5 to 0.8. The pause menu (Menu) turns sound and music on and off with `sound.volume(effects, music)`, kept \
@@ -1155,7 +1144,7 @@ extension Agent.Rules {
     """
 
     /// Where a game is played and what that allows, for the request's device line: the weakest place's budget, in
-    /// what the preview counts (vertices for C++ on the kit, triangles for three.js). The Xbox's is the console the
+    /// what the preview counts (vertices for C++ on the kit, triangles for a page). The Xbox's is the console the
     /// game goes to, as Device Portal names it: a Series X or S gives a game far more than an Xbox One, whose budget
     /// stands for any console Lamp doesn't know yet.
     static func gamePlaces(_ project: LampProject) -> String {
@@ -1170,22 +1159,22 @@ extension Agent.Rules {
             switch xbox {
             case let model? where model.localizedCaseInsensitiveContains("Series X"):
                 budgets.append((4, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU" + (web ? ", drawn by its web view" : "") + ": "
-                    + (web ? "under about 1,000 draws and 1,000,000 triangles a frame (many copies of one shape as one THREE.InstancedMesh)" : "under about 1,500 draws and 2,000,000 vertices a frame")
+                    + (web ? "under about 1,000 draws and 1,000,000 triangles a frame (many copies of one shape as one instanced mesh)" : "under about 1,500 draws and 2,000,000 vertices a frame")
                     + ", textures at most 2048 px, one shadow map and a light post-process pass at most"))
             case let model? where model.localizedCaseInsensitiveContains("Series"):
                 budgets.append((3, "the person's \(model)'s, which gives a game in Developer Mode most of its GPU, about a third of a Series X's" + (web ? ", drawn by its web view" : "") + ": "
-                    + (web ? "under about 600 draws and 600,000 triangles a frame (many copies of one shape as one THREE.InstancedMesh)" : "under about 900 draws and 1,200,000 vertices a frame")
+                    + (web ? "under about 600 draws and 600,000 triangles a frame (many copies of one shape as one instanced mesh)" : "under about 900 draws and 1,200,000 vertices a frame")
                     + ", textures at most 2048 px, one shadow map at most, no post-processing"))
             case let model:
                 budgets.append((0, (model.map { "the person's \($0)'s" } ?? "an Xbox One's, the slowest console the game may run on")
                     + ", which gives a game in Developer Mode only part of its GPU: "
-                    + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one THREE.InstancedMesh), MeshStandardMaterial or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
+                    + (web ? "under about 200 draws and 300,000 triangles a frame, drawn by its web view (many copies of one shape as one instanced mesh), a standard lit material or cheaper, one or two lights" : "under about 300 draws and 500,000 vertices a frame")
                     + ", textures at most 1024 px (keep each model's few), no shadow maps or post-processing beyond a sky gradient"))
             }
         }
         if places.contains(.tv) {
-            budgets.append((-2, "a Samsung or LG TV's, whose browser draws three.js far slower than any phone: under about 100 draws and 100,000 triangles a frame, "
-                + "textures at most 1024 px, no shadow maps or post-processing, MeshLambertMaterial or cheaper"))
+            budgets.append((-2, "a Samsung or LG TV's, whose browser draws 3D far slower than any phone: under about 100 draws and 100,000 triangles a frame, "
+                + "textures at most 1024 px, no shadow maps or post-processing, a Lambert material or cheaper"))
         }
         if places.contains(.androidTV) {
             budgets.append((-1, "a Google TV streamer's or a Fire TV stick's, a phone's chip from years ago drawing through its WebView at 1080p: under about 150 draws "
@@ -1216,7 +1205,7 @@ extension Agent.Rules {
     static let gameTry = """
     - `look_at_app` builds the preview on this Mac and plays the game from its start for two seconds, with no one \
     touching the controller, and shows you the last frame, what the game logged (`lamp_log`, a line per event, never \
-    per frame) and the preview's stats (draws a frame, and vertices for C++ or triangles for three.js); with `motion` it shows a frame every half \
+    per frame) and the preview's stats (draws a frame, and vertices for C++ or triangles for a page); with `motion` it shows a frame every half \
     second, and what it played on its speakers. `use_app` plays on from there with the controller: `stick` (`target` left or right, `x` and `y` -1 to \
     1, `amount` seconds, optionally `key` held at the same time), `button` (`key` a, b, x, y, lb, rb, lt, rt, menu, \
     view, up, down, left, right, ls, rs; `amount` seconds held, a tap by default) and `wait`, a picture after each. \

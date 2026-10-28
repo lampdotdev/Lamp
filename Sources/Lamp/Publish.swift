@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import LampSidebarKit
 
-/// Publishing a game drawn with three.js as a page anyone can play in a browser: a public repository on the person's own
+/// Publishing a web game as a page anyone can play in a browser: a public repository on the person's own
 /// GitHub account, served by GitHub Pages, made with GitHub's own command-line tool (`gh`) and their sign-in there.
 /// Nothing goes through Lamp's servers: the person's account holds the page, under GitHub's terms, and Lamp pays nothing
 /// for its plays.
@@ -19,7 +19,7 @@ enum Publish {
     nonisolated static let switchKey = "experimentPublishPages"
     nonisolated static var enabled: Bool { Edition.isDev && UserDefaults.standard.bool(forKey: switchKey) }
 
-    /// A wish whose one app is a game drawn with three.js: its page is the whole game.
+    /// A wish whose one app is a web game: its page is the whole game.
     static func canPublish(_ project: LampProject) -> Bool {
         enabled && project.holdsApp && GameKit.isGame(project) && GameKit.engine(project) == .web
             && Parts.folders(in: project.dir).isEmpty

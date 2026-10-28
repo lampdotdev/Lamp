@@ -1,7 +1,7 @@
 import AppKit
 import WebKit
 
-/// The preview a three.js game is played in for the agent (`GameKit.Engine.web`): its page from a copy in Lamp's own
+/// The preview a web game is played in for the agent (`GameKit.Engine.web`): its page from a copy in Lamp's own
 /// folder, in a web view no one sees, playing the script the agent's looks and uses make (`GameKit.plays`). Lamp's game
 /// runtime (`lamp-game.js`) reads the script itself and runs the game's frames at exactly 1/60 s, its clock and random
 /// numbers the same every play, so the same script gives the same pictures; at each `shot` it waits while Lamp takes a

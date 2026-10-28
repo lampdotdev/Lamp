@@ -1,12 +1,12 @@
 ---
 name: scene-3d
-description: 3D in a Mac app made natively, in Swift (RealityKit through LampSceneView) - a world to move through, a room, a thing to turn over and handle, a toy, or a 3D game the person asked to be native, and RealityKit's own physics for things that fall, roll, stack and collide. A 3D game is made web with three.js by default (the 3d-game skill). Read before writing or changing 3D in Swift on the Mac.
+description: 3D in a Mac app made natively, in Swift (RealityKit through LampSceneView) - a world to move through, a room, a thing to turn over and handle, a toy, or a 3D game the person asked to be native, and RealityKit's own physics for things that fall, roll, stack and collide. A 3D game is made web by default (the game and 3d-game skills). Read before writing or changing 3D in Swift on the Mac.
 ---
 
 # 3D scenes
 
-This is 3D in a Mac app made natively. A 3D game is made web with three.js by default, on the Mac as elsewhere (the
-3d-game skill); it's made here only when the person asked for a native game, or it's a Mac app already made in Swift.
+This is 3D in a Mac app made natively. A 3D game is made web by default, on the Mac as elsewhere (the game and
+3d-game skills); it's made here only when the person asked for a native game, or it's a Mac app already made in Swift.
 
 3D scenes (a world to move through, a room, a thing to turn over and handle): RealityKit through LampSceneView, from Sources/LampScene.swift, which Lamp adds to an app whose code imports RealityKit (the app then needs macOS 15). `LampSceneView(sky:camera:props:build:update:)`: sky `.day`, `.sunset`, `.overcast`, `.night`, `.studio`; camera `.orbit(target:distance:)`, `.chase("entity name")`, `.firstPerson()`, `.fixed(position:lookAt:)` or `.manual`; `build` adds entities to `scene.root`; `update(scene, dt)` runs every frame, with `scene.isDown(.w)` for keys. In a file that imports RealityKit, SwiftUI's `Scene` must be written `SwiftUI.Scene`.
 

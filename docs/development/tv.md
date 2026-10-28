@@ -12,8 +12,9 @@ direction, OK clicking, Back with `Lamp.onBack` and leaving the app when nothing
 `LampStore` under the name it had first). Lamp also owns `Web/three` (`TVTemplate.threeFolder`): three.js as a game's
 page has it (`DeviceSupport.threeFiles`), written by `TVTemplate.writeOwnedFiles` before every build, kept out of the
 app's versions (`DeviceSupport.paths`) and out of a shared file (`TVTemplate.isLamps`), so a TV app's page, a game
-played with phones above all, can draw in 3D. The page loads it with an import map and module scripts
-(`Rules.tvThree`), which need a newer TV browser than the oldest; slowness on a TV is a warning to the agent, never a
+played with phones above all, can draw in 3D. `Rules.tvThree` says only that the folder is there and
+Lamp's, that the page has no game runtime, Phaser bridge or Rapier, and to read the `3d-game` skill, which holds the
+import map and renderer recipe (module scripts and import maps need a newer TV browser than the oldest); slowness on a TV is a warning to the agent, never a
 reason to refuse 3D. The rules are `Agent.tvPrompt` (`Rules.tv…`: a
 1920×1080 page that never scrolls whole, design for the sofa, no syntax newer than 2019). Sound is the browser's own
 Web Audio (`Rules.webSound`, also given to every declared kind with the web library, the Xbox's included), with no

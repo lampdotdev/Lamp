@@ -17,7 +17,7 @@ another's files (`recipe.refines`) before that one and the Swift kinds last, sin
 kind's own mark.
 
 Where an app opens is its kind's `places`, each a `Destination`: this Mac, iOS, Android, Android TV, a Samsung or LG TV
-or a device through its integration. A kind whose app is a page (a three.js game, a screen) doesn't list its own: its
+or a device through its integration. A kind whose app is a page (a web game, a screen) doesn't list its own: its
 places are wherever Lamp has a host for a web engine (`Places.pagePlaces`, "Pages and their hosts" in the devices
 guide). Building, opening, looking at, using, quitting, Try On, setup checks and the device note go by the
 destination (`onIOS`, `onAndroid`, `onTV`, `onDevice`), so a kind that opens where another does (an Android TV app on

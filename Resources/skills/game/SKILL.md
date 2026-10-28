@@ -20,7 +20,7 @@ The tools Lamp has for games:
   instead. Its frame loop is its own `requestAnimationFrame`, moving everything by the time since the last frame;
   players are `Lamp.controllers` (and the remote's keys, with `Lamp.navigation = false`); sound is Web Audio and saves
   are `LampStore`, as the TV rules say. It's drawn in 2D on a canvas, or in 3D with the three.js Lamp writes in its
-  Web/three (the TV rules say how to load it, and the 3d-game skill how to keep it light). The rest of this skill
+  Web/three (the 3d-game skill says how to load it and keep it light). The rest of this skill
   holds for it wherever it doesn't name the runtime.
 - **Native Apple** (Mac, iPhone, iPad, Apple TV): SpriteKit for 2D, SwiftUI for menus and scores, and Lamp's blocks
   in LampSupport.swift: a game made natively, where the person asked for that, it needs what only Apple's apps have

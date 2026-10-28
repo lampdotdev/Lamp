@@ -190,9 +190,9 @@ keeps its folder and data), adds the ones the wish doesn't have, and leaves a pa
 files can't be put in place, or kept, fails the update, which puts the whole wish back, its list and kept files included. A Lamp from before opens a wish's file as the app at its root alone, so a file
 with a part says 10.
 
-A three.js game travels as its page (`GameFiles`): Web/ without Lamp's runtime beside it (lamp-game.js, lamp.js,
-three/), its scripts and pages as code the review reads (as a TV app's page is read, and its Sources/Native.swift as any
-app's Swift) and its models, pictures and sounds as data. The Mac that opens it makes a three.js game and writes Lamp's
+A web game travels as its page (`GameFiles`): Web/ without Lamp's runtime beside it (lamp-game.js, lamp-phaser.js,
+lamp.js, three/, phaser/), its scripts and pages as code the review reads (as a TV app's page is read, and its Sources/Native.swift as any
+app's Swift) and its models, pictures and sounds as data. The Mac that opens it makes a web game and writes Lamp's
 files around the page (`GameKit.write`); the copy opens on the Mac, wherever the sender had put it. Such a file says 11,
 so a Lamp from before asks to be updated rather than looking for Swift and finding none. A game in C++ isn't shared:
 Lamp makes no new ones.
@@ -228,7 +228,7 @@ never ship.
 
 ### Publishing a game as a page
 
-A wish whose one app is a game drawn with three.js can be published as a page anyone plays in a browser (`Publish`,
+A wish whose one app is a web game can be published as a page anyone plays in a browser (`Publish`,
 an experiment: Settings → Experimental, Lamp Dev only, since the page carries Lamp's own runtime, which needs a
 license that lets anyone pass it on before every Lamp can publish). Its share menu has Publish as Web Page…, which puts
 the Publish card in the chat's place (`PublishCard`, `PublishCards`, `SidebarPublish`). It goes on GitHub Pages under the
@@ -245,7 +245,7 @@ card where they see and change what it shows, and can tick Include the wish itse
 exact wish to anyone with Lamp (site/SHARED_WISHES.md) (with none, the bar links Lamp's site). That page is the one that works for
 someone without Lamp, whose Download Lamp carries the wish into the welcome, and for someone with it ("Open it with this
 wish"), where a file beside the page means nothing to a browser without Lamp. The wish as a shared file goes beside
-the page too (a three.js game's as its page, `GameFiles`), offered in the README, and made by
+the page too (a web game's as its page, `GameFiles`), offered in the README, and made by
 `Sharing.export`, so held to its checks. With them go credits.json with this wish at the end of the
 chain, a README with the credits and licenses, and `.nojekyll`; the staged page is searched for secrets again. The push
 signs in through `gh` for that push alone, Pages is turned on (or rebuilt), and the card waits until GitHub says it built

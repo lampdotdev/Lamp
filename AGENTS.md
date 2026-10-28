@@ -19,6 +19,17 @@ the part it governs. Only a rule that every change must follow belongs here.
   copy of an engine runs is decided only in `EngineInstall.path(for:)`. Before opening a PR that touches any of
   this, check each engine's `case` in `Agent.run` and its parser, and say in the PR description which engines you
   tried. Details: [engines](docs/development/engines.md).
+- **Keep guidance consistent wherever it appears.** Keep each policy or library recipe in one authoritative place;
+  other guidance points to it. Which library an app or game is built with, and how to use it, is a skill's (in
+  `Resources/skills`): tool descriptions in `Resources/lamp-tools.json` and the prompts and kind guidance in
+  `Sources/Lamp` say what to make and which skill to read, without choosing a library. Exact file paths, ownership
+  declarations ("Web/three/ is Lamp's") and support facts supplied at run time (a folder and the version in it) may
+  name a library without choosing one. When the authoritative source changes, update any affected references and
+  remaining summaries in the same PR: tool descriptions, prompts, skills, and relevant comments and development docs.
+  Before opening the PR, use `git grep` for both the old wording and related terms, and inspect each match in
+  context: the test is that nothing contradicts the source, not that a name never appears. Preserve accurate narrower
+  exceptions and historical descriptions; never use a blind replacement. Report any external documentation that also
+  needs updating.
 - **Approvals and privacy hold for every engine.** Shell commands go through `/agent/approve` whichever engine runs
   them, and file access outside the app's folder is checked the same way (`Privacy.verdict`); a command never skips
   approval because it looks like a read. Lamp's own commands over what's in an app's folder run in the app's
