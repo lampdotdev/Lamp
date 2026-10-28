@@ -6737,7 +6737,7 @@ final class Store: ObservableObject {
     /// ready") aren't a conversation, so the card still comes, under them.
     func offerStarterChanges(_ id: String, after delay: Double) {
         guard Self.nothingSaid(in: logs[id] ?? []), let project = projects.first(where: { $0.id == id }), Starters.isStarter(project),
-              let starter = Starters.starter(of: project), let card = Starters.card(for: starter, moreFun: GameFun.offered(for: project)),
+              let starter = Starters.starter(of: project), let card = Starters.card(for: starter),
               offeringStarter.insert(id).inserted else { return }
         Task {
             try? await Task.sleep(for: .seconds(delay))

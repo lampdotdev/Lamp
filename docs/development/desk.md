@@ -67,8 +67,7 @@ ready (`openWhenReady`). A
 starter opens with its chat beside it the first time (`MagicPanel.startWithChat`, the hand-off a new app gets after
 its first build); one that opens no window has its chat opened in Lamp the first time it's used. The chat opens on
 Lamp's own card (`Starters.card`, an `ask` marked `offer`): the starter's line and its three changes, each sent as
-the first request when clicked, with the message box answering it too. A game's card ends with a fourth, Make it a
-lot more fun (`GameFun`), which every game is offered. Nothing waits on it (`Talk.waiting`), so the
+the first request when clicked, with the message box answering it too. Nothing waits on it (`Talk.waiting`), so the
 desk doesn't say it has a question and using it still opens it. Each
 folder holds the app's code, APP.md (which the agent reads first, so it knows the app it's changing), icon.json
 (its design), the icon drawn from it in icon/ with its artwork, drawn once the way an app's is: layers of glass

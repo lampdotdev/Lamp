@@ -159,12 +159,10 @@ enum Starters {
     }
 
     /// The card a starter's chat opens with: its line, and its changes to click, each sent as the person's first
-    /// request (`Store.answer`). Typing something else answers it as well. A game's card ends with the change every
-    /// game is offered (`GameFun`), after its own three.
-    static func card(for starter: Starter, moreFun: Bool = false) -> LogLine? {
+    /// request (`Store.answer`). Typing something else answers it as well.
+    static func card(for starter: Starter) -> LogLine? {
         guard !starter.offer.isEmpty, !starter.tweaks.isEmpty else { return nil }
-        let tweaks = starter.tweaks + (moreFun ? [Tweak(title: GameFun.title, symbol: GameFun.symbol)] : [])
-        let options = tweaks.map { tweak in
+        let options = starter.tweaks.map { tweak in
             TalkCard.Option(title: tweak.title, symbol: tweak.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) == nil ? nil : $0 })
         }
         // Just the offer and its changes: in the wand's narrow panel a line under the offer saying what the wish is
