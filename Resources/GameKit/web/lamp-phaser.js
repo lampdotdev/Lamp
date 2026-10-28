@@ -41,9 +41,13 @@ export function frame() { return current; }
 // The Phaser.Game, once phaser() has started it.
 export let phaserGame = null;
 
-// A scene not yet started stays at INIT, so only these are on their way to running.
+// A scene not yet started stays at INIT, so only these are on their way to running. A scene started from another's
+// create (Boot's `this.scene.start('play')`) is first only an operation in the scene manager's queue, with no status
+// of its own: it's on its way too, so that the game's first scenes are all made before the game is said to have
+// started (and read pendingRestore() while it still gives the snapshot).
 const STARTING = new Set([Phaser.Scenes.START, Phaser.Scenes.LOADING, Phaser.Scenes.CREATING]);
-const starting = g => !g.isRunning || !g.scene.isBooted || g.scene.scenes.some(s => STARTING.has(s.sys.settings.status));
+const queued = m => (m._queue && m._queue.length > 0) || (m._pending && m._pending.length > 0);
+const starting = g => !g.isRunning || !g.scene.isBooted || queued(g.scene) || g.scene.scenes.some(s => STARTING.has(s.sys.settings.status));
 
 // Waits, without stepping the game, until no scene is loading or being made: the loader's files arrive on their own,
 // and the scene manager's queue (a scene started from another's create) is taken in as the game's step would.
