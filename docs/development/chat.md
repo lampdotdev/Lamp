@@ -118,7 +118,8 @@ and looked for again a few times a second); and where nothing on this Mac shows 
 person's phone, a widget, the menu bar, the background, a wish not made yet or being found, an app that didn't build or
 crashed) the same panel on its own: a window of its own size in the middle of the screen, wider than beside a window
 (the chat is what's being looked at) and clear of the corner where notifications come, with its width kept apart from
-the width beside a window (`ChatPanel.aloneWidth`). Moving between these (the app opens or quits, a preview
+the width beside a window (`ChatPanel.aloneWidth`). A Mac app moved to a TV or another device takes its chat to that
+panel as its Mac copy quits, with or without a turn going on (`ChatReturn`). Moving between these (the app opens or quits, a preview
 closes) keeps the draft (it's the store's, `Store.updateDraft`) and where the person was reading: each chat says which
 line is first in view as the scrolling settles (`SidebarCommand.scrolled`), and a chat drawn again opens there
 (`SidebarState.readingAt`). A wish deleted with its chat in Lamp's panel takes the panel with it. The panel's bar has what the chat beside a Mac app has, and for a wish that isn't a Mac
