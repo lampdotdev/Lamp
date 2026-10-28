@@ -35,8 +35,9 @@ honks when hit), people on the sidewalks who jump out of the way of a car, and t
   renderer and node materials, `three/webgpu` and `three/tsl`, drawing with WebGL 2), loaded through the import map.
 - `Web/js`, all ES modules:
   - `main.js`: start-up, `QUALITY` (what's drawn), the HUD, keys, and `frame(f)`, which Lamp's runtime calls about 60
-    times a second (`game({ renderer, frame, touch: false, keyboard: false })`: the city reads its own keys and draws its
-    own touch controls; a controller comes as the first pad). Lamp draws it at 1920x1080 and fits that to the window.
+    times a second (`game({ renderer, init, frame, touch: false, keyboard: false, snapshot })`: the city reads its own
+    keys and draws its own touch controls; a controller comes as the first pad; after a change of code `init` starts
+    the city where `snapshot()` left it, full map and hidden HUD included). Lamp draws it at 1920x1080 and fits that to the window.
   - The place: `nyc-geodata.js` (the real geography, generated data: don't edit by hand), `city-config.js` (streets,
     avenues, parks, shores in meters), `city-grid.js` and `buildings.js` (blocks and buildings), `landmarks.js`,
     `boroughs.js`, `road-network.js`, `road-paint.js`, `street-details.js` (lamps, signs, hydrants) and `trees.js`.

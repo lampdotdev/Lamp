@@ -10,30 +10,8 @@ final class GameFrameRateTests: XCTestCase {
     /// Plays `seconds` of frames, each taking `ms(width)` for the width the game is drawn at; gives what was logged
     /// and every size the drawing was set to.
     private func play(seconds: Double, sharp: Bool = false, ms: @escaping (Int) -> Double) throws -> (logs: [String], sizes: [String]) {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("Resources/GameKit/web/lamp-game.js"), encoding: .utf8)
-        let context = try XCTUnwrap(JSContext())
         var failed: String?
-        context.exceptionHandler = { _, value in failed = failed ?? value?.toString() ?? "?" }
-        context.evaluateScript("""
-            var window = this, testLogs = [], testSizes = [], testFrames = [];
-            var console = { log: function (line) { testLogs.push(String(line)); } };
-            function addEventListener() {}
-            var navigator = { maxTouchPoints: 0 }, innerWidth = 1920, innerHeight = 1080;
-            var document = { documentElement: { style: {} }, body: { style: {}, append: function () {} }, hidden: false, addEventListener: function () {} };
-            function requestAnimationFrame(fn) { testFrames.push(fn); }
-            var testRenderer = { domElement: { style: {} }, width: 1920, setPixelRatio: function () {},
-                             setSize: function (w, h) { this.width = w; testSizes.push(w + 'x' + h); } };
-            """)
-        // What the module imports, as Lamp writes it into a copy of the page on this Mac: the device and the controllers.
-        func value(_ module: String) -> String {
-            module.components(separatedBy: "export default ").last!.trimmingCharacters(in: CharacterSet(charactersIn: ";\n"))
-        }
-        let mac = try XCTUnwrap(Places.builtIn.first { $0.id == "mac" })
-        let imports = "var device = \(value(try GamePage.descriptor(for: mac))); var controllers = \(value(Controllers.pageJS));\n"
-        let body = source.replacingOccurrences(of: #"(?m)^import \w+ from '\./[a-z-]+\.js';$"#, with: "", options: .regularExpression)
-        // The module as a script in a scope of its own, as a module has, giving its game().
-        context.evaluateScript("(function () {\n" + imports + body.replacingOccurrences(of: "export ", with: "") + "\nwindow.game = game; })();")
+        let context = try GameRuntimePage.load { failed = failed ?? $0 }
         context.evaluateScript("game({ renderer: testRenderer, frame: function () {}, sharp: \(sharp) });")
         let tick = try XCTUnwrap(context.evaluateScript("(function (now) { var fn = testFrames.shift(); fn(now); return testRenderer.width; })"))
         var now = 1000.0, width = 1920
@@ -93,5 +71,38 @@ final class GameFrameRateTests: XCTestCase {
         let played = try play(seconds: 11, sharp: true) { _ in 1000 / 30 }
         XCTAssertEqual(played.sizes, ["1920x1080"])
         XCTAssertTrue(played.logs.contains { $0.hasPrefix("Lamp: 30 frames a second") }, "\(played.logs)")
+    }
+}
+
+/// lamp-game.js in a bare JavaScript context, as a page on this Mac would run it: a stand-in window and document
+/// (`page` adds to them), the device and controllers Lamp writes, and the module's game() and pendingRestore().
+@MainActor
+enum GameRuntimePage {
+    static func load(page: String = "", failed: @escaping (String) -> Void) throws -> JSContext {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Resources/GameKit/web/lamp-game.js"), encoding: .utf8)
+        let context = try XCTUnwrap(JSContext())
+        context.exceptionHandler = { _, value in failed(value?.toString() ?? "?") }
+        context.evaluateScript("""
+            var window = this, testLogs = [], testSizes = [], testFrames = [];
+            var console = { log: function (line) { testLogs.push(String(line)); } };
+            function addEventListener() {}
+            var navigator = { maxTouchPoints: 0 }, innerWidth = 1920, innerHeight = 1080;
+            var document = { documentElement: { style: {} }, body: { style: {}, append: function () {} }, hidden: false, addEventListener: function () {} };
+            function requestAnimationFrame(fn) { testFrames.push(fn); }
+            var testRenderer = { domElement: { style: {} }, width: 1920, setPixelRatio: function () {},
+                             setSize: function (w, h) { this.width = w; testSizes.push(w + 'x' + h); } };
+            """ + page)
+        // What the module imports, as Lamp writes it into a copy of the page on this Mac: the device and the controllers.
+        func value(_ module: String) -> String {
+            module.components(separatedBy: "export default ").last!.trimmingCharacters(in: CharacterSet(charactersIn: ";\n"))
+        }
+        let mac = try XCTUnwrap(Places.builtIn.first { $0.id == "mac" })
+        let imports = "var device = \(value(try GamePage.descriptor(for: mac))); var controllers = \(value(Controllers.pageJS));\n"
+        let body = source.replacingOccurrences(of: #"(?m)^import \w+ from '\./[a-z-]+\.js';$"#, with: "", options: .regularExpression)
+        // The module as a script in a scope of its own, as a module has, giving its game() and pendingRestore().
+        context.evaluateScript("(function () {\n" + imports + body.replacingOccurrences(of: "export ", with: "")
+                               + "\nwindow.game = game; window.pendingRestore = pendingRestore; })();")
+        return context
     }
 }

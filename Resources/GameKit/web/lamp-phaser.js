@@ -66,7 +66,9 @@ async function settled(g) {
 // behind everything; `touch` and `keyboard` as game() in lamp-game.js takes them (the touch buttons a phone shows, or
 // false for a game that draws its own; keyboard: false for a game that reads keys itself). `config` is anything more of
 // Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's. `snapshot`,
-// `restore`, `busy` and `assetChanged` keep the player's place through a change, as game() takes them.
+// `restore`, `busy` and `assetChanged` keep the player's place through a change, as game() takes them. The scenes are
+// made during game()'s init, so pendingRestore() from lamp-game.js gives the snapshot in the first scene's init or
+// create, and a game goes straight to where the player was without showing its title.
 export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {},
                                snapshot, restore, busy, assetChanged }) {
     // What lamp-game.js fits to the screen at 1920x1080's shape: Phaser fits its canvas inside it (Phaser's FIT, so a

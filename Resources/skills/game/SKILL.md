@@ -95,11 +95,18 @@ Swift: LampStore.
 Lamp puts each change into the game while the person plays it (Web: lamp-game.js, "Changes while it's played"), so a
 game is written to keep the player's place through one:
 
-- `snapshot()` in game() (or phaser()) returns, as plain JSON, everything that says where the game is: the level or
-  mode, the player's position, heading and speed, what they ride or hold, the camera, the score, lives, the clock, the
-  time of day. `restore(state)` puts it back once the new code's init has run. Keep both current as state is added, and
-  let restore take an older snapshot: a field it lacks keeps its start value. Without them a change of code starts the
-  game again, from its saves.
+- `snapshot()` in game() (or phaser()) returns, as plain JSON, everything that says where the game is: the mode
+  (playing, paused, a menu), which menu, overlay or card is open, the level, the player's position, heading and speed,
+  what they ride or hold, the camera, the score, lives, the clock, the time of day.
+- The new code starts straight from it. `pendingRestore()` from lamp-game.js gives the snapshot while the game starts
+  (in `init`; in a 2D game in its first scene's `init` or `create`), or null for a fresh start, and null again once
+  the game has started, so a later restart (a new round, a death) is fresh. With a state, the game builds exactly that
+  screen: that mode, that menu or overlay open, and nothing a fresh start shows (a title card, an intro, a tutorial
+  prompt, a fade in) built or shown at all. One start path, given the state or not, is the pattern: never start fresh
+  and then put the place back, which leaves the title over the game and input in the title's mode. Keep snapshot()
+  current as state is added, and let the start take an older snapshot: a field it lacks keeps its start value. Without
+  a snapshot a change of code starts the game again, from its saves. (`restore(state)`, called after init when the
+  game didn't read pendingRestore(), is still taken from games written that way; a new game reads the state at start.)
 - Pictures, models, sounds and data load through the runtime (`texture()`, `model()`, `sound.load()`, `asset()`), never
   by a URL of the game's own: a new copy of one of those goes into the running game with no reload. What the game makes
   of a file itself (a material from shader source, clones of a model, a mixer for its animations, a level from JSON) is

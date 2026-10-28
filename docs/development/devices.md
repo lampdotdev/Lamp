@@ -452,8 +452,12 @@ fetches each (`/app/page/file`), serves it in place of its bundle's (`LampPageFi
 the same bundle, then tells the page (`window.__lampLive`). lamp-game.js decides, and says which to Lamp
 (`/app/page/state`), which waits for that word: files the runtime loaded (`asset`, `texture`, `model`, `sound.load`) go into the
 running game, with the game's `assetChanged(path)` for what it made of them ("swapped"); anything else (code, or a file
-nothing put in) opens the page again with the game's `snapshot()` kept in sessionStorage for `restore(state)` after the new
-init ("reloading"; a restore that throws opens it once more, fresh, and the log says so); while `busy()` is true it waits
+nothing put in) opens the page again with the game's `snapshot()` kept in sessionStorage ("reloading"). The new copy takes
+it before init (`claim`), and the game reads it with `pendingRestore()` as it starts, in init or its first Phaser scene,
+so it builds the place the player was in and never shows its title first; a game that doesn't read it is given it in
+`restore(state)` after init, before the first frame. Either way it's taken from storage as it's read, so it's restored
+once, and an error while starting from it (init, a scene's create, restore, the first frame) opens the page once more,
+fresh, and the log says so; while `busy()` is true it waits
 for the next moment it isn't ("held"), which the chat shows as its Reload line and the Mac's title bar as its Reload
 (`awaitReload`); Reload puts it in at once (`PageLive.putInNow`), and the page shows "Reload to apply" itself where the
 app has no Reload of Lamp's (the simulator). No word within 20 s, or a copy Lamp hasn't heard from, and the app is

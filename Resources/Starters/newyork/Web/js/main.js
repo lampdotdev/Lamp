@@ -1,5 +1,5 @@
 // Lamp's game runtime first: in Lamp's preview it sets the clock and random numbers before anything reads them.
-import { game, save, load, input, onInput, label, glyph, BUTTON, STICK, TRIGGER } from '../lamp-game.js';
+import { game, save, load, input, onInput, label, glyph, pendingRestore, BUTTON, STICK, TRIGGER } from '../lamp-game.js';
 import * as THREE from 'three/webgpu';
 import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, vec3, smoothstep } from 'three/tsl';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
@@ -850,16 +850,18 @@ async function initApp() {
   // first pad. The canvas goes back under the HUD, where the page laid it out.
   // Lamp: where the player is, kept through a change Lamp makes while the city is played (lamp-game.js, "Changes while
   // it's played"): the mode, where each of the person, car, bike and helicopter is, which way it faces and how fast it
-  // goes, the camera and its zoom, and the time of day. restore() runs once the new code has built the city; a field an
-  // older snapshot lacks keeps its start value.
+  // goes, the camera and its zoom, the time of day, and whether the full map is open and the HUD hidden. The new code
+  // starts from it once it has built the city, before its first frame; a field an older snapshot lacks keeps its
+  // start value.
   function snapshot() {
     const entities = Object.fromEntries(Object.entries(controllerManager.entities).map(([mode, entity]) => [mode, {
       x: entity.position.x, y: entity.position.y, z: entity.position.z, heading: entity.heading, speed: entity.speed || 0
     }]));
     return { version: 1, activeMode: controllerManager.activeMode, entities, camera: cameraSystem.activePresetId,
-             zoom: cameraSystem.zoomMultiplier, time: lightingSystem.activePresetId };
+             zoom: cameraSystem.zoomMultiplier, time: lightingSystem.activePresetId,
+             map: mapSystem.isFullMapOpen, hudHidden: document.body.classList.contains('hud-minimized') };
   }
-  function restore(state) {
+  function startFrom(state) {
     if (state?.version !== 1) return;
     for (const mode of Object.keys(controllerManager.entities)) {
       const p = state.entities?.[mode];
@@ -872,9 +874,11 @@ async function initApp() {
     if (state.time) selectTime(state.time);
     if (state.camera) selectCamera(state.camera, true);
     if (Number.isFinite(state.zoom)) cameraSystem.zoomMultiplier = state.zoom;
+    if (typeof state.hudHidden === 'boolean' && hudToggleBtn && state.hudHidden !== document.body.classList.contains('hud-minimized')) hudToggleBtn.click();
+    if (state.map === true) mapSystem.toggleFullMap(true);
   }
 
-  game({ renderer, frame, touch: false, keyboard: false, snapshot, restore });
+  game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot });
   container.appendChild(renderer.domElement);
 }
 
