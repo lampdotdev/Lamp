@@ -280,7 +280,7 @@ the page's own HTML by `Publish.withCreditBar`): three things to change and a bo
 page is a copy of when Lamp can copy it again (`OpenInLamp.origin`): a starter's own page names the starter's id
 (`StarterRepos.stagePage`), and a wish that's been Put on GitHub names its repository and the commit last pushed
 while that repository is public (as GitHub said at the push) and holds the wish as it is now (the wish's own version
-the push carried, `GitHubRepo.remixOrigin`): a private repository can't be fetched without a sign-in, and an older
+the push carried, with nothing unsaved then or now, `Versions.savedVersion`, `GitHubRepo.remixOrigin`): a private repository can't be fetched without a sign-in, and an older
 push would remix an older game than the one played. The request goes to `https://lamp.dev/?starter=newyork&ask=…` (or `?repo=…&commit=…&ask=…`),
 whose remix dialog (`RemixDialog.astro`, on the homepage) shows what it starts from with the request in a box, then
 Open in Lamp on a Mac (`lamp://wish?starter=…&text=…` or `?repo=…&commit=…&text=…`, `remixLink` in lib/wish.js) and

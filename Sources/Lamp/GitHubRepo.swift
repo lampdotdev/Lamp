@@ -38,10 +38,11 @@ enum GitHubRepo {
     /// The repository a remix of this wish starts from (`RemixLink.Origin`): only one anyone can read, since Lamp fetches
     /// it without a sign-in, and only while it holds the wish as it is now, so a remix never starts from an older version
     /// than the page or app it was asked from. Nil otherwise, and the remix goes by the Share Link or the request.
-    static func remixOrigin(for project: LampProject) -> RemixLink.Origin? {
-        guard let kept = kept(for: project), kept.isPublic == true, let version = kept.version, let commit = kept.commit else { return nil }
-        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
-        guard head.ok, head.output.trimmed == version else { return nil }
+    /// An app in a folder of its wish's (`Mac/`, `Game/`) goes by its wish, which is what was put on GitHub.
+    static func remixOrigin(for app: LampProject) -> RemixLink.Origin? {
+        let project = app.partOf == nil ? app : Store.readWish(at: app.dir.deletingLastPathComponent()) ?? app
+        guard let kept = kept(for: project), kept.isPublic == true, let version = kept.version, let commit = kept.commit,
+              Versions.savedVersion(of: project.dir) == version else { return nil }
         return .repository(url: url(kept.repo), commit: commit)
     }
 
@@ -82,8 +83,9 @@ enum GitHubRepo {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
-        // Read before the export, so a change landing meanwhile is never taken for what went up.
-        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
+        // Read before the export, so a change landing meanwhile is never taken for what went up; none while anything is
+        // unsaved, since what goes up is then no version of the wish.
+        let version = Versions.savedVersion(of: project.dir)
         let work = Sharing.workFolder.appendingPathComponent("lamp-github-\(UUID().uuidString)")
         let tree = work.appendingPathComponent("repo")
         var done = false
@@ -136,7 +138,7 @@ enum GitHubRepo {
         guard bytes < 900_000_000 else { throw Failure(message: "\(project.name) is too big to put on GitHub.") }
         done = true
         return Staged(folder: tree, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open,
-                      version: head.ok ? Credits.validCommit(head.output.trimmed) : nil)
+                      version: version)
     }
 
     /// The files in the wish's folder that are Lamp's (the ones the builder can't delete, `Store`'s list), by their
@@ -499,7 +501,7 @@ enum GitHubRepo {
                 GitHubRepo.keep(kept, for: project)
                 // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
                 if before?.repo != kept.repo || before?.commit != kept.commit || before?.isPublic != kept.isPublic || before?.version != kept.version {
-                    Store.shared.refreshInstalled(project)
+                    for app in Store.shared.apps(of: project) { Store.shared.refreshInstalled(app) }
                 }
                 try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                 cards[project.id]?.staged = nil
