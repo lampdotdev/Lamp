@@ -120,9 +120,17 @@ enum Upstream {
         let staged = work.appendingPathComponent("theirs")
         try stage(package, for: project, into: staged, newParts: false)
         let theirsTree = try await tree(of: staged, in: project, indexes: indexes)
-        // The commit says which version of this wish it was measured against, when it was one, for the next merge.
+        // The commit says which version of this wish it was measured against, when it was one, for the next merge; one
+        // measured against the last brought-in carries that one's forward, so a third file from the same copy still
+        // measures against the last brought-in.
         var note = "The latest upstream as Lamp read it"
-        if case .own(let own) = base { note += "\n\nLamp-Own-Base: \(own)" }
+        var ownBase: String? = nil
+        switch base {
+        case .own(let own): ownBase = own
+        case .lastBrought: if let lastBrought { ownBase = await self.ownBase(of: lastBrought, in: project) }
+        default: break
+        }
+        if let ownBase { note += "\n\nLamp-Own-Base: \(ownBase)" }
         let madeTheirs = await run("\(signed) commit-tree \(theirsTree) -p \(baseMark) -m \(Sandbox.quoted(note))", in: project)
         guard madeTheirs.status == 0, let theirsMark = Credits.validCommit(madeTheirs.output) else { throw Failure(message: "Lamp couldn't prepare the merge.") }
         var keptMark = theirsMark
@@ -361,7 +369,10 @@ enum Upstream {
             if let local = parts.first(where: { $0.dir.lastPathComponent == part.folder }) {
                 try stage(part.package, for: local, into: folder.appendingPathComponent(part.folder))
             } else if newParts {
-                let coming = LampProject(id: part.folder.lowercased(), name: project.name, exe: project.exe, dir: project.dir.appendingPathComponent(part.folder))
+                // As the app it will be: its id is the one the update gives it (`Store.addPart`), which an Android
+                // app's package comes from.
+                let coming = LampProject(id: Parts.id(wish: project.id, folder: part.folder), name: project.name, exe: project.exe,
+                                         dir: project.dir.appendingPathComponent(part.folder))
                 try stage(part.package, for: coming, into: folder.appendingPathComponent(part.folder))
             }
         }
