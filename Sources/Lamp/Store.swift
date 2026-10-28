@@ -3151,7 +3151,7 @@ final class Store: ObservableObject {
             guard reviewsCanOpen else {
                 let alert = NSAlert()
                 alert.messageText = "Finish setting up Lamp first"
-                if waitingImport.keep(file) {
+                if waitingImport.keep(file, updating: target) {
                     alert.informativeText = waitingImport.count > 1
                         ? "Lamp will open your shared apps as soon as it can build them."
                         : "Lamp will open the shared app as soon as it can build it."
@@ -3211,7 +3211,7 @@ final class Store: ObservableObject {
     @discardableResult func openWaitingImport() -> Bool {
         guard pendingImport == nil, importRequest == nil else { return true }
         let file = waitingImport.take(setupReady: setupLook.isDone && setup.ready, welcomeOver: Onboarding.isDone || welcomeFinished)
-        if let file { review(file) }
+        if let file { review(file, updating: WaitingImport.target(beside: file)) }
         return file != nil
     }
 

@@ -70,6 +70,28 @@ final class WaitingImportTests: XCTestCase {
         XCTAssertNil(Store.fetchedRequest(beside: byHand))
     }
 
+    /// A repository fetched for one copy's Update from GitHub… while setup isn't done keeps that copy as its target
+    /// through the wait and a relaunch. Two copies of one repository (Keep Both) asking at once are both kept, each
+    /// with its own target, even though what was fetched is the same.
+    func testTheWishToUpdateWaitsWithItsRepository() throws {
+        func fetched() throws -> URL {
+            let tree = root.appendingPathComponent("clone-\(UUID().uuidString)/tally")
+            try FileManager.default.createDirectory(at: tree.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+            try "let version = 2".write(to: tree.appendingPathComponent("Sources/App.swift"), atomically: true, encoding: .utf8)
+            return tree
+        }
+        XCTAssertTrue(try launch().keep(try fetched(), updating: "tally-2"))
+        XCTAssertTrue(try launch().keep(try fetched(), updating: "tally"))
+        XCTAssertTrue(try launch().keep(try sharedFile("Other.lampapp")))
+
+        let first = try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true))
+        XCTAssertEqual(WaitingImport.target(beside: first), "tally-2")
+        let second = try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true))
+        XCTAssertEqual(WaitingImport.target(beside: second), "tally")
+        let opened = try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true))
+        XCTAssertNil(WaitingImport.target(beside: opened))
+    }
+
     func testTheKeptFileSurvivesARelaunch() throws {
         XCTAssertTrue(try launch().keep(try sharedFile("Tally.lampapp")))
 
