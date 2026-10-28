@@ -1,6 +1,6 @@
 # Home HQ by voice: a design for review
 
-Status: proposal, nothing built. Written against `origin/main` at 487f21e2. Second draft, after review.
+Status: proposal, nothing built. Written against `origin/main` at 487f21e2. Second draft, after review; (b) chosen, specified in [act.md](act.md).
 
 The goal: someone says "What do we need before school?", "Add milk" or "Mark the dishes done" into their phone, Home HQ
 does it with its own data, the TV and every other copy of the screen show the change, and the phone answers out loud,
@@ -236,7 +236,9 @@ page observed.
   Every page and app gets "talk to it" without copying Home HQ.
 - **Time**: about 4 to 6 days, plus waiting for a release, before Home HQ's part starts.
 
-### Recommendation
+**Chosen: (b).** Its API, gateway route, routes and rules are in [act.md](act.md).
+
+### Recommendation (before the choice)
 
 **(a), with `agent.js` shaped like `act`**: the same reads and writes table, the same step results, the same limits.
 Lifting it into Lamp afterwards is then a move, not a redesign, and v1 tells us what `act` must do before Lamp commits
@@ -330,7 +332,6 @@ Each touches lamp.js or LampSupport, which go to every app, so each is its own c
 
 ## Open questions
 
-- **(a) or (b).** The recommendation is (a), shaped like `act`.
 - **Model for the trial**: set Home HQ to a fast OpenRouter model, or measure on the default first?
 - **Away from home**: the page's `LampAI` fails off the Mac's Wi‑Fi. Is voice at home enough for v1?
 - **On-device recognition only**: right for a household's words, but it rules out phones and languages without it.
