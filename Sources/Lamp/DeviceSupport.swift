@@ -802,6 +802,12 @@ enum DeviceSupport {
           if (error) out.error = error;
           settle(out);
         }
+        // Over, or past the deadline by the clock even if its timer hasn't run yet (a slow write can carry the turn past
+        // it before the timer gets its turn): looked at before an answer is taken and before every read and write.
+        function late() {
+          if (!over && Date.now() >= deadline) stop('time');
+          return over;
+        }
         var result = new Promise(function (resolve) { settle = resolve; });
         var timer = setTimeout(function () { stop('time'); }, limits.seconds * 1000);
         result.then(function () { clearTimeout(timer); });
@@ -812,11 +818,16 @@ enum DeviceSupport {
           var results = {}, reads = [], changes = [];
           calls.forEach(function (c) { (tools[c.name] && tools[c.name].reads ? reads : changes).push(c); });
           return Promise.all(reads.map(function (c) {
-            if (over) return null;
+            if (late()) return null;
             var tool = tools[c.name], bad = actProblem(tool, c.name, c.args);
             if (bad) { results[c.id] = { id: c.id, ok: false, error: bad }; return null; }
             tell({ kind: 'read', name: c.name, args: c.args });
-            return Promise.resolve().then(function () { return tool.run(c.args, { turn: id, step: step, id: c.id }); }).then(function (value) {
+            var NOT_RUN = {};
+            return Promise.resolve().then(function () {
+              // Reads start together, but each one only while there's time: an earlier one can be slow.
+              return late() ? NOT_RUN : tool.run(c.args, { turn: id, step: step, id: c.id });
+            }).then(function (value) {
+              if (value === NOT_RUN) return;
               out.reads.push({ name: c.name, args: c.args });
               results[c.id] = { id: c.id, ok: true, value: actValue(value) };
             }, function (e) { results[c.id] = { id: c.id, ok: false, error: refused(e) }; });
@@ -836,7 +847,7 @@ enum DeviceSupport {
                 stopped = stopped || 'An earlier change in this step didn\'t go through.';
                 return next(i + 1);
               }
-              if (over) return results;
+              if (late()) return results;
               if (stopped) return skip(stopped);
               var bad = actProblem(tool, c.name, c.args);
               if (bad) return fail(bad);
@@ -848,10 +859,13 @@ enum DeviceSupport {
               return Promise.resolve().then(function () { return tool.check ? tool.check(c.args, call) : null; }).then(function (problem) {
                 if (problem) return fail(String(problem));
                 // Cancel and the time are looked at again right before the change, never in the middle of it.
-                if (over) return results;
-                writes++;
+                if (late()) return results;
                 tell({ kind: 'write', name: c.name, args: c.args });
-                return Promise.resolve().then(function () { return tool.run(c.args, call); }).then(function (value) {
+                if (late()) return results;
+                writes++;
+                var running;
+                try { running = Promise.resolve(tool.run(c.args, call)); } catch (e) { running = Promise.reject(e); }
+                return running.then(function (value) {
                   var kept = actValue(value);
                   ran[key] = kept;
                   var entry = { name: c.name, args: c.args, result: value };
@@ -879,7 +893,7 @@ enum DeviceSupport {
           if (o.model) body.model = o.model;
           post('/ai/act', body, left, deadline).then(function (answer) {
             // Cancelled, out of time or already over: an answer that comes late runs nothing.
-            if (over) return;
+            if (late()) return;
             route = answer.route || route;
             if (answer.calls && answer.calls.length) {
               var calls = answer.calls, n = steps.length + 1, ids = {};
@@ -888,7 +902,7 @@ enum DeviceSupport {
                 ids[calls[i].id] = true;
               }
               return runCalls(calls, n).then(function (results) {
-                if (over) return;
+                if (late()) return;
                 steps.push({ calls: calls, results: calls.map(function (c) { return results[c.id] || { id: c.id, ok: false, skipped: 'Not run.' }; }) });
                 if (steps.length >= limits.steps) return stop('steps');
                 step();

@@ -9,7 +9,10 @@
 (function () {
   'use strict';
   var D = window.DATA;
-  var S = { turn: null, voice: null, listening: false, history: [], last: null, el: null };
+  // `session` counts each time Ask opens, closes or the page hides: what started under one session (a follow-up listen,
+  // what was heard, an answer) does nothing once it has changed. `pending` is a question back in progress: the request
+  // it came from, what was asked and what was already done, so the answer is read against them.
+  var S = { turn: null, voice: null, listening: false, pending: null, last: null, el: null, session: 0, followUp: null };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
     'each part of the day, and the shopping list. You act for whoever is talking to it.\n' +
@@ -85,7 +88,21 @@
 
   // ------------------------------------------------------------ voice (the app's own, where there is one)
   function native() { return !!(window.LampNative && LampNative.available); }
-  function speak(text) { if (S.voice && S.voice.speak && text) LampNative.call('speak', { text: text }).then(null, function () {}); }
+  // Resolves true once the words have been said to the end; false when there's no voice, or they were cut off.
+  function speak(text) {
+    if (!(S.voice && S.voice.speak && text)) return Promise.resolve(false);
+    return LampNative.call('speak', { text: text }).then(function (done) { return done === true; }, function () { return false; });
+  }
+  function live(session) { return session === S.session && !!S.el && !document.hidden; }
+  // Ends this session: nothing it started (a follow-up listen, a turn, what was being heard) carries on.
+  function end() {
+    S.session++;
+    clearTimeout(S.followUp);
+    S.followUp = null;
+    if (S.turn) { S.turn.cancel(); S.turn = null; busy(false); }
+    if (S.listening) { S.listening = false; LampNative.call('stop', { cancel: true }).then(null, function () {}); }
+    hush();
+  }
   function hush() { if (S.voice && S.voice.speak) LampNative.call('stop', { cancel: true }).then(null, function () {}); }
 
   // ------------------------------------------------------------ the sheet
@@ -106,36 +123,47 @@
 
   function ask(text) {
     text = String(text || '').trim();
-    if (!text || S.turn) return;
+    if (!text || S.turn || !S.el) return;
     hush();
-    // The answer to a question back goes with it, so "Maya" answers "Who did it?".
-    if (S.pendingAsk && S.history.length) S.history[S.history.length - 1].heard = text;
+    clearTimeout(S.followUp);
+    // An answer to a question back goes with the request it came from, so "Maya" after "Who did it?" still means the
+    // dishes, and what that request already did isn't done again.
+    var pending = S.pending, request = text, history = [];
+    if (pending) {
+      request = pending.request + '\n\nYou asked: "' + pending.question + '" The person answered: "' + text + '".' +
+        (pending.done ? '\nAlready done for this request: ' + pending.done : '');
+      history = [{ said: pending.question, heard: text }];
+    }
+    var session = S.session;
     line('ask-you', App.esc(text));
     var doing = line('ask-doing', 'Thinking…');
     busy(true);
     var undoBox = S.el && S.el.querySelector('[data-ask-undo]');
     if (undoBox) undoBox.hidden = true;
-    var history = S.history.slice(-3);
-    S.turn = LampAI.act(text, {
+    S.turn = LampAI.act(request, {
       about: ABOUT, tools: tools, history: history,
       context: { people: App.read.people(), today: App.dayText(App.now()) },
       onStep: function (s) { if (doing && !s.result) doing.textContent = (DOING[s.name] || s.name) + (s.args.name || s.args.title ? ' ' + (s.args.name || s.args.title) : '') + '…'; }
     });
     var id = S.turn.id;
     S.turn.result.then(function (r) {
-      if (!S.turn || S.turn.id !== id) return;
+      // Cancelled by a close or the page hiding: only its "Thinking…" line goes.
+      if (!S.turn || S.turn.id !== id || session !== S.session) { if (doing && doing.parentNode) doing.parentNode.removeChild(doing); return; }
       S.turn = null;
       busy(false);
       if (doing && doing.parentNode) doing.parentNode.removeChild(doing);
       var spoken = words(r);
       if (r.stopped !== 'cancelled') line('ask-them' + (r.failed.length || r.stopped ? ' is-partly' : ''), App.esc(spoken));
-      S.history = r.ask ? S.history.concat([{ said: r.reply, heard: '' }]) : [];
-      S.pendingAsk = r.ask;
+      var did = receipt(r);
+      S.pending = r.ask ? { request: pending ? pending.request : text, question: r.reply,
+                            done: [pending && pending.done, did].filter(function (x) { return x; }).join(' ') } : null;
       S.last = r.turn;
       if (App.changesOf(r.turn).length && S.el) S.el.querySelector('[data-ask-undo]').hidden = false;
-      speak(spoken);
-      // A question back: listen again straight away where there's a voice.
-      if (r.ask && S.voice && S.voice.listen) setTimeout(listen, 400);
+      // A question back: listen for the answer once it has been said to the end, while Ask is still open.
+      speak(spoken).then(function (said) {
+        if (!said || !r.ask || !S.voice || !S.voice.listen || !live(session)) return;
+        S.followUp = setTimeout(function () { if (live(session)) listen(); }, 300);
+      });
     });
   }
 
@@ -154,17 +182,21 @@
   }
 
   function listen() {
-    if (!S.voice || !S.voice.listen || S.listening || S.turn) return;
+    if (!S.voice || !S.voice.listen || S.listening || S.turn || !S.el || document.hidden) return;
+    var session = S.session;
     hush();
     S.listening = true;
     if (S.el) S.el.classList.add('is-listening');
     var words = D.people.map(function (p) { return p.name; }).concat(D.chores.map(function (c) { return c.title; }));
     LampNative.call('listen', { words: words.slice(0, 80) }).then(function (heard) {
+      // Heard after Ask closed or the page hid: dropped, never a new turn.
+      if (session !== S.session) return;
       S.listening = false;
       if (S.el) S.el.classList.remove('is-listening');
-      if (!heard || heard.ended === 'cancelled' || heard.ended === 'interrupted' || !heard.text) return;
+      if (!live(session) || !heard || heard.ended === 'cancelled' || heard.ended === 'interrupted' || !heard.text) return;
       ask(heard.text);
     }, function () {
+      if (session !== S.session) return;
       S.listening = false;
       if (S.el) S.el.classList.remove('is-listening');
     });
@@ -182,14 +214,15 @@
       '</div>', {
       cls: 'sheet--wide',
       onClose: function () {
-        // Closing cancels: an answer that comes after runs nothing.
-        if (S.turn) { S.turn.cancel(); S.turn = null; }
-        if (S.listening) LampNative.call('stop', { cancel: true }).then(null, function () {});
-        hush();
+        // Closing ends the session: an answer, what's heard or a follow-up listen that comes after does nothing.
+        end();
+        S.pending = null;
         clearInterval(S.awake);
         S.el = null;
       },
       onMount: function (sheet) {
+        S.session++;
+        S.pending = null;
         S.el = sheet;
         // Talking isn't touching: while Ask is open the screen stays as it is, not off to the photo frame or the night
         // clock (which would close the sheet and cancel the turn).
@@ -209,10 +242,9 @@
     });
   }
 
-  // The page going away (the phone locked, the app hidden) cancels a turn that's still thinking.
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden && S.turn) { S.turn.cancel(); S.turn = null; busy(false); }
-  });
+  // The page going away (the phone locked, the app hidden) ends the session: a turn still thinking is cancelled, the mic
+  // is let go and no follow-up listen starts.
+  document.addEventListener('visibilitychange', function () { if (document.hidden) end(); });
 
   App.openAsk = open;
   App.on('ready', function () {

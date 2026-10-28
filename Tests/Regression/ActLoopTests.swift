@@ -118,6 +118,30 @@ final class ActLoopTests: XCTestCase {
         XCTAssertEqual(value(c, "outcome.stopped") as? String, "time")
     }
 
+    func testTheClockIsReadBeforeEachWriteNotOnlyTheTimer() throws {
+        let c = try page()
+        // A write slow enough to carry the turn past its deadline, before the deadline's timer has had its turn.
+        c.evaluateScript("""
+            var clock = Date.now(), realNow = Date.now; Date.now = function () { return clock; };
+            tools.add.run = function (a) { log.push('run:' + a.name); clock += 30000; return { added: a.name }; };
+            answers = [{ calls: [call('s1c1', 'add', { name: 'a' }), call('s1c2', 'add', { name: 'b' })] }]; go('x');
+            """)
+        settle(c)
+        XCTAssertEqual(log(c).filter { $0.hasPrefix("run:") }, ["run:a"])
+        XCTAssertEqual(value(c, "outcome.stopped") as? String, "time")
+        XCTAssertEqual(value(c, "timers.length") as? Int, 1, "the deadline's timer never ran")
+    }
+
+    func testAnAnswerTakenAfterTheClockPassedTheDeadlineRunsNothing() throws {
+        let c = try page()
+        c.evaluateScript("var clock = Date.now(); Date.now = function () { return clock; }; answers = ['hold']; go('Add milk');")
+        settle(c)
+        c.evaluateScript("clock += 26000; held({ calls: [call('s1c1', 'add', { name: 'milk' })] });")
+        settle(c)
+        XCTAssertEqual(log(c), [])
+        XCTAssertEqual(value(c, "outcome.stopped") as? String, "time")
+    }
+
     func testTheTurnKeepsTheRouteTheFirstStepWasAnsweredBy() throws {
         let c = try page()
         c.evaluateScript("answers = [{ route: 'sonnet', calls: [call('s1c1', 'groceries')] }, { reply: 'Here.' }]; go('x');")

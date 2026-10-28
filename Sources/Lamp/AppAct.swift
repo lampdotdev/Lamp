@@ -379,6 +379,7 @@ enum AppAct {
     /// One step, end to end: the page's request, the route (pinned for the turn by its id once the first step chose
     /// it), the model, its answer checked. Returns the status, the JSON and what was billed.
     @MainActor static func step(_ data: Data, appModel: String?) async -> (Int, [String: Any], Double) {
+        let started = Date()
         if let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], body["probe"] as? Bool == true {
             let route = AppAI.route(for: appModel)
             let refused = refusal(for: route)
@@ -397,12 +398,15 @@ enum AppAct {
         }
         if let refused = refusal(for: route) { return (501, ["error": refused], 0) }
         guard case .openRouter(let model) = route.kind else { return (501, ["error": unsupported], 0) }
+        // One deadline for the whole step, from the seconds the page has left: every attempt below (a call asked for
+        // again, a content-filter retry, its wait) gets only what's left of it, and none starts once it has passed.
+        let deadline = started.addingTimeInterval(r.seconds)
         let tag = "outside-text-" + String(UUID().uuidString.prefix(8)).lowercased()
         var cost = 0.0
         var retry: String?
         for attempt in 0..<2 {
             do {
-                let (message, more) = try await openRouterStep(openRouterBody(r, model: model, tag: tag, retry: retry), seconds: r.seconds)
+                let (message, more) = try await openRouterStep(openRouterBody(r, model: model, tag: tag, retry: retry), until: deadline)
                 cost += more
                 switch parse(openRouterMessage: message, for: r) {
                 case .success(let parsed):
@@ -415,6 +419,8 @@ enum AppAct {
                     if attempt == 0 { retry = problem.reason; continue }
                     return (200, ["reply": "I couldn't work out how to do that.", "ask": false, "route": route.id, "trouble": problem.reason], cost)
                 }
+            } catch let late as OutOfTime {
+                return (504, ["error": "This step ran out of time."], cost + late.cost)
             } catch let failure as AppAI.Failure {
                 return (502, ["error": failure.message], cost + failure.cost)
             } catch {
@@ -424,18 +430,24 @@ enum AppAct {
         return (502, ["error": "The AI didn't answer."], cost)
     }
 
+    /// The step's deadline passed (or less than a second of it was left) before an attempt could start.
+    struct OutOfTime: Error { var cost = 0.0 }
+
     /// One chat completion with tools. Its own call, not `viaOpenRouter`'s, since what comes back is the message
-    /// with its tool calls rather than text. The content-filter retry is the same.
-    private static func openRouterStep(_ body: [String: Any], seconds: Double) async throws -> ([String: Any], Double) {
+    /// with its tool calls rather than text. The content-filter retry is the same, inside the same deadline.
+    static func openRouterStep(_ body: [String: Any], until deadline: Date) async throws -> ([String: Any], Double) {
+        guard deadline.timeIntervalSinceNow >= 1 else { throw OutOfTime() }
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = seconds
         request.setValue("Bearer \(KeyStore.openRouterKey ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Lamp", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         var cost = 0.0
         for attempt in 0..<3 {
+            let left = deadline.timeIntervalSinceNow
+            guard left >= 1 else { throw OutOfTime(cost: cost) }
+            request.timeoutInterval = left
             let (data, response) = try await URLSession.shared.data(for: request)
             let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -444,7 +456,11 @@ enum AppAct {
                 throw AppAI.Failure(message: Provider.friendlyError(status: status, reply: obj, from: Provider.openRouter), cost: cost)
             }
             if choice["finish_reason"] as? String == "content_filter" {
-                if attempt < 2 { try await Task.sleep(for: .milliseconds(400 << attempt)); continue }
+                if attempt < 2 {
+                    let wait = min(Double(400 << attempt) / 1000, max(0, deadline.timeIntervalSinceNow))
+                    try await Task.sleep(for: .seconds(wait))
+                    continue
+                }
                 throw AppAI.Failure(message: "The AI provider's content filter cut the reply off. Try rewording the request.", cost: cost)
             }
             return (choice["message"] as? [String: Any] ?? [:], cost)

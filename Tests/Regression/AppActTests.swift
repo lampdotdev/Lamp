@@ -94,6 +94,15 @@ final class AppActTests: XCTestCase {
         XCTAssertNotNil(refusal(try body(["steps": [step(1), step(2), step(3), step(4)]])))
     }
 
+    func testAStepPastItsDeadlineStartsNoAttempt() async throws {
+        for deadline in [Date().addingTimeInterval(-5), Date().addingTimeInterval(0.5)] {
+            do {
+                _ = try await AppAct.openRouterStep([:], until: deadline)
+                XCTFail("an attempt started past the deadline")
+            } catch is AppAct.OutOfTime {}
+        }
+    }
+
     func testOpenRouterIsAskedForProvidersThatTakeTheTools() throws {
         let sent = AppAct.openRouterBody(try AppAct.parse(body(["context": ["list": ["eggs"]]])), model: "anthropic/claude-sonnet-5.5", tag: "outside-text-1")
         XCTAssertEqual((sent["provider"] as? [String: Any])?["require_parameters"] as? Bool, true)

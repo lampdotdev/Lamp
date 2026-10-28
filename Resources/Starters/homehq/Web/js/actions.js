@@ -99,6 +99,14 @@
   // ------------------------------------------------------------ what the agent can change
   // Each write is { check(args, call) → null or why not, run(args, call) → what's there now }. What each change was
   // is kept for the turn's Undo (`App.changesOf`), which is only done while the item is still as the change left it.
+  // Rows of this name, open or bought, at `store` (any store when null).
+  function sameItems(name, store, bought) {
+    return D.groceries.filter(function (g) {
+      return !g.gone && !!g.done === bought && sameName(g.name, name) && (!store || g.store === store);
+    });
+  }
+  function stores(rows) { var seen = {}; return rows.map(function (g) { return g.store; }).filter(function (s) { return !seen[s] && (seen[s] = true); }); }
+  function storeName(id) { var s = D.stores.filter(function (x) { return x.id === id; })[0]; return s ? s.name : id; }
   function groceryById(id) { return D.groceries.filter(function (g) { return g.id === id && !g.gone; })[0] || null; }
   function choreById(id) { return D.chores.filter(function (c) { return c.id === id; })[0] || null; }
   function eventById(id) { return D.events.filter(function (e) { return e.id === id; })[0] || null; }
@@ -123,9 +131,18 @@
 
   App.write = {
     addGrocery: {
+      // An item of the same name, open or bought, at the store asked for. With no store asked for, one at either; two
+      // stores' rows of the same name are a question, never a guess.
       check: function (a) {
         if (!String(a.name).trim()) return 'It needs a name.';
         if (String(a.name).length > 60) return 'That name is too long for the list.';
+        if (!a.store) {
+          var open = sameItems(a.name, null, false);
+          var rows = open.length ? open : sameItems(a.name, null, true);
+          if (stores(rows).length > 1) {
+            return (rows[0].name) + ' is on the list for ' + stores(rows).map(storeName).join(' and ') + ': ask which store.';
+          }
+        }
         return null;
       },
       run: function (a, call) {
@@ -133,7 +150,7 @@
         // Asked again (the same turn tried again, or a copy that already has it): what it added is there.
         var mine = groceryById(id);
         if (mine) return { already: true, item: grocery(mine) };
-        var open = D.groceries.filter(function (g) { return !g.done && !g.gone && sameName(g.name, a.name); })[0];
+        var open = sameItems(a.name, a.store, false)[0];
         if (open) {
           var before = state('grocery', open);
           if (a.qty) open.qty += qty;
@@ -141,7 +158,7 @@
           if (a.qty) keep(call, { kind: 'grocery', id: open.id, before: before, after: state('grocery', open) });
           return { already: true, item: grocery(open) };
         }
-        var bought = D.groceries.filter(function (g) { return g.done && !g.gone && sameName(g.name, a.name); })[0];
+        var bought = sameItems(a.name, a.store, true)[0];
         if (bought) {
           var was = state('grocery', bought);
           bought.done = false; bought.qty = qty;

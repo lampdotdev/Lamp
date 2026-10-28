@@ -37,7 +37,7 @@ belongs to the page.
 | Earlier call ids are unique | Gateway | A duplicate id gets a 400. The model's calls get ids of Lamp's own (`s<step>c<n>`). |
 | A reply-only step after three steps | Gateway and page | A request with three steps behind it (`maxSteps - 1`) is answered with a reply only: `tool_choice: "none"`, and any call refused. A fourth is a 400. The page also sends `final` on that step. |
 | One route for the whole turn | Gateway, from the page | The first answer carries the route's id. The page sends it back on every later step. A route that can't answer any more gets a 409, never a quiet switch. |
-| Writes per turn (6), the deadline (25 s), cancel | Page | Each step's request carries only the seconds left, which the gateway uses as that step's own limit. |
+| Writes per turn (6), the deadline (25 s), cancel | Page | Each step's request carries only the seconds left. The gateway turns that into one absolute deadline for the step, shared by every attempt it makes. |
 | A write checked right before it runs | Page | See "The loop". |
 | Repeats | Page and app | See "Repeats". |
 
@@ -105,7 +105,8 @@ The turn's deadline (25 s at most) is set when it starts, and every layer works 
 - lamp.js's `send` doesn't start another try after the deadline. It still retries the next way to the Mac, and once
   more after three seconds, when a try fails or times out, but only while time is left. So one step can reach the
   gateway more than once. That's safe, because a step only asks the model and changes nothing.
-- The gateway uses the seconds it's given as the limit on its call to OpenRouter.
+- The gateway turns the seconds it's given into one deadline for the step. A call asked for again and each content-filter retry, with its wait, get only what's left. None starts with less than a second left (a 504).
+- The page reads the clock itself (`Date.now()` against the deadline) before it takes an answer and right before each read, each check and each write. It doesn't rely only on the deadline's timer, which can run late when a slow write carries the turn past the deadline.
 
 The Mac's app around a page waits up to 240 s on its own request to Lamp. An answer that comes after the deadline is
 dropped by the page and runs nothing.
@@ -113,7 +114,7 @@ dropped by the page and runs nothing.
 ### Cancel
 
 `turn.cancel()` ends the turn at once: `result` resolves with `stopped: 'cancelled'` and what was done. The page
-checks for a cancel before every read and every write runs, so a step already under way runs nothing more. A write
+checks for a cancel, and the clock, before every read and every write runs, so a step already under way runs nothing more. A write
 that has already started finishes, since writes are the app's own and quick. Whatever arrives afterwards, an answer
 or a result, is dropped.
 
