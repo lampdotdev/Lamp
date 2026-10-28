@@ -404,11 +404,14 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     private static let place = "phone"
     #endif
 
-    /// This bundle, by its program's date and size: a new install is another.
+    /// This bundle, by the build of the page it carries (lamp-build.js, a name for its files) and its program: a new
+    /// install is another. On the Mac every game is a copy of one player, so the program alone doesn't tell them apart.
     private static let bundle: String = {
+        let page = Bundle.main.resourceURL?.appendingPathComponent("Web/lamp-build.js")
+        let built = page.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         guard let url = Bundle.main.executableURL,
-              let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return "" }
-        return "\(Int(values.contentModificationDate?.timeIntervalSince1970 ?? 0))-\(values.fileSize ?? 0)"
+              let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return built }
+        return built + "\(Int(values.contentModificationDate?.timeIntervalSince1970 ?? 0))-\(values.fileSize ?? 0)"
     }()
 
     init(files: LampPageFiles) {
