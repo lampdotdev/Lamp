@@ -91,17 +91,15 @@ final class StartersTests: XCTestCase {
         }
     }
     /// A starter put on GitHub and brought back from there unchanged is the starter it was, file for file: what the
-    /// publish stages and what the pull writes back agree (`StarterRepos.stage`, `StarterRepos.pull`).
-    func testEachStarterComesBackFromItsRepositoryUnchanged() throws {
+    /// publish stages and what the pull writes back agree (`StarterRepos.stage`, `StarterRepos.pull`). Fireside has the
+    /// most kinds of files (code, a share extension, its own files, what it declares); `scripts/pull-starter.sh --check`
+    /// does every starter with the app, games and screens included, which need Lamp's own bundle.
+    func testAStarterComesBackFromItsRepositoryUnchanged() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-pull-starters-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
-        let folders = try fm.contentsOfDirectory(at: starters, includingPropertiesForKeys: nil).filter { $0.hasDirectoryPath }
-        for folder in folders.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+        for folder in [starters.appendingPathComponent("fireside")] {
             let starter = try XCTUnwrap(Starters.read(folder), folder.lastPathComponent)
-            // A game or a screen is staged with Lamp's game kit, which only Lamp's own bundle holds: those are checked with
-            // the app (`scripts/pull-starter.sh --check`).
-            if starter.kind != .mac, Bundle.main.resourceURL.map({ !fm.fileExists(atPath: $0.appendingPathComponent("GameKit").path) }) ?? true { continue }
             let work = root.appendingPathComponent(folder.lastPathComponent)
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
             let (tree, _) = try StarterRepos.stage(starter, in: work.appendingPathComponent("stage"))
