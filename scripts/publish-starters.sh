@@ -71,12 +71,19 @@ else
     [[ -n "$url" ]] || continue
     GIT_TERMINAL_PROMPT=0 "$GIT" clone -q --depth 1 "${url%/}.git" "$WORK/latest/$folder" 2>/dev/null \
       || { echo "$folder: couldn't fetch $url (nothing published, so the latest is never replaced by older)" >&2; exit 1; }
+    # Each picture changed in the tree since its commit goes over the clone's, and only that one: the repository may
+    # have a newer picture of its own beside it.
     tree="Resources/Starters/$folder/tree"
-    if [[ -d "$tree/.git" ]] && [[ -n "$("$GIT" -C "$tree" status --porcelain -- .github 2>/dev/null)" ]]; then
-      echo "$folder: pictures drawn since its commit"
-      rm -rf "$WORK/latest/$folder/.github"
-      [[ -d "$tree/.github" ]] && cp -R "$tree/.github" "$WORK/latest/$folder/.github"
-    fi
+    [[ -d "$tree/.git" ]] || continue
+    "$GIT" -C "$tree" status --porcelain -z --no-renames -- .github 2>/dev/null | while IFS= read -r -d '' entry; do
+      picture="${${entry:3}%/}"
+      echo "$folder: $picture drawn since its commit"
+      rm -rf "$WORK/latest/$folder/$picture"
+      if [[ -e "$tree/$picture" ]]; then
+        mkdir -p "$WORK/latest/$folder/${picture:h}"
+        cp -R "$tree/$picture" "$WORK/latest/$folder/$picture"
+      fi
+    done
   done
   STAGE_STARTERS=1 "$BIN" --stage-starter-repos "$WORK/trees" "$WORK/pages" --trees "$WORK/latest"
 fi
