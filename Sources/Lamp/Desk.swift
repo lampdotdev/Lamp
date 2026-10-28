@@ -1869,8 +1869,15 @@ extension Store {
     /// comes up in Lamp's panel, beside what shows it or on its own. A wish Lamp came with that isn't built yet spins
     /// and opens when it's ready.
     func open(fromDesk project: LampProject) {
-        // A wish whose apps are all in folders of their own has no window of its own for its chat to go beside.
-        guard project.holdsApp else { return use(project) }
+        // A wish whose apps are all in folders of their own has no window of its own for its chat to go beside. One
+        // that plays on another device shows its chat in Lamp's panel too, as a wish holding such an app does below:
+        // once that app is running there, using the wish opens nothing and the chat would be the only thing to show. A
+        // starter still being made opens when it is ready, without its chat in between (`use`).
+        guard project.holdsApp else {
+            use(project)
+            if Self.playsAwayFromMac(apps(of: project)), !openWhenReady.contains(project.id) { showChat(project.id) }
+            return
+        }
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
         if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {
@@ -1887,6 +1894,12 @@ extension Store {
             }
             change(project)
         }
+    }
+
+    /// Whether one of a wish's apps opens somewhere other than this Mac now (a phone, an Android device, a TV), by the
+    /// place Try On points at rather than its kind's: a web app or a game says it has a window wherever it plays.
+    nonisolated static func playsAwayFromMac(_ apps: [LampProject]) -> Bool {
+        apps.contains { $0.destination != .mac }
     }
 
     /// A wish double-clicked on the desk: used when it's made and nothing's waiting on it, else its chat is shown.
