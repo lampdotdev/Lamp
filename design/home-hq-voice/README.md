@@ -1,190 +1,340 @@
 # Home HQ by voice: a design for review
 
-Status: proposal, nothing built. Written against `origin/main` at 52799211.
+Status: proposal, nothing built. Written against `origin/main` at 487f21e2. Second draft, after review.
 
 The goal: someone says "What do we need before school?", "Add milk" or "Mark the dishes done" into their phone, Home HQ
-does it with its own data, the TV and every other copy of the screen show the change, and the phone answers out loud.
+does it with its own data, the TV and every other copy of the screen show the change, and the phone answers out loud,
+saying only what really happened.
 
-This is three problems, taken in this order:
+Four parts, in this order: **actions** (Home HQ's changes, callable and safe), **the loop** (read, decide, act,
+observe), **voice** (hearing and speaking on the phone), and **where the loop lives**: inside Home HQ or as a small
+piece of Lamp. The last one is a choice to make (see "Two ways to build the loop").
 
-1. **Actions**: Home HQ's changes are something an agent can call, not only buttons.
-2. **The agent**: something turns a sentence into those calls and a short reply.
-3. **Voice**: getting the sentence from a phone, and speaking the reply.
-
-## What's there today (the facts this rests on)
+## What's there today
 
 - **Home HQ is a screen**: one web page (`Resources/Starters/homehq/Web/`), shown on the Mac, iPhone and iPad inside
-  Lamp's common app around a page (`LampPage.swift`), and on TVs, Android and the Xbox in their own hosts. Every copy
-  keeps the family's data the same through the wish's shared collections (`Web/js/sync.js`: `people`, `chores`,
-  `groceries`, `events`, `ticks`, `stars`, …), merged item by item. **A change made on any copy reaches the TV with no
-  new plumbing**: change `DATA`, call `App.emit('data')`.
+  Lamp's common app around a page (`Resources/GameKit/apple/LampPage.swift`), and on TVs, Android and the Xbox in their
+  own hosts. Every copy keeps the family's data the same through the wish's shared collections (`Web/js/sync.js`:
+  `people`, `chores`, `groceries`, `events`, `ticks`, `stars`, …), merged item by item, last write wins per item, with
+  no version on an item. A change made on any copy reaches the TV with no new plumbing: change `DATA`, call
+  `App.emit('data')`.
 - **The changes live inside click handlers.** Adding a grocery (`shopping.js` `add`), ticking a chore and giving its
   stars (`tasks.js` `complete`), adding an event (`calendar.js`, the New event sheet) each mix the data change with DOM
   work, timers and toasts. Nothing else can call them.
 - **`LampAI` for pages** (`DeviceSupport.webJS`, written as `Web/lamp.js`): `ask(prompt, {data, system, json, model})`,
-  `choose`/`decide`/`decideEach`, pictures. One whole answer per call: **no streaming, no tool calling, no
-  conversation**. `json: true` only parses the reply; a `schema` in the body is dropped (`Store.appRequest`).
-  Everything is answered by Lamp's gateway on the Mac. A copy away from the Mac's Wi‑Fi, or with Lamp closed, gets
-  "Couldn't reach Lamp on your Mac".
+  `choose`, `decide`, `decideEach` and pictures. Each call gets one whole answer back: **no streaming, no tool calling,
+  no conversation, no way to cancel a call in flight**.
+  - `json: true` gets a JSON-only instruction. The gateway re-asks once when the reply doesn't parse
+    (`AppAI.complete`, `Sources/Lamp/Gateway.swift:524`).
+  - A `schema` in the request body is dropped (`Store.appRequest`), though `AppAI.complete` can already send OpenRouter
+    a `response_format` schema.
+  - Lamp's gateway on the Mac answers every call. Away from the Mac's Wi‑Fi, or with Lamp closed, the call fails with
+    "Couldn't reach Lamp on your Mac".
 - **Which model answers** is the app's own choice (`AppModels.load(project).text`), then Settings, then OpenRouter
   Sonnet when there's a key, or the builder's sign-in.
-- **No speech for pages.** lamp.js has none; the page's web view grants no microphone. Native speech already works in
-  three starters: Universal Remote (`VoiceListener.swift`: tap to talk, `SFSpeechRecognizer` on-device, ends on 1.3 s
-  of silence, then `LampAI.decide`/`ask`), Wedding Words (`Speech.swift`: push-to-talk plus `AVSpeechSynthesizer`, the
-  closest to "speak, think, speak back"), Transcriber (`SpeechAnalyzer`, continuous, Mac). Every generated Apple app
-  already carries the microphone and speech-recognition reasons.
-- **Phone pages from a QR code** are plain `http://<Mac's LAN IP>:478xx/`, served only while an app is on a TV or in
-  the TV preview, talking over `ws://` to `LampRelay`. A browser won't open the mic there (`getUserMedia` needs a
-  secure context). Lamp has no HTTPS for them.
-- **`LampNative.call(name, args)`** reaches the app's own `Sources/Native.swift` on the Mac, iPhone and iPad (Home HQ
-  already uses it for calendars and photos). It's request and answer only: Swift can't push to the page except through
-  the wish.
+- **No speech for pages.** lamp.js has none, and the page's web view grants no microphone. Native speech works in three
+  starters:
+  - Universal Remote (`VoiceListener.swift`): tap to talk, on-device `SFSpeechRecognizer`, ends after 1.3 s of silence.
+  - Wedding Words (`Speech.swift`): push-to-talk and `AVSpeechSynthesizer`.
+  - Transcriber: `SpeechAnalyzer`, continuous, Mac only.
 
-## Decision 1: the agent runs in Home HQ's own page, on the copy that heard you
+  Every generated Apple app already carries the microphone and speech-recognition usage descriptions.
+- **Phone pages opened from a QR code** are plain `http://<Mac's LAN IP>:478xx/`, so a phone's browser won't open the mic
+  there (`getUserMedia` needs a secure context).
+- **`LampNative.call(name, args)`** reaches the app's own `Sources/Native.swift` on the Mac, iPhone and iPad. Home HQ
+  already uses it for calendars and photos.
+  - It's request and answer only: Swift can't push to the page.
+  - `LampNative.available` only says a bridge exists, not that a given call is registered. A call that isn't registered
+    rejects.
 
-The phone is **Home HQ's own iPhone copy** (the same page, already laid out for a phone), not a separate iPhone app or
-a QR page.
+## Where it runs: Home HQ's own page, on the copy that heard you
 
-Why:
+The phone is **Home HQ's own iPhone copy** (the same page, already laid out for a phone). The loop runs in that page,
+where `DATA` lives.
 
-- **One implementation of every action.** The page already knows how stars follow a tick, that ticks are per day, how
-  an example stops being an example, which aisle an item goes in. A native iPhone app writing the shared collections
-  itself would have to copy all of that in Swift and keep it in step. Running the agent where `DATA` lives means an
-  action is a function call.
-- **The TV updates for free**: the action calls `App.emit('data')`, sync puts the items, every copy redraws.
-- **The mic is native**: the iPhone copy has `LampNative`, so speech goes through Swift (as in Wedding Words), not the
-  web view.
-- **It costs the same to install** as a native iPhone app (Xcode, a team, the free account's 7 days and 3 apps), and
-  Home HQ on the iPhone is already one of its places.
-- **The Mac copy gets voice too**, the same way, which is how v1 is tried without a phone.
+- One implementation of every rule: the page already knows that stars follow a tick, that ticks are per day, how an
+  example stops being one, and which aisle an item goes in. A separate native iPhone app would have to copy all of that
+  in Swift.
+- The TV updates through the sync that's already there.
+- The mic is native, through `LampNative` and `Native.swift`.
+- Installing it costs the same as a native iPhone app (Xcode, a team, the free account's 7 days and 3 apps), and the
+  iPhone is already one of Home HQ's places.
+- The Mac copy gets the same voice, which is how most of it is tried before a phone.
 
 Turned down:
 
-- *QR phone page*: no mic over HTTP. Giving Lamp HTTPS on the LAN (a local CA, a cert the phone trusts) is a large,
-  separate project. A QR page could still *speak* (`speechSynthesis` isn't gated) but can't hear.
-- *Native iPhone app in the wish*: duplicates the actions (above). It's the right home later for Siri ("Add milk to
-  Home HQ" as an App Intent), since a screen's build doesn't make intents.
-- *Agent on the Mac, phone only relays text* (a `requests` collection the Mac copy claims and answers): adds a hop and
-  a "which copy answers" election, and the AI call goes to the Mac anyway. Worth it only if the phone's page can't run
-  the agent, and it can.
+- **A QR phone page**: it can't hear over HTTP.
+- **A native iPhone app in the wish**: it would duplicate the rules. It's the right home later for Siri, since a
+  screen's build makes no App Intents.
+- **The phone relaying text to the Mac's copy**: an extra hop and an election of which copy answers, for no gain.
 
-## Decision 2: actions are one layer the views and the agent both call
+## Actions: checked against fresh data before anything changes
 
-New file `Web/js/actions.js`, loaded after `data.js` and before the views. Each action changes `DATA`, calls
-`App.emit('data')`, and returns what it did and how to undo it. The views' click handlers call the same functions and
-keep only their DOM work (rows, timers, toasts).
+New file `Web/js/actions.js`, loaded after `data.js` and before the views. It holds the only code that changes the
+household's data on request. The views' buttons call the same functions and keep only their DOM work.
 
-```js
-App.actions = {
-  addGrocery:   { about: 'Put something on the shopping list',
-                  args: { name: 'string', qty: 'number?', store: 'string?', note: 'string?' },
-                  run: function (a) { /* catalog name and aisle, then aisleByAI as today; an open item of the same
-                                         name gets its quantity raised instead of a second row */ } },
-  checkGrocery: { about: 'Tick an item off the list', args: { id: 'string' }, run: … },
-  completeChore:{ about: 'Mark a chore done today; `by` is who did it (needed for an Anyone chore that earns stars)',
-                  args: { id: 'string', by: 'string?' }, run: … },
-  undoChore:    { … },
-  addEvent:     { about: 'Add an event to the family calendar shown on Home HQ',
-                  args: { title: 'string', start: 'ISO date', minutes: 'number?', people: '[person id]?' }, run: … }
-};
-// run returns { said: 'Added milk to Dairy', undo: function () { … } } or throws a plain sentence ("There's no chore
-// called dishes").
+### Reads
+
+Reads change nothing and come back as small JSON the loop shows the model:
+
+| Read | Gives |
+| --- | --- |
+| `people()` | id, name, kid or grown-up or pet, stars |
+| `events({ from, to, people? })` | every event in a date range (Home HQ's own and the shared calendar's), each with id, title, start, end, who, place, and whether Home HQ can change it (`cal` events can't) |
+| `chores({ part?, who?, day? })` | the chores of a part of the day (morning, after school, evening, or all), each with id, title, who, stars, done today and by whom |
+| `groceries({ open? })` | id, name, aisle, quantity, store, done |
+| `today()` | the date, time, time zone, part of the day, the weather line and what's next: enough for "before school" in one step |
+
+### Writes
+
+`addGrocery`, `checkGrocery`, `uncheckGrocery`, `setGroceryQty`, `completeChore`, `uncompleteChore`, `addEvent`.
+
+There is no delete or clear in v1. Clearing the list and removing events stay on the screen, where the Undo toast is.
+
+### How every write runs
+
+Every write runs in three steps:
+
+1. **Look up fresh, by id.** The write takes ids, never names or positions. It finds its item again in `DATA` at that
+   moment, because sync may have rebuilt the arrays since the model saw them (`take()` replaces `D.groceries` and
+   `D.chores`).
+2. **Check, all before any change.** Every write in a step is checked before any of them runs. If one fails the check,
+   none runs, and the reasons go back to the model as what it observed. The checks:
+   - The id exists and isn't `gone`.
+   - The person exists. A pet can't do a chore or attend an event.
+   - The chore isn't already done today, or already undone.
+   - The grocery item is still open.
+   - `addEvent` has a title, a start in the future and no more than a year ahead, a length between 5 minutes and 24
+     hours, and only the household's people.
+   - The quantity is between 1 and 99.
+   - An `addGrocery` whose name matches an open item becomes "already on the list" (or raises the quantity when one was
+     asked for). It never makes a second row.
+3. **Apply, then report what's there.** The write changes `DATA`, calls `App.emit('data')`, reads the item back, and
+   returns `{ ok, id, now }`, where `now` is the item as it is after the change. A write never reports success on its
+   own say-so.
+
+### Repeats don't duplicate
+
+Every turn has an id (`t` + time + random). A write that makes something new gets an id built from the turn and the
+step (`v<turn>-<n>`). Running the same write twice therefore puts the same item, and the shared collections merge it
+into one, even across copies. Each write also gets a key, the turn plus the write and its arguments. The turn keeps
+these keys, so a step the model repeats after observing comes back "already done" and doesn't run again. Retrying a
+failed turn (the "Try again" button, below) reuses its turn id, so whatever got through the first time isn't done
+twice.
+
+### Undo only if nothing changed since
+
+Each write keeps what the item looked like before and after. "Undo" (said, or tapped on the sheet) undoes the last turn's
+writes in reverse order, each one only if its item, looked up fresh, still matches what that write left. An item that has
+changed since (someone ticked it off on the TV, or another phone changed the quantity) is left alone, and the reply says
+so: "I put the eggs back, but someone already bought the milk." Undo needs no model call.
+
+## The loop: read, decide, act, observe
+
+```
+turn(request):
+  observe = today()                                      # always given
+  for step in 1..4:                                      # at most 4 model calls
+    plan = model(request, history, observe)              # one of:
+      { "read":  [ {name, args} … ] }                    #   look something up
+      { "act":   [ {name, args} … ] }                    #   change something (at most 6 writes in a turn)
+      { "reply": "…", "ask": false }                     #   finished, or a question back (ask: true)
+    if read:  observe += results;            continue
+    if act:   observe += check-then-apply results (above); continue
+    if reply: break
+  speak(receipt(writes) + reply)
 ```
 
-Reads aren't actions in v1. The agent is given a compact state with the request (below), because Home HQ's data for
-"today and tomorrow" is small. That keeps v1 to one model call per sentence.
+- **Deciding never writes.** Only a step the code has checked writes, and only what the household's data allows at
+  that moment.
+- **The model sees results before it says anything is done.** After an `act`, the next step observes `{ ok, now }` or
+  the reason for each write.
+- **What's spoken about writes is built by the code from the results, not by the model.** For example: "Added milk.
+  Marked the dishes done for Maya." When something failed, the receipt says what worked and what didn't, in that
+  order: "Added milk. I couldn't add soccer on Friday: there's already Soccer practice then." The model's `reply` adds
+  the answer to a question, or a question back, never a claim that something was done. A partial success is spoken as
+  partial.
+- **Limits**: 4 model calls, 6 writes and 25 seconds per turn. When it hits one, it stops and speaks the receipt so far
+  plus "I stopped there."
+- **Typical turns**:
+  - "Add milk": act, then a reply from the receipt. One model call when the code ends the turn after a clean act with
+    nothing left to answer, two otherwise.
+  - "What do we need before school?": usually one call, answered from `today()`, or two with a `chores` read.
+- **What the screens show**: the copy that heard you shows the words, then each step ("Looking at the calendar…",
+  "Adding milk…"), then the receipt and Undo. The other copies just change, as when someone taps.
 
-Ids, not names, go in args: the model picks from the state's ids, so "the dishes" becomes `chore:"c7"`, and an id that
-isn't there fails loudly. Calendar writes go to Home HQ's own events, as the New event sheet does today. The
-family's real calendar (EventKit) stays read-only.
+### Questions back: dates, people, duplicates
 
-## Decision 3: one call per sentence, a plan back as JSON
+The system text sets these rules. The checks enforce what they can.
 
-```
-page  ── LampAI.ask(request, { system, data: state, json: true }) ──▶  Lamp gateway  ──▶  model
-      ◀── { "say": "…", "do": [ { "action": "addGrocery", "args": { … } } ], "ask": false } ──
-```
+- **Dates and times** are resolved against `today()` (the page's date and time zone):
+  - "Friday" means the next Friday, today included only if it's still ahead.
+  - "Tonight" is after 5 PM today. "This weekend" is the coming Saturday and Sunday.
+  - A time with no AM or PM is read the way a family means it (7 to 11 is morning, 1 to 6 is afternoon). Otherwise it
+    asks.
+  - An event with no time asks "What time?", unless "all day" was said.
+  - A date in the past, or one Home HQ can't place, asks rather than guesses.
+- **People**:
+  - A name means a person in `people()`. "The kids" are the people with stars, and "everyone" is all the humans.
+  - "I" and "me" ask who, since a phone isn't a person.
+  - A name not in the family asks.
+  - The person who gets stars for an Anyone chore asks "Who did it?".
+- **Duplicate names**: two chores or items that both fit ("Dishes" in the morning and the evening, "Milk" at two
+  stores) ask, with the difference: "The morning dishes or the evening ones?" It prefers the current part of the day
+  only when the other one is already done.
+- **The calendar**: additions go to **Home HQ's own calendar**, as the New event sheet does, never to Apple's or
+  Google's calendars. The spoken receipt says "on Home HQ". An event from the family's shared calendar shows in reads
+  but can't be changed: "That's on your shared calendar, so change it there."
+- **History**: the last three exchanges of this copy, so "Maya" answers "Who did it?". A question back is a new turn
+  with the same history.
 
-- **system**: what Home HQ is, the actions (generated from `App.actions`' `about` and `args`), the rules: use ids from
-  the state, never invent a person, ask back when a chore or person is unclear, `say` is one or two short spoken
-  sentences with no lists or emoji.
-- **data** (fenced as outside text, as `ask` already does): today's and tomorrow's events (title, time, who, place),
-  this part of the day's chores with done/who/stars, the open shopping list, the weather line, the people, and the
-  last three exchanges (for "who did it?" → "Maya").
-- **reply**: `say` is spoken; `do` is run in order; `ask: true` means the phone listens again straight after
-  speaking. An action that throws stops the rest, and its sentence replaces `say`.
-- **"Undo"** said next undoes the last batch (the `undo`s returned), with no model call.
-- **What the screens show**: the copy that heard you shows the transcript and the reply in a sheet. The others just
-  change, as when someone taps.
+### Outside text
 
-Question 1 ("What do we need before school?") is a read: no `do`, a `say` built from the morning's events, chores and
-the weather advice already on Today.
+Event titles, notes and item names, including those from the family's shared calendar, go to the model as fenced
+outside text, as `LampAI.ask`'s `data` already does. None of them can make a write that the checks wouldn't allow
+anyway, and there is no delete to be talked into.
 
-## Decision 4: voice through `Native.swift`, tap to talk
+## Two ways to build the loop
+
+`LampAI.ask` returning a JSON plan stands in for tool calling, which Lamp doesn't offer the apps it makes. Either way,
+the actions, the checks, the turn ids, undo and the voice are Home HQ's. Lamp can't know a household's rules. What
+differs is who runs the loop and talks to the model.
+
+### (a) The JSON plan, inside Home HQ
+
+`Web/js/agent.js` builds the system text from the read and write list, calls `LampAI.ask(…, { json: true })` once per
+step, checks the plan's shape itself, and runs the loop above.
+
+- **Lamp changes**: none. It ships as a starter change, and existing copies take it on their next build.
+- **What it costs**:
+  - The protocol lives only in the prompt. A step can come back the wrong shape, so the page checks every field and
+    treats a bad plan as a failed step. The gateway only re-asks for JSON that doesn't parse at all.
+  - Each step sends the whole context again.
+  - There's no streaming, so the reply is spoken only after the last step.
+  - The next app that wants this copies `agent.js`.
+- **Time**: about 2 to 3 days for actions, the loop and the checks, plus voice (below).
+
+### (b) A small `LampAI.act` in Lamp first
+
+`LampAI.act(request, { reads, writes, context, history, limits })` in lamp.js, with a new `/ai/act` gateway route that
+runs the model side of the loop:
+
+- It uses real tool calling on routes that have it (OpenRouter).
+- It falls back to a JSON plan with a schema on routes that don't (Claude Code, Codex, the models on this Mac).
+
+The page still runs each read and write itself, between steps. `act` hands them to the page and passes back what the
+page observed.
+
+- **Lamp changes**: lamp.js, which goes into every page and must stay ES5 for the TVs' browsers; the gateway route and
+  `Store.appRequest`; the prompt rule for pages (`TVTemplate.webAI`) and the `app-ai` skill; the docs. Then the same in
+  Swift for native apps, or a note that it's only for pages for now.
+- **What it costs**:
+  - Every text route needs either tool calling or the fallback, and needs testing.
+  - Home HQ can't use it until a Lamp release is out.
+  - The interface gets fixed before one app has shown what it needs.
+- **What it gives**: a protocol the model is held to, and one place for limits, step reporting and later streaming.
+  Every page and app gets "talk to it" without copying Home HQ.
+- **Time**: about 4 to 6 days, plus waiting for a release, before Home HQ's part starts.
+
+### Recommendation
+
+**(a), with `agent.js` shaped like `act`**: the same reads and writes table, the same step results, the same limits.
+Lifting it into Lamp afterwards is then a move, not a redesign, and v1 tells us what `act` must do before Lamp commits
+to it. Choose (b) instead if a second app wants a voice agent soon.
+
+## Voice
 
 Three calls in Home HQ's `Sources/Native.swift`, built from Universal Remote's listener and Wedding Words' speech:
 
-- `listen` → starts on-device recognition (`SFSpeechRecognizer`, `requiresOnDeviceRecognition` when supported;
-  `SpeechAnalyzer` where available), resolves with the final text after 1.3 s of silence or a `stop`. Contextual
-  strings: the people's names, the chores, the list.
-- `stop` → ends listening early (the button tapped again).
-- `speak {text}` → `AVSpeechSynthesizer`, resolves when done. Listening never starts while it speaks.
+- **`voice`** answers `{ listen, speak, onDevice, permission }`, where `permission` is `granted`, `denied` or
+  `undetermined`. It's the real capability check. The mic button shows only when this call answers and `listen` is
+  true, which needs a speech recognizer for the language with on-device recognition. On a TV, Android or Lamp's preview
+  the call rejects, and so does an older build that never registered it, so the button doesn't show there. `denied`
+  shows the typed box with a line on turning the mic on in Settings.
+- **`listen`** starts on-device recognition, given the people's names, the chores and the list as contextual words. It
+  resolves with `{ text, ended }`, where `ended` is `silence` (after 1.3 s), `stopped`, `cancelled`, `interrupted` or
+  `nothing` (no speech in 6 s).
+- **`stop {cancel}`** ends listening. With `cancel`, the words are thrown away.
+- **`speak {text}`** resolves when done or stopped. It never overlaps listening.
 
-The page shows a mic button only where `LampNative.available` and `listen` exist (Mac, iPhone, iPad): on the rail,
-and big at the bottom of the phone layout. Tap, talk, see the words, hear the reply. No wake word, no always-on mic.
+v1 needs on-device recognition. Where there isn't any, it's the typed box only, so the household's words never leave the
+devices except as text to the model.
 
-## What Lamp itself needs (to make this reusable)
+### The lifecycle of a turn
 
-v1 needs **none** of these: it is Home HQ's own code on today's `LampAI.ask`. They're the pieces to lift out once v1
-shows it's worth it, so the next app gets "talk to it" without copying Home HQ:
+`idle → listening → thinking → (acting ↔ thinking) → speaking → idle`, or `speaking → listening` when the reply asks
+back.
 
-1. **`LampVoice` in Lamp's page host** (`LampPage.swift`, plus lamp.js): `LampVoice.listen()`, `.speak(text)`,
-   `.available`, answered by the app around the page as `lampGateway` is, so a page needs no `Native.swift` and no
-   compile. With it, a way for Swift to push partial words to the page (today only the wish can). The Swift side as
-   `LampVoice` in `LampSupport.swift` for native apps, replacing the copies in the starters.
-2. **`LampAI.act(request, { actions, state, history })`** in lamp.js and LampSupport: the prompt above, args checked
-   against the declared shapes, actions run, undo kept, `{ say, done, ask }` back. Home HQ's `actions.js` becomes its
-   input. A second round when an action returns data the model asked for gives real tool use without the gateway
-   learning tool calling.
-3. **A `schema` passed through `/ai`** (`Store.appRequest` drops it today, while `AppAI.complete` already sends
-   OpenRouter `response_format`), so `act` gets valid JSON every time instead of parsing hope.
-4. **A "quick" answer tier** an app can ask for (`model: 'quick'`), mapped by Lamp to the fastest model the person's
-   setup has. A voice turn wants about a second of thinking, not Sonnet's several. Which model that is, is Lamp's
-   choice and the person's in Settings, not the page's.
-5. **Streaming the spoken part** (`ask` with `onText`): speak the first sentence while the rest arrives. Needs the
-   gateway to stream (it sends one fixed-length answer now). Last, because it only pays off once 1–4 are in.
+| What happens | When it happens | Result |
+| --- | --- | --- |
+| Tap the mic | listening | Stop listening, then use the words |
+| Tap ✕ | listening | Cancel. Nothing is sent |
+| Tap ✕ | thinking | Cancel the turn. The model's answer, when it comes, is dropped and acts on nothing |
+| Tap ✕ | acting | The writes of the current step finish (they're local and take milliseconds). No further steps run. The receipt is shown and Undo is offered |
+| Tap ✕ or the mic | speaking | Stop speaking |
+| The phone locks or the app goes to the background | any time | The native side ends listening (`interrupted`) and stops speaking: an audio interruption, or the app resigning active. The page, on `visibilitychange` to hidden, cancels a turn that hasn't acted yet |
+| The app comes back with an unfinished turn | after a lock or background | No step is resumed in the background. The sheet shows "Didn't finish: add milk", with what was done and **Try again**, which reuses the turn's id so nothing is done twice |
+| An answer arrives late | after the turn was cancelled, timed out (25 s) or replaced by a new one | Every model answer carries its turn id and step. One that isn't for the live turn's current step is dropped. It never writes |
+| Can't reach Lamp | any step | "I can't reach Lamp on the Mac." Whatever was already done is in the receipt |
 
-Each touches lamp.js, which goes to every page, and LampSupport, which goes to every app, so each is its own change
-with its own rule in the prompts (`TVTemplate.webAI` and the `app-ai` skill), not part of the Home HQ change.
+## Milestones
 
-## The smallest first version worth trying
+0. **Phone to TV, first.** Before any model: build Home HQ with `actions.js` and a typed test box for one write
+   (`addGrocery`) on the iPhone. Show it on a TV place (a Samsung or LG TV, or the TV preview when no TV is at hand).
+   Measure: tap on the phone, then milk on the TV, and how long that takes. This proves the iPhone build with the extra
+   `Native.swift` calls, the wish sync between the phone and the TV, and the new ids. About half a day, plus the phone's
+   setup.
+1. **Actions and checks** for all the reads and writes, with the views moved onto them.
+2. **The loop**, typed, on the Mac copy.
+3. **Voice** (`voice`, `listen`, `stop`, `speak`) and the lifecycle, on the Mac, then the iPhone.
+4. **The acceptance run** (below).
 
-Home HQ only, no Lamp changes, the Mac copy first:
+## Acceptance: writes go safely
 
-1. `actions.js` with `addGrocery`, `checkGrocery`, `completeChore`, `addEvent`; `shopping.js`, `tasks.js` and
-   `calendar.js` call it.
-2. The agent: state, prompt, one `LampAI.ask(json:true)`, run, undo.
-3. `listen`/`stop`/`speak` in `Native.swift`; the mic button and the transcript sheet.
-4. A typed box in the same sheet (same agent, no mic), so it can be tried and checked where a mic can't be used.
+A scripted run in an isolated copy against the example family, through the typed box and the real model, plus checks
+that fake the model's answers to test what the model can't be relied on to produce.
 
-Then the same build on an iPhone as Home HQ's iPhone place. Roughly two days for 1–4 and the checks, plus the phone.
+**The gate. All of these must hold in every run:**
 
-**How we'll know it's worth more**: a fixed list of about 20 sentences against the example family ("add milk", "add two
-milks and eggs", "mark the dishes done", "Otto fed Biscuit", "what's on after school", "move soccer to five" (it can't
-yet, and should say so), "who's at the dentist"), each with the actions it should produce. Run against the real
-model, record what each produced and how long it took from tap to first word. Keep it if most are right and the time
-is short enough to talk to. The results decide whether 3–5 above come next.
+1. **Nothing unasked.** No write that the request didn't ask for. Reads and questions write nothing.
+2. **Nothing duplicated.** The same request twice, a repeated step and a Try again after a timeout each leave one item.
+3. **Nothing on stale data.** Another copy deletes the item, ticks the chore or changes the list between the model's
+   read and the write. The write is refused or left alone, and the receipt says so.
+4. **What's said is what's there.** After every turn, each spoken "done" matches the shared collections read back
+   on another copy. A partial success says which part failed.
+5. **Undo is safe.** It undoes only items unchanged since, and says which ones it left.
+6. **Cancelled means cancelled.** Cancel, lock, a late answer and a timeout never write after the cancel.
+7. **Calendar writes stay in Home HQ.** Nothing reaches Apple's or Google's calendars.
+8. **The limits hold.** No turn makes more than 4 model calls or 6 writes.
 
-## Open questions for review
+**Reported, not gated:**
 
-- **Model for v1**: the app's own model choice already exists. Set Home HQ to a fast OpenRouter model for the trial, or
-  measure on the default first?
-- **Phone away from home**: the page's `LampAI` fails off the Mac's Wi‑Fi. The iPhone's own-key fallback
-  (`LampDirect`) is Swift-only. Is "voice works at home" enough for v1? (We think yes: the TV is at home.)
-- **Mic in the page's host**: v1 goes through `Native.swift`, so it doesn't depend on WebKit's media capture in
-  `LampPage`. Not yet checked: that a screen's Mac and iPhone builds get the microphone and speech reasons (GameKit's
-  `{{USAGE}}`), and that the page's mic button shows only where `listen` is registered.
-- **Who's talking**: v1 doesn't know who holds the phone, so "I did the dishes" asks who. A copy could remember its
-  person (`App.me()` is a device). Later.
-- **Ambiguity vs speed**: always asking back when unsure costs a turn. Is "do the likely thing and offer Undo" better
-  for a family? v1 asks only for stars (who did an Anyone chore) and for a chore it can't match.
+- How often the right action was chosen, over a fixed list of requests (including ones it can't do yet, like "move
+  soccer to five", which must say so).
+- Time from the end of speech to the first spoken word.
+- Model calls per turn.
+
+These decide whether a faster model, streaming or (b) comes next.
+
+## What Lamp could take on later
+
+Whichever of (a) or (b) is chosen:
+
+1. **`LampVoice` in Lamp's page host** (`LampPage.swift`, plus lamp.js): `voice`, `listen`, `speak` for any page,
+   answered by the app around the page, plus a way for Swift to push partial words to the page.
+2. **A `schema` passed through `/ai`**, which `AppAI.complete` already supports.
+3. **A "quick" answer tier** (`model: 'quick'`) that Lamp maps to the fastest model the person's setup has.
+4. **Streaming the spoken part**, once the gateway can stream.
+
+Each touches lamp.js or LampSupport, which go to every app, so each is its own change with its own rule in the prompts.
+
+## Open questions
+
+- **(a) or (b).** The recommendation is (a), shaped like `act`.
+- **Model for the trial**: set Home HQ to a fast OpenRouter model, or measure on the default first?
+- **Away from home**: the page's `LampAI` fails off the Mac's Wi‑Fi. Is voice at home enough for v1?
+- **On-device recognition only**: right for a household's words, but it rules out phones and languages without it.
+- **Asking back vs doing the likely thing**: v1 asks for dates, people and duplicate names. A family may prefer the
+  likely thing with Undo for groceries.
+- **Not yet checked**: that a screen's Mac and iPhone builds carry the microphone and speech usage descriptions
+  (GameKit's `{{USAGE}}`), and that WKWebView fires `visibilitychange` when the iPhone locks.
