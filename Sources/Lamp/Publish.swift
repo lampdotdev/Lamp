@@ -85,7 +85,7 @@ enum Publish {
     /// Lamp (Download Lamp carries the wish into its welcome) and with it ("Open it with this wish"). With no link, the
     /// wish as a shared file, which goes beside the page either way, for the README's download: the exact game.
     /// `origin` is what the page is a copy of, when that's somewhere Lamp can copy it from again: the starter a
-    /// starter's own page is (`StarterRepos.stagePage`), or the repository the wish was put on (`GitHubRepo.kept`).
+    /// starter's own page is (`StarterRepos.stagePage`), or the repository the wish was put on, while it's public and up to date (`GitHubRepo.remixOrigin`).
     /// The Remix panel's request goes with it (`RemixLink.Origin`), so Lamp starts from a copy rather than its own version.
     struct OpenInLamp: Equatable {
         var link: URL?
@@ -137,9 +137,8 @@ enum Publish {
         let shared = try Sharing.export(project)
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         try fm.copyItem(at: shared, to: site.appendingPathComponent(fileName))
-        // A wish that's on GitHub is remixed from there, at the commit last put up.
-        let kept = GitHubRepo.kept(for: project)
-        let open = OpenInLamp(link: link, file: fileName, origin: kept.map { .repository(url: GitHubRepo.url($0.repo), commit: $0.commit) })
+        // A wish on GitHub is remixed from there, while its repository is public and holds the wish as it is now.
+        let open = OpenInLamp(link: link, file: fileName, origin: GitHubRepo.remixOrigin(for: project))
         let chain = credits.remixed(from: Credits.Remix(name: project.name, wish: Sharing.identity(of: project)))
         try chain.encoded().write(to: site.appendingPathComponent(Credits.file))
 

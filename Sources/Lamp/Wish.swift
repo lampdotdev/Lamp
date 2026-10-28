@@ -57,7 +57,7 @@ enum Wish {
     /// from, and the request for its chat's box. Lamp puts a fresh copy of that on the desk (a starter it ships, or the
     /// repository through Open from GitHub's own fetch and review) and opens it with the request waiting there.
     /// Everything in it is untrusted: a starter only by a folder's plain name, which must be one this Lamp ships; a
-    /// repository only as an https github.com address with no path past its name, and a commit only as hex.
+    /// repository only as an https github.com address with no path past its name, and a commit only as its full 40 hex digits.
     struct Remix: Equatable, Codable {
         enum From: Equatable, Codable {
             case starter(String)
@@ -110,9 +110,9 @@ enum Wish {
         (1...40).contains(text.count) && text.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") } && !text.hasPrefix("-")
     }
 
-    /// A commit as git names one in full or short: 7 to 40 hex digits.
+    /// A commit in full, 40 hex digits: a shallow fetch takes only a full one, never an abbreviation.
     static func isCommit(_ text: String) -> Bool {
-        (7...40).contains(text.count) && text.allSatisfy(\.isHexDigit)
+        text.count == 40 && text.allSatisfy(\.isHexDigit)
     }
 
     /// What was copied, only when it carries Lamp's mark.

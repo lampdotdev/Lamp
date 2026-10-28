@@ -22,14 +22,28 @@ enum GitHubRepo {
     /// A repository that's up, and whether it carries the MIT license the person chose: an update keeps to that choice.
     /// Nil from a Lamp before the choice was kept, read as no license. `commit` is the one the last Put on GitHub
     /// pushed, which a later share names on the chain (`Sharing.export`); nil from a Lamp before it was kept.
+    /// `isPublic` is what GitHub said after the last push, and `version` the wish's own version that push carried: a
+    /// remix starts from the repository only while both hold (`remixOrigin`). Nil from a Lamp before they were kept.
     struct Repo: Codable, Equatable {
         var repo: String   // "owner/name"
         var url: String
         var license: Bool? = nil
         var commit: String? = nil
+        var isPublic: Bool? = nil
+        var version: String? = nil
     }
 
     static func url(_ repo: String) -> String { "https://github.com/\(repo)" }
+
+    /// The repository a remix of this wish starts from (`RemixLink.Origin`): only one anyone can read, since Lamp fetches
+    /// it without a sign-in, and only while it holds the wish as it is now, so a remix never starts from an older version
+    /// than the page or app it was asked from. Nil otherwise, and the remix goes by the Share Link or the request.
+    static func remixOrigin(for project: LampProject) -> RemixLink.Origin? {
+        guard let kept = kept(for: project), kept.isPublic == true, let version = kept.version, let commit = kept.commit else { return nil }
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
+        guard head.ok, head.output.trimmed == version else { return nil }
+        return .repository(url: url(kept.repo), commit: commit)
+    }
 
     // MARK: Where it went
 
@@ -58,6 +72,8 @@ enum GitHubRepo {
         let credits: Credits
         /// Where the README's Remix it with Lamp goes.
         let open: Publish.OpenInLamp
+        /// The wish's own version this is of, kept with the repository once it's up (`Repo.version`).
+        var version: String? = nil
     }
 
     /// Stages the repository for `repo`, its README's remix link going to `link` (the wish's Share Link, which works
@@ -66,6 +82,8 @@ enum GitHubRepo {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
+        // Read before the export, so a change landing meanwhile is never taken for what went up.
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
         let work = Sharing.workFolder.appendingPathComponent("lamp-github-\(UUID().uuidString)")
         let tree = work.appendingPathComponent("repo")
         var done = false
@@ -117,7 +135,8 @@ enum GitHubRepo {
         // GitHub refuses a file over 100 MB and a repository is meant to stay well under 1 GB.
         guard bytes < 900_000_000 else { throw Failure(message: "\(project.name) is too big to put on GitHub.") }
         done = true
-        return Staged(folder: tree, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open)
+        return Staged(folder: tree, files: all.filter { !$0.hasDirectoryPath }.count, bytes: bytes, credits: chain, open: open,
+                      version: head.ok ? Credits.validCommit(head.output.trimmed) : nil)
     }
 
     /// The files in the wish's folder that are Lamp's (the ones the builder can't delete, `Store`'s list), by their
@@ -343,7 +362,8 @@ enum GitHubRepo {
                 if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")),
                    manifestsMatch(Data(before.output.utf8), after),
                    creditsMatch(credits.ok ? Data(credits.output.utf8) : nil, try? Data(contentsOf: clone.appendingPathComponent(Credits.file))) {
-                    return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: clone)), false)
+                    return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: clone),
+                                 isPublic: await isPublic(repo, gh: gh), version: staged.version), false)
                 }
             }
             let committed = await Subprocess.run(git, identity + ["commit", "-q", "-m", "Update \(project.name) from Lamp"], cwd: clone, timeout: 120)
@@ -353,7 +373,8 @@ enum GitHubRepo {
         step("Uploading…")
         let pushed = await Subprocess.run(git, signedIn + ["push", "-q", remote, "HEAD:main"], cwd: work, timeout: 600)
         guard pushed.ok else { throw Failure(message: "GitHub didn't take it: \(pushed.output.trimmed.suffix(200))") }
-        return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: work)), true)
+        return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: work),
+                     isPublic: await isPublic(repo, gh: gh), version: staged.version), true)
     }
 
     /// The git that talks to GitHub for the person, with their own settings: Homebrew's when they have it, else Apple's.
@@ -372,6 +393,13 @@ enum GitHubRepo {
     }
 
     /// The commit a work folder is at, as the credits take one.
+    /// Whether anyone can read the repository, as GitHub says now; nil when it can't be asked.
+    static func isPublic(_ repo: String, gh: String) async -> Bool? {
+        let answer = await Subprocess.run(gh, ["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"], mergeErrors: false, timeout: 30)
+        guard answer.ok else { return nil }
+        return answer.output.trimmed.uppercased() == "PUBLIC"
+    }
+
     static func head(_ git: String, in folder: URL) async -> String? {
         let head = await Subprocess.run(git, ["rev-parse", "HEAD"], cwd: folder, mergeErrors: false, timeout: 10)
         return head.ok ? Credits.validCommit(head.output.trimmed) : nil
@@ -470,7 +498,9 @@ enum GitHubRepo {
                 let before = GitHubRepo.kept(for: project)
                 GitHubRepo.keep(kept, for: project)
                 // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
-                if before?.repo != kept.repo || before?.commit != kept.commit { Store.shared.refreshInstalled(project) }
+                if before?.repo != kept.repo || before?.commit != kept.commit || before?.isPublic != kept.isPublic || before?.version != kept.version {
+                    Store.shared.refreshInstalled(project)
+                }
                 try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                 cards[project.id]?.staged = nil
                 cards[project.id]?.kept = kept

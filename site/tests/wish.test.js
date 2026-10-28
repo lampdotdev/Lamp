@@ -72,11 +72,11 @@ test("the exact wish's link names its file and carries the request", () => {
 
 test("a remix names only a starter's id or a github.com repository, and Lamp's link and mark carry it", () => {
   assert.deepEqual(remixFrom("?starter=newyork&ask=Snow"), { starter: "newyork" });
-  assert.deepEqual(remixFrom("?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fnewyork.git&commit=ABC1234"),
-    { repo: "https://github.com/lampdotdev/newyork", owner: "lampdotdev", name: "newyork", commit: "abc1234" });
+  assert.deepEqual(remixFrom("?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fnewyork.git&commit=B95D5012397FA3FA345505F428F1189271218753"),
+    { repo: "https://github.com/lampdotdev/newyork", owner: "lampdotdev", name: "newyork", commit: "b95d5012397fa3fa345505f428f1189271218753" });
   for (const bad of ["?starter=..%2Fetc", "?starter=New%20York", "?starter=a&repo=https%3A%2F%2Fgithub.com%2Fa%2Fb",
     "?repo=http%3A%2F%2Fgithub.com%2Fa%2Fb", "?repo=https%3A%2F%2Fgithub.com.evil%2Fa%2Fb", "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb%2Ftree%2Fmain",
-    "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack", "?ask=x"]) {
+    "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack", "?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=abc1234", "?ask=x"]) {
     assert.equal(remixFrom(bad), null, bad);
   }
   assert.equal(remixLink({ starter: "newyork" }, "Snow + ice"), "lamp://wish?starter=newyork&text=Snow%20%2B%20ice");

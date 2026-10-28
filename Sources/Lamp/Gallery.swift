@@ -958,7 +958,7 @@ enum Gallery {
     private static let remixEntries: [Entry] = [
         remix("With a share link", link: true),
         remix("Without a share link"),
-        remix("On GitHub", link: true, origin: .repository(url: "https://github.com/someone/new-york", commit: "0123abcd")),
+        remix("On GitHub", link: true, origin: .repository(url: "https://github.com/someone/new-york", commit: "b95d5012397fa3fa345505f428f1189271218753")),
         remix("Lamp's own suggestions", link: true, suggestions: RemixOffer.fallback),
         remix("Wide", link: true, width: 480),
     ]

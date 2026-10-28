@@ -42,14 +42,15 @@ final class WishTests: XCTestCase {
         XCTAssertEqual(try remix("lamp://wish?starter=newyork&text=Make%20it%20snow"), Wish.Remix(from: .starter("newyork"), text: "Make it snow"))
         // A browser's form writes a space as "+", and "+" itself as "%2B".
         XCTAssertEqual(try remix("lamp://wish?starter=newyork&text=Snow+%2B+ice"), Wish.Remix(from: .starter("newyork"), text: "Snow + ice"))
-        let repo = try XCTUnwrap(try remix("lamp://wish?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fnewyork&commit=ABC1234def&text=x"))
-        XCTAssertEqual(repo.from, .repository(url: "https://github.com/lampdotdev/newyork", commit: "abc1234def"))
-        XCTAssertEqual(repo.source, RepoImport.Source(owner: "lampdotdev", name: "newyork", ref: "abc1234def"))
+        let repo = try XCTUnwrap(try remix("lamp://wish?repo=https%3A%2F%2Fgithub.com%2Flampdotdev%2Fnewyork&commit=B95D5012397FA3FA345505F428F1189271218753&text=x"))
+        XCTAssertEqual(repo.from, .repository(url: "https://github.com/lampdotdev/newyork", commit: "b95d5012397fa3fa345505f428f1189271218753"))
+        XCTAssertEqual(repo.source, RepoImport.Source(owner: "lampdotdev", name: "newyork", ref: "b95d5012397fa3fa345505f428f1189271218753"))
         // Anything else that names an origin is refused, never taken for a plain wish.
         for bad in ["lamp://wish?starter=..%2Fetc&text=x", "lamp://wish?starter=New%20York", "lamp://wish?starter=a&repo=https%3A%2F%2Fgithub.com%2Fa%2Fb",
                     "lamp://wish?repo=http%3A%2F%2Fgithub.com%2Fa%2Fb", "lamp://wish?repo=https%3A%2F%2Fgitlab.com%2Fa%2Fb",
                     "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb%2Ftree%2Fmain", "lamp://wish?repo=github.com%2Fa%2Fb",
-                    "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack%3Devil", "lamp://wish?starter=newyork&commit=abc1234"] {
+                    "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=--upload-pack%3Devil", "lamp://wish?starter=newyork&commit=abc1234",
+                    "lamp://wish?repo=https%3A%2F%2Fgithub.com%2Fa%2Fb&commit=abc1234"] {
             let url = try XCTUnwrap(URL(string: bad))
             XCTAssertTrue(Wish.isRemix(url, scheme: "lamp"), bad)
             XCTAssertNil(Wish.remix(from: url, scheme: "lamp"), bad)

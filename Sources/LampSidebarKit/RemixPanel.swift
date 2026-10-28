@@ -79,7 +79,7 @@ public enum RemixLink {
         }
 
         /// A repository as Lamp wrote it into an app's chat (`Sidebar.install`), checked as the site and Lamp check a link's:
-        /// an https github.com address of an owner and a name, and a commit of hex. Nil for anything else.
+        /// an https github.com address of an owner and a name, and a full commit of 40 hex digits. Nil for anything else.
         public static func repository(_ url: String?, commit: String?) -> Origin? {
             guard let url, let rest = url.hasPrefix("https://github.com/") ? url.dropFirst("https://github.com/".count) : nil else { return nil }
             let parts = rest.split(separator: "/", omittingEmptySubsequences: false)
@@ -87,7 +87,7 @@ public enum RemixLink {
                 && part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) } }
             guard parts.count == 2, plain(parts[0]), plain(parts[1]) else { return nil }
             let commit = commit.flatMap { $0.isEmpty ? nil : $0 }
-            if let commit, !((7...40).contains(commit.count) && commit.allSatisfy(\.isHexDigit)) { return nil }
+            if let commit, !(commit.count == 40 && commit.allSatisfy(\.isHexDigit)) { return nil }
             return .repository(url: url, commit: commit)
         }
 

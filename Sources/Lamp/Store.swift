@@ -1781,9 +1781,11 @@ final class Store: ObservableObject {
     /// Puts a copy of the starter on the desk and opens it with the request in its box. `reuseDesk` takes the desk's
     /// own copy instead while nothing has been asked of it: the welcome's, whose starters were copied moments ago.
     func openCopy(of starter: Starters.Starter, request: String?, reuseDesk: Bool = false) {
+        // Lamp's own first build of a copy (`prepareStarters`) holds it busy too, and isn't anything asked of it.
         func fresh(_ project: LampProject) -> Bool {
             !(logs[project.id] ?? []).contains { $0.kind == .user || $0.kind == .agent }
-                && !busy.contains(project.id) && !pendingSubmissions.contains(project.id) && queued[project.id] == nil
+                && (!busy.contains(project.id) || preparing.contains(project.id))
+                && !pendingSubmissions.contains(project.id) && queued[project.id] == nil
         }
         let copies = projects.filter { Starters.starter(of: $0)?.name == starter.name && fresh($0) }
         let reused = copies.first { $0.id == remixApp } ?? (reuseDesk ? copies.first : nil)

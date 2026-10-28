@@ -349,7 +349,8 @@ the helper model after a change lands (`Store`, beside the version's title), kep
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
 (`RemixOffer.fallback`). A wish that's been Put on GitHub also has its repository and the commit last pushed there
-(`LampRepository`, `LampCommit`), so the panel's request goes with them and Lamp starts from a copy of this exact wish; a
+(`LampRepository`, `LampCommit`), while the repository is public and holds this version (`GitHubRepo.remixOrigin`), so
+the panel's request goes with them and Lamp starts from a copy of this exact wish; a
 starter's copy doesn't name the starter, since it may have been changed. When suggestions arrive after an install, a
 Share Link is made or taken down, or Put on GitHub pushes a new commit, the installed
 copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
