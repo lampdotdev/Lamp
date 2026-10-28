@@ -249,6 +249,14 @@ enum Starters {
         let credits = Credits.read(starter.folder.appendingPathComponent(Credits.file)) ?? Credits()
         let link = Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent, url: starter.repository, commit: starter.commit)
         try Credits.arrive(credits.remixed(from: link), in: project)
+        // Each license those credits name goes where they name it: one outside the folders above (at the root, say)
+        // would otherwise be missing, and a copy with a license missing can't be shared (`ShareCheck.refusal`).
+        for path in credits.upstream.compactMap(\.licenseFile) where Credits.isLicenceFile(path) {
+            let from = starter.folder.appendingPathComponent(path), to = project.dir.appendingPathComponent(path)
+            guard fm.fileExists(atPath: from.path), !fm.fileExists(atPath: to.path) else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: from, to: to)
+        }
         let icon = starter.folder.appendingPathComponent(iconFolder)
         for made in iconFiles(of: project) {
             let shipped = icon.appendingPathComponent(made.lastPathComponent)
