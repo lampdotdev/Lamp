@@ -43,7 +43,7 @@ index.html keeps the scaffold's head (lamp.js, then the import map, whose `phase
 ```js
 import * as Phaser from 'phaser';
 import { phaser, pad } from './lamp-phaser.js';
-import { BUTTON, STICK, sound, save, load, random, log, label, glyph, onInput } from './lamp-game.js';
+import { BUTTON, STICK, sound, save, load, random, log, label, glyph, onInput, pendingRestore } from './lamp-game.js';
 
 const CONTROLS = { move: STICK.LEFT, jump: BUTTON.A, back: BUTTON.B, pause: BUTTON.MENU };
 
@@ -163,9 +163,31 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
 The game skill's: effects from `sound.tone` for each thing the player does or meets (a jump sliding up, a coin's two
 quick notes, noise for a hit), made once; music quiet or none. The best score, levels reached and settings with
 `save(name, value)` and `load(name)`, read with a default for anything new (`load('best') ?? 0`).
-`snapshot()` and `restore(state)` in phaser() keep the player's place through a change (the scene, the player's
-position, the score, the time), and `busy()` holds a change of code during a round (the game skill, "Changes while
-it's played"). A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (load it again and
+`snapshot()` in phaser() keeps the player's place through a change (the scene, its mode, which menu or DOM card is
+open, the player's position, the score, the time), and `busy()` holds a change of code during a round (the game skill,
+"Changes while it's played"). The first scene reads `pendingRestore()` and goes straight to the scene the snapshot
+names, and that scene's `create` reads it again and builds that place with no title card or intro, so a fresh start
+and a change's start are one path:
+
+```js
+class Boot extends Phaser.Scene {
+    constructor() { super('boot'); }
+    preload() { … }
+    create() { this.scene.start(pendingRestore() ? 'play' : 'title'); }
+}
+class Play extends Phaser.Scene {
+    constructor() { super('play'); }
+    create() {
+        const was = pendingRestore();          // null on a fresh start and on every restart after the game began
+        this.level = buildLevel(was ? was.level : 1);
+        this.mode = was ? was.mode : 'ready';
+        if (was && was.paused) this.showPause(); else if (!was) hud.card('Level 1');
+    }
+}
+```
+
+Read it in `create`, not from the scene's data: `this.scene.restart()` with no data starts the scene with its last
+data again, so a snapshot passed that way would be put back on every restart. A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (load it again and
 swap the texture), or the page opens again with the snapshot.
 
 ### Keeping it smooth on the slowest place

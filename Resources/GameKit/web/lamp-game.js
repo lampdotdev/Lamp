@@ -723,9 +723,12 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
     document.body.append(renderer.domElement);
     fit();
     window.addEventListener('resize', fit);
+    // Where the player was, if the page is opened again for a change: known before init, so the game starts there.
+    if (!preview) await claim();
     // In the preview a start-up that fails ends the play with what it said, rather than leaving Lamp waiting for frames.
     if (init) {
         try { await init({ width: WIDTH, height: HEIGHT }); } catch (e) {
+            if (taken) return startFresh(e);
             log(`Error: ${e && e.message || e}`);
             if (preview) { window.webkit.messageHandlers.lampPreview.postMessage({ done: true, failed: String(e && e.message || e), logs }); return; }
             throw e;
@@ -739,6 +742,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         last = now;
         measure(now);
         step(dt);
+        // The first frame drawn from a snapshot has gone without an error: from here an error is the game's own.
+        guarding = false;
         live();
         requestAnimationFrame(loop);
     };
@@ -753,9 +758,12 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 // from it (a material from a shader's source, a clone of a model, a level read from JSON) and returns true when it has.
 // A change of code (a .js, .html or .css file), or of a file nothing put in, opens the page again with the new code,
 // keeping the player's place: just before, `snapshot()` gives what matters of where the game is (the level, the
-// player's position, the camera, the score, the mode…) as plain JSON, and once the new code's init has run,
-// `restore(state)` puts the game back there. A game without them starts again, from its own save() and load(). If
-// restore throws, the game starts fresh, and the log says so.
+// player's position, the camera, the score, the mode, which menu or overlay is open…) as plain JSON. The new copy
+// starts straight there: `pendingRestore()` gives that state while the game starts (in init, or in a Phaser scene's
+// init or create), so the game builds the place it was in rather than its title or intro, and the runtime calls
+// nothing more. A game that doesn't read it and has `restore(state)` is started as usual and then given the state,
+// before its first frame is drawn. A game without either starts again, from its own save() and load(). If starting
+// from the state throws (init, a scene's create, restore or the first frame), the game starts fresh, and the log says so.
 // While `busy()` is true (a match or a round under way, a race, a fight) a change of code waits, and goes in at the
 // next moment busy() is false (a pause, between rounds); the person can also put it in at once. Where the app around the
 // page has no Reload of Lamp's own, the page shows a small "Reload to apply" to press.
@@ -763,6 +771,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
 // again: the runtime keeps the latest snapshot, and the new copy restores it once, when it opens.
 
 let hooks = {}, started = false, waiting = null, pill = null;
+// The place this copy starts in (claim()), whether the game read it (pendingRestore()), and whether an error now means
+// the state didn't take.
+let pending = null, reopened = false, taken = false, guarding = false;
 const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
 const tellHost = (gen, state) => { try { const h = host(); h && h.postMessage({ gen, state }); } catch (e) {} };
 // What a change of these is, is code: the page is opened again for it.
@@ -849,13 +860,13 @@ if (!preview) {
     document.addEventListener('visibilitychange', () => { if (started && document.hidden) keepLast(); });
 }
 
-// After init: the place the page kept for its reopening, or else the latest snapshot of an older build (Lamp installed
-// a new one since), once.
-async function putBack() {
+// Where this copy of the page starts: the place it kept for its reopening, or else the latest snapshot of an older
+// build (Lamp installed a new one since). Taken from storage as it's read, so it's restored at most once.
+async function claim() {
     const session = store('session'), local = store('local');
-    let said = null, reopened = false;
+    let said = null;
     try { said = JSON.parse(session.getItem(LIVE) || 'null'); session.removeItem(LIVE); reopened = !!said; } catch (e) {}
-    if (said && said.fresh) { tellHost(said.gen, 'fresh'); return finish(); }
+    if (said && said.fresh) { tellHost(said.gen, 'fresh'); return; }
     const id = await build;
     if (!said) {
         try {
@@ -865,21 +876,49 @@ async function putBack() {
         } catch (e) {}
     }
     if (said && said.input && said.input.kind) { current = said.input; padName = said.padName || ''; for (const changed of listeners) try { changed(input()); } catch (e) {} }
-    if (said && said.state != null && hooks.restore) {
+    pending = said;
+    if (said && said.state != null) {
+        // An error while the game starts from the state (in a Phaser scene's create, say, or the first frame) is the
+        // state not taking.
+        window.addEventListener('error', e => { if (guarding) startFresh(e.error || e.message); });
+    }
+}
+
+// The state the game was in before a change of its code (what snapshot() gave), for the game to start from; null when
+// it starts fresh, and once it has started. Read it in init (or a Phaser scene's init or create) and build that place
+// instead of the title or intro: reading it is the restore, and restore() isn't called.
+export function pendingRestore() {
+    if (started || !pending || pending.state == null) return null;
+    taken = guarding = true;
+    return pending.state;
+}
+
+// After init: a game that didn't read the state is given it through restore(), before its first frame.
+async function putBack() {
+    const said = pending;
+    if (taken) {
+        log(reopened ? 'Lamp: the game started where it was, with the new code.' : 'Lamp: the game started where it was before it was installed again.');
+        tellHost(said.gen, 'restored');
+    } else if (said && said.state != null && hooks.restore) {
+        guarding = true;
         try {
             await hooks.restore(said.state);
             log(reopened ? 'Lamp: the game is back where it was, with the new code.' : 'Lamp: the game is back where it was before it was installed again.');
             tellHost(said.gen, 'restored');
-        } catch (e) {
-            // Half put back is worse than fresh: the page opens once more without the snapshot.
-            log(`Lamp: couldn't put the game back where it was (restore failed: ${e && e.message || e}), so it starts fresh.`);
-            try { session.setItem(LIVE, JSON.stringify({ fresh: true, gen: said.gen })); } catch (e2) {}
-            location.reload();
-            return new Promise(() => {});
-        }
-    } else if (reopened) tellHost(said.gen, 'started');
-    finish();
-    function finish() { started = true; }
+        } catch (e) { return startFresh(e); }
+    } else if (reopened && said && !said.fresh) tellHost(said.gen, 'started');
+    pending = null;
+    started = true;
+}
+
+// Half put back is worse than fresh: the page opens once more without the snapshot.
+function startFresh(e) {
+    if (!guarding && !taken) return;
+    guarding = taken = false;
+    log(`Lamp: couldn't put the game back where it was (${e && e.message || e}), so it starts fresh.`);
+    try { store('session').setItem(LIVE, JSON.stringify({ fresh: true, gen: pending && pending.gen })); } catch (e2) {}
+    location.reload();
+    return new Promise(() => {});
 }
 
 function showPill() {

@@ -41,9 +41,13 @@ export function frame() { return current; }
 // The Phaser.Game, once phaser() has started it.
 export let phaserGame = null;
 
-// A scene not yet started stays at INIT, so only these are on their way to running.
+// A scene not yet started stays at INIT, so only these are on their way to running. A scene started from another's
+// create (Boot's `this.scene.start('play')`) is first only an operation in the scene manager's queue, with no status
+// of its own: it's on its way too, so that the game's first scenes are all made before the game is said to have
+// started (and read pendingRestore() while it still gives the snapshot).
 const STARTING = new Set([Phaser.Scenes.START, Phaser.Scenes.LOADING, Phaser.Scenes.CREATING]);
-const starting = g => !g.isRunning || !g.scene.isBooted || g.scene.scenes.some(s => STARTING.has(s.sys.settings.status));
+const queued = m => (m._queue && m._queue.length > 0) || (m._pending && m._pending.length > 0);
+const starting = g => !g.isRunning || !g.scene.isBooted || queued(g.scene) || g.scene.scenes.some(s => STARTING.has(s.sys.settings.status));
 
 // Waits, without stepping the game, until no scene is loading or being made: the loader's files arrive on their own,
 // and the scene manager's queue (a scene started from another's create) is taken in as the game's step would.
@@ -66,7 +70,9 @@ async function settled(g) {
 // behind everything; `touch` and `keyboard` as game() in lamp-game.js takes them (the touch buttons a phone shows, or
 // false for a game that draws its own; keyboard: false for a game that reads keys itself). `config` is anything more of
 // Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's. `snapshot`,
-// `restore`, `busy` and `assetChanged` keep the player's place through a change, as game() takes them.
+// `restore`, `busy` and `assetChanged` keep the player's place through a change, as game() takes them. The scenes are
+// made during game()'s init, so pendingRestore() from lamp-game.js gives the snapshot in the first scene's init or
+// create, and a game goes straight to where the player was without showing its title.
 export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {},
                                snapshot, restore, busy, assetChanged }) {
     // What lamp-game.js fits to the screen at 1920x1080's shape: Phaser fits its canvas inside it (Phaser's FIT, so a

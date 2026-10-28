@@ -1070,10 +1070,13 @@ extension Agent.Rules {
     /// How a change goes into the game while it's played (lamp-game.js, "Changes while it's played"; `PageLive`).
     static let gameWebLive = """
     - Your changes go into the game while the person plays it, so write it to keep their place. Give game() (or phaser()) \
-    `snapshot()`, returning as plain JSON everything that says where the game is (the level or mode, the player's position, \
-    heading and speed, what they ride or hold, the camera, the score, lives, time, the time of day…), and `restore(state)`, \
-    which puts all of that back after init has run with the new code; keep both current as you add state, and let restore \
-    take a snapshot from before your change (a missing field keeps its start value). Load pictures, models, sounds and \
+    `snapshot()`, returning as plain JSON everything that says where the game is (the mode, which menu or overlay is open, \
+    the level, the player's position, heading and speed, what they ride or hold, the camera, the score, lives, time, the \
+    time of day…). The new code starts straight there: as the game starts (in init, or the first Phaser scene), \
+    `pendingRestore()` from lamp-game.js gives that state, or null for a fresh start, and the game builds exactly that \
+    place, with that menu or overlay open and nothing a fresh start would show (no title, intro or tutorial), never \
+    starting fresh and then patching it. Keep snapshot() current as you add state, and let the start take a snapshot from \
+    before your change (a missing field keeps its start value). Load pictures, models, sounds and \
     data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
     never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
     a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
