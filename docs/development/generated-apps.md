@@ -254,10 +254,27 @@ in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept re
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
 `Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
-that isn't the wish's own, is what the info panel's Visit and Update from GitHub… and Send Changes Back go by
+that isn't the wish's own, is what the info panel's Visit and Check for Updates… and Send Changes Back go by
 (`AppInfoView.origin`).
 
-A wish whose chain names where it came from offers Update from GitHub… in its info panel
+Every wish with somewhere to be updated from has the same Check for Updates… in its Credits, Review Update… once
+there is one, with a row that says "An update is available" or "Your app is up to date" (`AppUpdates`). The check asks
+GitHub for the default branch's latest commit (`git ls-remote`, confined, no sign-in, no clone, no model), at most daily
+by itself and coalesced across wishes following the same repository, and compares it with the commit the wish has.
+Which repository a wish follows (`AppUpdates.route`): a wish from another wish follows that wish (below); a wish the agent
+made from someone's own project follows the work it's based on, the first `upstream` source, when that's on GitHub with
+the commit it was taken at. A source with no commit is offered nothing.
+
+An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version,
+fetches the project into the wish's `.lamp/update/` (blobless, pinned to the commit the check saw: `latest/`, `files.txt`,
+`log.txt`, `changes.diff`, and the fetched `repo` for files as they were), and sends the agent a request with a note
+saying where it all is and how to port it (`AppUpdates.note`). The pinned job is kept in `.lamp/update/job.json`; after
+the turn (`Store.settleUpdate`) a turn that finished with no error moves the credited commit on, in `credits.json` and
+in what Lamp keeps; one that asked the person a question keeps the job for the answer; anything else lets it go with
+the commit where it was. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
+from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
+
+A wish whose chain names where it came from is updated as it was opened
 (`AppInfoView.updateFromRepository`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
 which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
 waits for setup, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's

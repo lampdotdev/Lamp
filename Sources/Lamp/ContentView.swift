@@ -316,11 +316,12 @@ enum AppInfoView {
         case remixedFromPage:
             if let page = origin(of: project)?.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(page) }
         case updateFromRepository:
-            // The repository fetched again and opened as any repository is: the review, then Update (the wish keeps its
-            // name, data and chat, with a version saved first, what changed here kept, `Upstream`) or Keep Both, since
-            // the wish came from there. It's this wish the review offers to update, not another copy of the same repository.
-            if let source = origin(of: project)?.url.flatMap(RepoImport.source(from:)) {
-                Store.shared.importRepository(source, request: nil, updating: project.id)
+            // Check for Updates… asks; Review Update…, once there is one, brings it in (`AppUpdates`): a wish in a
+            // repository through the same review as the first time, a wish made from someone's project by the agent.
+            if Store.shared.updateAvailability(of: project) == .available {
+                Store.shared.reviewUpdate(project)
+            } else {
+                Store.shared.checkForUpdates(project)
             }
         default: break
         }
@@ -354,7 +355,8 @@ enum AppInfoView {
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
-        if let credits = creditsSection(located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url) { sections.insert(credits, at: 0) }
+        if let credits = creditsSection(located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url,
+                                        update: store.updateAvailability(of: project)) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)
@@ -386,14 +388,16 @@ enum AppInfoView {
     /// Where the wish came from, first, since it's the one thing here that's about someone else: the work it's based on
     /// and its license, anything else it uses, and the wishes it was remixed from. A wish with no credits has none.
     /// `own` is where this wish was put on GitHub, which isn't where it came from.
-    static func creditsSection(_ credits: Credits, own: String?) -> SidebarInfoSection? {
+    /// `update` is what was last heard of an update (`AppUpdates`): a row of its own, and the button that checks or
+    /// reviews it, for a wish with somewhere to be updated from.
+    static func creditsSection(_ credits: Credits, own: String?, update: AppUpdates.Availability? = nil) -> SidebarInfoSection? {
         guard !credits.isEmpty else { return nil }
         var rows: [SidebarInfoRow] = []
         // The work it's based on and its license, each a row; anything else it uses a row of its own, named after it, with
         // who made it and its license when that's a plain id (terms of its own, `LicenseRef-`, would make the row too long
         // for the panel's one line; they're in the About window). Every row's label is its own: the panel tells rows apart
         // by their labels.
-        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from"]
+        var labels: Set<String> = ["Based on", "License", "Made with AI", "Remixed from", "Updates"]
         for (index, source) in credits.upstream.enumerated() {
             if index == 0 {
                 rows.append(SidebarInfoRow(label: "Based on", value: Credits.line(for: source)))
@@ -417,13 +421,18 @@ enum AppInfoView {
             }
             rows.append(SidebarInfoRow(label: "Remixed from", value: names.joined(separator: " → ")))
         }
+        let route = AppUpdates.route(for: credits, own: own)
+        if route != nil, let update { rows.append(SidebarInfoRow(label: "Updates", value: update.line)) }
         var buttons: [SidebarInfoButton] = []
         if let source = credits.upstream.first, source.url != nil { buttons.append(SidebarInfoButton(title: "Visit \(source.name)", action: basedOnPage)) }
         // The wish this one was most directly remixed from, where it lives (its repository on GitHub, not the one this
-        // wish was put on), and the latest of it from there, through the same review as the first time.
+        // wish was put on).
         if let remix = credits.origin(own: own) {
             buttons.append(SidebarInfoButton(title: "Visit \(remix.name) on GitHub", action: remixedFromPage))
-            if remix.url.flatMap(RepoImport.source(from:)) != nil { buttons.append(SidebarInfoButton(title: "Update from GitHub…", action: updateFromRepository)) }
+        }
+        // The same button whichever way the wish came: it checks, and once there's an update, it brings it in.
+        if route != nil {
+            buttons.append(SidebarInfoButton(title: update == .available ? "Review Update…" : "Check for Updates…", action: updateFromRepository))
         }
         return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }

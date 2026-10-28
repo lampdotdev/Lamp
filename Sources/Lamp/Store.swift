@@ -548,6 +548,8 @@ final class Store: ObservableObject {
     }
     @Published var logs: [String: [LogLine]] = [:]
     @Published var busy: Set<String> = []
+    /// What was last heard of each repository wishes come from, by address (`AppUpdates`).
+    @Published var updateChecks: [String: AppUpdates.Check] = [:]
     @Published var queued: [String: [QueuedMessage]] = [:]
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, until the next
     /// message, for its chapters (`Chapters.segments`).
@@ -2983,7 +2985,7 @@ final class Store: ObservableObject {
     func chooseRepository() {
         let alert = NSAlert()
         alert.messageText = "Open a wish from GitHub"
-        alert.informativeText = "Paste the address of a repository Lamp put on GitHub."
+        alert.informativeText = "Paste the address of a repository on GitHub: a wish Lamp put there, or a project Lamp can make into an app."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.placeholderString = "https://github.com/someone/wish"
         alert.accessoryView = field
@@ -3010,6 +3012,13 @@ final class Store: ObservableObject {
             let folder = RepoImport.cloneFolder()
             do {
                 let tree = try await RepoImport.clone(source, into: folder)
+                // Someone's own project, not a wish: the agent can make it into one, which then gets its updates as
+                // any wish does (`AppUpdates`). A wish's own update that finds no wish there is an error as before.
+                if target == nil, !RepoImport.holdsWish(tree) {
+                    try? FileManager.default.removeItem(at: folder)
+                    offerToAdapt(source)
+                    return
+                }
                 if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
                 importApp(from: tree, updating: target)
             } catch {
@@ -3017,6 +3026,25 @@ final class Store: ObservableObject {
                 NSAlert(error: error).runModal()
             }
         }
+    }
+
+    /// A project on GitHub that isn't a wish: Make App starts a wish whose first request is to make the project into an
+    /// app, which the agent does as with any project it's pointed at (keeping a copy for reference and crediting the
+    /// commit it was made from, `Agent.Rules`), with what the person would like changed.
+    private func offerToAdapt(_ source: RepoImport.Source) {
+        let alert = NSAlert()
+        alert.messageText = "Make this into an app?"
+        alert.informativeText = "\(source.name) isn't a Lamp app yet. \(Builder.engine.title) can make it into one, using your plan or credits, "
+            + "and you'll get its updates later with one click. Not every project can become an app."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "What would you like to change? (optional)"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Make App")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let change = field.stringValue.trimmed
+        wish("Make \(source.url) into an app." + (change.isEmpty ? "" : " " + change))
     }
 
     /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat
@@ -3961,6 +3989,7 @@ final class Store: ObservableObject {
                 owner.sentFrom = head
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
+            settleUpdate(current(project) ?? project, messages: messages, end: result.end)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value

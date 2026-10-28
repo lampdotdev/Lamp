@@ -1,0 +1,161 @@
+import XCTest
+@testable import Lamp
+
+/// A wish the agent made from someone's project on GitHub gets its updates the way a wish opened from GitHub does: the
+/// same button in its Credits, the same "An update is available", with nothing the person reads naming a repository,
+/// "upstream", "original" or a commit. Its credited commit moves on only when the update's turn finished well.
+final class AppUpdatesTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-app-updates-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() { try? FileManager.default.removeItem(at: root) }
+
+    private let slop = Credits.Source(name: "Slop New York", author: "Mr.doob", url: "https://github.com/mrdoob/slop-newyork",
+                                      commit: "dcb453fbba807d7f95d910f824a4abef849fde13", license: "MIT")
+    private let font = Credits.Source(name: "Inter", author: "Rasmus Andersson", url: "https://github.com/rsms/inter",
+                                      commit: "1234567890abcdef1234567890abcdef12345678", license: "OFL-1.1")
+
+    // MARK: Which source is checked
+
+    func testAWishMadeFromAProjectFollowsTheWorkItIsBasedOn() {
+        let credits = Credits(upstream: [slop, font])
+        XCTAssertEqual(AppUpdates.route(for: credits, own: nil), .adapted(slop))
+    }
+
+    func testAWishFromAnotherWishKeepsFollowingThatWish() {
+        let remix = Credits.Remix(name: "New York", url: "https://github.com/someone/new-york", commit: "abcdef1")
+        let credits = Credits(upstream: [slop], remixOf: [remix])
+        XCTAssertEqual(AppUpdates.route(for: credits, own: nil), .wish(remix))
+    }
+
+    func testASourceWithNoCommitIsOfferedNothing() {
+        var source = slop
+        source.commit = nil
+        XCTAssertNil(AppUpdates.route(for: Credits(upstream: [source]), own: nil))
+        XCTAssertNil(AppUpdates.route(for: Credits(upstream: [Credits.Source(name: "Kenney", url: "https://kenney.nl", commit: nil)]), own: nil))
+    }
+
+    func testTheWishsOwnRepositoryIsNotWhereItCameFrom() {
+        XCTAssertNil(AppUpdates.route(for: Credits(upstream: [slop]), own: "https://github.com/mrdoob/slop-newyork"))
+    }
+
+    // MARK: The cheap check
+
+    /// `git ls-remote https://github.com/mrdoob/slop-newyork.git HEAD`, recorded 2026-10-28.
+    private let lsRemote = ["13dd142b480bcfa01a6b18e36127c87e41cb4d80\tHEAD"]
+
+    func testTheTipIsReadFromWhatGitHubAnswers() {
+        XCTAssertEqual(AppUpdates.tip(fromLsRemote: lsRemote), "13dd142b480bcfa01a6b18e36127c87e41cb4d80")
+        XCTAssertNil(AppUpdates.tip(fromLsRemote: []))
+        XCTAssertNil(AppUpdates.tip(fromLsRemote: ["fatal: repository not found"]))
+    }
+
+    func testAvailability() {
+        let route = AppUpdates.Route.adapted(slop)
+        let tip = AppUpdates.tip(fromLsRemote: lsRemote)
+        XCTAssertNil(AppUpdates.availability(of: route, check: nil))
+        XCTAssertEqual(AppUpdates.availability(of: route, check: .init(tip: tip, at: Date())), .available)
+        var current = slop
+        current.commit = "13dd142"   // written short
+        XCTAssertEqual(AppUpdates.availability(of: .adapted(current), check: .init(tip: tip, at: Date())), .upToDate)
+        // A failed check never says up to date.
+        XCTAssertEqual(AppUpdates.availability(of: .adapted(current), check: .init(tip: nil, at: Date())), .failed)
+        XCTAssertEqual(AppUpdates.availability(of: route, check: .init(tip: tip, at: Date(), checking: true)), .checking)
+    }
+
+    // MARK: What the person reads
+
+    func testCreditsOfferTheSameButtonForEveryKindOfWish() throws {
+        let adapted = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil, update: .available))
+        XCTAssertEqual(adapted.rows.first { $0.label == "Updates" }?.value, "An update is available")
+        XCTAssertEqual(adapted.buttons.last?.title, "Review Update…")
+        XCTAssertEqual(adapted.buttons.last?.action, AppInfoView.updateFromRepository)
+
+        let remix = Credits.Remix(name: "New York", url: "https://github.com/someone/new-york", commit: "abcdef1")
+        let wish = try XCTUnwrap(AppInfoView.creditsSection(Credits(remixOf: [remix]), own: nil, update: .upToDate))
+        XCTAssertEqual(wish.rows.first { $0.label == "Updates" }?.value, "Your app is up to date")
+        XCTAssertEqual(wish.buttons.last?.title, "Check for Updates…")
+
+        let unchecked = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil))
+        XCTAssertNil(unchecked.rows.first { $0.label == "Updates" })
+        XCTAssertEqual(unchecked.buttons.last?.title, "Check for Updates…")
+
+        // Nothing to update from: no button.
+        var pinned = slop
+        pinned.commit = nil
+        let none = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [pinned]), own: nil, update: nil))
+        XCTAssertFalse(none.buttons.contains { $0.action == AppInfoView.updateFromRepository })
+    }
+
+    func testNothingThePersonReadsNamesWhereTheUpdateComesFrom() {
+        let said = [AppUpdates.request] + [AppUpdates.Availability.checking, .upToDate, .available, .failed].map(\.line)
+        for line in said {
+            for word in ["upstream", "original", "commit", "repositor", "github", "13dd142", "dcb453f"] {
+                XCTAssertFalse(line.lowercased().contains(word), "“\(line)” says \(word)")
+            }
+        }
+    }
+
+    // MARK: Accepting
+
+    func testOnlyAFinishedUpdateIsAccepted() {
+        XCTAssertEqual(AppUpdates.settle(ours: true, end: .changed, errors: false), .accepted)
+        XCTAssertEqual(AppUpdates.settle(ours: true, end: .changed, errors: true), .failed)
+        XCTAssertEqual(AppUpdates.settle(ours: true, end: .failed, errors: true), .failed)
+        XCTAssertEqual(AppUpdates.settle(ours: true, end: .replied, errors: false), .waiting)
+        // A turn about something else, after the person left the update unanswered, doesn't bring it in.
+        XCTAssertEqual(AppUpdates.settle(ours: false, end: .changed, errors: false), .abandoned)
+    }
+
+    func testAnAcceptedUpdateMovesBothCreditRecordsAndNothingElse() throws {
+        let dir = root.appendingPathComponent("slop")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        let project = LampProject(id: "slop", name: "Slop", exe: "Slop", dir: dir)
+        try Credits.arrive(Credits(upstream: [slop, font]), in: project)
+        let job = AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork.git", base: slop.commit!, target: "13dd142b480bcfa01a6b18e36127c87e41cb4d80")
+
+        let source = try XCTUnwrap(AppUpdates.accepted(job, in: Credits.load(project)).upstream.first)
+        try Credits.add(Credits(upstream: [source]), to: project)
+
+        for record in [Credits.file, Credits.arrivedPath] {
+            let credits = try XCTUnwrap(Credits.read(dir.appendingPathComponent(record)))
+            XCTAssertEqual(credits.upstream.map(\.commit), [job.target, font.commit], record)
+            XCTAssertEqual(credits.upstream.first?.license, "MIT", record)
+        }
+        XCTAssertEqual(AppUpdates.route(of: project)?.commit, job.target)
+    }
+
+    // MARK: Fetching (live: GitHub)
+
+    /// The change between two real commits, fetched as Lamp fetches it (confined git, no blobs until needed) into the
+    /// wish's .lamp. Run with LAMP_LIVE_GITHUB=1.
+    func testFetchingAnUpdateGivesTheAgentTheWholeChange() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["LAMP_LIVE_GITHUB"] == "1", "Set LAMP_LIVE_GITHUB=1 to fetch from GitHub")
+        let dir = root.appendingPathComponent("slop")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+        let project = LampProject(id: "slop", name: "Slop", exe: "Slop", dir: dir)
+        let job = AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork", base: "dcb453f", target: "13dd142b480bcfa01a6b18e36127c87e41cb4d80")
+        try await AppUpdates.fetch(job, for: project)
+        let update = dir.appendingPathComponent(AppUpdates.Job.folder)
+        let files = try String(contentsOf: update.appendingPathComponent("files.txt"), encoding: .utf8)
+        let log = try String(contentsOf: update.appendingPathComponent("log.txt"), encoding: .utf8)
+        let diff = try String(contentsOf: update.appendingPathComponent("changes.diff"), encoding: .utf8)
+        XCTAssertFalse(files.isEmpty)
+        XCTAssertTrue(log.contains("PersonRig"), log)
+        XCTAssertTrue(diff.hasPrefix("diff --git"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: update.appendingPathComponent("latest").path))
+        XCTAssertEqual(AppUpdates.Job.load(project), job)
+
+        // A base that isn't there gives no made-up change, and leaves nothing behind.
+        let gone = AppUpdates.Job(url: job.url, base: "0000000000000000000000000000000000000001", target: job.target)
+        do {
+            try await AppUpdates.fetch(gone, for: project)
+            XCTFail("fetched a change from a base that isn't there")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: update.path))
+    }
+}
