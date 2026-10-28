@@ -225,11 +225,11 @@ final class MagicPanel {
     /// Where an app opens changed (Try On, a place given, a device set up): when it went off the Mac just after its
     /// chat went with the app, the chat comes back in Lamp's panel. While the app is still open the chat stays beside
     /// it, and comes back when the app quits (`SidebarServer.closed`).
-    /// `afterSetup`: the device choice that waited on its setup is the change; a setup closed never gets here, and its
-    /// mark counts for nothing else.
-    func placeChanged(_ project: LampProject, afterSetup: Bool = false) {
+    /// `afterSetup`: the device choice (`moveWaitsOnSetup`) whose setup is done and made the change; a setup closed never
+    /// gets here, and its mark counts for nothing else.
+    func placeChanged(_ project: LampProject, afterSetup choice: Int? = nil) {
         let id = Store.shared.wish(of: project).id
-        let began = pendingMoves.removeValue(forKey: id).flatMap { afterSetup ? $0 : nil }
+        let began = pendingMoves.take(app: project.id, choice: choice)
         guard let left = leftApp[id], ChatReturn.leftLately(left, moveBegan: began, now: Date()),
               !SidebarServer.shared.isConnected(id), !ChatPanel.isOpen(id) else { return }
         // The move the chat went for is done only now: the wait counts from here.
@@ -237,12 +237,12 @@ final class MagicPanel {
         showChatAfterQuit(project, because: .placeChanged)
     }
 
-    /// Device choices waiting on their setup (a download, the device's approval), by wish, with when each was made: a
-    /// quit meanwhile is the app moving, however long the setup takes (`ChatReturn.leftLately`).
-    private var pendingMoves: [String: Date] = [:]
-    func moveWaitsOnSetup(_ project: LampProject) { pendingMoves[Store.shared.wish(of: project).id] = Date() }
-    /// Another choice under Try On: a device choice still waiting is dropped (`Store.tryOnChoices`).
-    func choiceMade(_ project: LampProject) { pendingMoves[Store.shared.wish(of: project).id] = nil }
+    /// Device choices waiting on their setup, each app's (`ChatReturn.PendingMoves`).
+    private let pendingMoves = ChatReturn.PendingMoves()
+    /// A device choice for the app is waiting on its setup: the choice, for its completion to give `placeChanged`.
+    func moveWaitsOnSetup(_ project: LampProject) -> Int { pendingMoves.began(app: project.id, at: Date()) }
+    /// Another choice under Try On for the app: its device choice still waiting is dropped (`Store.tryOnChoices`).
+    func choiceMade(_ project: LampProject) { pendingMoves.dropped(app: project.id) }
 
     /// A wish Lamp came with opens with its chat beside it the first time it's opened, ready to be changed, as a new
     /// app does after its first build (`handOff`), and once only: a chat the person closes stays closed.
@@ -494,6 +494,31 @@ enum ChatReturn {
         func isCurrent(_ wait: Wait, for id: String) -> Bool { waits[id] === wait }
         /// A wait that's done lets go of the wish only while it's still the wish's: an older one never ends its replacement.
         func end(_ wait: Wait, for id: String) { if waits[id] === wait { waits[id] = nil } }
+    }
+
+    /// Device choices waiting on their setup (a download, the device's approval), with when each was made: a quit
+    /// meanwhile is the app moving, however long the setup takes (`leftLately`).
+    /// Each mark is the app's and its choice's: another of the wish's apps choosing or changing place leaves it alone.
+    final class PendingMoves {
+        private var marks: [String: (began: Date, choice: Int)] = [:]
+        private var made = 0
+
+        /// A device choice for `app` (one of the wish's apps) began waiting on its setup. Its completion brings the
+        /// returned choice back to `take`.
+        func began(app: String, at date: Date) -> Int {
+            made += 1
+            marks[app] = (date, made)
+            return made
+        }
+        /// Another Try On choice for `app`: its choice still waiting is dropped.
+        func dropped(app: String) { marks[app] = nil }
+        /// When `choice`, `app`'s and done now, began waiting; nil for a choice that's been dropped or superseded, and
+        /// for any other change of place.
+        func take(app: String, choice: Int?) -> Date? {
+            guard let choice, let mark = marks[app], mark.choice == choice else { return nil }
+            marks[app] = nil
+            return mark.began
+        }
     }
 
     /// How soon after the chat went with the app a place chosen still counts as the app moving.

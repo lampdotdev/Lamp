@@ -79,6 +79,31 @@ final class ChatReturnTests: XCTestCase {
         XCTAssertFalse(ChatReturn.leftLately(quit, moveBegan: quit.addingTimeInterval(500), now: quit.addingTimeInterval(510)))
     }
 
+    /// A wish's chat app waits on a device's setup; meanwhile another of the wish's apps is given a place under Try On,
+    /// and a third app's place changes. The chat app's choice still finds when it began, and only it.
+    func testADeviceChoiceWaitingIsOnlyItsOwnApps() {
+        let pending = ChatReturn.PendingMoves()
+        let began = Date(timeIntervalSinceReferenceDate: 0)
+        let choice = pending.began(app: "wish", at: began)
+        pending.dropped(app: "wish/TV")
+        XCTAssertNil(pending.take(app: "wish/Phone", choice: nil))
+        XCTAssertEqual(pending.take(app: "wish", choice: choice), began)
+        // Taken once.
+        XCTAssertNil(pending.take(app: "wish", choice: choice))
+    }
+
+    /// A choice superseded by another for the same app, or whose setup was closed, finds nothing.
+    func testAChoiceDroppedOrSupersededFindsNothing() {
+        let pending = ChatReturn.PendingMoves()
+        let first = pending.began(app: "wish", at: Date(timeIntervalSinceReferenceDate: 0))
+        let second = pending.began(app: "wish", at: Date(timeIntervalSinceReferenceDate: 10))
+        XCTAssertNil(pending.take(app: "wish", choice: first))
+        XCTAssertEqual(pending.take(app: "wish", choice: second), Date(timeIntervalSinceReferenceDate: 10))
+        let third = pending.began(app: "wish", at: Date(timeIntervalSinceReferenceDate: 20))
+        pending.dropped(app: "wish")
+        XCTAssertNil(pending.take(app: "wish", choice: third))
+    }
+
     /// Two reasons for one wish: the wait keeps the stronger.
     func testTheStrongerReasonIsKept() {
         XCTAssertEqual(max(ChatReturn.Reason.appLeft, .crashed), .crashed)
