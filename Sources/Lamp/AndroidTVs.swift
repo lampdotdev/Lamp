@@ -108,10 +108,12 @@ enum AndroidTVs {
 
     static func pairedHosts(now: Date = Date()) -> Set<String> { Set(pairings(now: now).keys) }
 
-    /// Whether the device at an address is to be reached over Wireless debugging only: paired there lately, or a kept
-    /// TV there that's marked so.
-    static func requiresTLS(_ host: String) -> Bool {
-        pairedHosts().contains(host) || kept().contains { $0.address == host && $0.transport == .tls }
+    /// Whether the device at an address is to be reached over Wireless debugging only: one paired there lately (the
+    /// day-long hint, for a device not yet known by its serial), or a kept TV marked so that's at that address now, known
+    /// there by its serial (a live record's address is where it read its serial, or where adb's search name carrying it
+    /// points). A kept TV that's away puts no rule on the address it last had.
+    static func requiresTLS(_ host: String, among devices: [Device], pairedAt: Set<String>) -> Bool {
+        pairedAt.contains(host) || devices.contains { isRecord($0.id) && $0.transport == .tls && $0.connected && $0.address == host }
     }
 
     // MARK: What adb says
@@ -279,6 +281,8 @@ enum AndroidTVs {
                 device.adbSerial = listed.id
                 device.adbState = listed.adbState
                 device.connected = true
+                // Where it answers now, from that row: the record's last address says nothing of what's there.
+                device.address = listed.address ?? address(of: listed.id, services: services)
                 out.append(device)
             } else {
                 out.append(away(record))
@@ -287,13 +291,14 @@ enum AndroidTVs {
         return (out, records)
     }
 
-    /// A kept TV adb can't see now.
+    /// A kept TV adb can't see now. It has no address: the last one it had is only where reconnecting tries
+    /// (`Record.address`), and another device may have it now, so nothing that goes by a device's address (the window's
+    /// rules, the network list's names, Try On's found TVs) may take it for this TV.
     static func away(_ record: Record) -> Device {
         var device = Device(id: record.id, kind: .android, maker: record.maker, model: record.model, modelID: "", name: record.name,
                             os: "Android", osVersion: record.osVersion, input: ["remote"], features: ["tv"], reach: .network)
         device.adbState = "away"
         device.connected = false
-        device.address = record.address
         device.serialNumber = record.serial
         device.transport = record.transport
         device.aliases = record.aliases

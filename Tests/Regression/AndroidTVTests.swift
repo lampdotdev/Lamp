@@ -176,4 +176,20 @@ final class AndroidTVTests: XCTestCase {
         XCTAssertEqual(later.devices.first?.adb, old)
         XCTAssertFalse(try XCTUnwrap(later.devices.first).isAway)
     }
+
+    /// A kept TV that's paired over Wireless debugging and away puts no rule on the address it last had: a different
+    /// device there now (a Fire TV with another serial) can be connected on its old port once no pairing there is
+    /// recent. The TV itself, answering there, keeps its rule.
+    func testAnAwayTVPutsNoRuleOnItsLastAddress() throws {
+        let tv = try kept()
+        let fire = ["ro.product.manufacturer": "Amazon", "ro.product.model": "AFTMM", "ro.serialno": "FIRETV0000001", "leanback": "true"]
+        let other = "192.168.1.50:5555"
+        let read = Adb.listed("List of devices attached\n\(other)   device product:mantis\n").map { Device.from(adb: $0.serial, state: $0.state, properties: fire) }
+        let devices = AndroidTVs.merge(read, services: [], kept: [tv]).devices
+        XCTAssertTrue(try XCTUnwrap(devices.first { $0.id == tv.id }).isAway)
+        XCTAssertFalse(AndroidTVs.requiresTLS("192.168.1.50", among: devices, pairedAt: []))
+        XCTAssertTrue(AndroidTVs.requiresTLS("192.168.1.50", among: devices, pairedAt: ["192.168.1.50"]))
+        let here = look(try fixture("devices"), try fixture("mdns"), [mdnsName: properties, address: properties], kept: [tv])
+        XCTAssertTrue(AndroidTVs.requiresTLS("192.168.1.50", among: here, pairedAt: []))
+    }
 }

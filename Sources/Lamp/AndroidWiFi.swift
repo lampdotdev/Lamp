@@ -251,7 +251,7 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             state = .failed("Type the address and port the TV shows, like 192.168.1.20:5555.")
             return
         }
-        if AndroidTVs.requiresTLS(host), port == 5555 || current?.legacyPort == port {
+        if AndroidTVs.requiresTLS(host, among: Store.shared.devices, pairedAt: AndroidTVs.pairedHosts()), port == 5555 || current?.legacyPort == port {
             state = .failed("It's paired over Wireless debugging: type the port its Wireless debugging screen shows, not 5555.")
             return
         }
@@ -298,7 +298,9 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
     /// Ready once adb lists the device at that address allowed and reading what it is.
     private func finishIfReady(host: String, generation mine: UUID) async -> Bool {
         let services = AndroidTVs.services((await Adb.run(["mdns", "services"], timeout: 10)).output)
-        guard let device = Self.ready(at: host, among: await Adb.devices(), services: services, tls: AndroidTVs.requiresTLS(host)) else { return false }
+        let devices = await Adb.devices()
+        guard let device = Self.ready(at: host, among: devices, services: services,
+                                      tls: AndroidTVs.requiresTLS(host, among: devices, pairedAt: AndroidTVs.pairedHosts())) else { return false }
         guard mine == generation else { return true }
         Store.shared.refreshDevices()
         state = .done("\(device.name) is connected. Choose it under Try On.")

@@ -99,7 +99,9 @@ support folder's Android/tvs.json) with the serial it reads (`ro.serialno`), the
 last address (only where to try connecting, never proof of identity) and how it was let in (Wireless debugging, or a
 Fire TV's old port). `Adb.devices()` folds adb's listing into those records (`AndroidTVs.merge`): two selectors are one
 TV only when they read the same serial and reach the same address, a placeholder serial makes no record, ambiguous
-rows stay as adb listed them, and a kept TV adb can't see is still listed, away, with what to turn back on. Try On's
+rows stay as adb listed them, and a kept TV adb can't see is still listed, away, with what to turn back on. An away TV has no
+address: its last one is only where reconnecting tries, so nothing that goes by an address (the window's rules,
+Try On's found TVs, the network list's names) takes whatever is there now for it. Try On's
 choice (`project.device`) is the record's id; every command goes to the selector adb reaches the TV by now
 (`Device.adb`): Play, Stop, the checks, `use_app`, the launch queue and the screen's lease (by `AndroidRun.device`), so
 one TV reached two ways is one queue. adb reconnects paired devices itself; Lamp connects a kept TV only when it's
@@ -117,6 +119,7 @@ checked by the TV's serial, not when the TV stops answering (`Adb.process`). A p
 parts kept apart: the paired device's record is marked for good to be reached that way, but only by its identity (the
 serial the device answering at that address read as it paired, `promoted`, or its encrypted connection seen later);
 and the address is kept as a hint for a day at most (Android/paired.json), during which nothing there is reached or
-reconnected on 5555 and the window refuses it. The hint never changes a record, since the router may give the address
+reconnected on 5555 and the window refuses it. After that, the window keeps 5555 from an address only while a TV
+marked so is there now, known by its serial (`AndroidTVs.requiresTLS`). The hint never changes a record, since the router may give the address
 to another device, and it ends early once the paired device is seen connected over Wireless debugging. While the window is open Lamp's own reconnecting waits, and no two requests to one address run
 at once (`AndroidTVs.exclusively`); a request that waited for the address checks it's still wanted before it runs. Each Lamp has its own adb key: pairing one doesn't let the other in. Android TV apps can't be shared as a file yet.
