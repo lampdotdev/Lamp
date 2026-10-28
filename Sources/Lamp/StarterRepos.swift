@@ -146,8 +146,7 @@ enum StarterRepos {
             try Data(GitHubRepo.mitLicense(holder: "Roo Code, Inc.").utf8).write(to: tree.appendingPathComponent("LICENSE"))
         }
         // The pictures, kept in the repository (`Starters.picturesFolder`): the drawn icon, whole, and the preview, which
-        // shows only example content (from beside starter.md the one time, for a starter made before pictures lived
-        // in its repository: `Starters.iconFolder(of:)`).
+        // shows only example content.
         var showcase = GitHubRepo.Showcase(ideas: starter.tweaks.map(\.title), ideasTitle: starter.offer.isEmpty ? nil : starter.offer, license: license)
         let pictures = tree.appendingPathComponent(Starters.picturesFolder)
         for from in [Starters.iconFolder(of: starter), Starters.preview(of: starter)] {

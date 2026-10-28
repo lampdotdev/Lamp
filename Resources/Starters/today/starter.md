@@ -2,7 +2,7 @@
 name: Today
 offer: Make Today yours
 repository: https://github.com/lampdotdev/today
-commit: edad16ab6354b0733e2ad193a452ef211e92c4f3
+commit: e2f810fe999595479c352710284014c515b7639e
 tweaks:
   - pencil.line: Give it a bullet journal look
   - drop: Add a water counter

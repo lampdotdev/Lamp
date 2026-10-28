@@ -84,15 +84,9 @@ enum Starters {
         return bundled.filter { !here.contains($0.name) }
     }
 
-    /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview. A repository
-    /// published before the drawn icon lived there has its preview but not the icon: that's the one beside starter.md,
-    /// until the next publish puts it up (`StarterRepos.stage`) and that folder goes.
-    static func iconFolder(of starter: Starter) -> URL { picture(iconFolder, of: starter) }
-    static func preview(of starter: Starter) -> URL { picture("preview.png", of: starter) }
-    private static func picture(_ name: String, of starter: Starter) -> URL {
-        let inTree = starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(name)
-        return FileManager.default.fileExists(atPath: inTree.path) ? inTree : starter.folder.appendingPathComponent(name)
-    }
+    /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview.
+    static func iconFolder(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent(iconFolder) }
+    static func preview(of starter: Starter) -> URL { starter.tree.appendingPathComponent(picturesFolder).appendingPathComponent("preview.png") }
 
     /// The icon a starter ships with, drawn from its icon.json (`StarterIconsTests`).
     static func icon(of starter: Starter) -> NSImage? {
