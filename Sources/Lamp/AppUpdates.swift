@@ -43,12 +43,14 @@ enum AppUpdates {
 
     /// The route a wish's credits give it. A wish that came from another wish keeps following that wish, never the
     /// projects that one is based on: its maintainer brought those in, and bringing them in again would double them.
-    /// Otherwise the work it's based on (the first in `upstream`, "Based on" in the credits) when that's code on GitHub
+    /// Otherwise the work it's based on (`Credits.basis`, "Based on" in the credits) when that's code on GitHub
     /// with the commit it was taken at. A source with no commit has no base to measure an update against, and is
     /// offered nothing rather than a guess.
     static func route(for credits: Credits, own: String?) -> Route? {
         if let remix = credits.origin(own: own), remix.url.flatMap(RepoImport.source(from:)) != nil { return .wish(remix) }
-        guard let source = credits.upstream.first, let url = source.url, source.commit != nil,
+        // The project the wish was made from when its credits mark one, else the first, as wishes credited before the
+        // mark have it: never a library it uses, which would otherwise be followed if it were listed first.
+        guard let source = credits.basis, let url = source.url, source.commit != nil,
               RepoImport.source(from: url)?.ref == nil, RepoImport.source(from: url) != nil else { return nil }
         // The wish's own repository isn't where it came from.
         if let own, Credits.Source.plain(url) == Credits.Source.plain(own) { return nil }
@@ -249,9 +251,7 @@ enum AppUpdates {
 
     /// The request that makes someone's project into an app, at the version the person opened: the branch, tag or
     /// commit the address named, at the commit Lamp fetched, so the agent works from exactly that.
-    /// `reference` is where Lamp put that commit's tree in the wish, when it did (`Store.adopt`): the agent reads it
-    /// there instead of fetching the project again.
-    static func adaptRequest(_ source: RepoImport.Source, commit: String?, change: String, reference: String? = nil) -> String {
+    static func adaptRequest(_ source: RepoImport.Source, commit: String?, change: String) -> String {
         var line = "Make \(source.url) into an app"
         switch (source.ref, commit) {
         case let (ref?, commit?) where !commit.hasPrefix(ref.lowercased()): line += ", from its “\(ref)” at commit \(commit)"
@@ -259,9 +259,7 @@ enum AppUpdates {
         case let (ref?, nil): line += ", from its “\(ref)”"
         case (nil, nil): break
         }
-        line += "."
-        if let reference { line += " Its code at that commit is in \(reference)." }
-        return line + (change.isEmpty ? "" : " " + change)
+        return line + "." + (change.isEmpty ? "" : " " + change)
     }
 
     /// Whether the wish changed since its copy was made (`Job.head`): the copy would then put back what was changed.

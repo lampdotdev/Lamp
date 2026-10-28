@@ -79,7 +79,9 @@ enum GitHubRepo {
 
     /// Stages the repository for `repo`, its README's remix link going to `link` (the wish's Share Link, which works
     /// for someone without Lamp) when there is one: refused, with why, when the wish can't leave this Mac.
-    static func stage(_ project: LampProject, repo: String, link: URL?) throws -> Staged {
+    /// Without a repository it's staged as it would be for one not yet made (a check of what it would hold,
+    /// `GitHubProjects.check`): the chain ends with the wish as its shared file does, and the README names no address.
+    static func stage(_ project: LampProject, repo: String?, link: URL?) throws -> Staged {
         let fm = FileManager.default
         let credits = Credits.load(project)
         if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
@@ -97,7 +99,7 @@ enum GitHubRepo {
         let fileName = Publish.slug(project.name) + ".lampapp"
         // The file's credits end the chain with this wish, named where it's going: the repository's address, which a
         // remix opened from there carries on, and the commit up there now, which the next one is on top of.
-        let shared = try Sharing.export(project, repository: url(repo), commit: kept(for: project).flatMap { $0.repo == repo ? $0.commit : nil })
+        let shared = try Sharing.export(project, repository: repo.map(url), commit: kept(for: project).flatMap { $0.repo == repo ? $0.commit : nil })
         defer { try? fm.removeItem(at: shared.deletingLastPathComponent()) }
         guard Subprocess.runBlocking("/usr/bin/ditto", ["-x", "-k", shared.path, tree.path], timeout: 120).ok else {
             throw Failure(message: "Couldn't unpack \(project.name)'s files.")

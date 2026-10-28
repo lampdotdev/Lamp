@@ -75,9 +75,8 @@ enum RepoImport {
 
     /// Fetches the repository's tree at `ref` (its default branch without one), one commit deep, into `folder`:
     /// nothing of its history, and nothing of the person's goes with the request (git never asks for a sign-in, so a
-    /// private repository is refused rather than waited on). Returns the tree. `started` is handed git's process, so
-    /// whatever waits for the fetch can stop it.
-    static func clone(_ source: Source, into folder: URL, started: (@MainActor (Process) -> Void)? = nil) async throws -> URL {
+    /// private repository is refused rather than waited on). Returns the tree.
+    static func clone(_ source: Source, into folder: URL) async throws -> URL {
         let fm = FileManager.default
         let tree = folder.appendingPathComponent(source.name)
         try fm.createDirectory(at: tree, withIntermediateDirectories: true)
@@ -88,7 +87,6 @@ enum RepoImport {
         // Ten minutes is plenty for a wish; a repository that takes longer isn't one, and is let go: git and whatever it
         // started with it, not only the shell they run under, which would leave them holding the output open.
         let status = await Versions.git(command, cwd: tree, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
-            started?(process)
             Task {
                 try? await Task.sleep(for: .seconds(600))
                 Subprocess.terminateTree(process)

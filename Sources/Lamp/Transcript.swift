@@ -36,7 +36,7 @@ struct ToolCall {
         "ls": .list, "list": .list,
         "webfetch": .web, "web_fetch": .web, "websearch": .web,
         "todowrite": .plan, "plan": .plan, "task": .delegate,
-        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "connectors": .connectors, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
+        "look_at_app": .look, "use_app": .use, "read_notes": .recall, "read_skill": .learn, "save_notes": .remember, "make_art": .art, "offer_setup": .offer, "make_app_for": .kind, "remove_app": .remove, "connectors": .connectors, "github_project": .web, "network_devices": .network, "device_permission": .ask, "ask": .ask, "progress": .progress, "show_result": .result, "write_wish": .wish,
     ]
 
     var icon: String {

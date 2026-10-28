@@ -24,6 +24,8 @@
  * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
+ * - `github_project`: fetches someone's project on GitHub into the wish's reference folder, credits a fetched snapshot,
+ *   hands a Lamp wish on GitHub to the import review, or checks the wish as a Lamp repository would hold it.
  * - `network_devices`: lists the devices on the person's home network as Lamp's own look finds them now, with what
  *   Lamp already has for each.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
@@ -612,6 +614,23 @@ const connectors = defineTool({
 	},
 });
 
+const githubProject = defineTool({
+	...spec("github_project"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_GITHUB_URL;
+		if (!url) throw new Error("Lamp isn't available to fetch that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(660_000)]) : AbortSignal.timeout(660_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const networkDevices = defineTool({
 	...spec("network_devices"),
 	async execute(_toolCallId, params, signal) {
@@ -704,6 +723,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeAppFor);
 	pi.registerTool(removeApp);
 	pi.registerTool(connectors);
+	pi.registerTool(githubProject);
 	pi.registerTool(networkDevices);
 	pi.registerTool(deviceIntegration);
 	for (const name of ["ask", "progress", "write_wish", "device_permission"]) pi.registerTool(talkTool(name));

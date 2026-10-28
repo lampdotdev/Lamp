@@ -244,17 +244,23 @@ enum Sharing {
         let me = Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url, commit: commit ?? kept?.commit)
         var carried = credits.remixed(from: me.url == nil ? ownVersionLink(me, of: project, chain: credits) : me)
         carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
-        carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
+        carried.upstream = carried.upstream.map { source in
+            var source = source
+            source.licenseFile = source.licenseFile.map(inFile)
+            source.noticeFiles = source.noticeFiles?.map(inFile)
+            return source
+        }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
-        // Each license the credits name goes with the work it covers, wherever the kind's own files left it.
+        // Each license and notice the credits name goes with the work it covers, wherever the kind's own files left it.
         for source in credits.upstream {
-            guard let path = source.licenseFile, Credits.isLicenceFile(path) else { continue }
-            let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
-            guard !fm.fileExists(atPath: to.path),
-                  (try? from.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map({ $0.isRegularFile == true && $0.isSymbolicLink != true }) == true
-            else { continue }
-            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: from, to: to)
+            for path in source.termsFiles where Credits.isLicenceFile(path) {
+                let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
+                guard !fm.fileExists(atPath: to.path),
+                      (try? from.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map({ $0.isRegularFile == true && $0.isSymbolicLink != true }) == true
+                else { continue }
+                try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: from, to: to)
+            }
         }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
@@ -282,9 +288,10 @@ enum Sharing {
         // like a key.
         // A license the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
         for source in credits.upstream {
-            guard let path = source.licenseFile, !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) else { continue }
-            throw ImportError("\(project.name) can't be shared.",
-                              detail: "The license of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+            for path in source.termsFiles where !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) {
+                throw ImportError("\(project.name) can't be shared.",
+                                  detail: "The license of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+            }
         }
         // Every app's: each of a wish's apps keeps its own secrets and token.
         let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
@@ -554,7 +561,7 @@ enum Sharing {
         var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
                                identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
         package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
-        package.licences = (package.credits?.upstream ?? []).compactMap(\.licenseFile).filter(Credits.isLicenceFile).compactMap { path in
+        package.licences = (package.credits?.upstream ?? []).flatMap(\.termsFiles).filter(Credits.isLicenceFile).compactMap { path in
             let file = folder.appendingPathComponent(path)
             let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             return values?.isRegularFile == true && values?.isSymbolicLink != true ? file : nil

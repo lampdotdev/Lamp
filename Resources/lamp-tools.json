@@ -506,6 +506,49 @@
     }
   },
   {
+    "name": "github_project",
+    "label": "GitHub project",
+    "description": "Someone's project on GitHub, when the request needs its contents (read the github-projects skill first). fetch gets it, one commit deep, into a read-only reference folder and answers with a handle (owner/name@commit), its license files and whether it's a Lamp wish; it fetches only when you call it, and the person's GitHub sign-in reaches their private projects. build_from records that exact snapshot in the wish's credits (its commit, its license and notice files, kept in Licenses/) before you use any of its code or assets: adapted true for the project the app is made from, whose updates the app follows, false for a library or assets it uses. open_wish hands a Lamp wish on GitHub to Lamp's import review with the person's request. check makes the wish as a Lamp repository would hold it (lamp-app.json, credits, licenses, icon) and opens it again as Lamp's importer does, putting nothing anywhere.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "fetch",
+            "build_from",
+            "open_wish",
+            "check"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "description": "For fetch: the repository's address, https://github.com/owner/name, with /tree/<branch, tag or commit> for one that isn't its default branch"
+        },
+        "handle": {
+          "type": "string",
+          "description": "For build_from and open_wish: the handle fetch gave, owner/name@commit"
+        },
+        "adapted": {
+          "type": "boolean",
+          "description": "For build_from: true (the default) for the project the app is made from, false for a library or assets it uses"
+        },
+        "request": {
+          "type": "string",
+          "description": "For open_wish: what the person asked, for the wish's box once it's opened"
+        },
+        "doing": {
+          "type": "string",
+          "description": "What this step is for, in 5-10 plain words a non-programmer would follow, shown to them while it runs: \"Checking the new shelf layout\", \"Saving what you like about the look\"."
+        }
+      }
+    }
+  },
+  {
     "name": "network_devices",
     "label": "Look around the network",
     "description": "Lists the devices on the person's home network as Lamp finds them now: TVs, players, speakers and anything else that answers, each with its name, maker, model, address, what it said about itself, and whether Lamp already has a way for an app to control it; then every other host, with its hardware's maker and Bonjour services. Call it before asking the person what devices they have, whenever a wish controls, plays to or reads devices on their network, or they ask what one is.",

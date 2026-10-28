@@ -109,12 +109,11 @@ enum ShareCheck {
             return Sharing.ImportError("\(project.name) can't be shared.",
                                        detail: "It uses \(names), which came with no license. It can still be used on this Mac.")
         }
-        let missing = credits.upstream.filter { source in
-            source.licenseFile.map { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0).path) } ?? false
-        }
-        if let first = missing.first {
+        for source in credits.upstream {
+            guard let gone = source.termsFiles.first(where: { !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent($0).path) })
+            else { continue }
             return Sharing.ImportError("\(project.name) can't be shared.",
-                                       detail: "The license of \(first.name) is missing from it. Ask Lamp to put \(first.licenseFile ?? "it") back.")
+                                       detail: "The license of \(source.name) is missing from it. Ask Lamp to put \(gone) back.")
         }
         return nil
     }
