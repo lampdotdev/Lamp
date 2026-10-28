@@ -211,12 +211,94 @@ final class RepoAdoptTests: XCTestCase {
         try await waitFor { opened != nil }
 
         let tree = try XCTUnwrap(opened)
+        defer { try? FileManager.default.removeItem(at: tree.deletingLastPathComponent()) }
         XCTAssertEqual(Store.fetchedRequest(beside: tree), "add a 10+ filter", "the ask waits for the wish's box, as a link's does")
-        XCTAssertEqual(store.fetchedAttachments[tree.standardizedFileURL.path], [photo])
+        XCTAssertEqual(Store.fetchedFromWish(beside: tree), wish.id)
         XCTAssertEqual(sent, 0)
-        XCTAssertFalse(store.projects.contains { $0.id == wish.id }, "the new wish, never sent to, leaves nothing behind")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: tree.deletingLastPathComponent().appendingPathComponent(Credits.file).path))
-        try? FileManager.default.removeItem(at: tree.deletingLastPathComponent())
+        // Until the shared wish is in, the new wish keeps the words and files: a review that fails or is cancelled loses nothing.
+        XCTAssertTrue(store.projects.contains { $0.id == wish.id })
+        XCTAssertEqual(store.draft(for: wish).text, typed)
+        XCTAssertEqual(store.draft(for: wish).attachments, [photo])
+        XCTAssertFalse(store.busy.contains(wish.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(Store.fetchingFile).path))
+
+        // Kept for setup, the shared wish still knows which new wish named it.
+        let waiting = try newRoot().appendingPathComponent("Waiting")
+        let suite = "lamp-repo-adopt-test-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(WaitingImport(defaults: defaults, folder: waiting).keep(tree))
+        let kept = try XCTUnwrap(WaitingImport(defaults: defaults, folder: waiting).take(setupReady: true, welcomeOver: true))
+        XCTAssertEqual(Store.fetchedFromWish(beside: kept), wish.id)
+        XCTAssertEqual(Store.fetchedRequest(beside: kept), "add a 10+ filter")
+    }
+
+    func testWordsWrittenWhileItsFetchedStayInTheBox() async throws {
+        let (store, wish) = try makeWish()
+        let photo = try attachment()
+        var sentText: [String] = []
+        store.sendDraft = { sentText.append(store.draft(for: $0).text) }
+        var release: CheckedContinuation<Void, Never>?
+        store.fetchRepository = { source, folder, _ in
+            await withCheckedContinuation { release = $0 }
+            return try self.repository(source, in: folder, files: ["README.md": "Fluid.\n"])
+        }
+        let typed = "https://github.com/PavelDoGreat/WebGL-Fluid-Simulation make it a screen saver"
+        store.adopt(try XCTUnwrap(RepoImport.mention(in: typed)), draft: Store.Draft(text: typed), in: wish)
+        try await waitFor { release != nil }
+        store.updateDraft(Store.Draft(text: "and slower", attachments: [photo]), for: wish)
+        release?.resume()
+        try await waitUntilFree(store, wish)
+
+        XCTAssertEqual(sentText.count, 1)
+        XCTAssertTrue(sentText[0].hasPrefix("Make https://github.com/PavelDoGreat/WebGL-Fluid-Simulation into an app"))
+        XCTAssertEqual(store.draft(for: wish).text, "and slower", "the next message stays where it was written")
+        XCTAssertEqual(store.draft(for: wish).attachments, [photo])
+    }
+
+    func testAFailureKeepsWordsWrittenWhileItWasFetched() async throws {
+        let (store, wish) = try makeWish()
+        var release: CheckedContinuation<Void, Never>?
+        store.fetchRepository = { _, _, _ in
+            await withCheckedContinuation { release = $0 }
+            throw Sharing.ImportError("Lamp couldn't get remvze/moodist from GitHub.")
+        }
+        let typed = "https://github.com/remvze/moodist turn this into my sound room"
+        store.adopt(try XCTUnwrap(RepoImport.mention(in: typed)), draft: Store.Draft(text: typed), in: wish)
+        try await waitFor { release != nil }
+        store.updateDraft(Store.Draft(text: "with rain first"), for: wish)
+        release?.resume()
+        try await waitUntilFree(store, wish)
+        XCTAssertEqual(store.draft(for: wish).text, typed + "\n\nwith rain first")
+        XCTAssertNil(store.logs[wish.id]?.first { $0.text.hasPrefix("Getting ") }, "what went wrong is said instead")
+    }
+
+    func testAWishCutShortByAQuitIsBackInItsBoxAtTheNextLaunch() async throws {
+        let (store, wish) = try makeWish()
+        let photo = try attachment()
+        var release: CheckedContinuation<Void, Never>?
+        store.sendDraft = { _ in }
+        store.fetchRepository = { source, folder, _ in
+            await withCheckedContinuation { release = $0 }
+            return try self.repository(source, in: folder, files: ["README.md": "Sky.\n"])
+        }
+        let typed = "https://github.com/ofrohn/d3-celestial make this show tonight's sky above my home"
+        store.adopt(try XCTUnwrap(RepoImport.mention(in: typed)), draft: Store.Draft(text: typed, attachments: [photo]), in: wish)
+        try await waitFor { release != nil }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(Store.fetchingFile).path))
+
+        // Lamp gone mid-fetch: the next launch reads the wish from its folder.
+        let next = Store(testingAt: wish.dir.deletingLastPathComponent())
+        let back = try XCTUnwrap(next.projects.first { $0.id == wish.id })
+        XCTAssertEqual(next.draft(for: back).text, typed)
+        XCTAssertEqual(next.draft(for: back).attachments, [photo])
+        let line = try XCTUnwrap(next.logs[wish.id]?.last)
+        XCTAssertEqual(line.kind, .error)
+        XCTAssertEqual(line.retryFetch, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(Store.fetchingFile).path))
+
+        release?.resume()
+        try await waitUntilFree(store, wish)
     }
 
     func testAQuestionAboutAProjectCanGoAsWritten() async throws {
@@ -224,13 +306,19 @@ final class RepoAdoptTests: XCTestCase {
         var sent = 0
         store.sendDraft = { _ in sent += 1 }
         var asked: String?
-        store.askToAdapt = { _, ask in asked = ask; return .asWritten }
+        var lineWhileAsked: String?
+        store.askToAdapt = { _, ask in
+            asked = ask
+            lineWhileAsked = store.logs[wish.id]?.first { $0.text.contains("from GitHub") }?.text
+            return .asWritten
+        }
         store.fetchRepository = { source, folder, _ in try self.repository(source, in: folder, files: ["README.md": "Stars.\n"]) }
         let typed = "explain this repo https://github.com/ofrohn/d3-celestial"
         store.adopt(try XCTUnwrap(RepoImport.mention(in: typed)), draft: Store.Draft(text: typed), in: wish)
         try await waitUntilFree(store, wish)
 
         XCTAssertEqual(asked, "explain this repo")
+        XCTAssertEqual(lineWhileAsked, "Got ofrohn/d3-celestial from GitHub", "the fetch shows done while the question is open")
         XCTAssertEqual(sent, 1)
         XCTAssertEqual(store.draft(for: wish).text, typed, "the person's own words, not a request for an app")
         XCTAssertFalse(FileManager.default.fileExists(atPath: wish.dir.appendingPathComponent(Credits.file).path))

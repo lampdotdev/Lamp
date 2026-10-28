@@ -1059,6 +1059,7 @@ final class Store: ObservableObject {
     init(testingAt root: URL) {
         self.root = root
         reload()
+        recoverFetches()
     }
 
     private init() {
@@ -1080,6 +1081,7 @@ final class Store: ObservableObject {
         reload()
         for project in wishes where project.decided { settleDecided(project) }
         restoreWaiting()
+        recoverFetches()
         for project in projects { discardIfUnused(project.id) }
         // The wishes Lamp comes with don't count: they're there before the welcome is.
         Onboarding.settle(hasApps: projects.contains { !Starters.isStarter($0) })
@@ -1722,6 +1724,24 @@ final class Store: ObservableObject {
         let folder = file.deletingLastPathComponent()
         guard folder.lastPathComponent.hasPrefix(fetchedPrefix) || folder.deletingLastPathComponent().lastPathComponent == "Waiting" else { return nil }
         return Wish.tidy(try? String(contentsOf: folder.appendingPathComponent(requestFile), encoding: .utf8))
+    }
+
+    /// The new wish that named a fetched wish on GitHub (`adopt`), kept beside it as its request is, through a wait for setup.
+    nonisolated static func fetchedFromWish(beside file: URL) -> String? {
+        guard isFetchedFolder(file.deletingLastPathComponent()) else { return nil }
+        return Wish.tidy(try? String(contentsOf: file.deletingLastPathComponent().appendingPathComponent(WaitingImport.fromWishFile), encoding: .utf8))
+    }
+
+    nonisolated static func isFetchedFolder(_ folder: URL) -> Bool {
+        folder.lastPathComponent.hasPrefix(fetchedPrefix) || folder.deletingLastPathComponent().lastPathComponent == "Waiting"
+    }
+
+    /// The files in the box of the new wish that named a wish now opened, which then goes: it was never sent to.
+    private func takeFromWish(_ id: String?) -> [URL] {
+        guard let id, let wish = projects.first(where: { $0.id == id }), wish.untitled, turns[id] == nil else { return [] }
+        let files = draft(for: wish).attachments
+        dropUnsent(wish)
+        return files
     }
 
     /// The exact wish a link names: its shared file is fetched, no bigger than any shared file may be (refused early
@@ -3228,7 +3248,10 @@ final class Store: ObservableObject {
         guard let turn = begin(project) else { return updateDraft(draft, for: project) }
         let id = project.id
         fetching[id] = draft
+        // On disk too: a Lamp that quits or is forced to before the fetch ends gives the wish back at its next launch.
+        Self.saveFetching(draft, in: project)
         log(project, .status, "Getting \(mention.source.owner)/\(mention.source.name) from GitHub…")
+        fetchLines[id] = logs[id]?.last?.id
         Task {
             let folder = RepoImport.cloneFolder()
             var tree: URL?
@@ -3253,6 +3276,8 @@ final class Store: ObservableObject {
             try? fm.removeItem(at: folder)
             return
         }
+        // The fetch is over, whatever comes next (a question, the review of a shared wish): its line stops saying it's going.
+        endFetchLine(project, got: tree != nil && !turn.stopped ? source : nil)
         if turn.stopped {
             try? fm.removeItem(at: folder)
             return backInBox(project, draft, "Stopped. Your wish is back in the box.")
@@ -3262,13 +3287,14 @@ final class Store: ObservableObject {
             return fetchFailed(project, draft, source: source, failure)
         }
         if RepoImport.holdsWish(tree) {
-            // Opened as a wish from its link is, in a wish of its own: this one, never sent to, goes.
-            release(project)
-            dropUnsent(project)
+            // Opened as a wish from its link is, after its review, in a wish of its own. This one keeps the person's words
+            // and files in its box until then (`finishImport` takes the files and lets it go), so a review that fails or
+            // is cancelled, or waits for setup across a relaunch, loses nothing.
+            backInBox(project, draft, nil)
             if !mention.ask.isEmpty {
                 try? mention.ask.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8)
             }
-            if !draft.attachments.isEmpty { fetchedAttachments[tree.standardizedFileURL.path] = draft.attachments }
+            try? id.write(to: folder.appendingPathComponent(WaitingImport.fromWishFile), atomically: true, encoding: .utf8)
             if let openFetchedWish { openFetchedWish(tree) } else { importApp(from: tree) }
             return
         }
@@ -3293,8 +3319,8 @@ final class Store: ObservableObject {
             case .asWritten:
                 try? fm.removeItem(at: folder)
                 release(current)
-                updateDraft(draft, for: current)
-                return sendDraft(current)
+                Self.saveFetching(nil, in: current)
+                return hand(draft, to: current)
             case .cancel:
                 try? fm.removeItem(at: folder)
                 return backInBox(current, draft, "Your wish is back in the box.")
@@ -3311,9 +3337,67 @@ final class Store: ObservableObject {
         let reference = keepReference(tree, name: source.name, in: project)
         try? fm.removeItem(at: folder)
         release(project)
-        updateDraft(Draft(text: AppUpdates.adaptRequest(source, commit: commit, change: ask, reference: reference),
-                          attachments: draft.attachments), for: project)
+        Self.saveFetching(nil, in: project)
+        hand(Draft(text: AppUpdates.adaptRequest(source, commit: commit, change: ask, reference: reference),
+                   attachments: draft.attachments), to: project)
+    }
+
+    /// Sends a request through the chat's own submission, leaving whatever the person wrote in the box meanwhile there:
+    /// the box is the request only for the moment its submission takes it.
+    private func hand(_ request: Draft, to project: LampProject) {
+        let typed = draft(for: project)
+        updateDraft(request, for: project)
         sendDraft(project)
+        if !typed.isEmpty, let current = current(project) { updateDraft(typed, for: current) }
+    }
+
+    /// The wish's words and files back in its box, with anything written there while it was fetched after them.
+    nonisolated static func merged(_ wish: Draft, with typed: Draft) -> Draft {
+        guard !typed.isEmpty else { return wish }
+        var merged = typed
+        merged.text = [wish.text, typed.text].filter { !$0.trimmed.isEmpty }.joined(separator: "\n\n")
+        merged.attachments = wish.attachments + typed.attachments.filter { !wish.attachments.contains($0) }
+        return merged
+    }
+
+    private var fetchLines: [String: UUID] = [:]
+
+    /// The fetch's line, once it's over: what it got, or gone when it got nothing (what went wrong, or Stop, is said
+    /// after it).
+    private func endFetchLine(_ project: LampProject, got source: RepoImport.Source?) {
+        guard let line = fetchLines.removeValue(forKey: project.id), var lines = logs[project.id],
+              let index = lines.firstIndex(where: { $0.id == line }) else { return }
+        if let source { lines[index].text = "Got \(source.owner)/\(source.name) from GitHub" } else { lines.remove(at: index) }
+        logs[project.id] = lines
+        saveChat(project)
+    }
+
+    /// What a wish being fetched holds, kept in its .lamp until the fetch ends (`recoverFetches`).
+    private struct Fetching: Codable { let text: String; let attachments: [String] }
+    static let fetchingFile = ".lamp/fetching.json"
+
+    private static func saveFetching(_ draft: Draft?, in project: LampProject) {
+        let file = project.dir.appendingPathComponent(fetchingFile)
+        guard let draft else { try? FileManager.default.removeItem(at: file); return }
+        let saved = Fetching(text: draft.text, attachments: draft.attachments.map(\.path))
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(saved).write(to: file, options: .atomic)
+    }
+
+    /// A wish whose fetch a quit cut short: its words and files back in its box, with Retry.
+    func recoverFetches() {
+        for project in projects where turns[project.id] == nil {
+            let file = project.dir.appendingPathComponent(Self.fetchingFile)
+            guard let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Fetching.self, from: data) else { continue }
+            try? FileManager.default.removeItem(at: file)
+            let files = saved.attachments.filter { FileManager.default.fileExists(atPath: $0) }.map(URL.init(fileURLWithPath:))
+            let wish = Draft(text: saved.text, attachments: files)
+            updateDraft(Self.merged(wish, with: draft(for: project)), for: project)
+            logs[project.id]?.removeAll { $0.kind == .status && $0.text.hasPrefix("Getting ") && $0.text.hasSuffix(" from GitHub…") }
+            let named = RepoImport.mention(in: saved.text).map { "\($0.source.owner)/\($0.source.name)" } ?? "the project"
+            log(project, .error, "Lamp closed before it got \(named) from GitHub. Your wish is back in the box; click Retry to fetch it again.",
+                retryFetch: true)
+        }
     }
 
     /// The fetched tree, kept in the wish's .lamp (which its versions and its shared file leave out) for the agent to
@@ -3336,16 +3420,18 @@ final class Store: ObservableObject {
         let why = [error?.localizedDescription, (error as? LocalizedError)?.recoverySuggestion].compactMap { $0 }
             .filter { !$0.isEmpty }.joined(separator: " ")
         release(project)
-        updateDraft(draft, for: project)
+        Self.saveFetching(nil, in: project)
+        updateDraft(Self.merged(draft, with: self.draft(for: project)), for: project)
         let said = why.isEmpty ? "Lamp couldn't get \(source.owner)/\(source.name) from GitHub." : why
         log(project, .error, said + " Your wish is still in the box; click Retry to fetch it again.", retryFetch: true)
         startQueued(project)
     }
 
-    private func backInBox(_ project: LampProject, _ draft: Draft, _ said: String) {
+    private func backInBox(_ project: LampProject, _ draft: Draft, _ said: String?) {
         release(project)
-        updateDraft(draft, for: project)
-        log(project, .status, said)
+        Self.saveFetching(nil, in: project)
+        updateDraft(Self.merged(draft, with: self.draft(for: project)), for: project)
+        if let said { log(project, .status, said) }
         startQueued(project)
     }
 
@@ -3360,8 +3446,8 @@ final class Store: ObservableObject {
         adopt(mention, draft: draft, in: current)
     }
 
-    /// A new wish that turned out to be a wish someone put on GitHub, which opens as a wish of its own: this one was
-    /// never sent to, and leaves nothing behind.
+    /// A new wish that turned out to be a wish someone put on GitHub, once that opened as a wish of its own: this one
+    /// was never sent to, and leaves nothing behind.
     private func dropUnsent(_ project: LampProject) {
         guard project.untitled, !project.scaffolded else { return }
         logs[project.id] = nil
@@ -3371,16 +3457,12 @@ final class Store: ObservableObject {
         projects.removeAll { $0.id == project.id }
     }
 
-    /// Files that came with a wish found on GitHub, for its box once it's opened (`review`), by the tree they came with.
-    private(set) var fetchedAttachments: [String: [URL]] = [:]
-
     /// The question for a project named with words that don't ask for an app: made into one, or the words sent as they
     /// are, as the person wrote them.
     static func askToAdaptAlert(_ source: RepoImport.Source, ask: String) -> AdaptChoice {
         let alert = NSAlert()
         alert.messageText = "Make \(source.name) into an app?"
-        alert.informativeText = "Lamp has \(source.owner)/\(source.name). \(Builder.engine.title) can make it into an app, using your plan or credits, "
-            + "and you'll get its updates later with one click. Or send your message as you wrote it."
+        alert.informativeText = "\(Builder.engine.title) makes it into an app from your words below."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.stringValue = ask
         field.placeholderString = "What would you like to change? (optional)"
@@ -3478,8 +3560,9 @@ final class Store: ObservableObject {
         let package: Sharing.Package
         /// The request a link brought with this file (`take(exact:)`), for the wish's box; nil for a file opened by hand.
         var request: String? = nil
-        /// Files that came with the words of a new wish naming this wish on GitHub (`adopt`), for the box too.
-        var attachments: [URL] = []
+        /// The new wish that named this wish on GitHub (`adopt`): its files go into the box too, and it goes once this
+        /// wish is in.
+        var fromWish: String? = nil
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
@@ -3577,7 +3660,7 @@ final class Store: ObservableObject {
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package, updating: target))
-            pending.attachments = fetchedAttachments.removeValue(forKey: file.standardizedFileURL.path) ?? []
+            pending.fromWish = Self.fetchedFromWish(beside: file)
             if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
@@ -3620,7 +3703,7 @@ final class Store: ObservableObject {
             }
             return
         }
-        finishImport(pending.package, request: pending.request, attachments: pending.attachments)
+        finishImport(pending.package, request: pending.request, fromWish: pending.fromWish)
     }
 
     /// Update: the app already here takes the file's code, files, description and icon, in place, so it keeps
@@ -3641,8 +3724,9 @@ final class Store: ObservableObject {
         showChat(project.id)
         // A request that came with the wish's link goes into the app it updates, as into a new one (`finishImport`):
         // in the box, ready to send, whether or not the file has anything new.
-        if pending.request != nil || !pending.attachments.isEmpty {
-            updateDraft(Draft(text: pending.request ?? "", attachments: pending.attachments), for: project)
+        let attachments = takeFromWish(pending.fromWish)
+        if pending.request != nil || !attachments.isEmpty {
+            updateDraft(Draft(text: pending.request ?? "", attachments: attachments), for: project)
         }
         Task {
             // Looked at again now that the update owns the wish: a turn that ran while the review waited may have
@@ -3856,7 +3940,7 @@ final class Store: ObservableObject {
     private static let updateFailed = "Lamp couldn't update this app. It's just as it was."
     private static let updateChangedIcon = " Only its icon may have changed."
 
-    private func finishImport(_ package: Sharing.Package, request: String? = nil, attachments: [URL] = []) {
+    private func finishImport(_ package: Sharing.Package, request: String? = nil, fromWish: String? = nil) {
         let project: LampProject
         do {
             project = try Template.scaffold(name: uniqueName(package.name), platform: package.platform, family: package.family, in: root)
@@ -3878,6 +3962,7 @@ final class Store: ObservableObject {
         showChat(project.id)
         // A request that came with the wish's link (an app's remix panel, `RemixLink`, through `take(exact:)`) is in the
         // box, ready to send once the wish is built.
+        let attachments = takeFromWish(fromWish)
         if request != nil || !attachments.isEmpty { updateDraft(Draft(text: request ?? "", attachments: attachments), for: project) }
         log(project, .status, "Imported from a shared file. Building it now…")
         Task {

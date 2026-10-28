@@ -37,6 +37,9 @@ struct WaitingImport {
     /// The wish a repository was fetched to update, kept beside it (`target(beside:)`).
     static let targetFile = "update-target.txt"
 
+    /// The new wish that named a wish on GitHub (`Store.fetchedFromWish`), kept beside it: it goes once this one is in.
+    static let fromWishFile = "from-wish.txt"
+
     /// The wish a kept repository was fetched to update (`Store.copy(of:among:updating:)`), kept beside it so that
     /// after the wait, or a relaunch, the review offers that wish and not another copy of the same repository.
     /// Only in a folder kept for setup, never beside a file opened from anywhere else.
@@ -77,6 +80,8 @@ struct WaitingImport {
                 try fm.copyItem(at: request, to: home.appendingPathComponent(Self.requestFile))
             }
             if let target { try target.write(to: home.appendingPathComponent(Self.targetFile), atomically: true, encoding: .utf8) }
+            let fromWish = file.deletingLastPathComponent().appendingPathComponent(Self.fromWishFile)
+            if Store.fetchedFromWish(beside: file) != nil { try fm.copyItem(at: fromWish, to: home.appendingPathComponent(Self.fromWishFile)) }
         } catch {
             try? fm.removeItem(at: home)
             return false
