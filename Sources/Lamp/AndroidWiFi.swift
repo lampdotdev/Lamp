@@ -49,6 +49,7 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
     private var generation = UUID()
     /// The code and the pairing endpoint last sent, so a code is sent once, and only again once it's changed.
     private var sent: (code: String, endpoint: String)?
+    /// A pairing or a connection is in flight, whichever device it was for: adb is asked one thing at a time.
     private var busy = false
 
     func show(host: String? = nil) {
@@ -87,14 +88,12 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         state = .idle
         code = ""
         sent = nil
-        busy = false
     }
 
     func select(_ host: String) {
         guard selected != host else { return }
         selected = host
         generation = UUID()
-        busy = false
         sent = nil
         code = ""
         state = .idle
@@ -166,6 +165,7 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         busy = true
         state = .working("Pairing…")
         Task {
+            defer { done(mine) }
             let result = await Adb.pair(host: host, port: port, code: code)
             guard mine == generation else { return }
             switch result {
@@ -173,15 +173,23 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
                 self.code = ""
                 await connectAfterPairing(host: host, generation: mine)
             case .wrongCode:
-                busy = false
-                state = .failed("That code didn't work. Type the code the TV shows now.")
+                // adb says the same when the code is wrong and when the screen closed meanwhile.
+                self.code = ""
+                sent = nil
+                state = .failed("That code didn't work, or the pairing screen closed. Type the code the TV shows now.")
             case .unanswered:
-                busy = false
                 // The same code can go again once the screen is open again.
                 sent = nil
                 state = .failed("The TV's pairing screen didn't answer. Open Pair device with pairing code again, and keep it open.")
             }
         }
+    }
+
+    /// The end of a pairing or a connection. One the person moved on from leaves a code they typed meanwhile, for
+    /// another device, to be sent now.
+    private func done(_ mine: UUID) {
+        busy = false
+        if mine != generation { codeChanged() }
     }
 
     /// adb connects a device it has just paired with once its search sees the device's connection, so Lamp waits for
@@ -195,10 +203,9 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             guard mine == generation else { return }
         }
         let port = (await Adb.networkServices()).first { $0.host == host }?.connectPort
-        let typed = Self.endpoint(connectionAddress).flatMap { $0.0 == host ? $0.1 : nil }
+        let typed = Self.endpoint(connectionAddress).flatMap { $0.0 == host && $0.1 != 5555 ? $0.1 : nil }
         guard let target = port ?? typed else {
             guard mine == generation else { return }
-            busy = false
             typing = true
             state = .failed("Paired. Now type the address and port the TV's Wireless debugging screen shows, under IP address & port.")
             return
@@ -226,10 +233,10 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         busy = true
         state = .working("Connecting…")
         Task {
+            defer { done(mine) }
             let connected = await Adb.connect(target: "\(host):\(port)")
             guard mine == generation else { return }
             guard connected else {
-                busy = false
                 state = .failed(port == 5555 ? "The TV didn't answer. Check ADB debugging is on and it's on this Wi‑Fi."
                                              : "The TV didn't answer. Check Wireless debugging is on and it's on this Wi‑Fi.")
                 return
@@ -250,7 +257,6 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             try? await Task.sleep(for: .seconds(1))
         }
         guard mine == generation else { return }
-        busy = false
         state = .failed("Lamp connected, but the TV didn't let this Mac in. Try again, or pair it with a code.")
     }
 
@@ -258,7 +264,6 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
     private func finishIfReady(host: String, generation mine: UUID) async -> Bool {
         guard let device = (await Adb.devices()).first(where: { $0.kind == .android && $0.address == host && $0.adbState == "device" }) else { return false }
         guard mine == generation else { return true }
-        busy = false
         Store.shared.refreshDevices()
         state = .done("\(device.name) is connected. Choose it under Try On.")
         return true

@@ -164,8 +164,14 @@ enum AndroidTVs {
             let oneTV = group.count == 1 || (addresses.allSatisfy { $0 != nil } && Set(addresses).count == 1)
             let matching = records.indices.filter { records[$0].serial == serial }
             guard oneTV, matching.count <= 1 else {
+                // Left as adb listed them. A record with this serial is shown as unsure, not as one of them.
                 out += group
                 seen.insert(serial)
+                for index in matching {
+                    var device = away(records[index])
+                    device.adbState = "unsure"
+                    out.append(device)
+                }
                 continue
             }
             let transports = group.map { transport(of: $0.id, services: services) }
@@ -207,10 +213,9 @@ enum AndroidTVs {
         }
         for record in records where !seen.contains(record.serial) {
             // A TV adb lists only in a state that reads nothing (not allowed, or offline) is shown as that TV when the
-            // name adb's search gave it carries its serial, or it's a selector the TV had: that row says what to do on
-            // it. Nothing is put on it until it reads its serial again.
-            if let index = out.firstIndex(where: { $0.kind == .android && $0.adbState != "device"
-                && (serial(inMDNS: $0.id) == record.serial || record.aliases.contains($0.id)) }) {
+            // name adb's search gave it carries its serial: that row says what to do on it. Nothing is put on it until
+            // it reads its serial again.
+            if let index = out.firstIndex(where: { $0.kind == .android && $0.adbState != "device" && serial(inMDNS: $0.id) == record.serial }) {
                 let listed = out.remove(at: index)
                 var device = away(record)
                 device.adbSerial = listed.id
@@ -265,8 +270,8 @@ enum AndroidTVs {
 
     /// Connects kept TVs adb doesn't list, where Lamp knows where they listen: one paired over Wireless debugging at
     /// the port its service offers now (adb usually connects those itself, so only one still missing a few seconds
-    /// after it was first missed), a Fire TV at its last address's 5555. One try per TV a minute; true when one
-    /// connected, so the listing is read again.
+    /// after it was first missed), a Fire TV where its service says, else at its last address's 5555. One try per TV
+    /// a minute; true when one connected, so the listing is read again.
     static func reconnect(listed: [String], services: [Service], kept: [Record], now: Date = Date()) async -> Bool {
         var targets: [String] = []
         attempts.lock()
@@ -275,7 +280,10 @@ enum AndroidTVs {
             guard !there else { missingSince[record.id] = nil; continue }
             let since = missingSince[record.id] ?? now
             missingSince[record.id] = since
-            guard now.timeIntervalSince(since) >= 5, now.timeIntervalSince(lastTry[record.id] ?? .distantPast) >= 60 else { continue }
+            // adb connects a TV paired over Wireless debugging itself once its search sees it, so that one is given a
+            // moment first; nothing connects a Fire TV's old port but Lamp.
+            guard record.transport == .legacy || now.timeIntervalSince(since) >= 5,
+                  now.timeIntervalSince(lastTry[record.id] ?? .distantPast) >= 60 else { continue }
             let target: String?
             switch record.transport {
             case .tls:

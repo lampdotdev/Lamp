@@ -8811,7 +8811,7 @@ final class Store: ObservableObject {
             case .device(let device):
                 found = device
             case .confirm(let device):
-                let problem = "\(device.name) answers where the TV chosen under Try On was. To be sure it's the same TV, choose \(device.name) under Try On, then press Play."
+                let problem = "To be sure \(device.name) is the TV chosen under Try On, choose it there again, then press Play."
                 log(project, .error, problem)
                 return problem
             case nil:
@@ -8857,7 +8857,15 @@ final class Store: ObservableObject {
                 }
                 guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             }
-            return await launchOnAndroid(project, owner: owner, device: key, serial: serial, inFront: inFront)
+            // A TV's selector may have changed while an earlier launch held the queue.
+            var reach = serial
+            if AndroidTVs.isRecord(key) {
+                guard let device = devices.first(where: { $0.udid == key }), device.adbState == "device" else {
+                    return "Lamp lost the TV chosen under Try On. Check it's on, then press Play again."
+                }
+                reach = device.adb
+            }
+            return await launchOnAndroid(project, owner: owner, device: key, serial: reach, inFront: inFront)
         }
         androidWork[key] = Task { _ = await mine.value }
         return await mine.value
@@ -8962,24 +8970,34 @@ final class Store: ObservableObject {
         }
         note("Looking at \(project.name)", for: project)
         guard let open = androidApps[project.id] else { return (200, ["text": summary + " It isn't open now."]) }
+        let serial = liveSerial(open) ?? open.device
         try? await Task.sleep(for: Self.simulatorFirstScreen)
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
-        if let data = await Adb.screenshot(on: open.serial, density: androidDensities[project.id]),
+        if let data = await Adb.screenshot(on: serial, density: androidDensities[project.id]),
            (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
         let place = project.device == nil ? "the Android emulator (\(AndroidTools.avdName))" : "the person's Android device"
         var text = summary + " It's open on \(place). " + (screenshots.isEmpty ? "No picture of the screen could be taken."
             : Privacy.sharesPictures ? "A picture of its screen follows. Points for use_app are pixels in it." : Privacy.picturesOff)
         if !Privacy.sharesLog { text += " " + Privacy.logOff }
-        if Privacy.sharesPictures, let screen = await Adb.screen(on: open.serial, density: androidDensities[project.id]) { text += "\n\n" + screen.text }
+        if Privacy.sharesPictures, let screen = await Adb.screen(on: serial, density: androidDensities[project.id]) { text += "\n\n" + screen.text }
         if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nWhat it logged:\n\(tail)" }
         return (200, ["text": text, "screenshots": Self.agentPictures(screenshots, in: project)])
     }
 
     /// Open, still this project's screen (no other app of Lamp's launched on that device since), and alive on the device.
     private func isAndroidRunning(_ project: LampProject) async -> Bool {
-        guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id else { return false }
-        return await Adb.pid(of: Template.androidPackage(for: project), on: open.serial) == open.pid
+        guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id, let serial = liveSerial(open) else { return false }
+        return await Adb.pid(of: Template.androidPackage(for: project), on: serial) == open.pid
+    }
+
+    /// The selector adb reaches an open app's device by now. A TV's changes while the app is open (a new port), and an
+    /// address it had may be another device's since, so a TV's goes by its record, as the last look read it: nil while
+    /// the record's TV isn't reachable.
+    private func liveSerial(_ open: AndroidRun) -> String? {
+        guard AndroidTVs.isRecord(open.device) else { return open.serial }
+        guard let device = devices.first(where: { $0.udid == open.device }), device.adbState == "device" else { return nil }
+        return device.adb
     }
 
     /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
@@ -8996,7 +9014,7 @@ final class Store: ObservableObject {
 
     /// `use_app` for an Android app: the actions carried out with adb, the screen read between them.
     private func useOnAndroid(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
-        guard let open = androidApps[project.id], await isAndroidRunning(project) else {
+        guard let open = androidApps[project.id], await isAndroidRunning(project), let serial = liveSerial(open) else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -9004,14 +9022,14 @@ final class Store: ObservableObject {
             return (400, ["error": "use_app needs a list of actions."])
         }
         let density = androidDensities[project.id]
-        let screen = await Adb.screen(on: open.serial, density: density)
+        let screen = await Adb.screen(on: serial, density: density)
         // On the emulator, in plain sight as on the iPhone's simulator: its window glows, Lamp's fingertip goes to
         // each spot, and the person's Stop, Esc, or own click in the window ends it. A look leaves the emulator hidden
         // so as not to pull it in front mid-turn, so trying the app brings its window back, without taking the
         // keyboard. A device of the person's has nothing of it on the Mac's screen to show.
         let scale = Adb.scale(density: density)
         var shown: Emulator.Glass?
-        if let kind = Emulator.kind(of: open.serial), let size = await Adb.displaySize(on: open.serial) {
+        if let kind = Emulator.kind(of: open.serial), let size = await Adb.displaySize(on: serial) {
             await Emulator.unhide(kind)
             shown = await Emulator.glass(kind, size: CGSize(width: size.width / scale, height: size.height / scale))
         }
@@ -9022,7 +9040,7 @@ final class Store: ObservableObject {
                                          escape: Simulator.Driver.isAllowed) }
         if let glass { trial?.show(window: glass.window) }
         defer { trial?.end() }
-        let report = await Adb.perform(decoded, on: open.serial, density: density, screen: screen, aim: { point, doing, press in
+        let report = await Adb.perform(decoded, on: serial, density: density, screen: screen, aim: { point, doing, press in
             guard let trial, let spot = glass?.point(point) else { return }
             await trial.aim(at: spot, doing: doing, press: press)
         }, tookOver: { trial?.tookOver == true }) { [weak self] in
@@ -9053,8 +9071,8 @@ final class Store: ObservableObject {
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
         if Privacy.sharesPictures {
-            if let after = await Adb.screen(on: open.serial, density: density, mayWake: { trial?.tookOver != true }) { text += "\n\n" + after.text }
-            if let data = await Adb.screenshot(on: open.serial, density: density),
+            if let after = await Adb.screen(on: serial, density: density, mayWake: { trial?.tookOver != true }) { text += "\n\n" + after.text }
+            if let data = await Adb.screenshot(on: serial, density: density),
                (try? AppFolder.write(data, to: picture, in: project.dir)) != nil { screenshots = [picture] }
             text += "\n\nA picture of the screen follows. Points for the next use_app are pixels in it."
         }
@@ -10719,7 +10737,7 @@ final class Store: ObservableObject {
         if project.onAndroid {
             let package = Template.androidPackage(for: project)
             if let running = androidApps[project.id] {
-                await Adb.stop(package, on: running.serial)
+                await Adb.stop(package, on: liveSerial(running) ?? running.device)
                 running.end()
                 if androidLeases[running.device] == project.id { androidLeases[running.device] = nil }
             } else {

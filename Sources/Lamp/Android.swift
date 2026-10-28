@@ -167,7 +167,14 @@ enum AndroidTools {
         report.passed.append(.emulator)
         if let serial {
             let devices = await Adb.devices()
-            guard let device = devices.first(where: { $0.udid == serial }) else {
+            // A TV chosen before Lamp kept TVs is named by a selector it had: adb's search name carrying the serial
+            // the TV reads is that TV (Play makes it the record's choice); an address and port is the person's to confirm.
+            guard let device = devices.first(where: { $0.udid == serial }) ?? devices.first(where: { AndroidTVs.adopts(serial, as: $0) }) else {
+                if let other = devices.first(where: { AndroidTVs.isRecord($0.id) && $0.aliases.contains(serial) }) {
+                    report.issue = Issue(step: .device, title: "Choose \(other.name) again",
+                                         message: "To be sure it's the TV you chose, choose \(other.name) under Try On, then press Play.", action: .retry)
+                    return report
+                }
                 // A choice made over Wi‑Fi names the address and port it had then, which may have changed since.
                 report.issue = serial.contains(":") || AndroidTVs.isMDNS(serial)
                     ? Issue(step: .device, title: "Choose your device again",
@@ -397,6 +404,8 @@ enum Adb {
                 return "Lamp can't reach \(name). On it, turn on ADB debugging (Settings → My Fire TV → Developer options), and check it's on this Mac's Wi‑Fi."
             case "away":
                 return "Lamp can't reach \(name). On it, turn Wireless debugging back on (Settings → System → Developer options), and check it's on this Mac's Wi‑Fi."
+            case "unsure":
+                return "Lamp sees more than one device answering as \(name). Check Again in a moment, or choose it again under Try On."
             case "unauthorized":
                 return "On \(name), choose Allow when it asks whether to allow debugging from this Mac (tick Always allow). If it doesn't ask, connect it again from Try On with its pairing code."
             default:

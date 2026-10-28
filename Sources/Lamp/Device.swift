@@ -169,7 +169,7 @@ struct Device: Identifiable, Hashable {
     /// A TV or other device Lamp reaches over the network that didn't answer the last look: off, or on another network
     /// (a home elsewhere). Its setup is kept as it was, but nothing can be put on it, or set up, until it's found
     /// again. Not a phone: Xcode opens a phone's connection only when it's needed, so its `connected` says little.
-    var isAway: Bool { ((kind.isTV || kind == .other) && reach == .network && !connected) || (kind == .android && adbState == "away") }
+    var isAway: Bool { ((kind.isTV || kind == .other) && reach == .network && !connected) || (kind == .android && ["away", "unsure"].contains(adbState)) }
     /// Set up with Lamp: the person has made it theirs here, so it's one of their devices. Otherwise it's a possible
     /// device, only found on the network, which may be a neighbor's on a shared Wi‑Fi or a building's.
     ///
@@ -214,6 +214,7 @@ struct Device: Identifiable, Hashable {
             switch adbState {
             case "device": return .ready
             case "away": return .needs(transport == .legacy ? "Turn on ADB debugging on it" : "Turn on Wireless debugging on it")
+            case "unsure": return .needs("Check it's the right one")
             case "unauthorized": return .needs(tv ? "Allow this Mac on it" : "Allow USB debugging on it")
             case "offline": return .needs(tv ? "Turn it on" : "Reconnect it")
             default: return .needs(tv ? "Turn on debugging on it" : "Turn on USB debugging on it")
