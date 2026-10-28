@@ -11,7 +11,8 @@
   var D = window.DATA;
   // `session` counts each time Ask opens, closes or the page hides: what started under one session (a follow-up listen,
   // what was heard, an answer) does nothing once it has changed. `pending` is a question back in progress: the request
-  // it came from, what was asked and what was already done, so the answer is read against them.
+  // it came from, every question and answer of the chain so far, what's asked now and what was already done, so the
+  // answer is read against all of them.
   var S = { turn: null, voice: null, listening: false, pending: null, last: null, el: null, session: 0, followUp: null };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
@@ -128,11 +129,14 @@
     clearTimeout(S.followUp);
     // An answer to a question back goes with the request it came from, so "Maya" after "Who did it?" still means the
     // dishes, and what that request already did isn't done again.
-    var pending = S.pending, request = text, history = [];
+    // Every question and answer of the chain goes, in order: "Evening" still counts once "Maya" answers the next one.
+    var pending = S.pending, request = text, history = [], answered = [];
     if (pending) {
-      request = pending.request + '\n\nYou asked: "' + pending.question + '" The person answered: "' + text + '".' +
-        (pending.done ? '\nAlready done for this request: ' + pending.done : '');
-      history = [{ said: pending.question, heard: text }];
+      answered = pending.answered.concat([{ question: pending.question, answer: text }]).slice(-6);
+      request = pending.request + '\n\n' + answered.map(function (x) {
+        return 'You asked: "' + x.question + '" The person answered: "' + x.answer + '".';
+      }).join('\n') + (pending.done ? '\nAlready done for this request: ' + pending.done : '');
+      history = answered.slice(-3).map(function (x) { return { said: x.question, heard: x.answer }; });
     }
     var session = S.session;
     line('ask-you', App.esc(text));
@@ -155,7 +159,7 @@
       var spoken = words(r);
       if (r.stopped !== 'cancelled') line('ask-them' + (r.failed.length || r.stopped ? ' is-partly' : ''), App.esc(spoken));
       var did = receipt(r);
-      S.pending = r.ask ? { request: pending ? pending.request : text, question: r.reply,
+      S.pending = r.ask ? { request: pending ? pending.request : text, answered: answered, question: r.reply,
                             done: [pending && pending.done, did].filter(function (x) { return x; }).join(' ') } : null;
       S.last = r.turn;
       if (App.changesOf(r.turn).length && S.el) S.el.querySelector('[data-ask-undo]').hidden = false;
