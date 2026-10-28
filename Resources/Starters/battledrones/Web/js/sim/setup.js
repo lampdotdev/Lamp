@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 /**
  * The one way a skirmish match is set up from its description (battle
  * records, AGENT-BATTLES.md; sound duels, SOUND-DUEL.md; a Last Stand or an

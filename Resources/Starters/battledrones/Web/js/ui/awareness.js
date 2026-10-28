@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 
 /** Edge marker diameter and the gap kept to the playfield border, CSS px. */
 export const MARKER = { size: 46, margin: 8 };

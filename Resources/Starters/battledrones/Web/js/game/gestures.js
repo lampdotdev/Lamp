@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 
 export const TAP_SLOP_PX = 8;
 export const HOLD_DELAY_MS = 250;

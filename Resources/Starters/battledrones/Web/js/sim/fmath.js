@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 /**
  * Deterministic maths for the simulation. ECMAScript lets each engine
  * compute Math.sin, cos, atan2, hypot and pow its own way (their results

@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 /**
  * The menu's "🎬 Watch a replay" sheet: paste a battle record (the JSON an
  * agent battle writes to battles/, AGENT-BATTLES.md "Battle records") or pick

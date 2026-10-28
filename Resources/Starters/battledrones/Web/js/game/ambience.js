@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 
 /** Base bed level per biome, before the intensity duck. */
 const LEVEL = { temperate: 0.22, desert: 0.15, arctic: 0.17, volcanic: 0.25, tropical: 0.2 };

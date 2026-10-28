@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 /**
  * The battle viewer's check ahead (game/replay.ts): plays a battle record
  * through on this build's sim, off the main thread, and answers with the

@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 
 /** Gaps kept under the band (and, for the info card, above the dock), CSS px. */
 const GAP = { ticker: 6, banner: 8, card: 8 };

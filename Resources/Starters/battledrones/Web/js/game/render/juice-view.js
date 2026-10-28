@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 import * as THREE from "three";
 import { BUILDINGS, UNITS } from "../../sim/balance.js";
 import { sfx } from "../audio.js";

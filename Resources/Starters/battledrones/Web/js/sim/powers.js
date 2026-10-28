@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 import { POWERS, TICK_RATE, UNITS } from "./balance.js";
 import { hasGoliath } from "./goliath.js";
 import { areaBlast, strikeDamage } from "./combat.js";

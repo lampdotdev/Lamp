@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 /**
  * Onboarding hint pacing. A new player has a lot of one-time tips coming
  * their way in the first minutes (the tutorial stages, squads, touch

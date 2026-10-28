@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 import { worldHash } from "../sim/checksum.js";
 import { sidesOf } from "../sim/sides.js";
 /** The sim this build plays (vite.config.ts), or null outside a Vite build (tests). */

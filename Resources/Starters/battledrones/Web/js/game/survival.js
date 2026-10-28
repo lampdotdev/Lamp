@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 import { THEME_COUNTERS, survivalStatus, wavesSurvived } from "../sim/modes/survival.js";
 import { TICK_RATE } from "../sim/balance.js";
 import { buildingCenter, hqOf } from "../sim/world.js";

@@ -1,3 +1,4 @@
+/* From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones), changed to play on Lamp. */
 /* Full-screen, touch-first viewport hygiene (see DESIGN.md "Full-screen behavior") */
 * {
   margin: 0;

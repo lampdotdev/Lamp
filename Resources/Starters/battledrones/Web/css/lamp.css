@@ -4,7 +4,7 @@
 /* On a Mac the game's window has no title bar: its close, minimize and zoom buttons sit over the top-left corner, so
    the pause and mute buttons there move along. */
 @media (pointer: fine) {
-  .tl { left: max(78px, env(safe-area-inset-left)); }
+  .tl, .menu-mute { left: max(78px, env(safe-area-inset-left)); }
 }
 
 /* ------------------------------------------------------------ controllers --- */

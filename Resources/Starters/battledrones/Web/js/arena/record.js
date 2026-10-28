@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 import { step } from "../sim/sim.js";
 
 // setup and hashing live in the sim, shared with sound duels (SOUND-DUEL.md)

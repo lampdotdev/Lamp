@@ -1,3 +1,5 @@
+// From Battle Drones by Simon Willison (Apache License 2.0, see LICENSE-battledrones): its TypeScript turned into
+// JavaScript and changed to play on Lamp.
 /**
  * The order a match is set up and stepped in, whichever side this device
  * commands. The sim hands out entity ids from one shared counter as it
