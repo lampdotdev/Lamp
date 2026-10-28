@@ -652,6 +652,10 @@ export async function mountStack(host: HTMLElement) {
     hovered = which(event);
     s.hand(hovered >= 0);
   });
+  // For a keyboard, a button for each tape with a picture does what a click on the tape does.
+  host.querySelectorAll<HTMLButtonElement>("[data-tape]").forEach((button) => {
+    button.addEventListener("click", () => choose(Number(button.dataset.tape)));
+  });
 
   let tilt = { x: 0, y: 0 };
   // How far in front of the stack a chosen tape is held.

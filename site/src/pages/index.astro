@@ -140,9 +140,10 @@ const devices = [
 
     <!-- From the shelf: a stack of tapes, in 3D once lib/tapes.ts has drawn it, each original with its screenshot on
          its spine and a remix of it under it. A tape that's clicked flies out and shows the screenshot on its label.
-         Without WebGL, and for screen readers, the same tapes as a list. -->
+         Without WebGL, and for screen readers, the same tapes as a list, as tall as it needs; a keyboard reaches a
+         button for each tape that flies it out as a click does. -->
     <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
-      <div class="tape-host order-last h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:h-[40rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
+      <div class="tape-host order-last min-h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:min-h-[40rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
         <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
           {
             tapes.map((tape) => (
@@ -153,6 +154,7 @@ const devices = [
             ))
           }
         </ul>
+        {tapes.map((tape, i) => tape.shot && <button type="button" class="tape-control" data-tape={i}>Show what's on {tape.title}</button>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>

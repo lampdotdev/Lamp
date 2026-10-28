@@ -1,9 +1,9 @@
 ---
 // The homepage's "Change it live": an app being made on the Mac, changed again and again from Lamp's chat beside it,
 // as a story that loops. It's the making that's shown, not the app in use: a plain window on the Mac with its chat
-// overlapping its edge. A scoreboard for game night gains a round timer (something it does), turns into an arcade
-// (a whole new look), shows who's winning (a tweak), learns to listen (a new way in: said aloud, "start the round"
-// starts the clock and "point for Maya" scores), and loses two players who dropped out (a change to what's in it).
+// overlapping its edge. A scoreboard for game night turns into an arcade that shows who's winning (a whole new look),
+// learns to listen (a new way in: said aloud, "point for Maya" scores), gains a round timer that it can start when
+// asked aloud (something it does), and loses two players who dropped out (a change to what's in it).
 // Each change goes in the way it does in Lamp: colored light rises from the bottom of the window while it's made,
 // then a band of white sweeps up with the new version behind it. It isn't a recording: the steps come quicker than
 // they would, and the chat shows only what was asked and what came of it.
@@ -20,34 +20,32 @@ const players: Player[] = [
 
 // What's asked and what Lamp says once it's done, one pair for each change.
 const chat = [
-  { ask: "Add a round timer.", done: "Added: two minutes a round, with a buzzer at the end." },
-  { ask: "Make it look like an arcade.", done: "Done: neon on black, in arcade type." },
-  { ask: "Show who's winning.", done: "The leader gets a star, and everyone a bar." },
-  { ask: "Add voice control.", done: "Done: say “start the round”, or “point for” someone." },
+  { ask: "Make it look like an arcade, and show who's winning.", done: "Done: neon on black, a star for the leader and a bar for everyone." },
+  { ask: "Add voice control.", done: "Done: say “point for” someone to score." },
+  { ask: "Add a round timer.", done: "Added: two minutes a round. Say “start the round” to start it." },
   { ask: "Leo and Sam dropped out.", done: "Done: it's down to Maya and Priya." },
 ];
 
-// The six versions of the app. `timer` adds the round timer, `arcade` the new look, `lead` the star and the bars,
-// `voice` the listening, and `out` who's left the game. Once it listens, what's said aloud has started the round and
-// given Maya a point (`heard`), which the version after it keeps.
+// The five versions of the app. `arcade` is the new look, `lead` the star and the bars, `voice` the listening,
+// `timer` the round timer, and `out` who's left the game. What's said aloud once a version is in is marked on it
+// (`point`: Maya's point, `start`: the round started), and every version after it keeps what it did.
 const states = [
-  { timer: false, arcade: false, lead: false, voice: false, out: [] as string[] },
-  { timer: true, arcade: false, lead: false, voice: false, out: [] },
-  { timer: true, arcade: true, lead: false, voice: false, out: [] },
-  { timer: true, arcade: true, lead: true, voice: false, out: [] },
-  { timer: true, arcade: true, lead: true, voice: true, out: [] },
-  { timer: true, arcade: true, lead: true, voice: true, out: ["Leo", "Sam"] },
-];
-const listening = 4;
-const heard = (index: number) => index > listening;
-const scoreOf = (player: Player, index: number) => player.score + (player.name === "Maya" && heard(index) ? 1 : 0);
+  { arcade: false, lead: false, voice: false, timer: false, out: [] as string[] },
+  { arcade: true, lead: true, voice: false, timer: false, out: [] },
+  { arcade: true, lead: true, voice: true, timer: false, out: [], says: "point" },
+  { arcade: true, lead: true, voice: true, timer: true, out: [], says: "start" },
+  { arcade: true, lead: true, voice: true, timer: true, out: ["Leo", "Sam"] },
+] as { arcade: boolean; lead: boolean; voice: boolean; timer: boolean; out: string[]; says?: string }[];
+const heardAt = (move: string) => states.findIndex((state) => state.says === move);
+const heard = (move: string, index: number) => index > heardAt(move);
+const scoreOf = (player: Player, index: number) => player.score + (player.name === "Maya" && heard("point", index) ? 1 : 0);
 ---
 
 <div data-story class="relative">
   <p class="sr-only">
-    An app being made on the Mac, with Lamp's chat beside it. A scoreboard for game night gains a round timer, turns
-    into an arcade, shows who's winning, learns to start the round and count points when it's spoken to, and drops
-    two players who left, one request at a time.
+    An app being made on the Mac, with Lamp's chat beside it. A scoreboard for game night turns into an arcade that
+    shows who's winning, learns to count points when it's spoken to, gains a round timer it starts when asked aloud,
+    and drops two players who left, one request at a time.
   </p>
 
   <div data-window aria-hidden="true" class="@container relative aspect-[16/10] overflow-hidden rounded-[1.4cqw] bg-white shadow-[0_30px_70px_-20px_rgba(0,0,0,0.7)] ring-1 ring-white/15 select-none sm:w-[75%] lg:w-[77%]">
@@ -55,7 +53,7 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
       states.map((state, index) => {
         const top = Math.max(...players.map((player) => scoreOf(player, index)));
         return (
-          <div data-state={index} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.arcade ? "bg-[#121110] text-white" : "bg-white text-ink"]}>
+          <div data-state={index} data-says={state.says} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.arcade ? "bg-[#121110] text-white" : "bg-white text-ink"]}>
             {state.arcade && (
               /* The arcade's floor: a grid in perspective running to a glowing horizon, faint behind the scores. */
               <div class="arcade-floor pointer-events-none absolute inset-x-0 bottom-0 h-[62%] overflow-hidden"><div class="arcade-grid" /></div>
@@ -87,7 +85,7 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
                         {state.lead && rank === 0 && <span class="ml-[1cqw] rounded-[0.3cqw] bg-[#f6b81c] px-[0.6cqw] py-[0.15cqw] text-[1.2cqw] font-bold text-[#121110]">★ 1ST</span>}
                       </span>
                       <span class:list={["relative w-[5cqw] text-right text-[3cqw] font-bold tabular-nums", state.arcade && "font-mono text-[#f6b81c] [text-shadow:0_0_1cqw_rgba(246,184,28,0.6)]"]}>
-                        {index === listening && player.name === "Maya" ? <><span data-use-out="point">{player.score}</span><span data-use-in="point">{player.score + 1}</span></> : scoreOf(player, index)}
+                        {index === heardAt("point") && player.name === "Maya" ? <><span data-use-out="point">{player.score}</span><span data-use-in="point">{player.score + 1}</span></> : scoreOf(player, index)}
                       </span>
                       <span class="relative flex gap-[0.8cqw]">
                         <span class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-white/40" : "rounded-full ring-[0.15cqw] ring-black/20"]}>−</span>
@@ -101,10 +99,10 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
                 <div class:list={["flex w-[24cqw] shrink-0 flex-col items-center self-start px-[2cqw] py-[2.4cqw]", state.arcade ? "rounded-[0.4cqw] bg-black ring-[0.2cqw] ring-[#e2402a]/70" : "rounded-[1.4cqw] bg-[#f5f5f7]"]}>
                   <p class:list={["text-[1.4cqw] font-semibold", state.arcade ? "font-mono text-[#e2402a] uppercase" : "text-black/50"]}>Round timer</p>
                   <p class:list={["mt-[0.6cqw] text-[6cqw] leading-none font-bold tabular-nums", state.arcade ? "font-mono text-[#ff6a4d] [text-shadow:0_0_1.6cqw_rgba(226,64,42,0.8)]" : ""]}>
-                    {index === listening ? <><span data-use-out="start">2:00</span><span data-use-in="start">1:58</span></> : heard(index) ? "1:58" : "2:00"}
+                    {index === heardAt("start") ? <><span data-use-out="start">2:00</span><span data-use-in="start">1:58</span></> : heard("start", index) ? "1:58" : "2:00"}
                   </p>
                   <span class:list={["mt-[1.6cqw] px-[2.4cqw] py-[0.8cqw] text-[1.5cqw] font-semibold", state.arcade ? "rounded-[0.4cqw] bg-[#e2402a] font-mono text-white uppercase" : "rounded-full bg-ink text-white"]}>
-                    {index === listening ? <><span data-use-out="start">Start</span><span data-use-in="start">Pause</span></> : heard(index) ? "Pause" : "Start"}
+                    {index === heardAt("start") ? <><span data-use-out="start">Start</span><span data-use-in="start">Pause</span></> : heard("start", index) ? "Pause" : "Start"}
                   </span>
                 </div>
               )}
@@ -200,9 +198,8 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
     const changing = story.querySelector<HTMLElement>("[data-changing]")!;
     const messages = story.querySelector<HTMLElement>("[data-messages]")!;
     const words = story.querySelector<HTMLElement>("[data-voice-words]")!;
-    // The step whose change teaches the app to listen, and what's then said to it, each with what it does.
-    const LISTENS = 3;
-    const spoken = [{ words: "Start the round", does: "start" }, { words: "Point for Maya", does: "point" }];
+    // What's said to the app once a version that listens for it is in, and what it does.
+    const SPOKEN: Record<string, string> = { point: "Point for Maya", start: "Start the round" };
     const said = (step: number, role: string) => story.querySelector<HTMLElement>(`[data-step="${step}"][data-role="${role}"]`)!;
     const show = (element: HTMLElement, shown: boolean) => {
       element.toggleAttribute("data-shown", shown);
@@ -238,23 +235,21 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
       only(index);
     };
 
-    // Once it listens, someone at the table talks to it: each thing said shows as it's heard, then happens.
-    const listen = async () => {
-      for (const line of spoken) {
-        words.textContent = `“${line.words}”`;
-        story.toggleAttribute("data-hearing", true);
-        await pause(1100);
-        story.toggleAttribute(`data-heard-${line.does}`, true);
-        await pause(1200);
-        story.toggleAttribute("data-hearing", false);
-        await pause(500);
-      }
+    // Once it listens, someone at the table talks to it: what's said shows as it's heard, then happens.
+    const listen = async (does: string) => {
+      words.textContent = `“${SPOKEN[does]}”`;
+      story.toggleAttribute("data-hearing", true);
+      await pause(1100);
+      story.toggleAttribute(`data-heard-${does}`, true);
+      await pause(1300);
+      story.toggleAttribute("data-hearing", false);
+      await pause(500);
     };
 
     const play = async () => {
       for (;;) {
         only(0);
-        spoken.forEach((line) => story.toggleAttribute(`data-heard-${line.does}`, false));
+        Object.keys(SPOKEN).forEach((does) => story.toggleAttribute(`data-heard-${does}`, false));
         story.querySelectorAll<HTMLElement>(".story-message").forEach((message) => show(message, false));
         messages.scrollTop = 0;
         await pause(1200);
@@ -267,8 +262,9 @@ const scoreOf = (player: Player, index: number) => player.score + (player.name =
           await wipe(step + 1);
           show(changing, false);
           show(said(step, "done"), true);
-          await pause(step === LISTENS ? 900 : 2000);
-          if (step === LISTENS) await listen();
+          const says = states[step + 1].dataset.says;
+          await pause(says ? 900 : 2000);
+          if (says) await listen(says);
         }
         await pause(3200);
         // Back to the start: the window fades to where the story began while the chat clears.
