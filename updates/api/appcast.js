@@ -1,6 +1,6 @@
 // Sparkle's appcasts, built from the GitHub releases that carry a sparkle.json: /appcast.xml for Lamp, from the
-// releases, and /nightly/appcast.xml (?stream=nightly) for Lamp Nightly, from the nightlies alone (pre-releases from
-// .github/workflows/nightly.yml). Two apps, two feeds; neither ever sees the other's builds.
+// releases, and /nightly/appcast.xml (?stream=nightly) for Lamp Nightly, from the one rolling nightly pre-release
+// (.github/workflows/nightly.yml). Two apps, two feeds; neither ever sees the other's builds.
 import { dmgAsset, isNightly, releases, sparkleInfo } from "../lib/github.js";
 
 const escape = (text) => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

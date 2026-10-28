@@ -1,7 +1,7 @@
 // Sends a download to the release's DMG through GitHub's short-lived signed link, so the private repo's
 // files can be fetched without a GitHub account. Only Lamp DMGs from published releases are served.
-// "latest" is the newest published release with a DMG, for the website's Download button. A nightly's DMG is
-// served by its own tag (nightly-<version>), for the update feed; "latest" never is one.
+// "latest" is the newest published release with a DMG, for the website's Download button. The nightly's DMG is
+// served by its tag ("nightly"), for Lamp Nightly's feed; "latest" never is it.
 import { REPO, dmgAsset, github, isNightly, releases } from "../lib/github.js";
 
 export async function GET(request) {
@@ -11,7 +11,7 @@ export async function GET(request) {
     release = (await releases()).find((release) => dmgAsset(release));
     if (!release) return new Response("Not found", { status: 404 });
   } else {
-    if (!/^(v|nightly-)[0-9][0-9A-Za-z.+-]*$/.test(tag)) return new Response("Not found", { status: 404 });
+    if (!/^(v[0-9][0-9A-Za-z.+-]*|nightly(-[0-9][0-9A-Za-z.+-]*)?)$/.test(tag)) return new Response("Not found", { status: 404 });
     const releaseResponse = await github(`/repos/${REPO}/releases/tags/${encodeURIComponent(tag)}`);
     if (!releaseResponse.ok) return new Response("Not found", { status: 404 });
     release = await releaseResponse.json();

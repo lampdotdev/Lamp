@@ -21,9 +21,9 @@ export async function releases({ nightlies = false } = {}) {
   return (await response.json()).filter((release) => !release.draft && (nightlies ? true : !release.prerelease));
 }
 
-/** A nightly: a pre-release the nightly workflow published, tagged nightly-<version>. */
+/** The nightly: the one rolling pre-release the nightly workflow keeps, tagged "nightly" (nightly-<version> before). */
 export function isNightly(release) {
-  return Boolean(release.prerelease) && /^nightly-[0-9][0-9A-Za-z.+-]*$/.test(release.tag_name);
+  return Boolean(release.prerelease) && /^nightly(-[0-9][0-9A-Za-z.+-]*)?$/.test(release.tag_name);
 }
 
 /**

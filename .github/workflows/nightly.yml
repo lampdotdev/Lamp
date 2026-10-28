@@ -1,9 +1,11 @@
 # Builds, signs, notarizes and publishes Lamp Nightly from every push to main: a separate app from Lamp (its own
-# name, icon, bundle id, folders and update feed, Sources/Lamp/Edition.swift), as a pre-release tagged
-# nightly-<version>, where the version is the last release plus the commits since it (0.24.0+37, as build.sh names a
+# name, icon, bundle id, folders and update feed, Sources/Lamp/Edition.swift). One rolling pre-release, tagged
+# "nightly", whose tag moves to the commit and whose DMG, sparkle.json, title and notes are replaced each time: a
+# release is published once and edited from then on, so whatever listens for releases (Slack) hears of a nightly
+# once, never of each. The version is the last release plus the commits since it (0.24.0+37, as build.sh names a
 # build from source), with build number 0.24.0.37 so Sparkle orders the nightlies among themselves. Lamp Nightly
-# updates from /nightly/appcast.xml, which lists nightlies alone (updates/api/appcast.js); Lamp and the website's
-# Download never see them. The newest ten nightlies are kept; older ones go, tag and all.
+# updates from /nightly/appcast.xml, which lists that one release (updates/api/appcast.js); Lamp and the website's
+# Download never see it.
 #
 # The same secrets and steps as mac-release.yml, from the "release" environment, which main may use as v* tags may.
 name: Nightly
@@ -107,17 +109,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "nightly-$VERSION" "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json \
-            --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md --target "$GITHUB_SHA" || \
-          gh release upload "nightly-$VERSION" "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json --clobber
+          # The tag follows the commit; the release is made once and edited after that, never published again.
+          git push -f origin "$GITHUB_SHA:refs/tags/nightly"
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release view nightly --json assets --jq '.assets[].name' | grep -E '^Lamp-Nightly-.*\.dmg$' |
+              while read -r old; do gh release delete-asset nightly "$old" --yes || true; done
+            gh release upload nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json --clobber
+            gh release edit nightly --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
+          else
+            gh release create nightly "dist/Lamp-Nightly-$VERSION.dmg" dist/sparkle.json \
+              --prerelease --title "Lamp Nightly $VERSION" --notes-file dist/notes.md
+          fi
 
-      - name: Keep the newest ten nightlies
+      - name: Remove nightlies published one release each
+        # Left by the first shape of this workflow (nightly-<version> releases), which told of each.
         if: env.VERSION != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release list --limit 200 --json tagName,isPrerelease,createdAt \
-            --jq '[.[] | select(.isPrerelease and (.tagName | startswith("nightly-")))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' |
+          gh release list --limit 200 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease and (.tagName | startswith("nightly-"))) | .tagName' |
           while read -r tag; do
             [ -n "$tag" ] || continue
             echo "Removing $tag"
