@@ -1,0 +1,19 @@
+{
+  "upstream" : [
+    {
+      "author" : "Simon Willison",
+      "commit" : "ca4f13b36013e1980289046e731a295d2bf02a3e",
+      "license" : "Apache-2.0",
+      "licenseFile" : "Web/LICENSE-battledrones",
+      "name" : "Battle Drones",
+      "url" : "https://github.com/simonw/battledrones"
+    },
+    {
+      "author" : "Kazuhiko Arase",
+      "license" : "MIT",
+      "licenseFile" : "Web/LICENSE-qrcode-generator",
+      "name" : "qrcode-generator",
+      "url" : "https://github.com/kazuhikoarase/qrcode-generator"
+    }
+  ]
+}

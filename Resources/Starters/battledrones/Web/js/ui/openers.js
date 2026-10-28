@@ -1,0 +1,123 @@
+import { BUILDINGS, UNITS } from "../sim/balance.js";
+import { OPENERS, OPENER_IDS } from "../sim/openers.js";
+import { sfx } from "../game/audio.js";
+import { PLAYER } from "../game/controller.js";
+import { fullscreen } from "./fullscreen.js";
+import { iconUrl } from "../game/side-style.js";
+
+const ICON = (kind, side) => iconUrl(kind, side);
+
+/** What each card promises, as icon pills. */
+function pills(id, side) {
+    const o = OPENERS[id];
+    const items = [{ icon: o.building, label: BUILDINGS[o.building].name }];
+    const counts = new Map();
+    for (const k of o.units)
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+    for (const [k, n] of counts)
+        items.push({ icon: k, label: `${n} ${UNITS[k].name}s` });
+    items.push({ icon: "harvester", label: `${o.harvesters} Harvesters` });
+    if (o.scrap > 0)
+        items.push({ label: `+${o.scrap} scrap` });
+    if (o.scrap < 0)
+        items.push({ label: `−${-o.scrap} scrap`, cls: "neg" });
+    return items
+        .map((it) => `<span class="op-pill ${it.cls ?? ""}">${it.icon ? `<img src="${ICON(it.icon, side)}" alt="" draggable="false"/>` : `<i>⚙</i>`}${it.label}</span>`)
+        .join("");
+}
+
+/** The hero image cluster: the building with its units stacked in front. */
+function art(id, side) {
+    const o = OPENERS[id];
+    const unit = o.units[0] ?? "harvester";
+    const n = o.units.length || o.harvesters;
+    return `<div class="op-art">
+      <img class="op-b" src="${ICON(o.building, side)}" alt="" draggable="false"/>
+      <img class="op-u" src="${ICON(unit, side)}" alt="" draggable="false"/>
+      <span class="op-n">×${n}</span>
+    </div>`;
+}
+
+export function showOpenerPicker(opts) {
+    const root = document.getElementById("hud");
+    const side = opts.side ?? PLAYER;
+    const el = document.createElement("div");
+    el.className = "openers";
+    el.innerHTML = `
+    <button class="op-back" title="Back to the menu">‹ Menu</button>
+    <div class="op-head">
+      <h2>Choose your opener</h2>
+      <p class="op-ctx"></p>
+    </div>
+    <div class="op-cards">
+      ${OPENER_IDS.map((id, i) => `
+        <button class="op-card op-${id}" data-id="${id}">
+          ${art(id, side)}
+          <div class="op-text">
+            <b class="op-name">${OPENERS[id].name}</b>
+            <span class="op-tag">${OPENERS[id].tagline}</span>
+            <div class="op-pills">${pills(id, side)}</div>
+          </div>
+          <span class="op-key">${i + 1}</span>
+        </button>`).join("")}
+    </div>
+    <p class="op-foot">The clock starts when you choose. The enemy picks too.</p>`;
+    el.querySelector(".op-ctx").textContent = opts.context;
+    // keep touches on the overlay away from the game canvas underneath
+    el.addEventListener("pointerdown", (e) => e.stopPropagation());
+    root.appendChild(el);
+
+    let picked = false;
+    let timer = 0;
+    const pick = (id) => {
+        if (picked)
+            return;
+        picked = true;
+        sfx.unlock();
+        sfx.play("ready");
+        el.classList.add("chosen");
+        el.querySelectorAll(".op-card").forEach((c) => c.classList.toggle("picked", c.dataset.id === id));
+        // let the pick register visually, then start the match as the cards fade
+        timer = window.setTimeout(() => {
+            opts.onPick(id);
+            el.classList.add("out");
+            timer = window.setTimeout(destroy, 320);
+        }, 380);
+    };
+    el.querySelector(".op-back").addEventListener("click", () => fullscreen.reload());
+    el.querySelectorAll(".op-card").forEach((b) => {
+        const why = opts.blocked?.(b.dataset.id);
+        const good = why ? null : opts.recommended?.(b.dataset.id);
+        if (good) {
+            const badge = document.createElement("span");
+            badge.className = "op-rec";
+            badge.textContent = `★ ${good}`;
+            b.querySelector(".op-text").appendChild(badge);
+        }
+        if (why) {
+            b.disabled = true;
+            b.classList.add("blocked");
+            b.querySelector(".op-tag").textContent = why;
+            return;
+        }
+        b.addEventListener("click", () => pick(b.dataset.id));
+    });
+    // 1–3 belong to the cards while they're up: captured before the scene's
+    // keyboard sees them (there they'd also be the squad hotkeys)
+    const onKey = (e) => {
+        const i = Number(e.key) - 1;
+        if (!(i >= 0 && i < OPENER_IDS.length))
+            return;
+        e.stopImmediatePropagation();
+        if (!opts.blocked?.(OPENER_IDS[i]))
+            pick(OPENER_IDS[i]);
+    };
+    window.addEventListener("keydown", onKey, true);
+
+    function destroy() {
+        window.clearTimeout(timer);
+        window.removeEventListener("keydown", onKey, true);
+        el.remove();
+    }
+    return { destroy };
+}

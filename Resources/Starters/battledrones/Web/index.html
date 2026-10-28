@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#070a10" />
+  <title>Battle Drones</title>
+  <link rel="icon" href="data:," />
+  <!-- Based on Battle Drones by Simon Willison (Apache License 2.0, LICENSE-battledrones), changed to play on Lamp. -->
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/lamp.css" />
+  <!-- Lamp's building blocks for the page (LampAI, LampStore, Lamp.controllers for phones), then three.js as Lamp ships it -->
+  <script src="lamp.js"></script>
+  <script type="importmap">
+    { "imports": { "three": "./three/three.module.js", "three/addons/": "./three/addons/" } }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <div id="game"></div>
+    <div id="hud"></div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

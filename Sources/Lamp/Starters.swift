@@ -182,7 +182,7 @@ enum Starters {
 
     /// What a starter's folder gives the app, beside its scaffold (which is replaced): the agent and the build
     /// read these where any app keeps them.
-    private static let copied = ["Sources", "Widget", "Share", "Assets", "Web", "APP.md", "icon.json", "about.json", "capabilities.json"]
+    private static let copied = ["Sources", "Widget", "Share", "Assets", "Web", TVTemplate.phoneFolder, "APP.md", "icon.json", "about.json", "capabilities.json"]
 
     /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and shipped with Lamp, so it's on the desk
     /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, the

@@ -1,0 +1,44 @@
+/* The phone's command table, in Battle Drones' colors: a night-blue field, the side's own color for what's yours. */
+:root { --side: #7ec1ff; color-scheme: dark; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: #070a10; color: #e8eef8; font: 16px/1.4 system-ui, -apple-system, sans-serif; }
+body { -webkit-user-select: none; user-select: none; overscroll-behavior: none; touch-action: manipulation; }
+.screen { min-height: 100%; padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
+#join, #lobby, #ended { display: flex; flex-direction: column; justify-content: center; gap: 14px; max-width: 520px; margin: 0 auto; }
+[hidden] { display: none !important; }
+h1 { margin: 0; font-size: 34px; letter-spacing: 0.08em; line-height: 1.05; }
+h1 span { color: #ffd66e; }
+.sub, .status { color: #9fb3cf; margin: 0; }
+.name { display: grid; gap: 6px; color: #9fb3cf; }
+input { font: inherit; color: #fff; background: #111a28; border: 1px solid #2a3a52; border-radius: 12px; padding: 12px; }
+button { font: inherit; color: inherit; border: 0; cursor: pointer; }
+.cta { padding: 16px; border-radius: 14px; background: linear-gradient(#4f9dff, #2f74d6); font-weight: 700; }
+.seats { display: grid; gap: 10px; }
+.seat { display: grid; grid-template-columns: 16px 70px 1fr; align-items: center; gap: 10px; padding: 14px; border-radius: 14px; text-align: left;
+        background: #111a28; border-left: 5px solid var(--side); }
+.seat.mine { background: #1a2740; box-shadow: inset 0 0 0 2px var(--side); }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--side); display: inline-block; }
+
+#match { padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom)); height: 100%; display: flex; flex-direction: column; gap: 8px; }
+.bar { display: flex; align-items: center; gap: 10px; padding: 6px 4px; font-size: 17px; }
+.scrap { margin-left: auto; color: #ffd66e; font-weight: 700; }
+.pending { color: #9fb3cf; font-size: 14px; }
+.board { flex: 1; min-height: 0; display: grid; gap: 8px; grid-template-rows: auto 1fr; }
+@media (orientation: landscape) { .board { grid-template-rows: none; grid-template-columns: auto 1fr; } }
+.map { display: grid; place-items: center; min-height: 0; }
+@media (orientation: portrait) { .map { aspect-ratio: 1; max-height: 58vh; } }
+@media (orientation: landscape) { .map { height: 100%; aspect-ratio: 1; } }
+.map canvas { border-radius: 12px; touch-action: none; box-shadow: 0 0 0 2px var(--side); }
+.side { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.note { margin: 0; min-height: 2.8em; color: #b9c6da; font-size: 14px; }
+.quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.quick button, .tabs button, .shop button { padding: 10px 4px; border-radius: 12px; background: #111a28; font-size: 14px; }
+.quick button:active, .shop button:active { background: #24375a; }
+.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tabs button.on { background: var(--side); color: #071018; font-weight: 700; }
+.shop { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; align-content: start; }
+.shop button { display: grid; gap: 2px; padding: 10px 6px; text-align: center; }
+.shop button small { color: #ffd66e; font-size: 12px; }
+.shop button.off { opacity: 0.45; }
+.shop button.off small { color: #9fb3cf; }
+#ended h1 { font-size: 48px; color: #ffd66e; }

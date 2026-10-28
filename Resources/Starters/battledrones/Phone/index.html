@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#070a10" />
+  <title>Battle Drones · Commander</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="phone.css" />
+  <!-- Lamp serves this beside the page: the phone's side of Lamp's controllers. -->
+  <script src="lamp-controller.js"></script>
+</head>
+<body>
+  <main id="join" class="screen">
+    <h1>BATTLE <span>DRONES</span></h1>
+    <p class="sub">Command a side from your phone.</p>
+    <label class="name">Your name <input id="name" maxlength="16" autocomplete="nickname" placeholder="Commander" /></label>
+    <p class="status" id="status">Connecting…</p>
+  </main>
+
+  <main id="lobby" class="screen" hidden>
+    <h1>BATTLE <span>DRONES</span></h1>
+    <p class="sub" id="lobby-map"></p>
+    <div class="seats" id="seats"></div>
+    <button class="cta big" id="start">▶ Start battle</button>
+    <p class="status">Tap a side to switch. Anyone can start.</p>
+  </main>
+
+  <main id="match" class="screen" hidden>
+    <header class="bar">
+      <span class="dot"></span><b id="me"></b>
+      <span class="scrap" id="scrap"></span>
+      <span class="pending" id="pending"></span>
+    </header>
+    <div class="board">
+      <div class="map" id="map"><canvas id="mapcanvas"></canvas></div>
+      <div class="side">
+        <p class="note" id="note">Tap your units to select them, drag to box them, tap the map to order. Hold to show it on the screen.</p>
+        <div class="quick">
+          <button data-cmd="army">⚔ Army</button>
+          <button data-cmd="idle">💤 Idle</button>
+          <button data-cmd="harvesters">⛏ Miners</button>
+          <button data-cmd="stop">✋ Stop</button>
+          <button data-cmd="clear">✕ Clear</button>
+        </div>
+        <nav class="tabs">
+          <button data-tab="build" class="on">Build</button>
+          <button data-tab="train">Train</button>
+          <button data-tab="power">Calldowns</button>
+        </nav>
+        <div class="shop" id="shop"></div>
+      </div>
+    </div>
+  </main>
+
+  <main id="ended" class="screen" hidden>
+    <h1 id="result"></h1>
+    <p class="sub">Look at the screen for the battle report. A rematch brings you back to the lobby.</p>
+  </main>
+
+  <script src="phone.js"></script>
+</body>
+</html>

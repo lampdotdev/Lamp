@@ -1,0 +1,86 @@
+/* What Lamp's version adds to Battle Drones' look: the controller's pointer and highlight, the lobby for playing
+   together, and the corner tables of the players on controllers or the mouse. In the game's own colors. */
+
+/* On a Mac the game's window has no title bar: its close, minimize and zoom buttons sit over the top-left corner, so
+   the pause and mute buttons there move along. */
+@media (pointer: fine) {
+  .tl { left: max(78px, env(safe-area-inset-left)); }
+}
+
+/* ------------------------------------------------------------ controllers --- */
+
+.padcursor {
+  position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+}
+.padfocus {
+  outline: 3px solid #ffd66e !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 22px rgba(255, 214, 110, 0.45) !important;
+}
+.padlegend {
+  display: none;
+  position: fixed; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  z-index: 55; pointer-events: none; gap: 14px; padding: 6px 12px; border-radius: 12px;
+  background: rgba(7, 10, 16, 0.72); color: #dfe8f5; font: 600 13px/1.4 system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+}
+body.onpad .padlegend { display: flex; }
+body:has(.menu) .padlegend, body:has(.party) .padlegend { display: none; }
+
+/* ------------------------------------------------------------ the lobby --- */
+
+.party {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(ellipse at center, rgba(14, 22, 38, 0.92), rgba(5, 7, 12, 0.97));
+}
+.party-box {
+  width: min(980px, 100%); max-height: 100%; overflow: auto; padding: 28px 32px; border-radius: 20px;
+  background: rgba(16, 24, 38, 0.9); border: 1px solid rgba(126, 193, 255, 0.25); color: #e8eef8;
+}
+.party-box h2 { margin: 0; font-size: clamp(28px, 4vw, 44px); letter-spacing: 0.06em; text-transform: uppercase; }
+.party-map { margin: 4px 0 18px; color: #9fb3cf; }
+.party-cols { display: grid; grid-template-columns: minmax(200px, 300px) 1fr; gap: 28px; align-items: start; }
+@media (max-width: 640px) { .party-cols { grid-template-columns: 1fr; } }
+.party-qr { background: #fff; border-radius: 14px; padding: 10px; aspect-ratio: 1; display: grid; place-items: center; }
+.party-qr svg { width: 100%; height: auto; display: block; }
+.party-qr.wait { color: #333; font-size: 40px; }
+.party-note { color: #b9c6da; font-size: 15px; line-height: 1.45; }
+.party-note b { display: inline-flex; vertical-align: middle; }
+.party-seats { display: grid; gap: 10px; }
+.party-seat {
+  display: grid; grid-template-columns: 16px 90px 1fr auto; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.05);
+  border-left: 5px solid var(--side); font-size: 18px;
+}
+.party-seat .dot, .party-panel .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--side); }
+.party-seat .who { color: #e8eef8; }
+.party .cta.small { padding: 6px 12px; font-size: 14px; min-height: 0; }
+.party .row { display: flex; gap: 12px; justify-content: flex-end; margin-top: 22px; }
+
+/* ------------------------------------------------- the corner tables --- */
+
+.party-panel {
+  position: fixed; z-index: 30; pointer-events: auto; width: 264px; padding: 10px; border-radius: 16px;
+  background: rgba(7, 10, 16, 0.82); border: 2px solid var(--side); color: #e8eef8;
+  font: 600 13px/1.35 system-ui, -apple-system, sans-serif;
+}
+.party-panel.bl { left: calc(12px + env(safe-area-inset-left)); bottom: calc(12px + env(safe-area-inset-bottom)); }
+.party-panel.br { right: calc(12px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom)); }
+.party-panel.tl { left: calc(12px + env(safe-area-inset-left)); top: calc(64px + env(safe-area-inset-top)); }
+.party-panel.tr { right: calc(12px + env(safe-area-inset-right)); top: calc(64px + env(safe-area-inset-top)); }
+.pp-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; }
+.pp-scrap { margin-left: auto; color: #ffd66e; }
+.pp-map { position: relative; width: 240px; height: 240px; margin: 0 auto; }
+.pp-map canvas { width: 100%; height: 100%; border-radius: 8px; display: block; }
+.pp-cursor {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 0 0 2px var(--side); pointer-events: none;
+}
+.party-panel:not(:has(.pp-keys svg, .pp-keys span)) .pp-cursor { display: none; }
+.pp-shop { display: grid; grid-template-columns: 24px 1fr 24px; align-items: center; margin-top: 8px; text-align: center; }
+.pp-prev, .pp-next { font-size: 20px; cursor: pointer; }
+.pp-item { padding: 6px; border-radius: 10px; background: rgba(126, 193, 255, 0.16); cursor: pointer; }
+.pp-item.off { opacity: 0.5; }
+.pp-note { min-height: 18px; margin-top: 6px; color: #b9c6da; text-align: center; }
+.pp-keys { margin-top: 4px; color: #9fb3cf; font-size: 11px; text-align: center; }
