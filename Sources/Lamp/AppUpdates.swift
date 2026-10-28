@@ -221,6 +221,15 @@ enum AppUpdates {
     static let notOpenedYet = "This app is an update Lamp is preparing, and it isn't opened until the person has reviewed it. "
         + "Check your work by reading the code: Lamp builds it when you finish, and tells you if the build fails."
 
+    /// What Review Update… does for a wish whose copy exists: reviews it once it's ready; shows its chat while it
+    /// works, has work waiting, or waits on the person's answer to the agent's question; offers to try again only
+    /// when its preparation stopped or failed. Sending the update's request over a question would answer it.
+    enum CopyStep: Equatable { case review, show, retry }
+
+    static func step(ready: Bool, working: Bool, asking: Bool) -> CopyStep {
+        ready ? .review : working || asking ? .show : .retry
+    }
+
     /// Whether a turn in a copy was the update's own: the update's request (the first, or one to try again), or answers
     /// to the agent's questions about it. A question in the copy's chat about something else doesn't finish the update.
     static func isUpdateTurn(_ messages: [QueuedMessage]) -> Bool {
@@ -363,12 +372,12 @@ extension Store {
         // Being set up: one copy at a time.
         if preparingUpdates.contains(project.id) { return }
         if let prepared = updateCopy(of: project) {
-            if prepared.job.ready == true {
-                openPreparedReview(prepared.copy, job: prepared.job)
-            } else if busy.contains(prepared.copy.id) || !(queued[prepared.copy.id] ?? []).isEmpty {
-                showChat(prepared.copy.id)
-            } else {
-                retryPreparedUpdate(prepared.copy, job: prepared.job, of: project)
+            let id = prepared.copy.id
+            switch AppUpdates.step(ready: prepared.job.ready == true, working: busy.contains(id) || !(queued[id] ?? []).isEmpty,
+                                   asking: Talk.open(in: logs[id] ?? []) != nil) {
+            case .review: openPreparedReview(prepared.copy, job: prepared.job)
+            case .show: showChat(id)
+            case .retry: retryPreparedUpdate(prepared.copy, job: prepared.job, of: project)
             }
             return
         }
@@ -412,13 +421,16 @@ extension Store {
         guard !preparingUpdates.contains(project.id) else { return }
         // The wish is held while its version is saved and it's copied, so no turn changes it in between: the version
         // the job names is the one the copy is of.
-        guard begin(project) != nil else { return tellBusy(project) }
+        guard let wishHold = begin(project) else { return tellBusy(project) }
         preparingUpdates.insert(project.id)
         Task {
             defer { preparingUpdates.remove(project.id) }
             var job = job
             var holdsWish = true
-            defer { if holdsWish { finish(project) } }
+            defer { if holdsWish, holds(wishHold, project.id) { finish(project) } }
+            // Stop in the wish's chat while it's saved or copied ends the preparation there: no copy is made, or the one
+            // made goes, and nothing is sent.
+            @MainActor func stopped() -> Bool { !holds(wishHold, project.id) || wishHold.stopped }
             if await Versions.head(project) != nil, await Versions.hasUnsavedChanges(project) {
                 guard await Versions.save(project, message: "Before update") else {
                     log(project, .error, "Lamp couldn't prepare this update. Your app hasn't changed.")
@@ -427,6 +439,7 @@ extension Store {
                 versionsRevision += 1
             }
             job.head = await Versions.head(project)
+            guard !stopped() else { return }
             var made: LampProject?
             var hold: Turn?
             do {
@@ -444,6 +457,10 @@ extension Store {
                 reload()
                 let notIn = await installParts(of: package, into: copy)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be copied.") }
+                guard !stopped() else { throw CancellationError() }
+            } catch is CancellationError {
+                if let made { await abandonCopy(made, hold: hold) }
+                return
             } catch {
                 print("Preparing the update of \(project.name) failed: \(error)")
                 if let made { await abandonCopy(made, hold: hold) }

@@ -267,6 +267,15 @@ final class AppUpdateBoundaryTests: XCTestCase {
         XCTAssertFalse(AppUpdates.isUpdateTurn([]))
     }
 
+    /// Review Update… on a copy whose agent asked the person something shows the question; only a preparation that
+    /// stopped or failed is offered again.
+    func testAQuestionWaitingInTheCopyIsShownNotRetried() {
+        XCTAssertEqual(AppUpdates.step(ready: false, working: false, asking: true), .show)
+        XCTAssertEqual(AppUpdates.step(ready: false, working: false, asking: false), .retry)
+        XCTAssertEqual(AppUpdates.step(ready: false, working: true, asking: false), .show)
+        XCTAssertEqual(AppUpdates.step(ready: true, working: false, asking: false), .review)
+    }
+
     /// Make App builds the version the person opened: the branch, tag or commit in the address, at the commit fetched.
     func testMakeAppBuildsTheVersionThatWasOpened() throws {
         let source = try XCTUnwrap(RepoImport.source(from: "https://github.com/mrdoob/slop-newyork/tree/v1.2"))
