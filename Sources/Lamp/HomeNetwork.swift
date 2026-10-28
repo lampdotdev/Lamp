@@ -239,11 +239,14 @@ enum HomeNetwork {
         return device
     }
 
-    /// The list as Your Devices shows it: what Lamp makes apps for or controls, in the order Lamp found them; then the
-    /// devices Lamp could learn; then every other host on the network, and a count of those with private addresses
-    /// that say nothing else, since nothing tells one such phone from another.
+    /// The list as Your Devices shows it: the person's devices, set up with Lamp (away or part-way through setup too), in
+    /// the order Lamp found them; then what Lamp only found on the network that it makes apps for or controls, which may
+    /// be a neighbor's; then the devices Lamp could learn; then every other host on the network, and a count of those
+    /// with private addresses that say nothing else, since nothing tells one such phone from another.
     struct List {
         var works: [Device] = []
+        /// Found, not set up, and of a kind Lamp works with: a TV, a device an integration knows, one an app can control.
+        var possible: [Device] = []
         var couldLearn: [Device] = []
         var others: [NetworkHost] = []
         var unnamed = 0
@@ -256,12 +259,14 @@ enum HomeNetwork {
                 if device.kind == .other, device.integration == nil {
                     if let words = HomeNetwork.controls(device, host: device.address.flatMap { byAddress[$0] }) {
                         controls[device.id] = words
-                        works.append(device)
+                        possible.append(device)
                     } else {
                         couldLearn.append(device)
                     }
-                } else {
+                } else if device.isSetUp {
                     works.append(device)
+                } else {
+                    possible.append(device)
                 }
             }
             let listed = Set(devices.compactMap(\.address))

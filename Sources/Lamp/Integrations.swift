@@ -226,6 +226,9 @@ enum Integrations {
         for keptOne in kept() where !found.contains(where: { $0.id == keptOne.id }) {
             found.append(device(from: keptOne, onNetwork: false))
         }
+        // Said of each afresh: one remembered from a few minutes ago may have been set up, or forgotten, since.
+        let keptIDs = Set(kept().map(\.id))
+        for index in found.indices { found[index].kept = keptIDs.contains(found[index].id) }
         for index in found.indices {
             if var keptOne = kept(found[index].id), keptOne.address != found[index].address, found[index].connected {
                 keptOne.address = found[index].address ?? keptOne.address
@@ -321,6 +324,7 @@ enum Integrations {
                             osVersion: await read(identity.osVersion) ?? "", reach: .network)
         device.integration = integration.id
         device.address = address
+        device.kept = kept(id) != nil
         if var keptOne = kept(id) {
             keptOne.name = device.name
             keptOne.osVersion = device.osVersion
@@ -335,6 +339,7 @@ enum Integrations {
         device.integration = kept.integration
         device.address = kept.address
         device.connected = onNetwork
+        device.kept = true
         return device
     }
 

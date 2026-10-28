@@ -70,6 +70,19 @@ Only the person's click trusts a new certificate. Settings → Your Devices has 
 Lamp set up itself (an integration's, a TV; not a phone, whose pairing is the Mac's), Forget taking its record, its
 certificates and keys, what was typed for it and its approvals (`Integrations.forget`, `TVs.forget`).
 
+**Set up or possible** (`Device.isSetUp`). A device set up with Lamp is the person's; one Lamp only found on the network
+is a possible device, which may be a neighbor's on a shared network. Set up isn't ready: a device part-way through
+its setup, away from the network, or needing new credentials is still set up. This Mac, every Android device adb lists
+(plugged in or connected over Wi‑Fi from this Mac) and the emulator are; an iPhone or iPad once it's paired with this
+Mac or plugged in, before Developer Mode; a watch once Xcode lists it paired; a TV or an integration's device once it's
+kept (`Device.kept`, read from `TVs.kept` and `Integrations.kept` each time the devices are read, so setup, Forget and
+finding it again move it). Nothing is migrated: the kept records already say it. A possible device is never called the
+person's (the device line, `Places.known`, `network_devices`, the naming call's `AppName.seen`, the device card's
+question), but what Lamp can do with one like it is still said, and an app can still control one (a Roku) without
+setting it up; allowing it on the device card lets the agent use it and doesn't set it up. Try On offers it as Set
+Up… (`TryOnMenu.item`), whose setup chooses it once done (`setTVDevice`, `setDeviceAppDevice`), and a device app with
+no device chosen goes only on the one set up (`DeviceApps.device`).
+
 An integration whose `app` is declared makes its device a kind of app (`Platform.device`, with the integration's id in
 `LampProject.integration` and meta.json; DeviceApps.swift), with no Swift of its own for that device: Roku, the first,
 is all data. Each such integration is a row of the table of devices, which the naming call names devices by, and
@@ -170,9 +183,10 @@ device. Each address is one `NetworkHost`: hardware address and maker, randomize
 Bonjour services and the names they go by, its SSDP server and the UPnP description Lamp read (`HomeNetwork.merge`).
 Hosts are kept in memory only (`Store.hosts`).
 
-Settings → Your Devices lists, in this order (`HomeNetwork.List`): what Lamp makes apps for or controls (the kits'
+Settings → Your Devices lists, in this order (`HomeNetwork.List`): the person's devices, set up with Lamp (away ones
+too); then, under "Found on your network, not set up", what Lamp makes apps for or controls that's only found (the kits'
 devices, what integrations find, `Integrations.devices`, and what a starter controls, `HomeNetwork.controlled`, a Sonos
-now, "Apps can control it"); then the devices Lamp could learn, with "Lamp could learn to work with this" and Set Up…:
+now, "Apps can control it"); then the devices Lamp could learn:
 those that answered the SSDP scan that nothing knows, read from their UPnP description (routers left out), and hosts
 that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `device(for:)`, named by maker and model,
 never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this
@@ -196,7 +210,9 @@ every request in it carries `Agent.deviceSetupNote` in place of the app's notes,
 waiting") stays about the device. Lamp refuses the app tools there (`Store.deviceSetupRefusal`: looks, use, versions,
 art, kinds, connectors, `write_wish`), leaving the integration, skills, notes and the chat's cards. When
 `device_integration` keeps an integration it looks for the device at once, puts each found one's next step in that
-chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup").
+chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup"). Every device in that group shows only Set Up… (Pair… for a phone), never its first setup step ("Turn on developer mode
+on it"): that step is for the setup window Set Up… opens (`DevicesSection.end`). A device set up with Lamp shows its
+next step beside it.
 
 **Windows packages.** A declared app kind may say `wrap: "msix"`: the package step leaves a zip of the app's files and
 Lamp makes the package itself (`MSIX`, MSIX.swift), with nothing outside Lamp: the zip read as plain files only (no
@@ -282,7 +298,8 @@ devices as well as Lamp.
 reads the person's devices starts from what's there, not from a question about what they own. The tool waits for a
 fresh look (`Store.devicesNow`: the same look as Settings → Your Devices, with the wait for macOS's question on the first; a look still going after 45 s is said to be, never answered with the last one's list) and
 answers with each device on the network: its name, maker, model and address, what it said to the SSDP search, and what
-Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing). Phones,
+Lamp already has for it (`LampRoku` for a Roku, a way to put apps on a TV or an integration's device, or nothing), the
+devices set up with Lamp apart from the possible ones (above), which it says may not be the person's. Phones,
 the Mac and anything plugged in are left out, since they're where apps run. The look is SSDP, the TV kits, the
 integrations and the whole network (above): after the devices come every other host's facts, how much of the subnet
 was swept, how to tell what each is, and that the names a network holds are often people's, to be said to the person

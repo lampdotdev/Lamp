@@ -281,11 +281,17 @@ enum DeviceApps {
 
     // MARK: On the device
 
-    /// The device the app goes on: the one chosen under Try On, else the only one its integration found.
+    /// The device the app goes on: the one chosen under Try On, else the only one of its integration's that's set up.
+    /// One only found is never taken for the person's on its own: it may be a neighbor's, and is set up when chosen.
+    /// A chosen one since forgotten is still the choice while it's on the network (Play sets it up again first); gone
+    /// from both, the choice falls to the only one set up, as if none had been made.
     @MainActor static func device(for project: LampProject, among devices: [Device]) -> Device? {
         let mine = devices.filter { $0.integration == project.deviceIntegration && $0.integration != nil }
-        if let id = project.device { return mine.first { $0.id == id } ?? Integrations.kept(id).map { Integrations.device(from: $0, onNetwork: false) } }
-        return mine.count == 1 ? mine.first : nil
+        if let id = project.device, let chosen = mine.first(where: { $0.id == id }) ?? Integrations.kept(id).map({ Integrations.device(from: $0, onNetwork: false) }) {
+            return chosen
+        }
+        let setUp = mine.filter(\.isSetUp)
+        return setUp.count == 1 ? setUp.first : nil
     }
 
     /// The remote's keys the integration names, Lamp's names first.

@@ -5929,7 +5929,8 @@ final class Store: ObservableObject {
             }
             if turn.asked || Talk.open(in: logs[project.id] ?? []) != nil { return (200, ["text": Talk.alreadyAsked]) }
             DevicePermissions.asking(about: device, at: address, for: wish)
-            let ask = DevicePermissions.card(device: device, doing: doing)
+            let setUp = DevicePermissions.setUp(at: address, among: devices)
+            let ask = DevicePermissions.card(device: device, doing: doing, setUp: setUp)
             logs[project.id, default: []].append(chaptered(LogLine(kind: .ask, text: ask.text, ask: ask, at: Date()), in: project))
             closeSteps(project)
             turn.asked = true
