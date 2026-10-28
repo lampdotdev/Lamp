@@ -2218,26 +2218,43 @@ final class Store: ObservableObject {
     /// The copy on the old one is closed, so Play and Stop are about the one chosen.
     /// `place` is Android or Android TV: which emulator is meant when `serial` is nil, and for a device, whether it's a
     /// TV. A page with both opens on either; a kind with one is given the one it has.
+    /// A device is checked first (`AndroidSetup`: the tools a build needs, and the device answering), and chosen once
+    /// it's ready; closed instead, nothing changes. The emulator's own setup waits for Play.
     func setAndroidDevice(_ project: LampProject, _ serial: String?, place: Destination = .android) {
         // A game or a screen has Android among its places, and may be pointed at another of them now.
         let places = project.openPlaces.filter(\.isAndroid)
         guard let chosen = places.contains(place) ? place : places.first,
-              project.device != serial || project.destination != chosen, begin(project) != nil else { return }
-        var changed = project
-        changed.device = serial
-        changed.chosen = chosen
-        try? Template.saveMeta(changed)
-        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = changed }
-        syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
-        let name = devices.first(where: { $0.udid == serial })?.name
-        let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
-            ?? "\(changed.name) will open in the \(chosen == .androidTV ? "TV emulator" : "emulator") from now on."
-        Task {
-            await quit(project)
-            log(changed, .status, said)
-            finish(changed)
+              project.device != serial || project.destination != chosen else { return }
+        let choice = tryOnChoices[project.id]
+        let choose = { [self] in
+            // Another choice made while the device was checked, the one already saved included, is the one that stands.
+            guard tryOnChoices[project.id] == choice, let current = current(project),
+                  current.device != serial || current.destination != chosen, begin(current) != nil else { return }
+            var changed = current
+            changed.device = serial
+            changed.chosen = chosen
+            try? Template.saveMeta(changed)
+            if let index = projects.firstIndex(where: { $0.id == current.id }) { projects[index] = changed }
+            syncLocalNetwork()   // the device reaches Lamp's gateway over the Wi‑Fi
+            let name = devices.first(where: { $0.udid == serial })?.name
+            let said = name.map { "\(changed.name) will open on \($0) from now on. Press Play to put it there." }
+                ?? "\(changed.name) will open in the \(chosen == .androidTV ? "TV emulator" : "emulator") from now on."
+            Task {
+                await quit(current)
+                log(changed, .status, said)
+                finish(changed)
+            }
         }
+        if let serial { checkAndroidDevice(serial, choose) } else { choose() }
     }
+
+    /// Every app's latest choice under Try On, counted, so a choice that waits on a check (a device's) is dropped when
+    /// another follows it before the check answers, even one of what's already chosen, which changes nothing itself.
+    var tryOnChoices: [String: Int] = [:]
+
+    /// What a device chosen under Try On goes through before it's chosen: Android's setup, which answers at once when
+    /// everything is there. Replaceable so a test can hold the answer back.
+    var checkAndroidDevice: (String, @escaping () -> Void) -> Void = { AndroidSetup.shared.perform(device: $0, then: $1) }
 
     /// Which TV a TV app goes on when the person presses Play, by its id in `TVs`, or nil for the preview alone. A TV
     /// not set up yet is set up first (`TVSetup`), and chosen once it's ready.
@@ -7479,7 +7496,7 @@ final class Store: ObservableObject {
         // Android's tools aren't here: nothing to build with, said once for a request, with the window to get them open.
         if let problem = androidToolsProblem(project) {
             let said = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }.contains { $0.kind == .error && $0.text == problem }
-            if !said { log(project, .error, problem); AndroidSetup.shared.show() }
+            if !said { log(project, .error, problem); AndroidSetup.shared.show(device: project.device) }
             return problem
         }
         // Xcode would get as far as signing and fail there: said first, in the person's words, and once for
@@ -8958,8 +8975,9 @@ final class Store: ObservableObject {
         return WindowsTools.problem
     }
 
+    /// For a device of the person's, only what a build and adb need: the emulator isn't asked for when it isn't used.
     private func androidToolsProblem(_ project: LampProject) -> String? {
-        guard project.onAndroid, !AndroidTools.isReady else { return nil }
+        guard project.onAndroid, !(project.device == nil ? AndroidTools.isReady : AndroidTools.hasBuildTools) else { return nil }
         return "Android's tools aren't on this Mac yet. Download them in the Android Setup window (also under Settings → Building), then try again."
     }
 
