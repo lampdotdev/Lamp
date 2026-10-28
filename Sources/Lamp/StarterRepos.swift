@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LampSidebarKit
 
 /// Lamp's starters as repositories on GitHub (`Starters.account`, one each): each starter made into a wish the way the
 /// desk makes one and laid out as Put on GitHub lays a wish out (`GitHubRepo.stage`: the shared file's contents with
@@ -10,19 +11,23 @@ import Foundation
 ///
 /// The tree is the same every time for the same starter, so a starter that didn't change makes no new commit: its
 /// identity is derived from the starter (never a random one), its export time is fixed, and the shared file isn't in
-/// it (a zip differs every time it's made; the tree is what Lamp opens).
+/// it (a zip differs every time it's made; the tree is what Lamp opens). Its README leads with the starter: its icon
+/// and preview (in `.github/`, out of the code's way), what it is, the changes its chat offers, and for a game, the
+/// page it plays on: the game staged as Publish stages one (`page`), which the script puts on the repository's
+/// `gh-pages` branch for GitHub Pages.
 enum StarterRepos {
     static let commandLineFlag = "--stage-starter-repos"
 
-    /// `Lamp --stage-starter-repos <folder>`, with `STAGE_STARTERS=1`: each starter's tree into `<folder>/<starter>`,
-    /// then quits.
+    /// `Lamp --stage-starter-repos <folder> [<pages>]`, with `STAGE_STARTERS=1`: each starter's tree into
+    /// `<folder>/<starter>`, and a game's page into `<pages>/<starter>`, then quits.
     static func stageFromCommandLine() -> Never {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: commandLineFlag), index + 1 < arguments.count else {
-            FileHandle.standardError.write(Data("Usage: Lamp \(commandLineFlag) <folder>\n".utf8))
+            FileHandle.standardError.write(Data("Usage: Lamp \(commandLineFlag) <folder> [<pages>]\n".utf8))
             exit(2)
         }
         let out = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+        let pages = index + 2 < arguments.count && !arguments[index + 2].hasPrefix("-") ? URL(fileURLWithPath: arguments[index + 2], isDirectory: true) : nil
         // The starters hold none of the person's keys, and reading them would ask the keychain from a command line.
         Sharing.knownSecrets = { _ in [] }
         let fm = FileManager.default
@@ -36,12 +41,18 @@ enum StarterRepos {
             }
             do {
                 try fm.createDirectory(at: root, withIntermediateDirectories: true)
-                let tree = try stage(starter, in: root)
+                let (tree, page) = try stage(starter, in: root)
                 let to = out.appendingPathComponent(starter.folder.lastPathComponent)
                 try? fm.removeItem(at: to)
                 try fm.createDirectory(at: out, withIntermediateDirectories: true)
                 try fm.copyItem(at: tree, to: to)
-                print("Staged \(starter.name)")
+                if let page, let pages {
+                    let pageTo = pages.appendingPathComponent(starter.folder.lastPathComponent)
+                    try? fm.removeItem(at: pageTo)
+                    try fm.createDirectory(at: pages, withIntermediateDirectories: true)
+                    try fm.copyItem(at: page, to: pageTo)
+                }
+                print("Staged \(starter.name)" + (page == nil ? "" : ", with its page"))
             } catch {
                 FileHandle.standardError.write(Data("Couldn't stage \(starter.name): \(error.localizedDescription) \((error as? LocalizedError)?.recoverySuggestion ?? "")\n".utf8))
                 failed = true
@@ -56,8 +67,8 @@ enum StarterRepos {
         Starters.account + "/" + Starters.repositoryName(of: starter.folder.lastPathComponent)
     }
 
-    /// One starter's tree, in a work folder under `root`.
-    static func stage(_ starter: Starters.Starter, in root: URL) throws -> URL {
+    /// One starter's tree, and a game's page, in work folders under `root`.
+    static func stage(_ starter: Starters.Starter, in root: URL) throws -> (tree: URL, page: URL?) {
         let fm = FileManager.default
         let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
         try Template.fill(project)
@@ -82,14 +93,65 @@ enum StarterRepos {
             manifest["exportedAt"] = "2026-01-01T00:00:00Z"
             try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]).write(to: manifestURL)
         }
-        let (root, parts) = Sharing.layout(of: project)
-        let build = GitHubRepo.Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty)
-        try Data(GitHubRepo.readme(for: project, credits: chain, open: Publish.OpenInLamp(link: nil, file: nil), build: build, repo: repo).utf8)
-            .write(to: tree.appendingPathComponent("README.md"))
-        if GitHubRepo.canOfferLicense(chain) {
+        let license = GitHubRepo.canOfferLicense(chain)
+        if license {
             try Data(GitHubRepo.mitLicense(holder: "Roo Code, Inc.").utf8).write(to: tree.appendingPathComponent("LICENSE"))
         }
-        return tree
+        // The README's pictures: the starter's icon as it ships, and its preview, which shows only example content.
+        var showcase = GitHubRepo.Showcase(ideas: starter.tweaks.map(\.title), ideasTitle: starter.offer.isEmpty ? nil : starter.offer, license: license)
+        let pictures = tree.appendingPathComponent(".github")
+        for (from, name) in [(starter.folder.appendingPathComponent(Starters.iconFolder).appendingPathComponent("icon.png"), "icon.png"),
+                             (starter.folder.appendingPathComponent("preview.png"), "preview.png")] where fm.fileExists(atPath: from.path) {
+            try fm.createDirectory(at: pictures, withIntermediateDirectories: true)
+            try fm.copyItem(at: from, to: pictures.appendingPathComponent(name))
+            if name == "icon.png" { showcase.icon = ".github/icon.png" } else { showcase.preview = ".github/preview.png" }
+        }
+        let page = try stagePage(project, starter: starter, repo: repo, in: root)
+        if page != nil { showcase.play = Publish.pageURL(repo) }
+        let (app, parts) = Sharing.layout(of: project)
+        let build = GitHubRepo.Build(alone: app.platform.target.recipe.buildsAlone, app: app.platform.target.identity.name, others: !parts.isEmpty)
+        // Its credits are what it's based on; the chain would name only the starter itself, which is this page.
+        try Data(GitHubRepo.readme(for: project, credits: Credits(upstream: based.upstream, generated: based.generated),
+                                   open: Publish.OpenInLamp(link: nil, file: nil), build: build, repo: repo, showcase: showcase).utf8)
+            .write(to: tree.appendingPathComponent("README.md"))
+        return (tree, page)
+    }
+
+    /// A game's page as Publish stages one to play in any browser (`Publish.stage`), with the credit bar, the starter's
+    /// changes in its Remix panel and Lamp's site for the rest: nothing else (no shared file, which differs every time
+    /// it's made). Nil for a starter that isn't a game with a page.
+    static func stagePage(_ project: LampProject, starter: Starters.Starter, repo: String, in root: URL) throws -> URL? {
+        guard project.holdsApp, GameKit.isGame(project), GameKit.engine(project) == .web else { return nil }
+        let fm = FileManager.default
+        let site = root.appendingPathComponent("page-\(starter.folder.lastPathComponent)")
+        try? fm.removeItem(at: site)
+        try fm.createDirectory(at: site, withIntermediateDirectories: true)
+        let web = project.dir.appendingPathComponent(GameKit.webFolder)
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
+        guard let items = fm.enumerator(at: web, includingPropertiesForKeys: keys) else { return nil }
+        for case let file as URL in items {
+            if file.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+            let values = try? file.resourceValues(forKeys: Set(keys))
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
+            let target = site.appendingPathComponent(Sharing.relativePath(of: file, in: web))
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: target)
+        }
+        let anyBrowser = GamePage.anyBrowser
+        try GamePage.stage(site, in: site) { try GamePage.descriptor(id: anyBrowser.id, name: anyBrowser.name, input: anyBrowser.input) }
+        let index = site.appendingPathComponent("index.html")
+        guard let html = try? String(contentsOf: index, encoding: .utf8) else { return nil }
+        let credits = Credits.load(project)
+        let ideas = starter.tweaks.map { RemixIdea(text: $0.title, symbol: $0.symbol ?? "sparkles") }
+        try Data(Publish.withCreditBar(html, credits: credits, open: Publish.OpenInLamp(link: nil, file: nil),
+                                       suggestions: ideas.isEmpty ? RemixOffer.fallback : ideas, name: project.name,
+                                       about: AppDescription.description(of: project)).utf8).write(to: index)
+        try Data().write(to: site.appendingPathComponent(".nojekyll"))
+        try Data("# \(project.name), to play\n\nThe page at \(Publish.pageURL(repo)). The wish itself, to open in Lamp and change, is on the [main branch](\(GitHubRepo.url(repo))).\n".utf8)
+            .write(to: site.appendingPathComponent("README.md"))
+        let leaks = ShareCheck.secrets(in: site, known: [])
+        if let first = leaks.first { throw Sharing.ImportError("\(project.name)'s page holds something shaped like a key.", detail: "It's in \(first).") }
+        return site
     }
 
     /// The identity the starter's repository gives the wish: the same for every staging of the same starter, and no

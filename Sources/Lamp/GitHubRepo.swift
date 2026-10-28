@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import LampFileLook
 import LampSidebarKit
 
 /// Putting a wish on GitHub: its code as a repository on the person's own account, made with GitHub's command-line tool
@@ -100,7 +101,11 @@ enum GitHubRepo {
         let chain = Credits.read(tree.appendingPathComponent(Credits.file)) ?? credits
         let open = Publish.OpenInLamp(link: link, file: fileName)
         let build = Build(alone: root.platform.target.recipe.buildsAlone, app: root.platform.target.identity.name, others: !parts.isEmpty)
-        try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo).utf8).write(to: tree.appendingPathComponent("README.md"))
+        // The icon the shared file carries, as it's drawn: never a picture of the app running, which could show the
+        // person's data.
+        let icon = fm.fileExists(atPath: tree.appendingPathComponent(LampFile.iconEntry).path) ? LampFile.iconEntry : nil
+        try Data(readme(for: project, credits: credits, open: open, build: build, repo: repo, showcase: Showcase(icon: icon)).utf8)
+            .write(to: tree.appendingPathComponent("README.md"))
 
         let leaks = ShareCheck.secrets(in: tree, known: Sharing.knownSecrets(project))
         if let first = leaks.first {
@@ -154,24 +159,52 @@ enum GitHubRepo {
         var others: Bool
     }
 
-    /// The repository's README: what the wish is, how to remix it with Lamp, how to build it, and what it's based on.
-    static func readme(for project: LampProject, credits: Credits, open: Publish.OpenInLamp, build: Build, repo: String? = nil) -> String {
-        var text = "# \(project.name)\n\n"
-        if let line = AppDescription.description(of: project) { text += line + "\n\n" }
-        text += "Made with [Lamp](https://lamp.dev), a Mac app that builds apps from a description and changes them as you ask.\n\n"
+    /// What a README shows of the wish before anything about Lamp: pictures and ideas, by their paths in the
+    /// repository. A person's own wish shows its icon only: a picture of it running could show their data. A starter
+    /// shows its preview (example content only), what to try with it, and where to play it when it's a game.
+    struct Showcase {
+        var icon: String? = nil
+        var preview: String? = nil
+        /// Where it plays in a browser, for a game whose page is up.
+        var play: String? = nil
+        /// What to ask for first, and the line that offers them ("Make Hours fit your work").
+        var ideas: [String] = []
+        var ideasTitle: String? = nil
+        /// The repository carries an MIT license.
+        var license = false
+    }
+
+    /// The repository's README: the wish first (its icon, what it is, a picture of it, where to play it, ideas to try),
+    /// then how to remix it with Lamp, how to build it, and what it's based on.
+    static func readme(for project: LampProject, credits: Credits, open: Publish.OpenInLamp, build: Build, repo: String? = nil,
+                       showcase: Showcase = Showcase()) -> String {
+        let name = Publish.escaped(project.name)
+        var text = ""
+        if let icon = showcase.icon { text += "<p align=\"center\"><img src=\"\(icon)\" width=\"128\" height=\"128\" alt=\"\"></p>\n\n" }
+        text += "<h1 align=\"center\">\(name)</h1>\n\n"
+        if let line = AppDescription.description(of: project) { text += "<p align=\"center\">\(Publish.escaped(line))</p>\n\n" }
+        var links: [String] = []
+        if let play = showcase.play { links.append("<a href=\"\(play)\"><b>Play it in your browser</b></a>") }
+        links.append("<a href=\"#remix-it-with-lamp\">Remix it with Lamp</a>")
+        if build.alone { links.append("<a href=\"#build-it-yourself\">Build it yourself</a>") }
+        text += "<p align=\"center\">" + links.joined(separator: " · ") + "</p>\n\n"
+        if let preview = showcase.preview { text += "<p align=\"center\"><img src=\"\(preview)\" width=\"720\" alt=\"\(name)\"></p>\n\n" }
+        if !showcase.ideas.isEmpty {
+            text += "## \(showcase.ideasTitle ?? "Ideas to try")\n\nIt's yours to change by asking Lamp. A few places to start:\n\n"
+            text += showcase.ideas.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
+        }
         text += "## Remix it with Lamp\n\n"
+        text += "[Lamp](https://lamp.dev) is a Mac app that builds apps from a description and changes them as you ask. "
         if let link = open.link {
-            text += "[Make your own](\(link.absoluteString)) from this wish: with Lamp, or by getting Lamp from that page. "
+            text += "[Make your own](\(link.absoluteString)) from this wish, with Lamp or by getting Lamp from that page. "
         }
         if let repo {
-            text += (open.link == nil ? "With" : "Or, with") + " Lamp, choose File → Open from GitHub… and paste this repository's address (`\(url(repo))`): "
-                + "you get this exact wish, yours to change by asking, with the credits below kept."
-            if open.link == nil { text += " Don't have Lamp? [Get it](https://lamp.dev)." }
+            text += (open.link == nil ? "In" : "Or, in") + " Lamp, choose File → Open from GitHub… and paste `\(url(repo))`: "
+                + "you get this exact wish, yours to change, with the credits below kept."
             if let file = open.file { text += " [\(file)](\(file)) is the same wish as a file Lamp opens." }
         } else if let file = open.file {
             text += (open.link == nil ? "Download" : "Or download") + " [\(file)](\(file)) and open it with Lamp (double-click it, or File → Import Shared Wish…): "
-                + "you get this exact wish, yours to change by asking, with the credits below kept. The code here is what that file holds."
-            if open.link == nil { text += " Don't have Lamp? [Get it](https://lamp.dev)." }
+                + "you get this exact wish, yours to change, with the credits below kept. The code here is what that file holds."
         }
         if build.alone {
             text += "\n\n## Build it yourself\n\n"
@@ -182,6 +215,7 @@ enum GitHubRepo {
             text += "\n\n## Building it\n\nLamp builds this kind of app: it needs Xcode and signing on your Mac, which Lamp sets up. Open it in Lamp, above.\n\n"
         }
         text += Publish.creditsSection(credits)
+        if showcase.license { text += "## License\n\nMIT. See [LICENSE](LICENSE).\n" }
         return text
     }
 
