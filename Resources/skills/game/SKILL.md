@@ -90,6 +90,27 @@ Scores, progress and settings are kept on the device, and only ever added to: a 
 read, so an update never loses a player's progress. Web: `save(name, value)` and `load(name)` from lamp-game.js.
 Swift: LampStore.
 
+## Changes while it's played
+
+Lamp puts each change into the game while the person plays it (Web: lamp-game.js, "Changes while it's played"), so a
+game is written to keep the player's place through one:
+
+- `snapshot()` in game() (or phaser()) returns, as plain JSON, everything that says where the game is: the level or
+  mode, the player's position, heading and speed, what they ride or hold, the camera, the score, lives, the clock, the
+  time of day. `restore(state)` puts it back once the new code's init has run. Keep both current as state is added, and
+  let restore take an older snapshot: a field it lacks keeps its start value. Without them a change of code starts the
+  game again, from its saves.
+- Pictures, models, sounds and data load through the runtime (`texture()`, `model()`, `sound.load()`, `asset()`), never
+  by a URL of the game's own: a new copy of one of those goes into the running game with no reload. What the game makes
+  of a file itself (a material from shader source, clones of a model, a mixer for its animations, a level from JSON) is
+  made again in `assetChanged(path)`, which returns true when it has.
+- `busy()` is true while a match, race or round is on: a change of code then waits for the next pause, and the person
+  can put it in at once with Reload.
+- On a phone, Android, a TV or the Xbox a change arrives when Lamp installs the game again, and the runtime restores the
+  last snapshot then, once.
+
+Swift: a change reopens the app; what it keeps is what it saved.
+
 ## Keeping every frame smooth
 
 A frame has about 16 ms, and anything that runs during play takes from it, so a slow piece is a stutter:

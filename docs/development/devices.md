@@ -438,9 +438,31 @@ the page preview it had as the Xbox's web app, as a screen is, and its rules say
 On the Mac and on iOS a web game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
 is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and
-the chat beside it. A change to a game never goes into the open app (`LiveReload.eligible`, `Target.hostedByLamp`): it
-reopens, held for Reload while the person has it open. On the Mac it's made from Lamp's player (below) unless it has
-Swift of its own.
+the chat beside it. A three.js or Phaser game isn't built live as a Mac app is (`LiveReload.eligible`, `Target.hostedByLamp`):
+a change of its page goes into the open game instead (`PageLive`, below), and any other change (its Swift, Package.swift,
+capabilities.json) reopens it, held for Reload while the person has it open. On the Mac it's made
+from Lamp's player (below) unless it has Swift of its own.
+
+A change to a game while it's played. The app around the page on the Mac and in the simulator (`LampPageLive` in
+`LampPage.swift`) asks Lamp what has changed (`/app/page/live`, held up to 25 s, asked again at once; never on a phone,
+whose copy takes changes when it's installed). When a build's page differs from what that copy was installed with
+(`PageLive.installed`, the page's files by hash with a hash of the rest of the app, kept in `.lamp/page-live`) and the rest
+is the same, `Store.pageInPlace` answers with every file that differs from the install, copied out of the build; the app
+fetches each (`/app/page/file`), serves it in place of its bundle's (`LampPageFiles`) and keeps it for the next launch of
+the same bundle, then tells the page (`window.__lampLive`). lamp-game.js decides, and says which to Lamp
+(`/app/page/state`), which waits for that word: files the runtime loaded (`asset`, `texture`, `model`, `sound.load`) go into the
+running game, with the game's `assetChanged(path)` for what it made of them ("swapped"); anything else (code, or a file
+nothing put in) opens the page again with the game's `snapshot()` kept in sessionStorage for `restore(state)` after the new
+init ("reloading"; a restore that throws opens it once more, fresh, and the log says so); while `busy()` is true it waits
+for the next moment it isn't ("held"), which the chat shows as its Reload line and the Mac's title bar as its Reload
+(`awaitReload`); Reload puts it in at once (`PageLive.putInNow`), and the page shows "Reload to apply" itself where the
+app has no Reload of Lamp's (the simulator). No word within 20 s, or a copy Lamp hasn't heard from, and the app is
+installed as before. On the Mac the build is installed when the app closes (`LiveReload.awaitInstall`). The input the
+player was using is kept too; a controller read through the Gamepad API reappears at its next press. Every copy of the
+page names its build (`lamp-build.js`, beside `lamp-device.js`: build.sh's `stage_page` and `GamePage.stage`), and the
+runtime keeps the latest snapshot every five seconds and as the page hides; a newer build opened within a quarter of an
+hour restores it once. That's how a change reaches the game on a phone, Android, a TV and the Xbox: when Lamp installs it
+there and opens it, the player is back where they were.
 
 ### Lamp's player
 

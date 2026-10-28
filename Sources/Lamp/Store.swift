@@ -875,6 +875,11 @@ final class Store: ObservableObject {
             _ = away.landed(id, stillWaits: false)   // put in meanwhile, by the app closing: nothing of Lamp's to carry on
             return
         }
+        // A game's page holding a change until a pause takes it now, where it is, keeping the player's place.
+        if PageLive.shared.putInNow(project) {
+            reloadWhenFree.remove(id)
+            return
+        }
         // Taken now, before anything queued can start: otherwise kept until the turn that has the app ends.
         guard begin(owner) != nil else { reloadWhenFree.insert(id); return }
         reloadWhenFree.remove(id)
@@ -7024,6 +7029,7 @@ final class Store: ObservableObject {
         await finishSimulatorBundle(project)
         do {
             try await Simulator.install(project.builtURL, on: udid)
+            PageLive.shared.installed(project, at: .simulator)
             if let key = wishKey(for: project) { await Simulator.tellApp(wishKey: key, bundleID: project.bundleID, on: udid) }
             return nil
         } catch {
@@ -7763,6 +7769,47 @@ final class Store: ObservableObject {
     /// to be installed when the app closes. False sends the change the usual way, by reopening the app. `saysWhy`
     /// false keeps why it couldn't go in out of the chat: the try before the build is followed by the install's,
     /// which asks again and says it, so the chat said it twice.
+    /// A change of a game's page put into the copy open at `place` as it's played (`PageLive`): true when it went in or
+    /// waits there for a pause in the game, with the chat's Reload to put it in at once; false when the app is to be
+    /// installed as usual (a change of its Swift, a copy Lamp isn't hearing from, a page that didn't answer).
+    private func pageInPlace(_ project: LampProject, at place: PageLive.Place, owner: Turn?, inFront: Bool) async -> Bool {
+        guard PageLive.takes(project), PageLive.shared.isOpen(project, at: place) else { return false }
+        note("Updating \(project.name) in place…", for: project)
+        let outcome = await PageLive.shared.put(project, at: place)
+        switch outcome {
+        case .cannot:
+            return false
+        case .held:
+            awaitReload(project, owner: owner)
+            owner?.outcomes.append(.held)
+        case .unchanged, .went:
+            owner?.updatedInPlace = true
+            owner?.outcomes.append(.live)
+            owner?.reloadWhy = nil
+            if outcome != .unchanged { owner?.shown.append(Date()) }
+            pageWentIn(project, saying: false)
+            if inFront { log(project, .status, "\(project.name) is updated") }
+        }
+        // The copy installed on this Mac is the older one now: the build goes in when the app closes.
+        if place == .mac {
+            LiveReload.awaitInstall(project)
+            _ = heldInstalls.mayInstall(project.id, running: true)
+        }
+        prepareIconMeanwhile(project)
+        return true
+    }
+
+    /// A game's page took its change, at once or at a pause after holding it: nothing waits for Reload any more, and the
+    /// chat says the change is in (which also takes its Reload line away).
+    func pageWentIn(_ project: LampProject, saying: Bool = true) {
+        guard let project = current(project), Runtime.waitsForReload(project) || Runtime.holdsBuild(project) else { return }
+        Runtime.releaseBuild(project)
+        Self.tellReload(project, on: false)
+        turns[project.id]?.endedReloadWait = true
+        if saying { log(project, .status, "\(project.name) is updated") }
+        refreshOpenApps()
+    }
+
     private func reloadInPlace(_ project: LampProject, inFront: Bool, saysWhy: Bool = true) async -> Bool {
         // The change went in before the build (`reloadBeforeBuilding`): only the word that it did is left to say.
         // Closed since, the app is installed the usual way, from the whole build once it's done.
@@ -8010,6 +8057,8 @@ final class Store: ObservableObject {
         if project.onIOS {
             await prepareIcon(project)
             guard let owner, turns[project.id] === owner, !owner.stopped else { return "The app was stopped before it opened." }
+            // The simulator's copy of a game takes a change of its page as it's played (`PageLive`).
+            if !fresh, !(inFront && project.device != nil), await pageInPlace(project, at: .simulator, owner: owner, inFront: inFront) { return nil }
             if quiet { return await quietlyOnSimulator(project, owner: owner) }
             // The person's own phone gets the app when they press Play or a change is finished; the agent's
             // looks (not in front) stay on the simulator, which is the only screen Lamp can see.
@@ -8035,6 +8084,8 @@ final class Store: ObservableObject {
         // A change that can go into the open app goes in there, keeping what's on screen; the build waits to be
         // installed until the app closes (LiveReload).
         // The icon isn't part of such a change, so it doesn't wait for it: it's drawn meanwhile, ready for the next copy.
+        // A game's page takes a change of the page while it's played (`PageLive`).
+        if !fresh, await pageInPlace(project, at: .mac, owner: owner, inFront: inFront) { return nil }
         if !fresh, await reloadInPlace(project, inFront: inFront) {
             owner?.updatedInPlace = true
             owner?.outcomes.append(.live)
@@ -9003,6 +9054,7 @@ final class Store: ObservableObject {
             retireLaunches(of: project)
             await Simulator.terminate(project.bundleID, on: udid)
             try await Simulator.install(project.builtURL, on: udid)
+            PageLive.shared.installed(project, at: .simulator)
             if let key = wishKey(for: project) { await Simulator.tellApp(wishKey: key, bundleID: project.bundleID, on: udid) }
             guard stillOwns() else { return giveBack("The app was deleted or stopped before it opened.") }
             // One Lamp app per simulator: another project's app on this device is closed first, so what the
@@ -9821,6 +9873,8 @@ final class Store: ObservableObject {
             try fm.moveItem(at: app, to: project.installedURL)
         }
         swapped = true
+        // A game's page: what this copy has is what a change while it's played is measured against (`PageLive`).
+        PageLive.shared.installed(project, at: .mac)
         if copy.iconReady { Self.iconReachedApp(project) }
         // What the app now runs when it opens is this build's sources (LiveReload compares a change with them).
         LiveReload.installed(project)
@@ -10746,7 +10800,7 @@ final class Store: ObservableObject {
         }
         let route = request.path.split(separator: "?").first.map(String.init) ?? request.path
         let paths = ["/ai", "/ai/keys", "/ai/status", "/ai/image", "/ai/decide", "/ai/computer", "/agent/computer", "/agent/look", "/agent/use", "/agent/approve",
-                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/network", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim"]
+                     "/agent/versions", "/agent/versions/name", "/agent/versions/restore", "/agent/memory", "/agent/skill", "/agent/setup", "/agent/kind", "/agent/remove", "/agent/connectors", "/agent/network", "/agent/integration", "/agent/art", "/agent/talk", "/agent/steer", "/mcp", "/pi/key", "/app/secrets", "/app/share", "/app/claim", "/app/controller", "/app/phone-page", "/app/wish", "/app/wish/open", "/app/wish/poll", "/app/wish/send", "/app/wish/claim", "/app/page/live", "/app/page/file", "/app/page/state"]
         // MCP clients may try to open a listening stream (GET) or end a session (DELETE): neither is offered.
         if route == "/mcp", request.method != "POST" { return (405, ["error": "Method not allowed"]) }
         guard request.method == "POST", paths.contains(route) else {
@@ -10835,6 +10889,15 @@ final class Store: ObservableObject {
         if route == "/app/controller" { return await controllerSession(request, for: project) }
         if route == "/app/phone-page" { return await phonePageAddress(for: project) }
         if route.hasPrefix("/app/wish") { return await wishRoom(request, route: route, for: project) }
+        // A game's page taking changes while it's played (`PageLive`).
+        if route.hasPrefix("/app/page/") {
+            let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+            switch route {
+            case "/app/page/live": return await PageLive.shared.poll(body, for: project)
+            case "/app/page/file": return PageLive.shared.file(body, for: project)
+            default: return PageLive.shared.state(body, for: project)
+            }
+        }
         guard readyFor(project) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }

@@ -2,6 +2,8 @@
 
 One of the guides to working on Lamp. Start from `AGENTS.md` at the top of the repository: it has the rules every change follows and the list of guides; a section named in quotes may be in another guide on that list.
 
+A game drawn on Lamp's game runtime goes its own way: a change of its page goes into the open game by the page itself (`PageLive`; "Games" in the devices guide), on the Mac and in the simulator alike, and none of what follows applies to it.
+
 Whether the change was asked for beside the app or in Lamp's panel, a change goes into the open app without a restart when it can (`LiveReload`). The
 Mac app, or the Mac half of an app for both while Try On points at this Mac, is
 built live (a widget or share extension is built from the same copy, and a change to one reopens the app): build.sh with `LAMP_LIVE=1` copies Sources into `.lamp/live` with each `var body: some View` wrapped
