@@ -253,6 +253,12 @@ struct AppUsage: Codable {
     var agentCost: Double?
 
     var totalCost: Double { cost + (agentCost ?? 0) }
+
+    /// This usage and another's together.
+    func adding(_ other: AppUsage) -> AppUsage {
+        AppUsage(calls: calls + other.calls, cost: cost + other.cost,
+                 agentRuns: (agentRuns ?? 0) + (other.agentRuns ?? 0), agentCost: (agentCost ?? 0) + (other.agentCost ?? 0))
+    }
 }
 
 struct LogLine: Identifiable, Codable, Equatable {
@@ -550,6 +556,8 @@ final class Store: ObservableObject {
     @Published var busy: Set<String> = []
     /// What was last heard of each repository wishes come from, by address (`AppUpdates`).
     @Published var updateChecks: [String: AppUpdates.Check] = [:]
+    /// Wishes whose update is being set up (saved, copied, fetched), before its copy holds the job (`AppUpdates`).
+    @Published var preparingUpdates: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
     /// The turn in progress for each app. A new app's first turn stays here after it finishes, until the next
     /// message, for its chapters (`Chapters.segments`).
@@ -816,7 +824,7 @@ final class Store: ObservableObject {
     func isRunning(_ message: String, for project: LampProject) -> Bool { turns[project.id]?.messages.contains(message) ?? false }
 
     /// Takes the app for a span of work. Nil when something else has it.
-    private func begin(_ project: LampProject) -> Turn? {
+    func begin(_ project: LampProject) -> Turn? {
         guard turns[project.id] == nil else { return nil }
         let turn = Turn()
         turns[project.id] = turn
@@ -4017,7 +4025,7 @@ final class Store: ObservableObject {
                 owner.sentFrom = head
             }
             result = await turn(messages, attachments: saved, asked: asked, on: project)
-            settleUpdate(current(project) ?? project, messages: messages, end: result.end)
+            await settleUpdate(current(project) ?? project, messages: messages, end: result.end)
             // The scaffold's early build is the turn's until it's settled, whichever way the turn ended (a question, a
             // failure, a Stop): released before it, the next turn's build could run beside it on the same files.
             await owner.early?.value
@@ -4067,7 +4075,7 @@ final class Store: ObservableObject {
     }
 
     /// Marks the app idle again, then starts anything queued while it was busy.
-    private func finish(_ project: LampProject) {
+    func finish(_ project: LampProject) {
         settleDecided(project)
         if let turn = turns[project.id], turn.reloadedWhileAway, turn.reloadedByPerson, away.carriesOn(project.id) {
             queueCarryOn(project)
@@ -12222,6 +12230,14 @@ final class Store: ObservableObject {
     private func recordArt(_ project: LampProject, cost: Double) {
         guard cost > 0 else { return }
         usage[project.id, default: AppUsage()].agentCost = (usage[project.id]?.agentCost ?? 0) + cost
+        saveUsage(project)
+    }
+
+    /// What was spent on a copy an update was prepared in goes on the app it was for, when the copy goes: the work was
+    /// that app's (`AppUpdates`).
+    func takeUsage(of copy: LampProject, into project: LampProject) {
+        guard let spent = usage[copy.id] else { return }
+        usage[project.id] = (usage[project.id] ?? AppUsage()).adding(spent)
         saveUsage(project)
     }
 

@@ -109,10 +109,47 @@ final class AppUpdatesTests: XCTestCase {
     // MARK: Accepting
 
     func testOnlyAFinishedUpdateIsOfferedForReview() {
-        XCTAssertEqual(AppUpdates.settle(end: .changed, errors: false), .ready)
-        XCTAssertEqual(AppUpdates.settle(end: .changed, errors: true), .failed)
-        XCTAssertEqual(AppUpdates.settle(end: .failed, errors: true), .failed)
-        XCTAssertEqual(AppUpdates.settle(end: .replied, errors: false), .waiting)
+        XCTAssertEqual(AppUpdates.settle(end: .changed, errors: false, asking: false), .ready)
+        XCTAssertEqual(AppUpdates.settle(end: .changed, errors: true, asking: false), .failed)
+        XCTAssertEqual(AppUpdates.settle(end: .failed, errors: true, asking: false), .failed)
+        XCTAssertEqual(AppUpdates.settle(end: .replied, errors: false, asking: true), .waiting)
+        // Nothing in the update applied to the app: the turn changed nothing and asked nothing, and is done.
+        XCTAssertEqual(AppUpdates.settle(end: .replied, errors: false, asking: false), .ready)
+    }
+
+    /// A credit written with `.git` or a slash at the end is fetched from the repository's own address, as it's checked.
+    func testTheUpdateIsFetchedFromTheRepositorysOwnAddress() throws {
+        for url in ["https://github.com/mrdoob/slop-newyork.git", "https://github.com/mrdoob/slop-newyork/"] {
+            var source = slop
+            source.url = url
+            let route = try XCTUnwrap(AppUpdates.route(for: Credits(upstream: [source]), own: nil))
+            XCTAssertEqual(AppUpdates.job(for: route, tip: "13dd142b480bcfa01a6b18e36127c87e41cb4d80", wish: "slop")?.url,
+                           "https://github.com/mrdoob/slop-newyork")
+        }
+    }
+
+    /// What the agent spent preparing an update in its copy goes on the app it was for: $0.30 isn't lost with the copy.
+    func testWhatAnUpdateCostIsKeptOnTheApp() {
+        let app = AppUsage(calls: 4, cost: 0.02, agentRuns: 3, agentCost: 1.10)
+        let copy = AppUsage(calls: 0, cost: 0, agentRuns: 1, agentCost: 0.30)
+        let total = app.adding(copy)
+        XCTAssertEqual(total.agentRuns, 4)
+        XCTAssertEqual(total.agentCost ?? 0, 1.40, accuracy: 0.0001)
+        XCTAssertEqual(total.calls, 4)
+        XCTAssertEqual(AppUsage().adding(copy).totalCost, 0.30, accuracy: 0.0001)
+    }
+
+    /// An update's review has no sender to trust: its warnings speak of the update.
+    func testAnUpdatesReviewDoesNotSpeakOfASender() {
+        for verdict in ["risky", "partly"] {
+            let review = ImportReview(summary: "A game.", capabilities: [], concerns: [], risk: verdict == "risky" ? .high : .low,
+                                      reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: [],
+                                      partial: verdict == "partly")
+            let lines = ImportReviewCard.considerations(review, prepared: true).map(\.text)
+            XCTAssertFalse(lines.isEmpty, verdict)
+            XCTAssertFalse(lines.contains { $0.contains("sender") }, "\(lines)")
+            XCTAssertTrue(ImportReviewCard.considerations(review).contains { $0.text.contains("sender") }, verdict)
+        }
     }
 
     /// A wish changed after its copy was made isn't replaced by that copy: the change would be lost.

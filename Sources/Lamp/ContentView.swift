@@ -616,7 +616,7 @@ struct ImportReviewCard: View {
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fixed[.summary] = $0 }
                 }
-                let considerations = Self.considerations(review)
+                let considerations = Self.considerations(review, prepared: prepared)
                 if !considerations.isEmpty {
                     ScrollView {
                         section("Things to consider") {
@@ -722,9 +722,14 @@ struct ImportReviewCard: View {
     }
 
     /// The verdict first, unless it's an all-clear (said by nothing being here), then each concern.
-    static func considerations(_ review: ImportReview) -> [Consideration] {
+    /// `prepared` is an update Lamp prepared for an app here: there's no sender to trust, only the update to look at.
+    static func considerations(_ review: ImportReview, prepared: Bool = false) -> [Consideration] {
         var list: [Consideration] = []
         switch review.verdict {
+        case .risky where prepared:
+            list.append(Consideration(text: "Looks risky. Don't update unless you expected this", weight: .warning, icon: "xmark.octagon.fill"))
+        case .partlyChecked where prepared:
+            list.append(Consideration(text: "Only partly checked. Update only if you trust where the app came from", weight: .caution))
         case .risky: list.append(Consideration(text: "Looks risky. Don't open unless you trust the sender", weight: .warning, icon: "xmark.octagon.fill"))
         case .sensitive: list.append(Consideration(text: "Does sensitive things. Open only if you expected that", weight: .warning, icon: "exclamationmark.octagon.fill"))
         case .partlyChecked: list.append(Consideration(text: "Only partly checked. Open only if you trust the sender", weight: .caution))
