@@ -192,4 +192,16 @@ final class AndroidTVTests: XCTestCase {
         let here = look(try fixture("devices"), try fixture("mdns"), [mdnsName: properties, address: properties], kept: [tv])
         XCTAssertTrue(AndroidTVs.requiresTLS("192.168.1.50", among: here, pairedAt: []))
     }
+
+    /// A kept TV listed by its mDNS name in a look where adb's search answered nothing has no known address: the one it
+    /// last had isn't taken for where it is now.
+    func testAnUnresolvedMDNSNameGivesNoAddress() throws {
+        var tv = try kept()
+        tv.address = "192.168.1.50"
+        let devices = look("List of devices attached\n\(mdnsName) device product:jarvis\n", "", [mdnsName: properties], kept: [tv])
+        let live = try XCTUnwrap(devices.first { $0.id == tv.id })
+        XCTAssertEqual(live.adbState, "device")
+        XCTAssertNil(live.address)
+        XCTAssertFalse(AndroidTVs.requiresTLS("192.168.1.50", among: devices, pairedAt: []))
+    }
 }

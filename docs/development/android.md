@@ -99,7 +99,8 @@ support folder's Android/tvs.json) with the serial it reads (`ro.serialno`), the
 last address (only where to try connecting, never proof of identity) and how it was let in (Wireless debugging, or a
 Fire TV's old port). `Adb.devices()` folds adb's listing into those records (`AndroidTVs.merge`): two selectors are one
 TV only when they read the same serial and reach the same address, a placeholder serial makes no record, ambiguous
-rows stay as adb listed them, and a kept TV adb can't see is still listed, away, with what to turn back on. An away TV has no
+rows stay as adb listed them, and a kept TV adb can't see is still listed, away, with what to turn back on. A device's address is only what
+the look saw (its address and port, or where adb's search says its mDNS name points), else none; an away TV has no
 address: its last one is only where reconnecting tries, so nothing that goes by an address (the window's rules,
 Try On's found TVs, the network list's names) takes whatever is there now for it. Try On's
 choice (`project.device`) is the record's id; every command goes to the selector adb reaches the TV by now

@@ -266,7 +266,8 @@ enum AndroidTVs {
             device.id = record.id
             device.adbSerial = live.id
             device.aliases = group.map(\.id)
-            device.address = records[index].address
+            // Where this look saw it, or nothing: the record's last address is only where reconnecting tries.
+            device.address = addresses.compactMap { $0 }.first
             device.transport = records[index].transport
             device.kept = true
             out.append(device)
