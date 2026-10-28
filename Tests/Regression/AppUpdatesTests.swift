@@ -160,6 +160,24 @@ final class AppUpdatesTests: XCTestCase {
         XCTAssertTrue(AppUpdates.isStale(job, head: "aaaa111", unsaved: true))
     }
 
+    /// What the copy's credits gained while the update was prepared goes into the app with its files; the copy's link
+    /// to the app it was copied from doesn't.
+    func testAnUpdateKeepsTheCreditsItsCopyGained() {
+        let job = AppUpdates.Job(url: slop.url!, base: slop.commit!, target: "13dd142b480bcfa01a6b18e36127c87e41cb4d80", wish: "newyork")
+        let kept = Credits(upstream: [slop])
+        var moved = slop
+        moved.commit = job.target
+        let library = Credits.Source(name: "Tween", author: "Someone", url: "https://github.com/someone/tween",
+                                     commit: "abcdef1234567", license: "MIT")
+        let prepared = Credits(upstream: [moved, library], remixOf: [Credits.Remix(name: "New York", wish: UUID().uuidString)],
+                               generated: [Credits.Generated(file: "Web/sky.png")])
+        let after = AppUpdates.credits(afterUpdating: kept, with: prepared, job: job)
+        XCTAssertEqual(after.upstream.map(\.name), ["Slop New York", "Tween"])
+        XCTAssertEqual(after.upstream.first?.commit, job.target)
+        XCTAssertEqual(after.generated.map(\.file), ["Web/sky.png"])
+        XCTAssertTrue(after.remixOf.isEmpty)
+    }
+
     func testAnAcceptedUpdateMovesBothCreditRecordsAndNothingElse() throws {
         let dir = root.appendingPathComponent("slop")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent(".lamp"), withIntermediateDirectories: true)

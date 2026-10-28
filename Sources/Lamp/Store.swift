@@ -3149,6 +3149,8 @@ final class Store: ObservableObject {
         /// itself, and Cancel throws it away.
         var prepared: AppUpdates.Job? = nil
         var copy: String? = nil
+        /// The copy's version when its review was made: a copy changed since isn't what was reviewed.
+        var copyHead: String? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3269,7 +3271,11 @@ final class Store: ObservableObject {
         pendingImport = nil
         if let copy = pending.copy {
             try? FileManager.default.removeItem(at: pending.package.folder)
-            return keepPreparedCopy(copy)
+            Task {
+                guard await !preparedCopyChanged(since: pending) else { return }
+                keepPreparedCopy(copy)
+            }
+            return
         }
         finishImport(pending.package, request: pending.request)
     }
@@ -3297,6 +3303,11 @@ final class Store: ObservableObject {
             // Looked at again now that the update owns the wish: a turn that ran while the review waited may have
             // changed it since the sheet said. Changed here, the new code is brought in rather than put in place.
             // A prepared update already has the wish's changes: it's put in place, unless the wish changed again since.
+            if pending.prepared != nil, await preparedCopyChanged(since: pending) {
+                finish(project)
+                try? FileManager.default.removeItem(at: pending.package.folder)
+                return
+            }
             if let job = pending.prepared {
                 let stale = AppUpdates.isStale(job, head: await Versions.head(project), unsaved: await Versions.hasUnsavedChanges(project))
                 if stale {
@@ -3379,7 +3390,9 @@ final class Store: ObservableObject {
                 let notIn = await installParts(of: package, into: project)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
                 // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
-                if let job = pending.prepared { try Credits.arrive(AppUpdates.accepted(job, in: creditsKept), in: project) }
+                if let job = pending.prepared {
+                    try Credits.arrive(AppUpdates.credits(afterUpdating: creditsKept, with: package.credits, job: job), in: project)
+                }
             } catch {
                 let iconBack = await putBack()
                 // A part the file brought, or changed in kind, goes back with the files (`followRestored`), and the list

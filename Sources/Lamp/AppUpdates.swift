@@ -202,6 +202,15 @@ enum AppUpdates {
         return Job(url: url, base: base, target: tip, wish: wish)
     }
 
+    /// The wish's credits once a prepared update is in: its own, with the update's commit, and whatever the copy's
+    /// credits added while it was prepared (a library brought in, a license filled in, a picture made with AI). Not the
+    /// copy's link to the wish it was copied from: the wish isn't a remix of itself.
+    static func credits(afterUpdating kept: Credits, with prepared: Credits?, job: Job) -> Credits {
+        var credits = accepted(job, in: kept).merged(with: Credits(upstream: prepared?.upstream ?? [], generated: prepared?.generated ?? []))
+        credits.remixOf = kept.remixOf
+        return credits.checked
+    }
+
     /// Whether the wish changed since its copy was made (`Job.head`): the copy would then put back what was changed.
     static func isStale(_ job: Job, head: String?, unsaved: Bool) -> Bool {
         unsaved || head != job.head
@@ -425,10 +434,14 @@ extension Store {
     /// `asked` is whether the agent asked the person something in this turn: its card may already be answered and
     /// folded, with the answer only in line, so the open card alone doesn't say the update is still going.
     func settleUpdate(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) async {
-        guard var job = AppUpdates.Job.load(project), job.wish != nil, job.ready != true else { return }
+        guard var job = AppUpdates.Job.load(project), job.wish != nil else { return }
         let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
         let asking = asked || Talk.open(in: logs[project.id] ?? []) != nil || (queued[project.id] ?? []).contains { $0.card != nil }
-        switch AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking) {
+        let settled = AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking)
+        // A request the person sent in a copy that was already ready: once it's done, the copy is reviewed again as it
+        // is then. Until then there's nothing to say.
+        if job.ready == true, settled != .ready { return }
+        switch settled {
         case .waiting:
             return
         case .failed:
@@ -445,30 +458,52 @@ extension Store {
             try? job.save(in: project)
             AppUpdates.Job.clearFetched(project)
             log(project, .status, "Your update is ready.")
-            openPreparedReview(project, job: job)
+            openPreparedReview(project, job: job, fromItsTurn: true)
         }
     }
 
     /// The review of a prepared copy, as any shared app is reviewed (`Sharing.review` of exactly what would go in), with
     /// Update, Keep Both and Cancel for the wish it's an update of. A review already open waits for this one: Review
     /// Update… opens it later.
-    func openPreparedReview(_ copy: LampProject, job: AppUpdates.Job) {
-        guard pendingImport == nil, let wish = job.wish.flatMap({ id in projects.first { $0.id == id } }) else { return }
-        let package: Sharing.Package
-        do {
-            let file = try Sharing.export(copy)
-            defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
-            package = try Sharing.open(file)
-        } catch {
-            NSAlert(error: error).runModal()
-            return
-        }
-        let pending = PendingImport(package: package, existing: wish, prepared: job, copy: copy.id)
-        pendingImport = pending
+    /// A copy with work going on or waiting isn't reviewed yet: the turn that ends it reviews it then. The version it's
+    /// at is kept with the review, so a copy that changes after isn't taken for what was reviewed.
+    func openPreparedReview(_ copy: LampProject, job: AppUpdates.Job, fromItsTurn: Bool = false) {
+        guard pendingImport == nil, let wish = job.wish.flatMap({ id in projects.first { $0.id == id } }),
+              (queued[copy.id] ?? []).isEmpty, fromItsTurn || !busy.contains(copy.id) else { return }
         Task {
+            let head = await Versions.head(copy)
+            guard pendingImport == nil else { return }
+            let package: Sharing.Package
+            do {
+                let file = try Sharing.export(copy)
+                defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+                package = try Sharing.open(file)
+            } catch {
+                NSAlert(error: error).runModal()
+                return
+            }
+            let pending = PendingImport(package: package, existing: wish, prepared: job, copy: copy.id, copyHead: head)
+            pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
         }
+    }
+
+    /// Whether the copy a review was made of has changed since, or has work going on or waiting: then Update or Keep
+    /// Both would take something other than what was reviewed. Says so, and reviews it again once it's still.
+    func preparedCopyChanged(since pending: PendingImport) async -> Bool {
+        guard let id = pending.copy, let copy = projects.first(where: { $0.id == id }) else { return true }
+        let working = busy.contains(id) || !(queued[id] ?? []).isEmpty
+        var changed = working
+        if !changed { changed = await Versions.head(copy) != pending.copyHead }
+        if !changed { changed = await Versions.hasUnsavedChanges(copy) }
+        guard changed else { return false }
+        let alert = NSAlert()
+        alert.messageText = "This update changed after you reviewed it"
+        alert.informativeText = working ? "Lamp will show it to you again once it's done." : "Review it again before you choose."
+        alert.runModal()
+        if !working, let job = AppUpdates.Job.load(copy) { openPreparedReview(copy, job: job) }
+        return true
     }
 
     /// Update on a copy prepared before the wish changed again: putting it in place would take that change away. The
