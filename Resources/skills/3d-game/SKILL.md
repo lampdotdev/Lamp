@@ -78,8 +78,8 @@ device) or tell the person why 3D in a page can't run there.
 - Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
   mismatched models, and cost little. Build each character and prop as a `THREE.Group` of them in a function of its
   own (a body, a head, eyes that blink, wheels that turn, a tail that wags), its parts named so they can move, and
-  give it a little life: a bob, a lean into a turn, a squash on landing. Never download a model from the web. A model
-  the person gave, or the game must have (a .glb) goes in Web/ and loads once in `init` with
+  give it a little life: a bob, a lean into a turn, a squash on landing. A model file (a .glb) is for one
+  the person gave or named, as the game skill's "Fun" says: it goes in Web/ and loads once in `init` with
   lamp-game.js's `model('ship.glb')` (a group holding its scene, with `group.animations`), and a picture with
   `texture('bricks.png', t => { t.colorSpace = THREE.SRGBColorSpace; })`: a new copy of either goes into the running
   game, inside the same group or texture. A clone of the model, or a mixer playing its animations, is made again in

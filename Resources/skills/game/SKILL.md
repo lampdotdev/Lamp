@@ -49,9 +49,11 @@ A game is for fun, and fun is designed from the first build, not added at the en
   secret, a joke in a name, a combo that does something special, weather that changes, a celebration that's over the
   top. Many small ones beat one big one.
 
-Everything in it is made in code: 3D models from three.js shapes (the 3d-game skill), music and effects from
-`sound` (below), pictures from `make_art` or drawn in code. Nothing is downloaded from the web, so the game opens
-anywhere with no network, and is the person's to share without a license to check.
+Make what's in it in code by default: 3D models from three.js shapes (the 3d-game skill), music and effects from
+`sound` (below), pictures from `make_art` or drawn in code. Made that way it matches the game's style and is the
+person's to share. Use a file only when the person gives it or names where it comes from and its license allows
+sharing; it goes into the game's own folder, credited as the rules say. The game never loads anything from the
+network while it's played.
 
 When asked to make a game more fun, play it first and find what's flat (a loop that doesn't pull, a curve that's
 too easy or too hard, an action that answers with nothing), then work on those four: the loop and the curve, the
