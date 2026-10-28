@@ -2955,7 +2955,7 @@ final class Store: ObservableObject {
     }
 
     /// Display names must be unique: each app installs as "<name>.app" in the apps folder (Edition.appsFolder).
-    private func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
+    func uniqueName(_ name: String, ignoring id: String? = nil) -> String {
         // A wish's other parts carry its name, and are no other app holding it.
         // A newer Lamp's wish keeps its name too: its installed copy is found by it.
         let taken = Set(projects.filter { $0.id != id && ($0.partOf == nil || $0.partOf != id) }.map { $0.name.lowercased() }
@@ -3136,6 +3136,11 @@ final class Store: ObservableObject {
         /// That app was changed here since it arrived: Update then merges the new code into those changes with git, the
         /// agent settling only what conflicts (`mergeUpdate`), rather than putting it in their place.
         var changedHere = false
+        /// An update the agent prepared in a copy of `existing` (`AppUpdates`): Update puts the copy's files in place of
+        /// the wish's, since the copy already has the wish's changes, rather than merging again; Keep Both keeps the copy
+        /// itself, and Cancel throws it away.
+        var prepared: AppUpdates.Job? = nil
+        var copy: String? = nil
     }
 
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
@@ -3246,6 +3251,7 @@ final class Store: ObservableObject {
     func cancelImport() {
         importRequest = nil
         if let pending = pendingImport { try? FileManager.default.removeItem(at: pending.package.folder) }
+        if let copy = pendingImport?.copy { discardPreparedCopy(copy) }
         pendingImport = nil
     }
 
@@ -3253,6 +3259,10 @@ final class Store: ObservableObject {
         guard let pending = pendingImport else { return }
         importRequest = nil
         pendingImport = nil
+        if let copy = pending.copy {
+            try? FileManager.default.removeItem(at: pending.package.folder)
+            return keepPreparedCopy(copy)
+        }
         finishImport(pending.package, request: pending.request)
     }
 
@@ -3278,7 +3288,17 @@ final class Store: ObservableObject {
         Task {
             // Looked at again now that the update owns the wish: a turn that ran while the review waited may have
             // changed it since the sheet said. Changed here, the new code is brought in rather than put in place.
-            let changed = pending.changedHere ? true : await changedSinceArrival(project)
+            // A prepared update already has the wish's changes: it's put in place, unless the wish changed again since.
+            if let job = pending.prepared {
+                let stale = AppUpdates.isStale(job, head: await Versions.head(project), unsaved: await Versions.hasUnsavedChanges(project))
+                if stale {
+                    finish(project)
+                    try? FileManager.default.removeItem(at: pending.package.folder)
+                    preparedUpdateIsStale(project, job: job, copy: pending.copy)
+                    return
+                }
+            }
+            let changed = pending.prepared != nil ? false : pending.changedHere ? true : await changedSinceArrival(project)
             if changed {
                 await mergeUpdate(pending.package, into: project)
                 return
@@ -3286,7 +3306,8 @@ final class Store: ObservableObject {
             defer { finish(project) }
             let package = pending.package
             defer { try? FileManager.default.removeItem(at: package.folder) }
-            let before = "Before updating from a shared file"
+            let before = pending.prepared != nil ? "Before update" : "Before updating from a shared file"
+            let creditsKept = Credits.load(project)
             var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
             if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
             guard kept else {
@@ -3349,6 +3370,8 @@ final class Store: ObservableObject {
                 newArtwork = try Sharing.install(package, into: project, replacing: true)
                 let notIn = await installParts(of: package, into: project)
                 guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be put in place.") }
+                // The copy's credits name the wish it was copied from; the wish keeps its own, moved on to the update.
+                if let job = pending.prepared { try Credits.arrive(AppUpdates.accepted(job, in: creditsKept), in: project) }
             } catch {
                 let iconBack = await putBack()
                 // A part the file brought, or changed in kind, goes back with the files (`followRestored`), and the list
@@ -3360,7 +3383,7 @@ final class Store: ObservableObject {
                 return
             }
             if await Versions.hasUnsavedChanges(project) {
-                guard await Versions.save(project, message: "Updated from a shared file") else {
+                guard await Versions.save(project, message: pending.prepared != nil ? "Updated" : "Updated from a shared file") else {
                     let iconBack = await putBack()
                     await followRestored(project)
                     setApps(project, appsBefore)
@@ -3373,8 +3396,13 @@ final class Store: ObservableObject {
                 log(project, .status, "You already have this version.")
                 return
             }
+            // In place: the copy it was prepared in has done its work.
+            if let job = pending.prepared {
+                updateChecks[AppUpdates.key(job.url)]?.tip = job.target
+                if let copy = pending.copy { discardPreparedCopy(copy) }
+            }
             // The same code with a new icon picture still gets built, which is what draws and installs the icon.
-            log(project, .status, "Updated from a shared file. Building it now…")
+            log(project, .status, pending.prepared != nil ? "Your app is updated. Building it now…" : "Updated from a shared file. Building it now…")
             if await build(project) == nil {
                 await installReportingCrash(project)
             } else {
@@ -3508,7 +3536,7 @@ final class Store: ObservableObject {
     /// update can put the whole wish back and a fresh import can say so.
     /// `onlyNew` makes only the parts the wish has no folder for, as a merge asks (`Upstream.Merged.newParts`): an
     /// app of the same family already here is never taken for one of them, since its files were merged in place.
-    private func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
+    func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)

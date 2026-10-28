@@ -92,7 +92,7 @@ final class AppUpdatesTests: XCTestCase {
     }
 
     func testNothingThePersonReadsNamesWhereTheUpdateComesFrom() {
-        let said = [AppUpdates.request] + [AppUpdates.Availability.checking, .upToDate, .available, .failed].map(\.line)
+        let said = [AppUpdates.request] + [AppUpdates.Availability.checking, .upToDate, .available, .failed, .preparing, .ready].map(\.line)
         for line in said {
             for word in ["upstream", "original", "commit", "repositor", "github", "13dd142", "dcb453f"] {
                 XCTAssertFalse(line.lowercased().contains(word), "“\(line)” says \(word)")
@@ -102,13 +102,19 @@ final class AppUpdatesTests: XCTestCase {
 
     // MARK: Accepting
 
-    func testOnlyAFinishedUpdateIsAccepted() {
-        XCTAssertEqual(AppUpdates.settle(ours: true, end: .changed, errors: false), .accepted)
-        XCTAssertEqual(AppUpdates.settle(ours: true, end: .changed, errors: true), .failed)
-        XCTAssertEqual(AppUpdates.settle(ours: true, end: .failed, errors: true), .failed)
-        XCTAssertEqual(AppUpdates.settle(ours: true, end: .replied, errors: false), .waiting)
-        // A turn about something else, after the person left the update unanswered, doesn't bring it in.
-        XCTAssertEqual(AppUpdates.settle(ours: false, end: .changed, errors: false), .abandoned)
+    func testOnlyAFinishedUpdateIsOfferedForReview() {
+        XCTAssertEqual(AppUpdates.settle(end: .changed, errors: false), .ready)
+        XCTAssertEqual(AppUpdates.settle(end: .changed, errors: true), .failed)
+        XCTAssertEqual(AppUpdates.settle(end: .failed, errors: true), .failed)
+        XCTAssertEqual(AppUpdates.settle(end: .replied, errors: false), .waiting)
+    }
+
+    /// A wish changed after its copy was made isn't replaced by that copy: the change would be lost.
+    func testAWishChangedSinceTheCopyWasMadeIsNotReplaced() {
+        let job = AppUpdates.Job(url: slop.url!, base: slop.commit!, target: "13dd142b480bcfa01a6b18e36127c87e41cb4d80", wish: "slop", head: "aaaa111")
+        XCTAssertFalse(AppUpdates.isStale(job, head: "aaaa111", unsaved: false))
+        XCTAssertTrue(AppUpdates.isStale(job, head: "bbbb222", unsaved: false))
+        XCTAssertTrue(AppUpdates.isStale(job, head: "aaaa111", unsaved: true))
     }
 
     func testAnAcceptedUpdateMovesBothCreditRecordsAndNothingElse() throws {
