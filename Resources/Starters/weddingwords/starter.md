@@ -1,8 +1,8 @@
 ---
 name: Wedding Words
 offer: Make Wedding Words yours
-repository: https://github.com/RooCodeInc/lamp-starter-weddingwords
-commit: 29a82d37a325b191ca6acb24758eea3ec615a8f6
+repository: https://github.com/lampdotdev/weddingwords
+commit: f220f01a30fe5bf76027bfa9531a65e523310978
 tweaks:
   - sun.max: Give it a Neapolitan postcard look
   - stopwatch: Time my toast run-throughs

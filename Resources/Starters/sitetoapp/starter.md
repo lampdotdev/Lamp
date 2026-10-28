@@ -1,8 +1,8 @@
 ---
 name: Site-to-App
 offer: Make Site-to-App yours
-repository: https://github.com/RooCodeInc/lamp-starter-sitetoapp
-commit: 0485c414c40592097d3b7811c8efed8cab2c0b4f
+repository: https://github.com/lampdotdev/sitetoapp
+commit: dcdabde23417692e27382a630979a1bbe126b454
 tweaks:
   - paintpalette: Give it a vintage Mac look
   - rectangle.split.2x1: Show two sites side by side

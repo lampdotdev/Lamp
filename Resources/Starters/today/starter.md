@@ -1,8 +1,8 @@
 ---
 name: Today
 offer: Make Today yours
-repository: https://github.com/RooCodeInc/lamp-starter-today
-commit: f39c69b1fc6e0ffe5e709d375838d7e3ce69cb57
+repository: https://github.com/lampdotdev/today
+commit: c0279eb05fee01c7b2d2418c311b6069c572cd24
 tweaks:
   - pencil.line: Give it a bullet journal look
   - drop: Add a water counter

@@ -1,8 +1,8 @@
 ---
 name: Hours
 offer: Make Hours fit your work
-repository: https://github.com/RooCodeInc/lamp-starter-hours
-commit: 75f48cc35de9edc4dd1e4e9c4374335f069209e3
+repository: https://github.com/lampdotdev/hours
+commit: 086a408b80f7f0e390b46dc2484d6a4e7a85ff48
 tweaks:
   - doc.richtext: Give invoices a classic letterhead look
   - bell: Remind me if no timer runs
