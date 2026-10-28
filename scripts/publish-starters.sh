@@ -46,8 +46,7 @@ for tree in "$WORK"/trees/*(N/); do
   if gh repo view "$repo" --json name >/dev/null 2>&1; then
     "$GIT" -c credential.helper= -c "credential.helper=!gh auth git-credential" clone -q "https://github.com/$repo.git" "$clone"
   else
-    name="$(sed -n 's/^name: *//p' "$starter" | head -1)"
-    gh repo create "$repo" --public --description "$name, a starter wish that comes with Lamp" >/dev/null
+    gh repo create "$repo" --public >/dev/null
     (cd "$clone" && "$GIT" init -q -b main)
   fi
   # The starter as it is now in place of what's there: one commit of the difference, or none.
@@ -64,6 +63,9 @@ for tree in "$WORK"/trees/*(N/); do
   fi
   sha="$("$GIT" rev-parse HEAD)"
   cd "$OLDPWD"
+  # What it is, in its own words (about.json), as the repository's description.
+  about="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("description",""))' "Resources/Starters/$folder/about.json" 2>/dev/null || true)"
+  [[ -n "$about" ]] && gh repo edit "$repo" --description "$about" >/dev/null
   # A game's page: the gh-pages branch, one commit of the difference, served by GitHub Pages.
   if [[ -d "$WORK/pages/$folder" ]]; then
     site="$WORK/sites/$folder"
