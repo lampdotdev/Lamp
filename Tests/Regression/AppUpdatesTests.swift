@@ -289,6 +289,59 @@ final class AppUpdateBoundaryTests: XCTestCase {
         XCTAssertFalse(AppUpdates.mayDuplicate(copy))
     }
 
+    /// A message waiting for a copy that Update deletes reaches the app with every file it names: its own attached file,
+    /// a file picked from inside the copy, one from elsewhere, and the picture of what it pointed at, though the copy's
+    /// folder is gone by the time the app takes the message.
+    @MainActor
+    func testAMessagesFilesInsideTheCopySurviveItsDeletion() throws {
+        let fm = FileManager.default
+        let apps = root.appendingPathComponent("Apps")
+        try fm.createDirectory(at: apps, withIntermediateDirectories: true)
+        let wish = try Template.draft(name: "New York", in: apps)
+        let copy = try Template.draft(name: "New York Update", in: apps)
+        let store = Store(testingAt: apps)
+        let (app, update) = (try XCTUnwrap(store.current(wish)), try XCTUnwrap(store.current(copy)))
+        func file(_ path: String, in folder: URL, _ text: String) throws -> URL {
+            let url = folder.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        }
+        _ = try file("\(Attachments.folder)/kept.txt", in: update.dir, "kept")
+        let picked = try file("Assets/picked.txt", in: update.dir, "picked")
+        let outside = try file("outside.txt", in: root, "outside")
+        let picture = try file(".lamp/pointed.png", in: update.dir, "pointed")
+        let message = QueuedMessage(text: "Make the sky pink", attachments: [picked, outside], kept: ["kept.txt"],
+                                    pointed: PointedAt(title: "Sky", picture: picture.path))
+
+        let moved = try store.forwarded([message], from: update)
+        try fm.removeItem(at: update.dir)
+        _ = store.post(moved, to: app)
+
+        let line = try XCTUnwrap(store.logs[app.id]?.last { $0.kind == .user })
+        let names = line.attachments ?? []
+        let folder = app.dir.appendingPathComponent(Attachments.folder)
+        let texts = Set(names.compactMap { try? String(contentsOf: folder.appendingPathComponent($0), encoding: .utf8) })
+        XCTAssertEqual(texts, ["kept", "picked", "outside", "pointed"], "\(names)")
+        let pointed = try XCTUnwrap(line.pointed)
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent(pointed.picture), encoding: .utf8), "pointed")
+    }
+
+    /// A file inside the copy that can't be copied out isn't passed on by its old path, which the copy's deletion would
+    /// leave pointing at nothing: forwarding fails, naming it, so the copy isn't deleted with the only copy of it.
+    @MainActor
+    func testAFileThatCantBeKeptStopsTheForward() throws {
+        let apps = root.appendingPathComponent("Apps")
+        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
+        let copy = try Template.draft(name: "New York Update", in: apps)
+        let store = Store(testingAt: apps)
+        let update = try XCTUnwrap(store.current(copy))
+        let gone = update.dir.appendingPathComponent("Assets/gone.txt")
+        XCTAssertThrowsError(try store.forwarded([QueuedMessage(text: "Use this", attachments: [gone])], from: update)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("gone.txt"), error.localizedDescription)
+        }
+    }
+
     /// A message sent to a copy while Update deletes it goes to the app the copy went into, however long deleting takes.
     @MainActor
     func testAMessageToACopyBeingDeletedGoesToTheApp() throws {

@@ -559,12 +559,37 @@ final class Store: ObservableObject {
     /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
     /// to that app (`AppUpdates`).
     @Published var retiringCopies: [String: String] = [:]
-    /// Messages waiting for a copy that's going, as requests to another app: each with its files kept outside the copy
-    /// (its own attached files are in the copy's folder, which goes), and no longer the answer to the copy's question.
-    func forwarded(_ messages: [QueuedMessage], from copy: LampProject) -> [QueuedMessage] {
-        messages.map { message in
+    /// Messages to a copy that's going, as requests to another app, and no longer answers to the copy's questions.
+    /// Every file one names inside the copy's folder goes to the waiting files first, as `keptForLater` keeps a waiting
+    /// request's: its own attached files (`kept`), a file picked from inside the copy, the picture of what it pointed
+    /// at. Files elsewhere are named as they were. Throws, naming the file, when one inside the copy can't be copied:
+    /// the copy holds the only copy of it, so it mustn't go on by a path the copy's deletion would empty.
+    func forwarded(_ messages: [QueuedMessage], from copy: LampProject) throws -> [QueuedMessage] {
+        // Standardizing drops /private from a path that exists (the copy's folder) and keeps it on one that doesn't (a
+        // file already gone), so both are compared without it.
+        func plain(_ url: URL) -> String {
+            let path = url.standardizedFileURL.path
+            return path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+        }
+        let inside = plain(copy.dir) + "/"
+        func out(_ file: URL) throws -> URL {
+            guard plain(file).hasPrefix(inside) else { return file }
+            let folder = waitingFiles.appendingPathComponent(UUID().uuidString)
+            let kept = folder.appendingPathComponent(file.lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: file, to: kept)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                throw Sharing.ImportError("Lamp couldn't keep “\(file.lastPathComponent)” from a message to the update.")
+            }
+            return kept
+        }
+        return try messages.map { message in
             let own = message.kept.map { copy.dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
-            return QueuedMessage(text: message.text, attachments: message.attachments + keepForLater(own), pointed: message.pointed)
+            var pointed = message.pointed
+            if let picture = pointed?.url { pointed?.picture = try out(picture).path }
+            return QueuedMessage(text: message.text, attachments: try (message.attachments + own).map(out), pointed: pointed)
         }
     }
     /// Where a message sent to `project` goes.
@@ -3656,7 +3681,16 @@ final class Store: ObservableObject {
         // A copy going away with its update: the message goes to the app it went into, as a request of its own (the
         // copy's question isn't that app's to answer).
         let target = queueTarget(for: project)
-        if target.id != project.id { return send(prompt, attachments: attachments, pointed: pointed, to: target) }
+        if target.id != project.id {
+            // Its files inside the copy are kept first; one that can't be is said, not sent by a path that's going.
+            do {
+                let message = try forwarded([QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)], from: project)[0]
+                return send(message.text, attachments: message.attachments, pointed: message.pointed, to: target)
+            } catch {
+                log(target, .error, error.localizedDescription + " Your message wasn't sent: send it again here.")
+                return
+            }
+        }
         // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
@@ -4269,7 +4303,7 @@ final class Store: ObservableObject {
     }
 
     /// Puts the messages in the chat and their files in Attachments/. Returns the saved file names.
-    private func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
+    func post(_ messages: [QueuedMessage], to project: LampProject) -> [String] {
         var saved: [String] = []
         for message in messages {
             var names = message.kept + Attachments.save(message.attachments, to: project)

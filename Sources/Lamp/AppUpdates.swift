@@ -674,15 +674,23 @@ extension Store {
     /// to `movingQueuedTo` (the wish an Update put the copy into), rather than with the copy.
     func discardPreparedCopy(_ id: String, movingQueuedTo target: LampProject?) async {
         guard let copy = projects.first(where: { $0.id == id }) else { return }
-        if let wish = AppUpdates.Job.load(copy)?.wish.flatMap({ wish in projects.first { $0.id == wish } }) {
-            takeUsage(of: copy, into: wish)
+        // Until it's gone, whatever is sent to the copy goes to the app (`queueTarget`); what was already waiting goes now,
+        // with its files. A file that can't be kept keeps the copy too, with the message still waiting there.
+        if let target, let waiting = queued[id], !waiting.isEmpty {
+            do {
+                let moved = try forwarded(waiting, from: copy)
+                queued[id] = nil
+                queued[target.id, default: []].append(contentsOf: moved)
+                log(target, .status, waiting.count == 1 ? "Your message to the update goes on here." : "Your messages to the update go on here.")
+            } catch {
+                log(target, .error, error.localizedDescription + " “\(copy.name)” is kept, with your message waiting there.")
+                return
+            }
         }
-        // Until it's gone, whatever is sent to the copy goes to the app (`queueTarget`); what was already waiting goes now.
         if let target { retiringCopies[id] = target.id }
         defer { retiringCopies[id] = nil }
-        if let target, let waiting = queued.removeValue(forKey: id), !waiting.isEmpty {
-            queued[target.id, default: []].append(contentsOf: forwarded(waiting, from: copy))
-            log(target, .status, waiting.count == 1 ? "Your message to the update goes on here." : "Your messages to the update go on here.")
+        if let wish = AppUpdates.Job.load(copy)?.wish.flatMap({ wish in projects.first { $0.id == wish } }) {
+            takeUsage(of: copy, into: wish)
         }
         await delete(copy)
     }
