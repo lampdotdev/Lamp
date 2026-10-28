@@ -20,7 +20,8 @@ final class GameFrameRateTests: XCTestCase {
             var console = { log: function (line) { testLogs.push(String(line)); } };
             function addEventListener() {}
             var navigator = { maxTouchPoints: 0 }, innerWidth = 1920, innerHeight = 1080;
-            var document = { documentElement: { style: {} }, body: { style: {}, append: function () {} } };
+            var document = { documentElement: { style: {} }, body: { style: {}, append: function () {} }, hidden: false,
+                             addEventListener: function () {} };
             function requestAnimationFrame(fn) { testFrames.push(fn); }
             var testRenderer = { domElement: { style: {} }, width: 1920, setPixelRatio: function () {},
                              setSize: function (w, h) { this.width = w; testSizes.push(w + 'x' + h); } };

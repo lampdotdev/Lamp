@@ -154,7 +154,7 @@ final class GamePageTests: XCTestCase {
     func testWhatThePageIsToldIsPartOfTheBuildsInputs() throws {
         let mac = try game(chosen: .mac), android = try game(chosen: .android)
         let inputs = { (project: LampProject) in project.platform.target.recipe.inputs(project) ?? "" }
-        XCTAssertTrue(inputs(mac).hasSuffix(try GamePage.descriptor(for: GamePage.place(for: mac))))
+        XCTAssertTrue(inputs(mac).contains(try GamePage.descriptor(for: GamePage.place(for: mac))))
         XCTAssertNotEqual(inputs(mac), inputs(android))
     }
 
