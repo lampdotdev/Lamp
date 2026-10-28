@@ -281,7 +281,9 @@ enum Publish {
                 + credits.generated.map { "`\($0.file)`" }.joined(separator: ", ") + ".\n\n"
         }
         if !credits.remixOf.isEmpty {
-            text += "Remixed from " + credits.remixOf.map { $0.name + ($0.starter != nil ? " (a Lamp starter)" : "") }.joined(separator: ", then ") + ".\n\n"
+            text += "Remixed from " + credits.remixOf.map { remix in
+                (remix.url.map { "[\(remix.name)](\($0))" } ?? remix.name) + (remix.starter != nil ? " (a Lamp starter)" : "")
+            }.joined(separator: ", then ") + ".\n\n"
         }
         return text
     }

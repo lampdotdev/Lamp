@@ -1615,7 +1615,9 @@ final class Store: ObservableObject {
     }
 
     func handle(url: URL) {
-        if url.isFileURL && url.pathExtension == "lampapp" {
+        // A shared file, or a folder holding a wish as Put on GitHub lays one out.
+        var folder: ObjCBool = false
+        if url.isFileURL, url.pathExtension == "lampapp" || (FileManager.default.fileExists(atPath: url.path, isDirectory: &folder) && folder.boolValue) {
             importApp(from: url)
             return
         }
@@ -1637,7 +1639,7 @@ final class Store: ObservableObject {
     /// Where a shared file a link named is kept once fetched, with the request that came with it beside it
     /// (`fetchedRequest`), so the request stays with that file through the review, a wait for setup (`WaitingImport`
     /// copies it with the file), or a restart.
-    private static let fetchedPrefix = "lamp-fetched-"
+    static let fetchedPrefix = "lamp-fetched-"
     private static let requestFile = WaitingImport.requestFile
 
     /// The request kept beside a fetched file, for the wish made from it: only in a folder Lamp made for the file
@@ -1652,6 +1654,8 @@ final class Store: ObservableObject {
     /// by its declared length, and cut off as it comes), then goes the way a file opened by hand does, review
     /// included, with the request the link brought beside it for its box.
     func take(exact: Wish.Exact) {
+        // A link that names where a wish lives on GitHub: fetched as a repository, not as a file.
+        if let source = RepoImport.source(from: exact.file) { return importRepository(source, request: exact.text) }
         NSApp.activate()
         Task {
             let folder = Sharing.workFolder.appendingPathComponent(Self.fetchedPrefix + UUID().uuidString)
@@ -2961,10 +2965,50 @@ final class Store: ObservableObject {
 
     func chooseImport() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.lampApp]
-        panel.message = "Choose a Lamp app someone shared with you"
+        panel.allowedContentTypes = [.lampApp, .folder]
+        panel.canChooseDirectories = true
+        panel.message = "Choose a shared wish file, or a folder cloned from GitHub"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importApp(from: url)
+    }
+
+    /// Open from GitHub…: the address of a wish's repository, which Lamp fetches and opens as it would the shared file.
+    func chooseRepository() {
+        let alert = NSAlert()
+        alert.messageText = "Open a wish from GitHub"
+        alert.informativeText = "Paste the address of a repository Lamp put on GitHub."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "https://github.com/someone/wish"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let source = RepoImport.source(from: field.stringValue) else {
+            let refusal = NSAlert()
+            refusal.messageText = "That isn't a repository on GitHub"
+            refusal.informativeText = "An address looks like https://github.com/someone/wish, with a branch or commit after it if you like."
+            refusal.runModal()
+            return
+        }
+        importRepository(source, request: nil)
+    }
+
+    /// Fetches a wish's repository and opens it as a shared file is opened (`importApp`), with a request that came with
+    /// its link kept beside it for the wish's box, as beside a fetched file.
+    func importRepository(_ source: RepoImport.Source, request: String?) {
+        NSApp.activate()
+        Task {
+            let folder = RepoImport.cloneFolder()
+            do {
+                let tree = try await RepoImport.clone(source, into: folder)
+                if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
+                importApp(from: tree)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                NSAlert(error: error).runModal()
+            }
+        }
     }
 
     /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat

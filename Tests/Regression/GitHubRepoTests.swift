@@ -2,7 +2,7 @@ import XCTest
 @testable import Lamp
 
 /// What goes on GitHub: the shared wish unpacked, with what builds it, the shared file, a README and never Lamp's
-/// own records or a key.
+/// own records or a key. And what comes back: the tree opens in Lamp as the file does, its credits naming the repository.
 final class GitHubRepoTests: XCTestCase {
     private var root: URL!
 
@@ -35,6 +35,42 @@ final class GitHubRepoTests: XCTestCase {
         XCTAssertFalse(has(".lamp"))
         XCTAssertFalse(has(".git"))
         XCTAssertEqual(staged.open.link?.absoluteString, "https://lamp.dev/w/AyTkit4xCc")
+        XCTAssertTrue(readme.contains("https://github.com/someone/tally"))
+
+        // The tree opens as the shared file does: only the sender's code is read (Lamp's own file beside it isn't), and
+        // the chain ends with this wish, named where it lives.
+        let package = try Sharing.open(staged.folder)
+        defer { try? fm.removeItem(at: package.folder) }
+        XCTAssertEqual(package.name, "Tally")
+        XCTAssertTrue(package.sources.contains { $0.lastPathComponent == "App.swift" })
+        XCTAssertFalse(package.sources.contains { $0.lastPathComponent == "LampSupport.swift" })
+        XCTAssertEqual(package.credits?.remixOf.last?.url, "https://github.com/someone/tally")
+        XCTAssertFalse(fm.fileExists(atPath: package.folder.appendingPathComponent("tally.lampapp").path))
+        // The file inside says the same.
+        let file = try Sharing.open(staged.folder.appendingPathComponent("tally.lampapp"))
+        defer { try? fm.removeItem(at: file.folder) }
+        XCTAssertEqual(file.credits?.remixOf.last?.url, "https://github.com/someone/tally")
+        // Opened here as the same wish and shared on as a file, it still says where it lives; put on another repository,
+        // it lives there now.
+        let link = Credits.Remix(name: "Tally", wish: file.credits?.remixOf.last?.wish)
+        XCTAssertEqual(file.credits?.remixed(from: link).remixOf.last?.url, "https://github.com/someone/tally")
+        var moved = link
+        moved.url = "https://github.com/else/tally"
+        XCTAssertEqual(file.credits?.remixed(from: moved).remixOf.last?.url, "https://github.com/else/tally")
+    }
+
+    func testARepositoryAddressIsReadAsGitTakesIt() {
+        XCTAssertEqual(RepoImport.source(from: "https://github.com/someone/tally"), RepoImport.Source(owner: "someone", name: "tally"))
+        XCTAssertEqual(RepoImport.source(from: " github.com/someone/tally.git/ "), RepoImport.Source(owner: "someone", name: "tally"))
+        XCTAssertEqual(RepoImport.source(from: "git@github.com:someone/tally.git"), RepoImport.Source(owner: "someone", name: "tally"))
+        XCTAssertEqual(RepoImport.source(from: "ssh://git@github.com/someone/tally.git"), RepoImport.Source(owner: "someone", name: "tally"))
+        XCTAssertEqual(RepoImport.source(from: "https://github.com/someone/tally/tree/feature/x")?.ref, "feature/x")
+        XCTAssertEqual(RepoImport.source(from: "https://github.com/someone/tally/commit/199f010cf9b35eb58ec934d95eba1ab977c880c1")?.ref,
+                       "199f010cf9b35eb58ec934d95eba1ab977c880c1")
+        for bad in ["https://example.com/someone/tally", "https://github.com/someone", "https://github.com/someone/tally/tree/--upload-pack=x",
+                    "https://github.com/someone/tally/tree/../x", "https://github.com/someone/tally/blob/main/README.md", "not an address"] {
+            XCTAssertNil(RepoImport.source(from: bad), bad)
+        }
     }
 
     func testAShareAlikeUpstreamLeavesNoLicenseToChoose() {

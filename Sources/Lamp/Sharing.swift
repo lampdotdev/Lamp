@@ -178,7 +178,9 @@ enum Sharing {
         return (root, found.filter { $0.id != root.id })
     }
 
-    static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
+    /// `repository` is where the wish is going as it's exported (Put on GitHub), named on the chain's last link so
+    /// whoever opens the file sees where the wish lives.
+    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -231,7 +233,7 @@ enum Sharing {
         // are the wish's; when one of its apps in a folder goes at the file's root, paths into that folder lose it.
         let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
         func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
-        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project)))
+        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project), url: repository))
         carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
         carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
@@ -500,8 +502,11 @@ enum Sharing {
     static let maxUnpackedBytes = 256 * 1024 * 1024
     static let maxFiles = 2000
 
+    /// A shared file, or a folder holding a wish as Put on GitHub lays it out (a clone of its repository, `RepoImport`).
     static func open(_ file: URL) throws -> Package {
         let fm = FileManager.default
+        var isFolder: ObjCBool = false
+        if fm.fileExists(atPath: file.path, isDirectory: &isFolder), isFolder.boolValue { return try RepoImport.open(folder: file) }
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         let folder = workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
@@ -516,7 +521,15 @@ enum Sharing {
             throw ImportError("This file holds more than a Lamp app would (over \(maxFiles) files or 256 MB unpacked).")
         }
         try run("/usr/bin/ditto", ["-x", "-k", file.path, folder.path])
+        let package = try open(unpacked: folder)
+        opened = true
+        return package
+    }
 
+    /// A shared file's contents as unpacked into a folder of Lamp's (`open`, and a repository's tree copied there by
+    /// `RepoImport`), read and checked. The folder is the caller's to remove when the package is refused.
+    static func open(unpacked folder: URL) throws -> Package {
+        let fm = FileManager.default
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")),
@@ -559,7 +572,6 @@ enum Sharing {
             throw ImportError("Lamp can't open this Android app.",
                               detail: "Its build file doesn't name the app's package in a way Lamp can read.")
         }
-        opened = true
         return package
     }
 
@@ -570,7 +582,10 @@ enum Sharing {
         let language = platform.target.recipe.language
         let android = language == .kotlin ? AndroidFiles.list(in: folder) : nil
         let web = language == .web ? TVFiles.list(in: folder) : language == .game ? GameFiles.list(in: folder) : nil
+        // Lamp's own files in Sources/ are never read from a file (a repository holds them so the code builds alone):
+        // this Mac writes its own, and the review reads only the sender's code.
         let appCode = android?.code ?? web?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
+            .filter { $0.lastPathComponent != "LampSupport.swift" && $0.lastPathComponent != Template.sceneSupportFile }
         guard !appCode.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         // A widget's and a share extension's code is read whatever number the file gives itself: the number is
         // the sender's word. Lamp's own files there are never taken from a file; this Mac writes its own.

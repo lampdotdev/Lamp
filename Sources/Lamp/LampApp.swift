@@ -53,6 +53,8 @@ struct LampCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Import Shared Wish…") { store.chooseImport() }
                 .keyboardShortcut("o")
+            Button("Open from GitHub…") { store.chooseRepository() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
                 .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
         }
