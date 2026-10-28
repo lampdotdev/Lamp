@@ -50,6 +50,7 @@ folder="$1"
 source="$2"
 # An address is cloned here, one commit deep, with nothing of the person's sent; Lamp reads the clone as it reads any.
 if [[ "$source" == https://* || "$source" == github.com/* ]] && [[ ! -e "$source" ]]; then
+  [[ "$source" == https://* ]] || source="https://$source"
   CLONE="$(mktemp -d -t lamp-pull-clone)"
   trap 'rm -rf "$CLONE"' EXIT
   GIT_TERMINAL_PROMPT=0 git clone -q --depth 1 "${source%/}.git" "$CLONE/tree" 2>/dev/null \

@@ -174,6 +174,22 @@ enum StarterRepos {
                 try? fm.removeItem(at: to)
             }
         }
+        // The licenses the credits name outside those folders (one at the root, say) come along at their paths, and
+        // one the credits no longer name goes.
+        let based = Credits(upstream: package.credits?.upstream ?? [], generated: package.credits?.generated ?? [])
+        let had = Credits.read(starter.appendingPathComponent(Credits.file)).map { Credits(upstream: $0.upstream, generated: $0.generated) } ?? Credits()
+        func outside(_ path: String) -> Bool { !pulledFolders.contains(where: { path.hasPrefix($0 + "/") }) && Credits.validPath(path) != nil }
+        let named = Set(based.upstream.compactMap(\.licenseFile).filter(outside))
+        for path in named {
+            let from = staged.appendingPathComponent(path), to = starter.appendingPathComponent(path)
+            guard fm.fileExists(atPath: from.path), (try? Data(contentsOf: from)) != (try? Data(contentsOf: to)) else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: to)
+            try fm.copyItem(at: from, to: to)
+        }
+        for path in Set(had.upstream.compactMap(\.licenseFile).filter(outside)).subtracting(named) where Credits.isLicenceFile(path) {
+            try? fm.removeItem(at: starter.appendingPathComponent(path))
+        }
         // What it is, in the starter's own format.
         let about = starter.appendingPathComponent(AppDescription.file)
         if let description = package.description, AppDescription.description(at: about) != description {
@@ -183,8 +199,6 @@ enum StarterRepos {
         }
         // What it's based on; the chain is a copy's, never the starter's.
         let creditsURL = starter.appendingPathComponent(Credits.file)
-        let based = Credits(upstream: package.credits?.upstream ?? [], generated: package.credits?.generated ?? [])
-        let had = Credits.read(creditsURL).map { Credits(upstream: $0.upstream, generated: $0.generated) } ?? Credits()
         if based != had {
             if based.isEmpty { try? fm.removeItem(at: creditsURL) } else { try starterCredits(based).write(to: creditsURL, options: .atomic) }
         }
