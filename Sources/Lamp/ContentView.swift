@@ -291,9 +291,16 @@ enum AppInfoView {
     static let updateFromRepository = "updateFromRepository"
 
     /// Where the wish came from, when that's a repository on GitHub: the chain's last link naming one that isn't where
-    /// this wish was put (`Credits.origin`).
+    /// this wish was put (`Credits.origin`), a starter's link filled in for a copy made before starters named theirs
+    /// (`Starters.located`).
     static func origin(of project: LampProject) -> Credits.Remix? {
-        Credits.load(project).origin(own: GitHubRepo.kept(for: project)?.url)
+        located(Credits.load(project)).origin(own: GitHubRepo.kept(for: project)?.url)
+    }
+
+    static func located(_ credits: Credits) -> Credits {
+        var credits = credits
+        credits.remixOf = credits.remixOf.map(Starters.located)
+        return credits
     }
 
     /// A button of the panel's, here or in the chat beside the app: Settings opened at its tab, the app or its code
@@ -347,7 +354,7 @@ enum AppInfoView {
         // Choices an earlier Lamp let this app make for itself: the one thing left to change here.
         if models != AppModels() { aiButtons.append(SidebarInfoButton(title: "Use Settings' Choices", action: useSettingsChoices)) }
         sections.append(SidebarInfoSection(title: "AI inside this app", rows: ai, buttons: aiButtons))
-        if let credits = creditsSection(Credits.load(project), own: GitHubRepo.kept(for: project)?.url) { sections.insert(credits, at: 0) }
+        if let credits = creditsSection(located(Credits.load(project)), own: GitHubRepo.kept(for: project)?.url) { sections.insert(credits, at: 0) }
         var building = [SidebarInfoRow(label: "Agent", value: Builder.engine.title)]
         if Builder.engine == .claude || Builder.engine == .codex {
             let model = Builder.engineModel(Builder.engine)

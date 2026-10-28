@@ -3113,7 +3113,7 @@ final class Store: ObservableObject {
     /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
     /// version saved since that touched them, or changes not yet saved. A wish with no such version counts as changed,
     /// since nothing says what arrived.
-    static let arrivalMessages: Set<String> = ["Imported from a shared file", "Updated from a shared file"]
+    static let arrivalMessages: Set<String> = ["Imported from a shared file", "Updated from a shared file", "From Lamp"]
     func changedSinceArrival(_ project: LampProject) async -> Bool {
         guard let arrival = await Versions.list(project).first(where: { Self.arrivalMessages.contains($0.message) }) else { return true }
         if await Versions.hasUnsavedChanges(project) { return true }

@@ -84,20 +84,33 @@ enum Contribute {
         let checkedOut = await Subprocess.run(git, ["checkout", "-q", "-b", branch, "FETCH_HEAD"], cwd: work, timeout: 60)
         guard checkedOut.ok else { throw Failure(message: "Couldn't prepare the pull request: \(checkedOut.output.trimmed.suffix(200))") }
 
-        // The wish as it is now in the parent's place, but for what's the repository's own: its README and license
-        // stay its owner's (a license the wish's credits name at the root is that one), and its credits, read before
-        // anything goes, keep their chain and take only what the wish newly uses.
+        // The wish as it is now in the parent's place, but for what's the repository's own: its README, the pictures
+        // the README shows (`.github/`, a starter's) and its license stay its owner's (a license the wish's credits
+        // name at the root is that one), and its credits, read before anything goes, keep their chain and take only
+        // what the wish newly uses.
         let theirs = Credits.read(work.appendingPathComponent(Credits.file)) ?? Credits()
-        let kept: Set<String> = [".git", "README.md", "LICENSE"]
+        // And the identity its wish has there: a copy here may have its own (a starter's copy, or one kept beside
+        // another), which a contribution must never put in its place.
+        let theirApp = (try? JSONSerialization.jsonObject(with: Data(contentsOf: work.appendingPathComponent("lamp-app.json"))) as? [String: Any])?["app"] as? String
+        let kept: Set<String> = [".git", ".github", "README.md", "LICENSE"]
+        // A repository with no shared file beside its code (a starter's) gets none from a contribution either.
+        let hadFile = ((try? fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)) ?? []).contains { $0.pathExtension == "lampapp" }
         for item in try fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil) where !kept.contains(item.lastPathComponent) {
             try fm.removeItem(at: item)
         }
         for item in try fm.contentsOfDirectory(at: staged.folder, includingPropertiesForKeys: nil)
-        where !["README.md", Credits.file].contains(item.lastPathComponent) && !fm.fileExists(atPath: work.appendingPathComponent(item.lastPathComponent).path) {
+        where !["README.md", Credits.file].contains(item.lastPathComponent) && !fm.fileExists(atPath: work.appendingPathComponent(item.lastPathComponent).path)
+            && (hadFile || item.pathExtension != "lampapp") {
             try fm.copyItem(at: item, to: work.appendingPathComponent(item.lastPathComponent))
         }
         try theirs.merged(with: Credits(upstream: staged.credits.upstream, generated: staged.credits.generated)).encoded()
             .write(to: work.appendingPathComponent(Credits.file), options: .atomic)
+        let manifestURL = work.appendingPathComponent("lamp-app.json")
+        if let theirApp, var manifest = try? JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any] {
+            manifest["app"] = theirApp
+            try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                .write(to: manifestURL, options: .atomic)
+        }
 
         let added = await Subprocess.run(git, ["add", "-A"], cwd: work, timeout: 120)
         guard added.ok else { throw Failure(message: "Couldn't prepare the pull request: \(added.output.trimmed.suffix(200))") }

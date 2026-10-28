@@ -16,6 +16,10 @@ struct LampApp: App {
             if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
             if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
         }
+        // Each starter as the repository it's put in on GitHub (`scripts/publish-starters.sh`).
+        if ProcessInfo.processInfo.environment["STAGE_STARTERS"] == "1", CommandLine.arguments.contains(StarterRepos.commandLineFlag) {
+            StarterRepos.stageFromCommandLine()
+        }
         // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
         if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
     }
