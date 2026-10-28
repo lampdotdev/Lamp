@@ -837,7 +837,13 @@ struct MoreFromLamp: View {
                                 }
                             }
                             Spacer(minLength: 12)
-                            Button("Add") { store.put(starter: starter) }
+                            // Added to open at once, as a wish clicked on the desk does: built out of sight first when it
+                            // isn't yet, its icon spinning until then.
+                            Button("Add") {
+                                guard let project = store.put(starter: starter) else { return }
+                                listing = false
+                                store.open(fromDesk: project)
+                            }
                                 .accessibilityLabel("Add \(starter.name)")
                         }
                     }
