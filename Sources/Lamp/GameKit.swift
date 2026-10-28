@@ -974,8 +974,9 @@ extension Agent.Rules {
     - The game reaches the wish's other apps with `Lamp.wish` in Web/lamp.js, the same block a TV app's page has: \
     messages, shared values and files, so another app of the wish can send it moves or things to play with, or show \
     its score. That works wherever it's played: the Mac, an iPhone or an iPad, Android and the Xbox. In Lamp's preview \
-    of it `Lamp.wish` is 'away' with a reason saying it can't reach them there, so the game stays whole without them. Its players still play with a controller, the keyboard or the touch controls Lamp draws: it \
-    has no `Lamp.controllers`, so the wish's other apps send it messages rather than joining as players.
+    of it `Lamp.wish` is 'away' with a reason saying it can't reach them there, so the game stays whole without them. Its players play with a controller, the keyboard or the touch controls Lamp draws, and \
+    phones join as players from its Phone/ page (`Lamp.controllers`); the wish's other apps send it messages rather than \
+    joining as players.
     """
 
     /// For a wish with a screen beside other apps: how its places are given, and how it reaches the others.

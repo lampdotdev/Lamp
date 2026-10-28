@@ -556,7 +556,10 @@ final class Store: ObservableObject {
     @Published var openApps: Set<String> = []
     /// The apps open on this Mac, and those open in a simulator or on a phone: an app for both can be in
     /// both at once, and its Play and Stop are for the place Try On points at (`isOpen`).
-    @Published private(set) var openOnMac: Set<String> = []
+    @Published private(set) var openOnMac: Set<String> = [] { didSet { Self.openOnMacNow = openOnMac } }
+    /// The same, for what's asked of every app without the store at hand (`servesPhonePage`, which runs while the
+    /// store is still being made).
+    private(set) static var openOnMacNow: Set<String> = []
     @Published private(set) var openOnIOS: Set<String> = []
     /// A choice in the chat's Try On waiting to open the app where it points (`Store.tryOn`), by app.
     var openingChosen: [String: UUID] = [:]
@@ -10798,7 +10801,7 @@ final class Store: ObservableObject {
     static func servesPhonePage(_ project: LampProject) -> Bool {
         guard project.holdsApp, takesPlayers(project) else { return false }
         let onTV = project.hasTV && (project.device != nil || TVPreview.window(project) != nil)
-        let onMac = project.platform.target.takesPhones && project.hasMac && shared.openOnMac.contains(project.id)
+        let onMac = project.platform.target.takesPhones && project.hasMac && openOnMacNow.contains(project.id)
         return onTV || onMac
     }
 

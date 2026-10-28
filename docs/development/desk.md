@@ -56,7 +56,7 @@ send. Until that message, nothing is named, scaffolded, built or saved (`startQu
 becomes may be an iPhone app, which a scaffold already written as a Mac app would rule out. The message that
 isn't an answer to a card names it like any first request and ends `finding`.
 
-A new person's desk isn't empty: Lamp comes with thirteen wishes (`Starters`, from `Resources/Starters`), working
+A new person's desk isn't empty: Lamp comes with fourteen wishes (`Starters`, from `Resources/Starters`), working
 apps to use as they are and to change into their own, which shows what Lamp does better than a question about
 what to make. So the welcome is the hello and setup, and ends on the desk (a wish from the site is still made
 once setup is done). They're copied once, on the first launch, each saved as its first version ("From Lamp"),
@@ -127,6 +127,14 @@ Native.swift against Lamp's LampPage.swift. `StartersBuildTests` can't build one
 Lamp's bundle): build it in a Lamp Dev instance. New York has no Swift of its own, so it's prebuilt as a copy of Lamp's
 player (build.sh builds the player before the starters, and `PrebuiltStarters` hands it to the starter's build as a
 person's Mac does); Home HQ's Native.swift makes it compiled ("Lamp's player" in the devices guide).
+A starter may be a game played together: Battle Drones is Simon Willison's Battle Drones (Apache-2.0), a real-time
+strategy game, its TypeScript turned into plain ES modules in `Web/js` (types taken out, comments kept) on Lamp's
+runtime with `fill: true`, its online and sound duels left out. People play it together on one screen: phones join
+from its `Phone/` page (`Lamp.controllers`, "Games" in the devices guide), and controllers and the mouse take seats
+with a table drawn in a corner. Its credits.json names the upstream repository at its commit and qrcode-generator (MIT),
+each with its license file in Web/, and the game's About sheet credits it too. Its `snapshot()` is the whole match as
+JSON, so a change of its code carries on the battle; its APP.md has that and its budget on an Xbox One as worked
+examples.
 A starter whose code imports RealityKit (none does now) gets LampScene.swift and macOS 15 like any app with a 3D scene
 (`Template.withScene`), and check-starters.sh type-checks it that way; on a Mac below macOS 15 it isn't put on the desk
 or offered at all (`Starters.runsHere`), and it's offered once the Mac is updated.
