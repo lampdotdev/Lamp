@@ -117,7 +117,7 @@ enum Starters {
         return parse(text, folder: project.dir)
     }
 
-    private static func read(_ folder: URL) -> Starter? {
+    static func read(_ folder: URL) -> Starter? {
         guard let text = try? String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8) else { return nil }
         return parse(text, folder: folder)
     }

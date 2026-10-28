@@ -90,4 +90,38 @@ final class StartersTests: XCTestCase {
             }
         }
     }
+    /// A starter put on GitHub and brought back from there unchanged is the starter it was, file for file: what the
+    /// publish stages and what the pull writes back agree (`StarterRepos.stage`, `StarterRepos.pull`).
+    func testEachStarterComesBackFromItsRepositoryUnchanged() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("lamp-pull-starters-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let folders = try fm.contentsOfDirectory(at: starters, includingPropertiesForKeys: nil).filter { $0.hasDirectoryPath }
+        for folder in folders.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let starter = try XCTUnwrap(Starters.read(folder), folder.lastPathComponent)
+            // A game or a screen is staged with Lamp's game kit, which only Lamp's own bundle holds: those are checked with
+            // the app (`scripts/pull-starter.sh --check`).
+            if starter.kind != .mac, Bundle.main.resourceURL.map({ !fm.fileExists(atPath: $0.appendingPathComponent("GameKit").path) }) ?? true { continue }
+            let work = root.appendingPathComponent(folder.lastPathComponent)
+            try fm.createDirectory(at: work, withIntermediateDirectories: true)
+            let (tree, _) = try StarterRepos.stage(starter, in: work.appendingPathComponent("stage"))
+            let package = try RepoImport.open(folder: tree)
+            defer { try? fm.removeItem(at: package.folder) }
+            let copy = work.appendingPathComponent("starter")
+            try fm.copyItem(at: folder, to: copy)
+            let notes = try StarterRepos.pull(package, into: copy)
+            XCTAssertEqual(notes, [], folder.lastPathComponent)
+            func files(_ dir: URL) -> [String: Data] {
+                var found: [String: Data] = [:]
+                for case let file as URL in fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator()
+                where (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true && !file.path.contains("/Prebuilt") {
+                    found[Sharing.relativePath(of: file, in: dir)] = try? Data(contentsOf: file)
+                }
+                return found
+            }
+            let before = files(folder), after = files(copy)
+            XCTAssertEqual(Set(after.keys).symmetricDifference(before.keys).sorted(), [], "\(folder.lastPathComponent): files added or taken out")
+            XCTAssertEqual(before.keys.filter { before[$0] != after[$0] }.sorted(), [], "\(folder.lastPathComponent): files changed")
+        }
+    }
 }

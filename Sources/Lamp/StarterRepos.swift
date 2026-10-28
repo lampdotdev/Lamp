@@ -62,6 +62,153 @@ enum StarterRepos {
         exit(failed ? 1 : 0)
     }
 
+    // MARK: Bringing a starter back
+
+    static let pullFlag = "--pull-starter"
+
+    /// `Lamp --pull-starter <starter> <source>`, with `STAGE_STARTERS=1`: the starter's files in
+    /// `Resources/Starters/<starter>` (under the current folder) taken from a wish changed in Lamp (`source`: the wish's
+    /// folder, a folder holding a repository's tree, or a repository's address), then quits. What changed is for git to
+    /// say; a change to its icon's design is said here, since the icon's pictures are drawn separately.
+    static func pullFromCommandLine() -> Never {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: pullFlag), index + 2 < arguments.count else {
+            FileHandle.standardError.write(Data("Usage: Lamp \(pullFlag) <starter folder name> <wish folder, repository folder or address>\n".utf8))
+            exit(2)
+        }
+        let name = arguments[index + 1], source = arguments[index + 2]
+        let starter = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/Starters/\(name)")
+        Sharing.knownSecrets = { _ in [] }
+        let done = DispatchSemaphore(value: 0)
+        var status: Int32 = 0
+        Task.detached {
+            do {
+                let package = try await read(source)
+                defer { try? FileManager.default.removeItem(at: package.folder) }
+                let notes = try pull(package, into: starter)
+                for note in notes { print(note) }
+            } catch {
+                FileHandle.standardError.write(Data("Couldn't bring \(name) back: \(error.localizedDescription) \((error as? LocalizedError)?.recoverySuggestion ?? "")\n".utf8))
+                status = 1
+            }
+            done.signal()
+        }
+        done.wait()
+        exit(status)
+    }
+
+    /// The wish as the import reads it, so only what the review reads comes in: a repository by its address (fetched
+    /// as Open from GitHub… fetches one), a folder holding a repository's tree, or a wish's own folder (exported as a
+    /// shared file is, then opened).
+    static func read(_ source: String) async throws -> Sharing.Package {
+        let fm = FileManager.default
+        if let address = RepoImport.source(from: source), !fm.fileExists(atPath: source) {
+            let folder = RepoImport.cloneFolder()
+            defer { try? fm.removeItem(at: folder) }
+            let tree = try await RepoImport.clone(address, into: folder)
+            return try RepoImport.open(folder: tree)
+        }
+        let folder = URL(fileURLWithPath: (source as NSString).expandingTildeInPath, isDirectory: true)
+        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return try RepoImport.open(folder: folder) }
+        guard let wish = Store.readWish(at: folder) else {
+            throw Sharing.ImportError("\(folder.path) isn't a wish, a repository's tree or an address Lamp can read.")
+        }
+        let file = try Sharing.export(wish)
+        defer { try? fm.removeItem(at: file.deletingLastPathComponent()) }
+        return try Sharing.open(file)
+    }
+
+    /// The parts of a starter that come from the wish, each replaced whole so a file taken out there is taken out here.
+    static let pulledFolders = ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, GameKit.webFolder, Sharing.Assets.folder]
+    static let pulledFiles = ["APP.md", Template.Capabilities.file, BrowserCompanions.Declaration.file]
+
+    /// Writes `package` into the starter's folder as the starter keeps it: its code and files as the import would
+    /// install them (`Upstream.stage`, never Lamp's own files), APP.md, what it declares, its description (about.json),
+    /// the work it's based on (credits.json, without the chain, which a copy is given), and its icon's design. The
+    /// starter's own files stay as they are: starter.md (its offer and where it's published), preview.png and the
+    /// icon's pictures. A file is written only when what it says differs, so an unchanged wish changes nothing.
+    /// Returns what needs saying beyond the files.
+    @discardableResult
+    static func pull(_ package: Sharing.Package, into starter: URL) throws -> [String] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: starter.appendingPathComponent("starter.md").path) else {
+            throw Sharing.ImportError("\(starter.path) isn't a starter's folder.", detail: "Make one as desk.md says, then bring the wish into it.")
+        }
+        let work = Sharing.workFolder.appendingPathComponent("lamp-pull-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: work) }
+        let standIn = LampProject(id: starter.lastPathComponent, name: package.name, exe: "Starter", dir: work.appendingPathComponent("app"))
+        try fm.createDirectory(at: standIn.dir, withIntermediateDirectories: true)
+        let staged = work.appendingPathComponent("staged")
+        try Upstream.stage(package, for: standIn, into: staged)
+        var notes: [String] = []
+
+        for folder in pulledFolders {
+            let from = staged.appendingPathComponent(folder), to = starter.appendingPathComponent(folder)
+            guard !sameTree(from, to) else { continue }
+            try? fm.removeItem(at: to)
+            if fm.fileExists(atPath: from.path) { try fm.copyItem(at: from, to: to) }
+        }
+        // What it declares is Lamp's to write from what passed the checks, so it's compared by what it says.
+        func same(_ file: String, _ from: URL, _ to: URL) -> Bool {
+            switch file {
+            case Template.Capabilities.file: return Template.Capabilities.load(from).checked == Template.Capabilities.load(to).checked
+            case BrowserCompanions.Declaration.file: return BrowserCompanions.Declaration.load(from) == BrowserCompanions.Declaration.load(to)
+            default: return (try? Data(contentsOf: from)) == (try? Data(contentsOf: to))
+            }
+        }
+        for file in pulledFiles {
+            let from = staged.appendingPathComponent(file), to = starter.appendingPathComponent(file)
+            if fm.fileExists(atPath: from.path) {
+                if !same(file, from, to) {
+                    try? fm.removeItem(at: to)
+                    try fm.copyItem(at: from, to: to)
+                }
+            } else if file != "APP.md" {
+                try? fm.removeItem(at: to)
+            }
+        }
+        // What it is, in the starter's own format.
+        let about = starter.appendingPathComponent(AppDescription.file)
+        if let description = package.description, AppDescription.description(at: about) != description {
+            var data = try JSONSerialization.data(withJSONObject: ["description": description], options: [.withoutEscapingSlashes])
+            data.append(Data("\n".utf8))
+            try data.write(to: about, options: .atomic)
+        }
+        // What it's based on; the chain is a copy's, never the starter's.
+        let creditsURL = starter.appendingPathComponent(Credits.file)
+        let based = Credits(upstream: package.credits?.upstream ?? [], generated: package.credits?.generated ?? [])
+        let had = Credits.read(creditsURL).map { Credits(upstream: $0.upstream, generated: $0.generated) } ?? Credits()
+        if based != had {
+            if based.isEmpty { try? fm.removeItem(at: creditsURL) } else { try based.encoded().write(to: creditsURL, options: .atomic) }
+        }
+        // The icon's design, whose pictures are drawn by StarterIconsTests: said when it changed.
+        let iconFrom = staged.appendingPathComponent("icon.json"), iconTo = starter.appendingPathComponent("icon.json")
+        let newSpec = (try? Data(contentsOf: iconFrom)).flatMap { try? JSONDecoder().decode(IconSpec.self, from: $0) }
+        let oldSpec = (try? Data(contentsOf: iconTo)).flatMap { try? JSONDecoder().decode(IconSpec.self, from: $0) }
+        if let newSpec, newSpec != oldSpec {
+            try fm.copyItem(at: iconFrom, to: work.appendingPathComponent("icon.json"))
+            try? fm.removeItem(at: iconTo)
+            try fm.copyItem(at: work.appendingPathComponent("icon.json"), to: iconTo)
+            notes.append("Its icon's design changed: draw its pictures again (desk.md, step 5).")
+        }
+        return notes
+    }
+
+    /// Whether two folders hold the same files with the same contents (both missing counts as the same).
+    private static func sameTree(_ a: URL, _ b: URL) -> Bool {
+        func files(_ root: URL) -> [String: Data]? {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: root.path) else { return nil }
+            var found: [String: Data] = [:]
+            for case let file as URL in fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator() {
+                guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+                found[Sharing.relativePath(of: file, in: root)] = try? Data(contentsOf: file)
+            }
+            return found
+        }
+        return files(a) == files(b)
+    }
+
     /// The repository a starter goes in: "<account>/newyork".
     static func repo(of starter: Starters.Starter) -> String {
         Starters.account + "/" + Starters.repositoryName(of: starter.folder.lastPathComponent)
