@@ -1,6 +1,6 @@
 // Reads Lamp's releases from the private GitHub repo with a read-only token kept on the server
-// (GITHUB_TOKEN: a fine-grained token with Contents: read on RooCodeInc/Lamp only).
-export const REPO = process.env.LAMP_REPO || process.env.FORGE_REPO || "RooCodeInc/Lamp";
+// (GITHUB_TOKEN: a fine-grained token with Contents: read on lampdotdev/Lamp only).
+export const REPO = process.env.LAMP_REPO || process.env.FORGE_REPO || "lampdotdev/Lamp";
 
 export async function github(path, accept = "application/vnd.github+json", redirect = "follow") {
   const token = process.env.GITHUB_TOKEN;

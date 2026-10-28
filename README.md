@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases)): open the DMG and drag Lamp to Applications. To get every change as soon as it's merged, install **Lamp Nightly** from the `nightly` pre-release there: a separate app, signed and notarized the same way, that updates itself with each nightly and lives beside Lamp without touching it. To cut a release, see [RELEASING.md](RELEASING.md).
+Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/lampdotdev/Lamp/releases)): open the DMG and drag Lamp to Applications. To get every change as soon as it's merged, install **Lamp Nightly** from the `nightly` pre-release there: a separate app, signed and notarized the same way, that updates itself with each nightly and lives beside Lamp without touching it. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -45,7 +45,7 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 2. **Clone and build:**
 
    ```bash
-   git clone https://github.com/RooCodeInc/Lamp.git ~/Code/roo/Forge
+   git clone https://github.com/lampdotdev/Lamp.git ~/Code/roo/Forge
    cd ~/Code/roo/Forge
    ./build.sh
    open "build/Lamp Dev.app"
