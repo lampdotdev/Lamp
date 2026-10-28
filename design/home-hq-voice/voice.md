@@ -54,8 +54,9 @@ How a host records:
 - **A panel over the page:** Ask floats at the bottom of the screen, with the page in view behind it: what was said,
   what's happening or what happened (in full, wrapped, readable from across the room), the exchange before it dimmed
   above, and a few buttons.
-- **The remote stays in it:** while it's open the arrows (and Tab on the Mac) move only between its buttons, something
-  in it always has focus, and the page's own shortcuts wait. Closing gives focus back to Ask on the rail.
+- **The remote stays in it:** while it's open the arrows (and Tab on the Mac) move only between its buttons and stop at
+  its edges, something in it always has focus (the one the arrows chose, across any change), and the page's own
+  shortcuts wait. Closing gives focus back to Ask on the rail.
 - **One deliberate press:** Ask on the rail, reached with the arrows. Opening it listens straight away, with the level
   showing and focus on **Stop**.
 - **OK keeps its meaning:** it is never a global key.
@@ -75,8 +76,9 @@ How a host records:
   what was heard, or typing) claims the question and ends the others: the recording, its transcription, the voice and
   any listen to come. Silence leaves the question and its buttons, with Talk to say it again. A question with no
   choices is answered by voice or typing; choices are never guessed from the wording.
-- **Closing by itself:** only after a finished answer, 8 s after it was read out (20 s when there's Undo), put off by
-  any press. Never while a question waits, nor after a failure or a part done.
+- **Closing by itself:** only after a finished answer read out to the end, 8 s later (20 s when there's Undo). Any
+  key, press or typing calls it off for that answer, and it never closes over something being typed. Never while a
+  question waits, nor after a failure or a part done.
 - **Typing:** "Type" is in every voice panel, and the typed form shows wherever there's no voice. Ask never
   hides for lack of a microphone.
 - **Typing or talking again:** "Type instead", a typed question or another recording drops a transcription still on

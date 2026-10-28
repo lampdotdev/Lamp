@@ -29,7 +29,7 @@ final class HomeHQVoiceTests: XCTestCase {
                 classList: { toggle: function () {}, add: function () {}, remove: function () {} },
                 setAttribute: function (k, v) { e.attrs[k] = v; }, getAttribute: function (k) { return e.attrs[k]; },
                 addEventListener: function (t, fn) { (e.listeners[t] = e.listeners[t] || []).push(fn); },
-                fire: function (t, ev) { ev = ev || {}; ev.target = ev.target || e; ev.preventDefault = function () {}; ev.stopPropagation = function () {};
+                fire: function (t, ev) { ev = ev || {}; ev.target = ev.target || e; ev.defaultPrevented = false; ev.preventDefault = function () { ev.defaultPrevented = true; }; ev.stopPropagation = function () {};
                   var at = e; while (at) { (at.listeners[t] || []).forEach(function (fn) { fn(ev); }); at = at.parentNode; } },
                 focus: function () { document.activeElement = e; },
                 closest: function (sel) { var at = e; while (at) { if (sel === '[data-ask-act]' && at.attrs['data-ask-act']) return at; at = at.parentNode; } return null; },
@@ -411,5 +411,61 @@ final class HomeHQVoiceTests: XCTestCase {
         c.evaluateScript("answer({ reply: 'Soccer at 4.' });")
         settle(c)
         XCTAssertEqual(str(c, "focusedKey()"), "mic")
+    }
+
+    /// Moved with the arrows from Yes to No while the question is read out: listening again leaves focus on No.
+    func testListeningAgainKeepsFocusWhereTheArrowsMovedIt() throws {
+        let c = try page()
+        asked(c)
+        c.evaluateScript("q('[data-ask-act=\"choice:1\"]').focus();")
+        c.evaluateScript("spoken();")
+        settle(c)
+        c.evaluateScript("run();")
+        settle(c)
+        XCTAssertEqual(log(c).filter { $0.hasPrefix("listen") }.count, 2)
+        XCTAssertEqual(str(c, "focusedKey()"), "choice:1")
+    }
+
+    /// At the panel's edge an arrow has nowhere to go in it, and nothing else may take it either (on Android the
+    /// WebView's own focus search would leave the panel). In the typed box, left and right still move the caret.
+    func testArrowsNeverLeaveThePanel() throws {
+        let c = try page()
+        asked(c)
+        for key in [37, 38, 39, 40] {
+            XCTAssertEqual(c.evaluateScript("var ev = { key: 'Arrow', keyCode: \(key) }; q('[data-ask-act=\"choice:0\"]').fire('keydown', ev); ev.defaultPrevented")?.toBool(), true, "keyCode \(key)")
+        }
+        c.evaluateScript("clock += 1000; press('type');")
+        XCTAssertEqual(c.evaluateScript("var ev = { key: 'ArrowLeft', keyCode: 37 }; q('[data-ask-input]').fire('keydown', ev); ev.defaultPrevented")?.toBool(), false)
+        XCTAssertEqual(c.evaluateScript("var ev = { key: 'ArrowUp', keyCode: 38 }; q('[data-ask-input]').fire('keydown', ev); ev.defaultPrevented")?.toBool(), true)
+    }
+
+    /// An answer that's still being read out when the person turns to Type (or presses anything) never closes by
+    /// itself afterwards, and never over something being typed.
+    func testTurningToTypeCallsOffClosingByItself() throws {
+        let c = try page()
+        c.evaluateScript("App.openAsk();")
+        settle(c)
+        c.evaluateScript("listenDone({ ended: 'quiet', audio: 'UklGRg==' });")
+        settle(c)
+        c.evaluateScript("hearDone({ text: 'Add milk', nothing: false });")
+        settle(c)
+        c.evaluateScript("answer({ reply: 'Added.', done: [{ name: 'addGrocery', args: { name: 'Milk' }, result: { item: { name: 'Milk' } } }] });")
+        settle(c)
+        c.evaluateScript("clock += 1000; press('type');")
+        settle(c)
+        c.evaluateScript("spoken();")
+        settle(c)
+        c.evaluateScript("run(); run();")
+        XCTAssertNotNil(value(c, "panel() && 1"), "closed while the person was turning to type")
+        // And once it is set to close, a draft in the box keeps it open.
+        c.evaluateScript("q('[data-ask-input]').value = 'Mark the'; document.activeElement = null;")
+        c.evaluateScript("q('[data-ask-input]').value = ''; q('[data-ask-input]').value = 'Add eggs'; q('[data-ask-form]').fire('submit');")
+        settle(c)
+        c.evaluateScript("answer({ reply: 'Added.', done: [{ name: 'addGrocery', args: { name: 'Eggs' }, result: { item: { name: 'Eggs' } } }] });")
+        settle(c)
+        c.evaluateScript("spoken();")
+        settle(c)
+        c.evaluateScript("q('[data-ask-input]').value = 'Mark the di'; run();")
+        XCTAssertNotNil(value(c, "panel() && 1"), "closed over a draft")
     }
 }

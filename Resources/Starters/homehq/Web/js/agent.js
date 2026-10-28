@@ -22,7 +22,7 @@
   // take a new count, so a transcription that comes back after the person has typed or talked again is dropped.
   // `q` is the question on screen, open until its first answer (a button, what was heard, or typing) claims it.
   var S = { turn: null, voice: null, hear: false, listening: false, listenTag: '', armedAt: 0, pending: null, last: null,
-            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null, lines: 0, q: null, qs: 0,
+            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null, lines: 0, q: null, qs: 0, touches: 0,
             closer: null, before: null, offBack: null, acts: [], focusKey: '' };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
@@ -154,13 +154,18 @@
   }
 
   // The panel's buttons, by key: `mic` (Talk, or Stop while listening), `type`, `undo`, `close` and `choice:N`. Focus
-  // stays on the same key across a change (the mic turning from Talk to Stop keeps it); otherwise it goes where asked,
-  // or to the first. A button newly given focus ignores OK for a moment, so a held or repeated press that came before
+  // stays on the button that has it (wherever the arrows took it) across a change, the mic turning from Talk to Stop
+  // included; otherwise it goes where asked, or to the first. A button newly given focus ignores OK for a moment, so a held or repeated press that came before
   // it never presses it.
+  function focusedKey() {
+    var f = document.activeElement;
+    return f && S.el && S.el.contains(f) && f.getAttribute ? f.getAttribute('data-ask-act') || '' : '';
+  }
   function acts(list, focusKey) {
     var box = el('[data-ask-acts]');
     if (!box) return;
     S.acts = list;
+    S.focusKey = focusedKey() || S.focusKey;
     box.innerHTML = list.map(function (b) {
       return '<button type="button" class="btn ' + (b.solid ? 'btn--solid' : 'btn--ghost') + ' ask-act" data-ask-act="' + b.key + '">' +
         (b.icon ? App.icon(b.icon, 24) : '') + App.esc(b.label) + '</button>';
@@ -195,7 +200,7 @@
   function afterAnswer(undoable) { acts(idleActs(undoable), undoable ? 'undo' : canHear() ? 'mic' : 'close'); }
 
   function press(key) {
-    stayOpen();
+    touched();
     if (key === 'mic') return S.listening ? stopListening() : listen(S.q && S.q.open ? S.q.id : 0);
     if (key === 'type') return typeInstead();
     if (key === 'close') return close();
@@ -220,21 +225,24 @@
     return true;
   }
 
-  // Closing by itself: only after a finished answer, counted from when it has been read out, and put off by anything
-  // the person does. Never while a question waits, nor after a failure or a part done. With Undo there's longer.
-  function closeLater(undoable) {
-    stayOpen();
-    var session = S.session;
-    S.closeAfter = undoable ? 20000 : 8000;
-    S.closer = setTimeout(function () { if (live(session)) close(); }, S.closeAfter);
+  // Closing by itself: only after a finished answer that was read out to the end with nothing done meanwhile, counted
+  // from then. Anything the person does (a key, a press, typing, Type) calls it off for that answer, and it never
+  // closes over something being typed. Never while a question waits, nor after a failure or a part done. With Undo
+  // there's longer.
+  function quietAfter(undoable, session) {
+    var touches = S.touches;
+    return function (done) {
+      if (done !== true || !live(session) || S.touches !== touches || S.turn || S.listening || (S.q && S.q.open)) return;
+      stayOpen();
+      S.closer = setTimeout(function () {
+        var input = el('[data-ask-input]');
+        if (!live(session) || S.touches !== touches || (input && (input.value || document.activeElement === input))) return;
+        close();
+      }, undoable ? 20000 : 8000);
+    };
   }
   function stayOpen() { clearTimeout(S.closer); S.closer = null; }
-  function touched() {
-    if (!S.closer) return;
-    var after = S.closeAfter, session = S.session;
-    clearTimeout(S.closer);
-    S.closer = setTimeout(function () { if (live(session)) close(); }, after);
-  }
+  function touched() { S.touches = (S.touches || 0) + 1; stayOpen(); }
 
   function ask(text) {
     text = String(text || '').trim();
@@ -285,7 +293,8 @@
         return;
       }
       afterAnswer(undoable);
-      speak(spoken).then(function () { if (live(session) && !S.turn && !S.listening && !partly && !S.q) closeLater(undoable); });
+      var later = quietAfter(undoable, session);
+      speak(spoken).then(function (done) { if (!partly) later(done); });
     });
   }
 
@@ -301,8 +310,8 @@
     youSaid('');
     show(text, kept.length ? 'is-partly' : '');
     afterAnswer(false);
-    var session = S.session;
-    speak(text).then(function () { if (live(session) && !S.turn && !S.listening && !S.q && !kept.length) closeLater(false); });
+    var later = quietAfter(false, S.session);
+    speak(text).then(function (done) { if (!kept.length) later(done); });
   }
 
   // Listening, for a new request or (with `answering`) for the answer to the question on screen. Opening Ask gives the
@@ -388,11 +397,19 @@
     if (!voice) el('[data-ask-input]').focus();
   }
 
-  // The panel keeps the keys: Tab goes round its own buttons (the arrows already do, through Lamp.scope), a held or
-  // repeated OK presses nothing new, and anything pressed puts off closing by itself.
+  // The panel keeps the keys: the arrows move only between its own buttons (Lamp.scope) and stop at its edges, where
+  // nothing else may take them (Android's own focus search would leave the panel); Tab goes round them; a held or
+  // repeated OK presses nothing new; and anything pressed calls off closing by itself.
+  var ARROWS = { 37: 'left', 38: 'up', 39: 'right', 40: 'down' };
   function keys(e) {
     touched();
     if ((e.key === 'Enter' || e.keyCode === 13) && e.repeat && e.target && e.target.tagName !== 'INPUT') { e.preventDefault(); e.stopPropagation(); return; }
+    var arrow = ARROWS[e.keyCode];
+    if (arrow) {
+      // Left and right move the caret in the typed box; everything else is the panel's.
+      if (!(e.target && e.target.tagName === 'INPUT' && (arrow === 'left' || arrow === 'right'))) e.preventDefault();
+      return;
+    }
     if (e.key !== 'Tab') return;
     var list = Array.prototype.slice.call(S.el.querySelectorAll('button, input')).filter(function (b) { return !b.disabled && b.offsetParent !== null; });
     if (!list.length) return;
@@ -436,6 +453,7 @@
     });
     layer.addEventListener('keydown', keys, true);
     layer.addEventListener('pointerdown', touched);
+    layer.addEventListener('focusin', function () { var k = focusedKey(); if (k) S.focusKey = k; });
     if (!S.ready) return begin();
     // Opened just after the page loaded, before the app around it has said whether it can hear: typed at once, and it
     // turns to listening when the answer comes, only while this same panel is still open and untouched.

@@ -65,7 +65,8 @@ turns it into text for `act`. Their comments in lamp.js have the details. The re
   show the level as it's heard, a Stop that the opening press can't trigger, and "Type instead" wherever text can be
   typed. Never hide a typed way in because there's no voice.
 - Float Ask over the page rather than replacing it, and keep the remote in it while it's open (`Lamp.scope`, Tab on
-  the Mac), with something in it always focused; give focus back to where it was when it closes. A button newly
+  the Mac, and arrows consumed at its edges), with something in it always focused, the one the person moved to kept
+  across changes; give focus back to where it was when it closes. A button newly
   focused ignores OK for a moment, so a held press doesn't press it.
 - Give every recording a session of the page's own, and cancel it (`LampVoice.cancel`) when the person closes or the
   page hides; drop any recording, transcript or answer that comes back for a session that has ended, and a transcript
@@ -73,8 +74,8 @@ turns it into text for `act`. Their comments in lamp.js have the details. The re
 - Act only on `quiet` and `stopped`: `cap` may have cut the person off, so ask them to say it again shorter; say so
   plainly for `nothing` and `denied`.
 - Read the reply out with `LampVoice.speak`, and listen again for an answer only once it has finished, without moving
-  focus off the choices. Close by itself only after a finished answer, counted from when it was read out and put off by
-  any press; never while a question waits or after a failure.
+  focus off the choices. Close by itself only after a finished answer read out to the end; any key, press or typing
+  calls that off, and never close over a draft, while a question waits or after a failure.
 
 ## The person's own things
 
