@@ -1,377 +1,270 @@
 ---
-import { Image, getImage } from "astro:assets";
-import type { ImageMetadata } from "astro";
+import { Image } from "astro:assets";
 import Base from "../layouts/Base.astro";
-import DownloadButton from "../components/DownloadButton.astro";
-import QuickLook from "../components/QuickLook.astro";
-import FirstIdea from "../components/FirstIdea.astro";
-import Bento, { type Point } from "../components/Bento.astro";
-import AICards from "../components/AICards.astro";
-import ChangeStory from "../components/ChangeStory.astro";
-import WishDialog from "../components/WishDialog.astro";
-import { IDEAS, platform, slug } from "../lib/ideas";
 import { together } from "../lib/text";
-import UsesYourMac from "../components/visuals/UsesYourMac.astro";
-import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
-import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
-import ChangeItAnyTime from "../components/visuals/ChangeItAnyTime.astro";
-import SignupsWidget from "../components/visuals/SignupsWidget.astro";
-import Places from "../components/visuals/Places.astro";
-import receipt from "../assets/receipt.png";
-import AppleSilicon from "../components/visuals/AppleSilicon.astro";
-import ShareWithAnyone from "../components/visuals/ShareWithAnyone.astro";
-import icon from "../assets/AppIcon.png";
-import anthropic from "../assets/logos/anthropic.png";
-import openai from "../assets/logos/openai.png";
-import openrouter from "../assets/logos/openrouter.png";
+import { DOWNLOAD_URL } from "../lib/download";
+import newYork from "../assets/starters/newyork.png";
+import homeHQ from "../assets/starters/homehq.png";
+import remote from "../assets/starters/universalremote.png";
 
+// The page sells remixing: start from something someone made, change it while it runs, put it on what's in the
+// house, and share it with your name on it. It's dressed as home video: tape labels, the stripes on their sleeves,
+// cream paper. Apps and games get the same weight, so it never reads as a site for games only. Every example is a
+// real starter (Resources/Starters), with its own pictures and the changes it suggests.
+const pitch = "Start from an app or a game someone made. Say what to change and watch it change while it runs. Then put it on your TV.";
+const description = `Remixable software. ${pitch} No code.`;
 
-// Icons Lamp made for apps it built, in one row under "No localhost shenanigans.", all the same size. The row is centered
-// on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
-// and 24px gaps put each edge through the middle of an icon. The order mixes the colors, as several are
-// purple. A name missing from src/assets/icons/ is skipped.
-const icons = import.meta.glob<ImageMetadata>("../assets/icons/*.png", { eager: true, import: "default" });
+// What Lamp can put something on today, as people name their things. Only what a kind of app or a shipped
+// device integration really reaches (Sources/Lamp/Places, Resources/Devices); a device Lamp only reaches in a
+// simulator isn't listed. Each gets one of the sleeve's colors, in order.
+const devices = [
+  "Samsung TVs", "LG TVs", "Roku", "Xbox", "Fire TV & Google TV", "Android phones & tablets", "iPhone & iPad",
+  "Photo frames", "Your Mac",
+];
+
+// The shelf: three starters, one of each kind, each with the change its starter suggests first.
 const shelf = [
-  "mine-1", "mine-6", "trip-tab", "mine-3", "mine-8", "habit-streaks", "mine-2", "palette-studio", "trail-log",
-  "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
-].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
-
-// The rest of the features as a bento box, rows split 6/4, 5/5, 4/6, telling a story: what you get (row one),
-// what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong color of
-// its own, close to the app icons'.
-const points: Point[] = [
-  {
-    title: "Gorgeous by default.",
-    text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels like it came with the device, never like AI made it.",
-    tile: "bento:col-span-6 bg-linear-to-br from-amber-from to-amber-to",
-    visual: BeautifulByDefault,
-  },
-  {
-    title: "Plugged into your day.",
-    text: "Your calendar, reminders, contacts and notifications, on your Mac and your iPhone. On the Mac, Mail, Notes and Messages too.",
-    tile: "bento:col-span-4 bg-linear-to-b from-sky-from to-sky-to text-white",
-    visual: WorksWithYourMac,
-    below: true,
-  },
-  {
-    title: "Apps that do the clicking.",
-    text: "An app can use your other apps to get things done, your browser included, signed in as you.",
-    tile: "bento:col-span-5 bg-night bg-[radial-gradient(120%_90%_at_80%_0%,#5b4be0_0%,transparent_65%)] text-white",
-    visual: UsesYourMac,
-  },
-  {
-    title: "Smart, and private.",
-    text: "Apps read text in pictures, understand speech and translate, right on your Mac. Lamp can even run the AI on your Mac's own chip.",
-    tile: "bento:col-span-5 bg-graphite-deep bg-[radial-gradient(90%_75%_at_50%_25%,#8f4c0c_0%,transparent_72%)] text-white",
-    visual: AppleSilicon,
-    centre: true,
-  },
-  {
-    title: "Selfish, not stingy.",
-    // A line break in the text starts a new line on the tile.
-    text: "Made for you, but happy to share.\nSend any app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
-    tile: "bento:col-span-6 bg-linear-to-b from-lilac-from to-lilac-to text-white",
-    visual: ShareWithAnyone,
-  },
-  {
-    title: "Try anything. Go back any time.",
-    text: "Lamp saves a version with every change, so nothing you try is a mistake.",
-    tile: "bento:col-span-4 bg-linear-to-b from-mint-from to-mint-to",
-    visual: ChangeItAnyTime,
-    centre: true,
-  },
+  { image: homeHQ, kind: "App · Lamp", name: "Home HQ", tweak: "put it on the photo frame", stripe: "stripe-cool", tone: "text-[#156f64]", ink: "text-[#2a6fb0]" },
+  { image: newYork, kind: "Game · Mr.doob", name: "New York", tweak: "move it to the Moon", stripe: "stripe-warm", tone: "text-[#a8361f]", ink: "text-[#b8264f]" },
+  { image: remote, kind: "TV & Sonos · Lamp", name: "Universal Remote", tweak: "add a bedtime button", stripe: "stripe-warm", tone: "text-[#a8361f]", ink: "text-[#b8264f]", tall: true },
 ];
-
-// Signed-in subscriptions first, then a key, then the models that run on the Mac itself, in the app's own
-// order. Lamp's built-in models (Native Mac AI) run on Metal; they get a chip, like the app's Providers tab,
-// since Apple's logo isn't ours to use.
-const providers = [
-  { logo: anthropic, name: "Claude" },
-  { logo: openai, name: "ChatGPT" },
-  { logo: openrouter, name: "OpenRouter" },
-  { name: "Apple Metal" },
-];
-
-// The hero's line under the heading, and with "Little things made just for you." the page's description for search
-// results and link previews.
-const pitch = "Something for your work, one for your hikes, even a language tutor just for a single\u00a0speech.";
-// Where wishes go, as places rather than platforms: "your phone" is an iPhone or an Android one alike.
-const noCode = "For your Mac, your phone, even your TV. No coding needed, with AI you already have.";
-const description = `Little things made just for you. ${pitch} ${noCode}`;
-
-// Things people know with the one part only their owner would want: a reader knows what a dashboard is, and the
-// part after "but" is what no company would ship. They go from the everyday to the wildly particular, so the reader
-// is with them by the time they get strange, and each lives somewhere different (a widget, something that just
-// runs, the iPad, a game), since what Lamp makes isn't only windows; the pictures say where without a word. A third
-// of them are off the Mac and the iPhone (a watch, the TV, an Android phone, a console), so it's plain a wish can go
-// anywhere. Each opens as the ideas page's wishes do, to change and take to Lamp: those that are the ideas page's
-// name it (`idea`) and take its words and icon, and the rest bring their own, with their pictures in
-// src/assets/examples/, drawn the way the ideas page's are (scripts/idea-art). The widget's card is drawn, and its
-// picture is only for the opened wish.
-const thumbs = {
-  ...import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" }),
-  ...import.meta.glob<ImageMetadata>("../assets/examples/*.jpg", { eager: true, import: "default" }),
-};
-const ideaIcons = import.meta.glob<ImageMetadata>("../assets/ideas/icons/*.png", { eager: true, import: "default" });
-const pictureOf = (name: string) => thumbs[`../assets/ideas/thumbs/${name}.jpg`] ?? thumbs[`../assets/examples/${name}.jpg`];
-type Wish = { name: string; about: string; wish: string };
-type But = { known: string; but: string; visual?: typeof SignupsWidget; picture: string } & ({ idea: string } | Wish);
-const examples: But[] = [
-  {
-    visual: SignupsWidget, picture: "signups", known: "Your analytics dashboard,", but: "but only today's sign-ups against last week's, on your desktop.",
-    name: "Sign-ups Today", about: "Today's sign-ups against the same day last week, on your desktop.",
-    wish: "A widget on my desktop with today's sign-ups from our analytics against the same day last week, and which page most of them came from. Nothing else.",
-  },
-  { idea: "School Dates", picture: "school-dates", known: "A family calendar,", but: "but it fills itself with every date buried in the school's emails." },
-  { idea: "Presenting", picture: "presenting", known: "Do Not Disturb,", but: "but it also hides your desktop and personal tabs when you share your screen." },
-  { idea: "Inbox Invaders", picture: "inbox-invaders", known: "Space Invaders,", but: "but the aliens are the emails you haven't answered." },
-  {
-    picture: "physio", known: "A workout app,", but: "but it's your physio's six exercises, counting the reps on your wrist.",
-    name: "Physio Reps", about: "Your physio's six exercises on your wrist, counting every rep.",
-    wish: "My physio's six exercises on my Apple Watch, in her order: it counts my reps as I move, starts the next one with a tap, and nudges me at six if I haven't done them today.",
-  },
-  { idea: "Whose Turn", picture: "whose-turn", known: "A chore chart,", but: "but fair over the month, on the old iPad in the kitchen." },
-  {
-    picture: "shows", known: "A TV guide,", but: "but only the shows you watch together, so nobody gets ahead.",
-    name: "Watching Together", about: "Only the shows you watch as a family, and where you all got to.",
-    wish: "On our living-room TV: just the shows the four of us watch together, which episode we're up to on each, and the next one locked until everyone's on the sofa, so nobody (Mia) watches ahead.",
-  },
-  {
-    picture: "aisles", known: "A shopping list,", but: "but in the order of the aisles at Dad's supermarket, on his Android phone.",
-    name: "Saturday Shop", about: "The week's shopping list, in the order of the aisles at Dad's supermarket.",
-    wish: "A shopping list on Dad's Android phone, in the order of the aisles at his supermarket (fruit and veg first, dairy last), with big ticks, that the rest of us can add to during the week.",
-  },
-  { idea: "Bedtime Stories", picture: "bedtime-stories", known: "A storybook,", but: "but a new one every night, starring your daughter Maya and her giraffe Kevin." },
-  {
-    picture: "street-racer", known: "A racing game,", but: "but the track is your own street, on the Xbox.",
-    name: "Our Street Racer", about: "A kart race down your own street, past the corner shop and the school.",
-    wish: "A kart racing game on our Xbox where the track is our own street: the corner shop, the postbox, the school gate and the speed bumps, two of us racing with controllers, and a lap record for the family.",
-  },
-  { idea: "Campaign Notes", picture: "campaign-notes", known: "Your D&D campaign notes,", but: "but they know which secrets the party hasn't found yet, and open each session with a dramatic recap." },
-  { idea: "Frank the Snake", picture: "frank-the-snake", known: "Snake,", but: "but the snake is your dachshund, eating the socks he really steals." },
-];
-const buts = await Promise.all(examples.map(async (item) => {
-  const idea = "idea" in item ? IDEAS.find((idea) => idea.name === item.idea)! : undefined;
-  const wish: Wish = idea ?? (item as Wish);
-  const image = pictureOf(item.picture);
-  const icon = idea && ideaIcons[`../assets/ideas/icons/${slug(idea.name)}.png`];
-  const opened = {
-    name: wish.name, about: wish.about, wish: wish.wish, platform: idea ? platform(idea) : undefined,
-    picture: image ? (await getImage({ src: image, width: 1200, format: "webp" })).src : "",
-    icon: icon ? (await getImage({ src: icon, width: 128, format: "webp" })).src : "",
-  };
-  return { ...item, image, opened: JSON.stringify(opened) };
-}));
 ---
 
-<Base title="Lamp: turn your wishes into selfish software" description={description} image="/og.jpg">
-  <!--
-    Full-width bands that alternate white and light gray, in the manner of Apple's product pages, each with the
-    content in the same centered column. Tiles take the other shade from the band they sit on.
-  -->
-  <main>
-    <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
-         follows. -->
-    <div class="px-2 pt-2 sm:px-3 sm:pt-3">
-    <!--
-      Opens like Apple's product pages: the card starts as tall as the window with the icon large in its middle,
-      then the card shrinks to its own height as the icon settles and the words come up under it, and the button
-      appears. Once, on load, and not at all for people who've asked for less motion (global.css). The card stops
-      short of the window's bottom, so the next heading shows under it and it's plain there's more.
-    -->
-    <!-- Opened at a section (the menu bar's AI or Features from another page), the hero is already in place: while
-         the card shrinks, everything under it moves up, and the section the browser went to would slide away. -->
-    <script is:inline>if (location.hash) document.documentElement.classList.add("no-intro");</script>
-    <section class="hero-card hero-sky relative flex flex-col items-center overflow-hidden rounded-[28px] px-6 pt-26 pb-14 text-center sm:pt-28 sm:pb-16">
-      <div class="hero-icon">
-        <Image
-          src={icon}
-          alt=""
-          width={88}
-          height={88}
-          densities={[1, 2]}
-          loading="eager"
-          class="size-18 drop-shadow-[0_10px_22px_rgba(217,122,6,0.28)] sm:size-22"
-        />
+<Base title="Lamp: remixable software" description={description} image="/og.jpg">
+  <main class="tape-page overflow-x-clip bg-paper text-tape">
+    <!-- Hero: plain white type on the sleeve's stripes, run diagonally across the whole window like a film
+         maker's box. The pale bands are kept to the corners, so the words only ever sit on ones they read on. -->
+    <section id="top" class="technicolor">
+    <div class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-16 px-4 pt-32 pb-24 text-white sm:px-6 sm:pt-40 sm:pb-28">
+      <div class="flex min-w-0 flex-[1_1_32rem] flex-col items-start gap-7">
+        <p class="bg-tape px-2.5 py-1 font-mono text-sm font-bold tracking-wider text-paper">NO CODE · T‑120 · SIDE B</p>
+        <h1 class="mb-2 text-[clamp(3.25rem,8.4vw,8rem)] leading-[0.9] font-black tracking-[-0.05em]">Remixable software.</h1>
+        <p class="max-w-[30ch] text-2xl leading-[1.4] font-semibold">{together(pitch)}</p>
+        <div class="flex flex-wrap gap-3.5">
+          <a href={DOWNLOAD_URL} data-download-place="hero" class="tape-button tape-button-paper">Download for Mac</a>
+          <a href="#shelf" class="tape-button tape-button-outline-white">See what's on the shelf</a>
+        </div>
       </div>
-      <!-- The name small under the icon, as Apple labels a product, and the promise as the page's heading. -->
-      <div class="hero-words flex flex-col items-center">
-        <p class="mt-3 text-[15px] font-semibold tracking-tight">Lamp</p>
-        <!-- Full size from xl. From md it's always two lines, broken after "software", even where the window is wide
-             enough for one; narrower, the browser balances the lines it needs. -->
-        <h1 class="mt-5 font-display text-5xl leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl xl:text-7xl">
-          Lamp makes software<br class="hidden md:inline" /> crafted just for&nbsp;you.
-        </h1>
-        <p class="mt-5 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together(pitch)} {together(noCode)}</p>
-      </div>
-      <div class="hero-button relative z-10 mt-9">
-        <DownloadButton place="hero">
-          <a
-            slot="beside"
-            href="/ideas"
-            class="inline-flex h-[52px] items-center rounded-full bg-white/70 px-8 text-[17px] font-semibold text-ink shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/10 backdrop-blur-sm transition duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:scale-[1.03] hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-graphite active:scale-[0.98]"
-          >
-            Explore ideas
-          </a>
-        </DownloadButton>
-      </div>
-    </section>
 
-    </div>
-
-    <!--
-      The page goes from the familiar to the new: things people know with something only they'd want, getting
-      stranger as they go, then that they change as they're used, then their own (the first-idea section).
-    -->
-    <section>
-      <div class="mx-auto max-w-6xl px-4 pt-16 pb-14 sm:px-6">
-        <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Real apps. Uniquely&nbsp;yours.</h2>
-        <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-          {together("Lots of little things, each doing things exactly your way.")}
-        </p>
-        <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {
-            buts.map((item) => (
-              <li class="flex">
-                <button
-                  type="button"
-                  data-idea={item.opened}
-                  class="flex w-full cursor-pointer flex-col overflow-hidden rounded-[22px] bg-panel text-left transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
-                >
-                {item.visual ? <item.visual /> : item.image && (
-                  <Image
-                    src={item.image}
-                    alt=""
-                    widths={[400, 720]}
-                    sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw"
-                    loading="lazy"
-                    class="aspect-[3/2] w-full object-cover"
-                  />
-                )}
-                <span class="block px-6 pt-4 pb-6 text-lg leading-snug font-semibold">
-                  <span class="text-muted">{item.known}</span> {together(item.but)}
-                </span>
-                </button>
-              </li>
-            ))
-          }
-        </ul>
-      </div>
-    </section>
-
-    <section class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Change it while you're using&nbsp;it.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp makes real apps, but they are malleable like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
-      </p>
-      <div class="mx-auto mt-10 max-w-5xl"><ChangeStory /></div>
-      </div>
-    </section>
-
-    <!-- Where wishes go once they're made: places in a home, not platforms, so the page widens without turning into
-         a list of systems. The Mac stays where Lamp lives and wishes are made. -->
-    <section>
-      <div class="mx-auto max-w-6xl px-4 pt-20 pb-6 sm:px-6 sm:pt-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made on your Mac.<br /> At home everywhere&nbsp;else.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("Your phone, your watch, the TV in the living room.")}<br />{together("Each wish lives where it's most useful, and looks like it belongs there.")}
-      </p>
-      <div class="mt-12"><Places /></div>
-      </div>
-    </section>
-
-    <FirstIdea heading="So what's yours?" lead="Not sure yet? Answer a couple of questions." class="px-2 pt-16 sm:px-3 sm:pt-20" />
-
-    <section id="features">
-      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <Bento points={points}>
-          <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
-            <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl"><span class="sm:inline-block">No localhost shenanigans.</span> <span class="sm:inline-block">No subscription. Just&nbsp;there.</span></h3>
-            <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-              {together("Real, native apps, in the platforms you use.")}
-            </p>
-            <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
-              <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
-                {
-                  shelf.map((icon) => (
-                    <Image
-                      src={icon}
-                      alt=""
-                      width={136}
-                      height={136}
-                      densities={[1, 2]}
-                      class="size-24 drop-shadow-[0_12px_18px_rgba(0,0,0,0.14)] sm:size-34"
-                    />
-                  ))
-                }
-              </div>
-            </div>
+      <!-- New York's sleeve: who made it, the game itself, and the sleeve's stripes with the tape's window cut in. -->
+      <div class="flex min-w-0 flex-[1_1_26rem] justify-center">
+        <figure class="flex w-full max-w-[32.5rem] -rotate-2 flex-col overflow-hidden border-2 border-tape bg-[#f7f2e3] text-tape shadow-[10px_10px_0_var(--color-tape)]">
+          <figcaption class="flex items-start justify-between gap-4 px-7 pt-6 pb-4">
+            <span class="flex flex-col gap-1">
+              <span class="text-[1.375rem] font-extrabold italic">Made by Mr.doob</span>
+              <span class="text-[clamp(2.75rem,6vw,4rem)] leading-[0.9] font-black tracking-[-0.04em]">New York</span>
+            </span>
+            <span class="text-right font-mono text-[13px] leading-snug font-bold text-[#a8361f]">GAME<br />3D</span>
+          </figcaption>
+          <Image src={newYork} alt="New York: a yellow taxi on a Manhattan avenue at golden hour" widths={[520, 1040]} sizes="(min-width: 640px) 520px, 100vw" loading="eager" class="block h-auto w-full border-y-2 border-tape" />
+          <div class="stripe-warm relative h-[7.5rem]" aria-hidden="true">
+            <span class="absolute -top-5 -right-0.5 h-40 w-[9.5rem] bg-tape [clip-path:polygon(100%_0,100%_100%,0_50%)]"></span>
           </div>
-      </Bento>
+          <div class="flex flex-wrap items-baseline justify-between gap-3 px-7 pt-4 pb-5">
+            <span class="text-xl font-extrabold italic">Walk, drive, bike or fly</span>
+            <span class="-rotate-3 font-marker text-[1.375rem] text-[#b8264f]">remix me!</span>
+          </div>
+        </figure>
+      </div>
+    </div>
+    </section>
+
+    <!-- Side B: a stack of tapes running off the left edge. The originals have printed sleeves; the remixes are
+         written on in marker, and the last is blank. -->
+    <section id="remix" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
+      <div class="order-last flex min-w-0 flex-[1_1_37.5rem] flex-col gap-2 [margin-left:calc(-1*var(--edge))] lg:order-none">
+        <div class="flex min-h-21 items-stretch border-2 border-l-0 border-tape bg-[#f7f2e3]">
+          <span class="stripe-warm-across w-[calc(var(--edge)+30%)] min-w-24" aria-hidden="true"></span>
+          <span class="flex flex-1 flex-col justify-center px-5 py-3">
+            <span class="text-[2.125rem] leading-none font-black tracking-[-0.03em]">Home HQ</span>
+            <span class="text-[13px] font-bold tracking-[0.15em]">THE ORIGINAL · AN APP FOR THE FAMILY</span>
+          </span>
+        </div>
+        <div class="spine">
+          <span class="spine-code" aria-hidden="true">T‑120</span>
+          <span class="spine-label">
+            <span class="font-marker text-[1.375rem] sm:text-[1.875rem] leading-tight text-[#b8264f]">On the kitchen frame</span>
+            <span class="text-[13px] font-bold tracking-wider">REMIXED BY YOU</span>
+          </span>
+          <span class="spine-side">B1</span>
+        </div>
+        <div class="spine gap-5 text-paper">
+          <span class="stripe-cool h-12 w-[6.875rem] shrink-0" aria-hidden="true"></span>
+          <span class="flex flex-1 flex-col">
+            <span class="text-[1.75rem] leading-none font-black tracking-[0.02em] uppercase">New York</span>
+            <span class="text-xs font-bold tracking-[0.15em] text-[#cfc8b2]">THE ORIGINAL · A GAME BY MR.DOOB</span>
+          </span>
+          <span class="spine-side">A1</span>
+        </div>
+        <div class="spine">
+          <span class="spine-code" aria-hidden="true">E‑180</span>
+          <span class="spine-label">
+            <span class="font-marker text-[1.375rem] sm:text-[1.875rem] leading-tight text-[#2a6fb0]">Snowy winter night</span>
+            <span class="text-[13px] font-bold tracking-wider">REMIXED BY YOUR FRIEND</span>
+          </span>
+          <span class="spine-side">B2</span>
+        </div>
+        <div class="spine">
+          <span class="spine-code" aria-hidden="true">T‑120</span>
+          <span class="spine-label spine-lined">
+            <span class="font-marker text-[1.375rem] sm:text-[1.875rem] leading-tight text-[#6f6857]">your idea here…</span>
+            <span class="text-[13px]" aria-hidden="true">&nbsp;</span>
+          </span>
+          <span class="rounded-[3px] bg-[#c23a20] px-2.5 py-1.5 text-[15px] font-black text-paper">● REC</span>
+        </div>
+      </div>
+      <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
+        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Record over it. Keep the original.</h2>
+        <p class="max-w-[36ch] text-xl leading-normal">{together("Everything opens running. Ask for a change in the chat beside it, and it changes in front of you. The first version stays on the shelf.")}</p>
       </div>
     </section>
 
-    <!-- Pricing, deliberately short and a little cheeky: there's nothing to price. -->
-    <section id="pricing" class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
-        <!-- A receipt for nothing, as an icon in the manner of the Mac's from around 2008, sized like the closing
-             section's Lamp icon. -->
-        <Image src={receipt} alt="" width={88} height={88} densities={[1, 2]} class="mx-auto size-22" />
-        <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Lamp is free.</h2>
-        <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together("You only pay for the AI you bring.")}<br />{together("Sorry there's no more copy to put here.")}</p>
-      </div>
-    </section>
+    <div class="rule" aria-hidden="true"></div>
 
-    <section id="ai">
-      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-balance text-muted">
-        {together("AI doesn't just make your software. It can be part of what it does.")}
-      </p>
-      <div class="mt-10"><AICards /></div>
+    <!-- What it runs on, like the back of a box. -->
+    <section id="devices" class="mx-auto flex max-w-[80rem] flex-col gap-8 px-4 py-26 sm:px-6">
+      <div class="flex flex-col gap-2">
+        <p class="font-mono text-sm font-bold tracking-wider text-[#a8361f]">COMPATIBLE WITH</p>
+        <h2 class="chip-heading max-w-[16ch] text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Runs on what's already in the house.</h2>
       </div>
-    </section>
-
-    <section class="bg-panel">
-      <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
-      <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already&nbsp;have.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or a model that runs right on your Mac.")}
-      </p>
-      <ul class="mt-10 flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
+      <ul class="grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-x-8 border-t-2 border-tape">
         {
-          providers.map((provider) => (
-            <li class="flex items-center gap-2.5 text-muted">
-              {
-                provider.logo ? (
-                  <Image src={provider.logo} alt="" width={24} height={24} densities={[1, 2]} class="size-6 opacity-70" />
-                ) : (
-                  <svg aria-hidden="true" viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-[1.6] opacity-90">
-                    <rect x="6" y="6" width="12" height="12" rx="2.5" />
-                    <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
-                    <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9H6M2.5 12H6M2.5 15H6M18 9h3.5M18 12h3.5M18 15h3.5" stroke-linecap="round" />
-                  </svg>
-                )
-              }
-              <span class="font-medium">{provider.name}</span>
+          devices.map((device, i) => (
+            <li class="flex items-center gap-3.5 border-b border-tape py-3.5 text-[1.375rem] font-extrabold">
+              <span class="h-6.5 w-2.5 shrink-0" style={`background: var(--stripe-${i})`} aria-hidden="true"></span>
+              {device}
+            </li>
+          ))
+        }
+        <li class="flex items-center gap-3.5 border-b border-tape py-3.5 text-xl font-bold italic">
+          <span class="box-border h-6.5 w-2.5 shrink-0 border-2 border-tape" aria-hidden="true"></span>
+          and it works the Sonos
+        </li>
+      </ul>
+      <p class="mt-2 max-w-[52ch] text-xl leading-normal">{together("Developer mode on the TV, the maker's sign-in and certificates, finding the box on your Wi‑Fi: Lamp walks you through the part where people usually give up.")}</p>
+    </section>
+
+    <div class="rule" aria-hidden="true"></div>
+
+    <!-- On the shelf: real starters, each with the change it suggests. -->
+    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-col gap-10 px-4 py-24 sm:px-6">
+      <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">On the shelf</h2>
+      <ul class="grid grid-cols-[repeat(auto-fit,minmax(18.75rem,1fr))] gap-9">
+        {
+          shelf.map((item) => (
+            <li class="flex flex-col gap-1.5">
+              {item.tall ? (
+                <div class="flex aspect-[16/10] justify-center overflow-hidden bg-tape">
+                  <Image src={item.image} alt="" widths={[300, 600]} sizes="300px" class="mt-3.5 h-[130%] w-auto" />
+                </div>
+              ) : (
+                <Image src={item.image} alt="" widths={[400, 800]} sizes="(min-width: 1024px) 400px, 100vw" class="aspect-[16/10] w-full object-cover" />
+              )}
+              <span class:list={[item.stripe, "mb-3 h-3"]} aria-hidden="true"></span>
+              <span class:list={["font-mono text-xs font-bold uppercase", item.tone]}>{item.kind}</span>
+              <h3 class="text-3xl leading-none font-black tracking-[-0.03em]">{item.name}</h3>
+              <span class:list={["font-marker text-xl", item.ink]}>{item.tweak}</span>
             </li>
           ))
         }
       </ul>
-      </div>
     </section>
 
-    <section>
-      <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
-      <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
-      <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Go on, be&nbsp;selfish.</h2>
-      <div class="mt-9"><DownloadButton place="footer" /></div>
+    <div class="rule" aria-hidden="true"></div>
+
+    <!-- Sharing keeps the names of everyone who made a thing: what makes it worth sharing for people with an
+         audience. -->
+    <section id="sharing" class="mx-auto flex max-w-[80rem] flex-col items-center gap-7 px-4 py-26 text-center sm:px-6">
+      <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Share it. Your name stays on it.</h2>
+      <p class="max-w-[44ch] text-xl leading-normal">{together("Share a link to your version. Whoever remixes it next starts from yours, and it still says who made it.")}</p>
+      <dl class="mt-3 flex flex-col gap-1.5">
+        <dt class="credit">MADE BY</dt>
+        <dd class="text-3xl font-black tracking-[-0.02em]">Mr.doob</dd>
+        <dt class="credit mt-3.5">SNOWY WINTER NIGHT</dt>
+        <dd class="text-3xl font-black tracking-[-0.02em]">your friend</dd>
+        <dt class="credit mt-3.5">TAXI FARES</dt>
+        <dd class="text-3xl font-black tracking-[-0.02em]">you</dd>
+      </dl>
+    </section>
+
+    <!-- The lamp's light falls across the last section, in the sleeve's stripes. -->
+    <section id="download" class="relative overflow-hidden bg-tape text-paper">
+      <span class="beam absolute top-0 right-0 h-full w-[46%] opacity-95 [clip-path:polygon(62%_0,82%_0,100%_100%,20%_100%)]" aria-hidden="true"></span>
+      <div class="relative mx-auto flex max-w-[80rem] flex-col items-start gap-6 px-4 py-28 sm:px-6">
+        <h2 class="max-w-[11ch] text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Lamp runs on your Mac.</h2>
+        <p class="max-w-[30ch] text-[1.375rem] text-[#e6dfca]">What you make runs on everything else. Free.</p>
+        <a href={DOWNLOAD_URL} data-download-place="footer" class="tape-button tape-button-lit">Download for Mac</a>
+        <p class="text-sm text-[#cfc8b2]">{together("For Macs with Apple Silicon and macOS 14 Sonoma or later")}</p>
       </div>
     </section>
   </main>
-
-  <QuickLook />
-  <WishDialog place="home" />
-
 </Base>
+
+<style>
+  /* The sleeve's colors, warm to cool, and the bands they're printed in. */
+  .tape-page {
+    --stripe-0: #f6b81c; --stripe-1: #f08a1c; --stripe-2: #e2402a; --stripe-3: #d23778; --stripe-4: #5a2d8c;
+    --stripe-5: #2c3592; --stripe-6: #1f6fc4; --stripe-7: #1f8a4a; --stripe-8: var(--color-tape);
+    /* How far it is from the content's edge to the window's, so the tapes can run off the page. */
+    --edge: calc(max(0px, (100vw - 80rem) / 2) + 1rem);
+    background-image: radial-gradient(rgb(60 40 10 / 0.07) 1px, transparent 1.4px), radial-gradient(rgb(60 40 10 / 0.05) 1px, transparent 1.4px);
+    background-size: 5px 5px, 9px 9px;
+    background-position: 0 0, 3px 4px;
+  }
+  @media (width >= 40rem) {
+    .tape-page { --edge: calc(max(0px, (100vw - 80rem) / 2) + 1.5rem); }
+  }
+  .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 20%, var(--stripe-1) 0 40%, var(--stripe-2) 0 60%, var(--stripe-3) 0 80%, var(--stripe-4) 0); }
+  .stripe-warm-across { background: linear-gradient(90deg, var(--stripe-0) 0 20%, var(--stripe-1) 0 40%, var(--stripe-2) 0 60%, var(--stripe-3) 0 80%, var(--stripe-4) 0); }
+  .stripe-cool { background: linear-gradient(180deg, var(--stripe-7) 0 33.3%, var(--stripe-6) 0 66.6%, var(--stripe-2) 0); }
+  .beam { background: linear-gradient(90deg, var(--stripe-6) 0 16.6%, var(--stripe-7) 0 33.3%, var(--stripe-0) 0 50%, var(--stripe-1) 0 66.6%, var(--stripe-2) 0 83.3%, var(--stripe-3) 0); }
+  /* Between sections, the stripes run the full width of the window. */
+  .rule { height: 30px; background: linear-gradient(180deg, var(--stripe-7) 0 16.6%, var(--stripe-6) 0 33.3%, var(--stripe-0) 0 50%, var(--stripe-1) 0 66.6%, var(--stripe-2) 0 83.3%, var(--stripe-3) 0); }
+
+  /* The hero's field: the stripes on the slant, from the yellow corner at the top left to the lime at the bottom
+     right. Yellow, orange and lime fail white words, so they stay in the corners (a phone's hero is tall, so its
+     slant reaches the words sooner and the corners are smaller); every band in between holds them at 3:1 or more,
+     the words over them all being large. */
+  .technicolor {
+    --corner: 5%; --corner-edge: 11%;
+    background: linear-gradient(150deg,
+      var(--stripe-0) 0 var(--corner), var(--stripe-1) 0 var(--corner-edge), var(--stripe-2) 0 24%, var(--stripe-3) 0 35%,
+      var(--stripe-4) 0 47%, var(--stripe-5) 0 59%, var(--stripe-6) 0 70%, #1e8fd6 0 80%, var(--stripe-7) 0 91%, #7cbf3a 0);
+  }
+  @media (width < 40rem) {
+    .technicolor { --corner: 2%; --corner-edge: 5%; }
+  }
+
+  /* Headings keep plain ink; the stripes sit above them, as a tab cut from the sleeve. */
+  .chip-heading::before {
+    content: ""; display: block; width: 5.5rem; height: 1.25rem; margin-bottom: 1.5rem;
+    background: linear-gradient(150deg, var(--stripe-0) 0 12%, var(--stripe-1) 0 24%, var(--stripe-2) 0 36%, var(--stripe-3) 0 48%,
+      var(--stripe-4) 0 60%, var(--stripe-5) 0 72%, var(--stripe-6) 0 84%, var(--stripe-7) 0);
+  }
+  #sharing .chip-heading::before { margin-inline: auto; }
+
+  .tape-button {
+    display: inline-flex; align-items: center; min-height: 3.25rem; padding: 0 1.625rem; border-radius: 6px;
+    background: var(--color-tape); color: var(--color-paper); font-size: 1.125rem; font-weight: 800;
+    transition: translate 0.2s ease;
+  }
+  .tape-button:hover { translate: 0 -2px; }
+  .tape-button:focus-visible { outline: 3px solid var(--stripe-6); outline-offset: 3px; }
+  .tape-button-paper { background: var(--color-paper); color: var(--color-tape); }
+  .tape-button-outline-white { background: transparent; color: #fff; box-shadow: inset 0 0 0 2px #fff; }
+  /* On the dark last section, in the yellow of the lamp's light. */
+  .tape-button-lit { background: var(--stripe-0); color: var(--color-tape); }
+
+  .spine {
+    display: flex; align-items: center; gap: 1rem; min-height: 5.25rem;
+    padding: 0.5rem 1.125rem 0.5rem calc(var(--edge) + 1.125rem); background: #26241f;
+  }
+  .spine-code { writing-mode: vertical-rl; rotate: 180deg; font-family: var(--font-mono); font-size: 11px; color: #a39c88; }
+  .spine-label {
+    flex: 1; display: flex; flex-direction: column; align-items: center; padding: 0.5rem 1.125rem;
+    background: #f7f2e3; color: var(--color-tape); border-radius: 2px; text-align: center;
+  }
+  .spine-lined { background-image: repeating-linear-gradient(180deg, transparent 0 22px, rgb(42 111 176 / 0.35) 22px 23px); }
+  .spine-side { font-family: var(--font-mono); font-weight: 700; font-size: 1.125rem; color: var(--color-paper); border: 1.5px solid #a39c88; padding: 2px 6px; }
+  .credit { font-family: var(--font-mono); font-weight: 700; font-size: 13px; letter-spacing: 0.15em; color: #a8361f; }
+</style>
