@@ -23,7 +23,7 @@
 /* Talking: Talk or Stop, the level as it's heard, what's happening, and typing one press away. */
 .ask-voice { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
 .ask-talk, .ask-stop { min-width: 9rem; }
-.ask-talk[hidden], .ask-stop[hidden], .ask-row[hidden] { display: none; }
+.ask-voice[hidden], .ask-talk[hidden], .ask-stop[hidden], .ask-row[hidden], .ask-note[hidden] { display: none; }
 .ask-meter { flex: 1; min-width: 6rem; height: .75rem; border-radius: 1rem; background: var(--paper-2); overflow: hidden; }
 .ask-meter i { display: block; height: 100%; width: 0; background: var(--ink); transition: width .08s linear; }
 .ask-voice-state { flex-basis: 100%; color: var(--ink-2); font-size: 1.25rem; }

@@ -17,12 +17,13 @@ into text, and `act` does it.
 How a host records:
 
 - **Format:** both hosts convert to 16 kHz mono signed 16-bit little-endian PCM in a WAV.
-- **When it ends:** after 1.2 s of quiet that follows speech, or at 15 s (`cap`). At 6 s with no speech it ends as
-  `nothing` if no sound came, and otherwise sends what it has to be transcribed. Speech is a level three times the
-  room's: the quietest it has been lately, which follows a dip at once and rises back over a couple of seconds. So
-  speech from the first moment counts once its first pause shows the room. The limits run on the clock, so a
-  recording whose audio stops coming still ends. This is a rule of thumb on levels, not a way of telling speech from a
-  television.
+- **When it ends:** as finished (`quiet`) only after quiet that was really heard: 1.2 s under the speech level after
+  speech, or 1.2 s under the floor (and past 6 s) when there was sound that never stood out from the room. With no
+  sound at all by 6 s it's `nothing`, and anything still going at 15 s is `cap`, which is never acted on. Speech is a
+  level three times the room's: the quietest it has been lately, which follows a dip at once and, until speech is
+  heard, rises back over a couple of seconds. So speech from the first moment counts once its first pause shows the
+  room, and talking on without a pause is never taken for the room. The limits run on the clock, so a recording whose
+  audio stops coming still ends. This is a rule of thumb on levels, not a way of telling speech from a television.
 - **One at a time:** each recording has its own stop. A new one, a cancel or a page load ends the one before, which
   answers only the page that asked for it.
 - **What reaches the page:** levels go to the page tagged with the page's session.
@@ -42,8 +43,8 @@ How a host records:
 - **Errors, each in words the person can act on:** no key (501, `needs: text`), a key OpenRouter doesn't accept, no
   credit, OpenRouter busy, network failure.
 - **Paid once:** lamp.js and the Android relay try each way to the Mac once, and not again after a moment. Each
-  recording carries its own id, so one that reaches Lamp by two ways is transcribed and charged once (Lamp keeps the
-  answer for five minutes per app). A request that times out on the device may still have been paid for.
+  recording carries its own id, so the same recording reaching the same running Lamp by two ways within five minutes
+  is transcribed and charged once. A restart of Lamp, or a new `hear` call, starts afresh. A request that times out on the device may still have been paid for.
 - **Availability:** `isAvailable('hear')` asks the route through the host, so an older host answers false.
 
 ## Home HQ's Ask

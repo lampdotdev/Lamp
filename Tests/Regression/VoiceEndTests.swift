@@ -3,8 +3,9 @@ import XCTest
 
 /// When a recording ends, as the hosts decide it: `LampVoiceEnd` in LampPage.swift (Mac, iPhone, iPad) and in Android's
 /// LampPageGateway.kt, each compiled from its own source and run through the same recordings, by level and time. Speech
-/// from the very first moment is heard as speech; sound that never stood out from the room is still sent, not thrown
-/// away as nothing; and the clock ends a recording whose audio has stopped coming. On Android also `LampVoiceTake`, the
+/// from the very first moment is heard as speech; sound that never stood out from the room is still sent once it has
+/// really stopped, and never ended as finished while it goes on; and the clock ends a recording whose audio has stopped
+/// coming. On Android also `LampVoiceTake`, the
 /// loop around the microphone: a recording cancelled while no audio comes ends at once, on its own, and a read that
 /// fails is a failure, not a wait.
 final class VoiceEndTests: XCTestCase {
@@ -17,8 +18,13 @@ final class VoiceEndTests: XCTestCase {
         return [
             // Talking from the moment it opens, with the pause between words.
             ("straight away", words + run(6, 0.003), "quiet", 2.4...2.8),
-            // Sound from the first moment that never dips: sent to be heard at six seconds, not dropped.
-            ("steady", run(7, 0.1), "quiet", 5.9...6.1),
+            // Sound from the first moment that never dips: not dropped, and not ended while it goes on, only once
+            // it has really stopped.
+            ("steady", run(7, 0.1) + run(3, 0.001), "quiet", 8.1...8.4),
+            // ... and when it never stops, the limit: not something to act on.
+            ("steady to the limit", run(16, 0.1), "cap", 14.9...15.1),
+            // Speech that's been heard and then goes on without a pause isn't taken for the room.
+            ("talking on", words + run(4, 0.2) + run(3, 0.003), "quiet", 6.4...6.8),
             ("silence", run(7, 0.001), "nothing", 5.9...6.1),
             // Audio stops coming after a few words: the clock ends it.
             ("audio stops", words, "quiet", 2.4...2.8),

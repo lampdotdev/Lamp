@@ -16,7 +16,9 @@ final class HomeHQVoiceTests: XCTestCase {
         let c = try XCTUnwrap(JSContext())
         c.exceptionHandler = { _, value in XCTFail(value?.toString() ?? "?") }
         c.evaluateScript("""
-            var window = this, log = [], timers = [], clock = 1000, lines = [], focused = '', handlers = {}, sheet = null;
+            var window = this, log = [], timers = [], clock = 1000, lines = [], focused = '', handlers = {}, sheet = null, sheetOpen = false, opens = 0;
+            // Back as Home HQ's system.js takes it: the open sheet closes; with none, it goes elsewhere.
+            function back() { if (sheetOpen) App.closeSheet(); }
             Date = (function (Real) { function Fake() { return new Real(clock); } Fake.now = function () { return clock; }; return Fake; })(Date);
             function setTimeout(fn) { timers.push(fn); return timers.length; } function clearTimeout(id) { if (id) timers[id - 1] = null; }
             function setInterval() { return 0; } function clearInterval() {}
@@ -36,7 +38,8 @@ final class HomeHQVoiceTests: XCTestCase {
               on: function (e, fn) { handlers[e] = fn; }, emit: function () {}, rerender: function () {}, esc: function (s) { return s; }, icon: function () { return ''; },
               dayText: function () { return '2026-10-28'; }, now: function () { return new Date(); }, changesOf: function () { return []; }, resetIdle: function () {},
               person: function () { return { name: 'x' }; },
-              sheet: function (html, o) { registry = {}; sheet = o; var s = el('sheet'); s.innerHTML = html; registry['[data-ask-form]'] = el('form'); if (html.indexOf('data-ask-form hidden') > -1) registry['[data-ask-form]'].hidden = true; o.onMount(s, function () { o.onClose(); }); } };
+              closeSheet: function () { if (sheetOpen) { sheetOpen = false; sheet.onClose(); } },
+              sheet: function (html, o) { registry = {}; sheet = o; sheetOpen = true; opens++; var s = el('sheet'); s.innerHTML = html; registry['[data-ask-form]'] = el('form'); if (html.indexOf('data-ask-form hidden') > -1) registry['[data-ask-form]'].hidden = true; o.onMount(s, function () { o.onClose(); }); } };
             var listenDone = null, hearDone = null, hears = [], actDone = null, acts = [], statusDone = null;
             var LampVoice = {
               status: function () { return \(voice == "held" ? "new Promise(function (r) { statusDone = r; })" : "Promise.resolve(\(voice))"); },
@@ -176,5 +179,30 @@ final class HomeHQVoiceTests: XCTestCase {
         c.evaluateScript("statusDone({ listen: true, speak: true, permission: 'granted' });")
         settle(c)
         XCTAssertEqual(log(c), ["listen:ask1-1"])
+    }
+
+    func testBackBeforeTheVoiceAnswersLeavesAskClosed() throws {
+        let c = try page(voice: "held")
+        c.evaluateScript("App.openAsk(); back();")
+        settle(c)
+        c.evaluateScript("statusDone({ listen: true, speak: true, permission: 'granted' });")
+        settle(c)
+        c.evaluateScript("timers.forEach(function (f) { if (f) f(); });")
+        settle(c)
+        XCTAssertEqual(log(c).filter { $0.hasPrefix("listen") }, [])
+        XCTAssertEqual(c.evaluateScript("sheetOpen")?.toBool(), false)
+    }
+
+    func testHidingBeforeTheVoiceAnswersStartsNothing() throws {
+        let c = try page(voice: "held")
+        c.evaluateScript("App.openAsk(); var opensBefore = opens; document.hidden = true; document.onvisibilitychange();")
+        settle(c)
+        c.evaluateScript("statusDone({ listen: true, speak: true, permission: 'granted' });")
+        settle(c)
+        // Back on the screen later: what was pressed before it hid doesn't start now.
+        c.evaluateScript("document.hidden = false; document.onvisibilitychange(); timers.forEach(function (f) { if (f) f(); });")
+        settle(c)
+        XCTAssertEqual(log(c).filter { $0.hasPrefix("listen") }, [])
+        XCTAssertEqual(c.evaluateScript("opens - opensBefore")?.toInt32(), 0, "no Ask opened after the page hid")
     }
 }

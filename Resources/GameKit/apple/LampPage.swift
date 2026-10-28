@@ -315,30 +315,34 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
 }
 
 /// When one recording ends, from its levels and the clock alone (the same rule as LampVoiceEnd in Android's
-/// LampPageGateway.kt): speech is a level three times the room's, and above a floor. The room is the quietest it has
-/// been lately: it follows a dip at once and rises back over a couple of seconds, so speech from the very first moment
-/// counts as soon as its first pause shows the room. Quiet for 1.2 s after speech ends it; at 6 s with no speech it
-/// ends as nothing, unless something above the floor was heard, which is sent to be transcribed rather than thrown
-/// away; at 15 s it ends cut off. Asked on a timer as well as for each chunk, so it ends on time when audio stops. A
-/// rule of thumb on levels, not a way of telling speech from a television.
+/// LampPageGateway.kt). Speech is a level three times the room's, and above a floor. The room is the quietest it has
+/// been lately: it follows a dip at once and, until speech is heard, rises back over a couple of seconds, so speech
+/// from the very first moment counts once its first pause shows the room; once speech is heard the room stays put, so
+/// talking on without a pause is never taken for the room. A recording ends as finished (`quiet`) only after quiet
+/// that was really heard: 1.2 s under the speech level once there was speech, or 1.2 s under the floor once there was
+/// only sound. With no sound at all by 6 s it's `nothing`. Anything still going at 15 s is `cap`, which is never acted
+/// on. Asked on a timer as well as for each chunk, so the limits hold when audio stops coming. A rule of thumb on
+/// levels, not a way of telling speech from a television.
 struct LampVoiceEnd {
     static let maxSeconds = 15.0, waitSeconds = 6.0, quietSeconds = 1.2, floor = 0.02, rise = 2.0
     private(set) var speechAt: Double?
     private(set) var peak = 0.0
-    private var room: Double?, at = 0.0, lastLoud = 0.0, sound = false
+    private var room: Double?, at = 0.0, lastLoud = 0.0, lastSound: Double?
 
     mutating func heard(level: Double, top: Double, at t: Double) {
         peak = max(peak, top)
-        if let r = room, level >= r { room = r + (level - r) * min(1, (t - at) / Self.rise) } else { room = level }
+        if let r = room, level >= r { if speechAt == nil { room = r + (level - r) * min(1, (t - at) / Self.rise) } } else { room = level }
         at = t
-        if level > Self.floor { sound = true }
+        if level > Self.floor { lastSound = t }
         if level > max((room ?? 0) * 3, Self.floor) { if speechAt == nil { speechAt = t }; lastLoud = t }
     }
 
     func ended(at t: Double) -> String? {
         if t >= Self.maxSeconds { return "cap" }
-        guard speechAt != nil else { return t >= Self.waitSeconds ? (sound ? "quiet" : "nothing") : nil }
-        return t - lastLoud >= Self.quietSeconds ? "quiet" : nil
+        if speechAt != nil { return t - lastLoud >= Self.quietSeconds ? "quiet" : nil }
+        guard let sound = lastSound else { return t >= Self.waitSeconds ? "nothing" : nil }
+        // Sound that never stood out from the room: finished only once it has stopped, after the wait for speech.
+        return t >= Self.waitSeconds && t - sound >= Self.quietSeconds ? "quiet" : nil
     }
 }
 

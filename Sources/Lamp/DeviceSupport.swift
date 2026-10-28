@@ -1037,8 +1037,9 @@ enum DeviceSupport {
          * What the person said, as text: `audio` is a WAV in base64 as `LampVoice.listen` gives it (16 kHz mono 16-bit,
          * at most 15 seconds), transcribed by Lamp on the Mac with the AI set up there (OpenRouter's Scribe), which
          * pays for it. Resolves { text, nothing (true when no words were heard), seconds }. Check
-         * `LampAI.isAvailable('hear')` first. Each call is transcribed and paid for once, even when it reaches Lamp by
-         * more than one way to the Mac; a call that times out on the page's side may still have been paid for.
+         * `LampAI.isAvailable('hear')` first. Each call is transcribed and paid for once even when it reaches Lamp by
+         * more than one way to the Mac (Lamp remembers it for five minutes while it keeps running); a call that times
+         * out on the page's side may still have been paid for.
          *
          *     LampAI.hear(heard.audio).then(function (r) { if (!r.nothing) ask(r.text); });
          */
@@ -1294,10 +1295,9 @@ enum DeviceSupport {
        *     LampVoice.stop('s1');     // keep what was said so far      LampVoice.cancel('s1');   // throw it away
        *     LampVoice.speak('Added milk.').then(function (finished) { ... });
        *
-       * A recording ends by itself after a moment of quiet following speech, at 6 seconds when nothing stood out from
-       * the room ('nothing' when no sound came at all; otherwise it's sent as 'quiet' to be transcribed), or at 15
-       * seconds ('cap', which may have cut the person off), on the clock whether audio is still coming or not. Only
-       * 'quiet', 'stopped' and 'cap' carry `audio`.
+       * A recording ends by itself only after quiet that was really heard ('quiet'), as 'nothing' when no sound at all
+       * came in 6 seconds, or at 15 seconds ('cap', which may have cut the person off: never act on it), on the clock
+       * whether audio is still coming or not. Only 'quiet', 'stopped' and 'cap' carry `audio`.
        */
       var voiceApple = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampVoice;
       var voiceAndroid = !voiceApple && window.lampVoiceHost && typeof window.lampVoiceHost.postMessage === 'function' ? window.lampVoiceHost : null;

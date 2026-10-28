@@ -74,8 +74,9 @@ enum AppHear {
     typealias Transcribe = @MainActor (String) async -> Result<Heard, Failure>
 
     /// Each recording the page sends carries its own id (`op`). The page tries each way to the Mac in turn, so the same
-    /// recording can arrive again when an answer is lost on the way back; it's transcribed and charged once, and the
-    /// copy waits for, or is given, that one answer. Kept per app for a few minutes.
+    /// recording can arrive again when an answer is lost on the way back; within five minutes, in this running Lamp,
+    /// it's transcribed and charged once, and the copy waits for, or is given, that one answer. Kept in memory per app,
+    /// so a restart forgets it.
     private static var heard: [String: (at: Date, answer: Task<(Int, [String: Any], Double), Never>)] = [:]
     static let keepFor: TimeInterval = 300
 

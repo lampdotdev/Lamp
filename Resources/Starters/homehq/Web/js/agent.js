@@ -16,7 +16,7 @@
   // answer is read against all of them. `heard` counts what was said: a recording, its transcription, and typing all
   // take a new count, so a transcription that comes back after the person has typed or talked again is dropped.
   var S = { turn: null, voice: null, hear: false, listening: false, listenTag: '', armedAt: 0, pending: null, last: null,
-            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null };
+            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null, lines: 0 };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
     'each part of the day, and the shopping list. You act for whoever is talking to it.\n' +
@@ -112,6 +112,7 @@
   // ------------------------------------------------------------ the sheet
   function line(cls, html) {
     if (!S.el) return;
+    S.lines++;
     var log = S.el.querySelector('.ask-log'), d = document.createElement('div');
     d.className = 'ask-line ' + cls;
     d.innerHTML = html;
@@ -261,24 +262,40 @@
     S.el.querySelector('[data-ask-input]').focus();
   }
 
-  function open() {
+  // Talking or typing: the voice row (Talk, Stop, the level, Type instead) where it can hear, the typed box otherwise, and
+  // a word when only transcription is missing.
+  function setMode(voice) {
+    if (!S.el) return;
+    S.el.querySelector('[data-ask-voice]').hidden = !voice;
+    S.el.querySelector('[data-ask-form]').hidden = voice;
+    S.el.querySelector('[data-ask-note]').hidden = !(S.voice && S.voice.listen && !S.hear);
+  }
+  // With a voice, opening Ask is listening (one press), unless the microphone was refused; otherwise it's typing.
+  function begin() {
     var voice = canHear();
+    setMode(voice);
+    if (voice && S.voice.permission !== 'denied') listen();
+    else if (voice) { voiceState('idle', ''); S.el.querySelector('[data-ask-talk]').focus(); }
+    else S.el.querySelector('[data-ask-input]').focus();
+  }
+
+  function open() {
     App.sheet('<div class="sheet-pad ask"><div class="label">Ask Home HQ</div>' +
       '<div class="ask-log" aria-live="polite"></div>' +
-      (voice ? '<div class="ask-voice"><button type="button" class="btn btn--solid ask-talk" data-ask-talk>' + App.icon('mic', 26) + 'Talk</button>' +
+      '<div class="ask-voice" data-ask-voice hidden><button type="button" class="btn btn--solid ask-talk" data-ask-talk>' + App.icon('mic', 26) + 'Talk</button>' +
         '<button type="button" class="btn btn--solid ask-stop" data-ask-stop hidden>Stop</button>' +
         '<div class="ask-meter"><i data-meter></i></div><span class="ask-voice-state" data-ask-voice-state></span>' +
-        '<button type="button" class="btn btn--ghost ask-type" data-ask-type>Type instead</button></div>' : '') +
-      '<form class="ask-row" data-ask-form' + (voice ? ' hidden' : '') + '>' +
+        '<button type="button" class="btn btn--ghost ask-type" data-ask-type>Type instead</button></div>' +
+      '<form class="ask-row" data-ask-form>' +
       '<input class="ask-input" data-ask-input placeholder="Add milk · Mark the dishes done · What\'s on after school?" autocomplete="off">' +
       '<button class="btn btn--solid" data-ask-send>Ask</button></form>' +
       '<button class="btn btn--ghost ask-undo" data-ask-undo hidden>' + App.icon('undo', 22) + 'Undo</button>' +
-      (S.voice && S.voice.listen && !S.hear ? '<p class="sheet-p">Talking needs OpenRouter set up in Lamp on the Mac. You can type instead.</p>' : '') +
+      '<p class="sheet-p ask-note" data-ask-note hidden>Talking needs OpenRouter set up in Lamp on the Mac. You can type instead.</p>' +
       '</div>', {
       cls: 'sheet--wide',
       onClose: function () {
-        // Closing ends the session: a recording is thrown away, and an answer, a transcript or a follow-up listen that
-        // comes after does nothing.
+        // Closing ends the session: a recording is thrown away, and an answer, a transcript, a follow-up listen or
+        // the voice answering late that comes after does nothing.
         end();
         S.pending = null;
         clearInterval(S.awake);
@@ -288,6 +305,8 @@
         S.session++;
         S.pending = null;
         S.el = sheet;
+        S.lines = 0;
+        var session = S.session;
         // Talking isn't touching: while Ask is open the screen stays as it is, not off to the photo frame or the night
         // clock (which would close the sheet and cancel the turn).
         App.resetIdle();
@@ -297,13 +316,20 @@
         sheet.querySelector('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; S.heard++; if (!S.listening) voiceState('idle', ''); ask(t); });
         sheet.querySelector('[data-ask-undo]').addEventListener('click', undo);
         var talk = sheet.querySelector('[data-ask-talk]'), stop = sheet.querySelector('[data-ask-stop]'), type = sheet.querySelector('[data-ask-type]');
-        if (talk) talk.addEventListener('click', listen);
-        if (stop) { stop.addEventListener('click', stopListening); stop.addEventListener('keydown', function (e) { if (e.repeat) e.preventDefault(); }); }
-        if (type) type.addEventListener('click', typeInstead);
-        // With a voice, opening Ask is listening (one press); otherwise it's typing.
-        if (voice && S.voice.permission !== 'denied') listen();
-        else if (voice) { voiceState('idle', ''); talk.focus(); }
-        else input.focus();
+        talk.addEventListener('click', listen);
+        stop.addEventListener('click', stopListening);
+        stop.addEventListener('keydown', function (e) { if (e.repeat) e.preventDefault(); });
+        type.addEventListener('click', typeInstead);
+        if (!S.ready) return begin();
+        // Opened just after the page loaded, before the app around it has said whether it can hear: the sheet is up
+        // and typed at once, so Back and closing work as ever, and it turns to listening when the answer comes, only
+        // while this same sheet is still open and untouched.
+        setMode(false);
+        input.focus();
+        S.ready.then(function () {
+          if (!live(session) || S.turn || S.listening || input.value || S.lines) return;
+          begin();
+        });
       }
     });
   }
@@ -312,17 +338,7 @@
   // is let go and no follow-up listen starts.
   document.addEventListener('visibilitychange', function () { if (document.hidden) end(); });
 
-  // Ask pressed before the voice has answered (just after the page loads): it waits for it a moment, so the sheet opens
-  // listening where it can, and typed after at most a second and a half either way.
-  function openWhenReady() {
-    if (!S.ready) return open();
-    var opened = false;
-    function go() { if (!opened) { opened = true; open(); } }
-    S.ready.then(go, go);
-    setTimeout(go, 1500);
-  }
-
-  App.openAsk = openWhenReady;
+  App.openAsk = open;
   App.on('ready', function () {
     if (!window.LampAI || !LampAI.act) return;
     LampAI.isAvailable('act').then(function (yes) {
@@ -331,7 +347,7 @@
       var b = document.createElement('button');
       b.className = 'rail-item rail-ask';
       b.innerHTML = App.icon('mic', 26) + '<span>Ask</span>';
-      b.addEventListener('click', openWhenReady);
+      b.addEventListener('click', open);
       rail.insertBefore(b, settings);
     });
     // Voice: asked of the app around the page (never prompting), and whether Lamp can transcribe.
