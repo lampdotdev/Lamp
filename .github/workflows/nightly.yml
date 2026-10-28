@@ -18,10 +18,12 @@ on:
 permissions:
   contents: write
 
-# A push on the heels of another makes the earlier build pointless.
+# A build takes longer than main often goes between pushes, so one under way always finishes: cancelled by each newer
+# push, nightlies would rarely ship on a busy day. Meanwhile GitHub keeps only the latest push waiting, dropping any
+# older one, so the next nightly is always of main as it is then, and builds never pile up.
 concurrency:
   group: nightly
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   nightly:
