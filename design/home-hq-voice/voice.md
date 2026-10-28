@@ -17,9 +17,11 @@ into text, and `act` does it.
 How a host records:
 
 - **Format:** both hosts convert to 16 kHz mono signed 16-bit little-endian PCM in a WAV.
-- **When it ends:** as finished (`quiet`) only after quiet that was really heard: 1.2 s under the speech level after
-  speech, or 1.2 s under the floor (and past 6 s) when there was sound that never stood out from the room. With no
-  sound at all by 6 s it's `nothing`, and anything still going at 15 s is `cap`, which is never acted on. Speech is a
+- **When it ends:** as finished (`quiet`) only after 1.2 s of quiet audio actually received: under the speech level
+  after speech, or under the floor (and past 6 s) when there was sound that never stood out from the room. Audio that
+  stops coming is never quiet: after a second without any, the recording ends as an `error` (the microphone stopped
+  sending), which is never acted on. With no sound at all by 6 s it's `nothing`, and anything still going at 15 s is
+  `cap`, which is never acted on. Stop always keeps what was said so far. Speech is a
   level three times the room's: the quietest it has been lately, which follows a dip at once and, until speech is
   heard, rises back over a couple of seconds. So speech from the first moment counts once its first pause shows the
   room, and talking on without a pause is never taken for the room. The limits run on the clock, so a recording whose

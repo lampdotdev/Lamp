@@ -395,6 +395,9 @@ enum GameAndroid {
                     event(call, JSONObject().put("event", "level").put("session", mine.tag).put("level", minOf(1.0, level * 4)).put("speech", speech))
                 }
                 val audio = mine.pcm.toByteArray()
+                // The microphone stopped sending mid-way: what it heard may be cut off, so it's an error, not something to act on.
+                if (ended == "lost") return JSONObject().put("ended", "error").put("error", "The microphone stopped sending sound. Try again.")
+                    .put("peak", mine.end.peak).put("speech", mine.end.speechAt >= 0).put("input", routed)
                 val out = JSONObject().put("ended", ended).put("seconds", audio.size / 2.0 / RATE).put("peak", mine.end.peak)
                     .put("speech", mine.end.speechAt >= 0).put("input", routed)
                 if (ended == "stopped" || ended == "quiet" || ended == "cap") out.put("audio", android.util.Base64.encodeToString(wav(audio), android.util.Base64.NO_WRAP))
@@ -457,30 +460,38 @@ enum GameAndroid {
      *  Speech is a level three times the room's, and above a floor. The room is the quietest it has been lately: it
      *  follows a dip at once and, until speech is heard, rises back over a couple of seconds, so speech from the very
      *  first moment counts once its first pause shows the room; once speech is heard the room stays put, so talking on
-     *  without a pause is never taken for the room. A recording ends as finished (`quiet`) only after quiet that was
-     *  really heard: 1.2 s under the speech level once there was speech, or 1.2 s under the floor once there was only
-     *  sound. With no sound at all by 6 s it's `nothing`. Anything still going at 15 s is `cap`, which is never acted
-     *  on. Asked every frame whether audio comes or not, so the limits hold when audio stops. A rule of thumb on
-     *  levels, not a way of telling speech from a television. */
+     *  without a pause is never taken for the room. A recording ends as finished (`quiet`) only after 1.2 s of quiet
+     *  that was received: audio under the speech level after speech, or under the floor (past 6 s) when there was only
+     *  sound. Missing audio is never quiet: a stream that stops coming for a second ends as `lost`, which nothing acts
+     *  on. With no sound at all by 6 s it's `nothing`. Anything still going at 15 s is `cap`, which is never acted on.
+     *  Asked every frame whether audio comes or not, so these hold when audio stops. A rule of thumb on levels, not a
+     *  way of telling speech from a television. */
     class LampVoiceEnd {
-        companion object { const val MAX = 15.0; const val WAIT = 6.0; const val QUIET = 1.2; const val FLOOR = 0.02; const val RISE = 2.0 }
+        companion object { const val MAX = 15.0; const val WAIT = 6.0; const val QUIET = 1.2; const val FLOOR = 0.02; const val RISE = 2.0; const val STALL = 1.0 }
         var speechAt = -1.0; private set
         var peak = 0.0; private set
-        private var room = -1.0; private var at = 0.0; private var lastLoud = 0.0; private var lastSound = -1.0
+        private var room = -1.0; private var at = 0.0; private var lastHeard = -1.0; private var sound = false
+        // When the quiet that's going on now began, by the audio received: under the speech level, and under the floor.
+        private var quietFrom = -1.0; private var silentFrom = -1.0
         @Synchronized fun heard(level: Double, top: Double, t: Double) {
             peak = maxOf(peak, top)
             if (room < 0 || level < room) room = level
             else if (speechAt < 0) room += (level - room) * minOf(1.0, (t - at) / RISE)
             at = t
-            if (level > FLOOR) lastSound = t
-            if (level > maxOf(room * 3, FLOOR)) { if (speechAt < 0) speechAt = t; lastLoud = t }
+            lastHeard = t
+            if (level > FLOOR) { sound = true; silentFrom = -1.0 } else if (silentFrom < 0) silentFrom = t
+            if (level > maxOf(room * 3, FLOOR)) { if (speechAt < 0) speechAt = t; quietFrom = -1.0 }
+            else if (quietFrom < 0) quietFrom = t
         }
         @Synchronized fun ended(t: Double): String? = when {
             t >= MAX -> "cap"
-            speechAt >= 0 -> if (t - lastLoud >= QUIET) "quiet" else null
-            lastSound < 0 -> if (t >= WAIT) "nothing" else null
-            // Sound that never stood out from the room: finished only once it has stopped, after the wait for speech.
-            else -> if (t >= WAIT && t - lastSound >= QUIET) "quiet" else null
+            lastHeard < 0 -> if (t >= WAIT) "nothing" else null
+            speechAt >= 0 && quietFrom >= 0 && lastHeard - quietFrom >= QUIET -> "quiet"
+            speechAt < 0 && sound && t >= WAIT && silentFrom >= 0 && lastHeard - silentFrom >= QUIET -> "quiet"
+            speechAt < 0 && !sound && t >= WAIT -> "nothing"
+            // Audio that has stopped coming isn't quiet: what was heard may have been cut off.
+            t - lastHeard >= STALL -> "lost"
+            else -> null
         }
     }
 

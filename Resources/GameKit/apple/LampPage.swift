@@ -271,6 +271,8 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         #endif
         let seconds = Double(pcm.count / 2) / Self.rate
         var answer: [String: Any] = ["ended": ended, "seconds": seconds, "peak": end.peak, "speech": end.speechAt != nil]
+        // The microphone stopped sending mid-way: what it heard may be cut off, so it's an error, not something to act on.
+        if ended == "lost" { answer["ended"] = "error"; answer["error"] = "The microphone stopped sending sound. Try again." }
         if ended == "stopped" || ended == "quiet" || ended == "cap" { answer["audio"] = Self.wav(pcm).base64EncodedString() }
         pcm = Data(); session = ""
         reply?(answer, nil); reply = nil
@@ -318,31 +320,38 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
 /// LampPageGateway.kt). Speech is a level three times the room's, and above a floor. The room is the quietest it has
 /// been lately: it follows a dip at once and, until speech is heard, rises back over a couple of seconds, so speech
 /// from the very first moment counts once its first pause shows the room; once speech is heard the room stays put, so
-/// talking on without a pause is never taken for the room. A recording ends as finished (`quiet`) only after quiet
-/// that was really heard: 1.2 s under the speech level once there was speech, or 1.2 s under the floor once there was
-/// only sound. With no sound at all by 6 s it's `nothing`. Anything still going at 15 s is `cap`, which is never acted
-/// on. Asked on a timer as well as for each chunk, so the limits hold when audio stops coming. A rule of thumb on
-/// levels, not a way of telling speech from a television.
+/// talking on without a pause is never taken for the room. A recording ends as finished (`quiet`) only after 1.2 s of
+/// quiet that was received: audio under the speech level after speech, or under the floor (past 6 s) when there was
+/// only sound. Missing audio is never quiet: a stream that stops coming for a second ends as `lost`, which nothing acts
+/// on. With no sound at all by 6 s it's `nothing`. Anything still going at 15 s is `cap`, which is never acted on.
+/// Asked on a timer as well as for each chunk, so these hold when audio stops coming. A rule of thumb on levels, not a
+/// way of telling speech from a television.
 struct LampVoiceEnd {
-    static let maxSeconds = 15.0, waitSeconds = 6.0, quietSeconds = 1.2, floor = 0.02, rise = 2.0
+    static let maxSeconds = 15.0, waitSeconds = 6.0, quietSeconds = 1.2, floor = 0.02, rise = 2.0, stallSeconds = 1.0
     private(set) var speechAt: Double?
     private(set) var peak = 0.0
-    private var room: Double?, at = 0.0, lastLoud = 0.0, lastSound: Double?
+    private var room: Double?, at = 0.0, lastHeard: Double?, sound = false
+    /// When the quiet that's going on now began, by the audio received: under the speech level, and under the floor.
+    private var quietFrom: Double?, silentFrom: Double?
 
     mutating func heard(level: Double, top: Double, at t: Double) {
         peak = max(peak, top)
         if let r = room, level >= r { if speechAt == nil { room = r + (level - r) * min(1, (t - at) / Self.rise) } } else { room = level }
         at = t
-        if level > Self.floor { lastSound = t }
-        if level > max((room ?? 0) * 3, Self.floor) { if speechAt == nil { speechAt = t }; lastLoud = t }
+        lastHeard = t
+        if level > Self.floor { sound = true; silentFrom = nil } else if silentFrom == nil { silentFrom = t }
+        if level > max((room ?? 0) * 3, Self.floor) { if speechAt == nil { speechAt = t }; quietFrom = nil }
+        else if quietFrom == nil { quietFrom = t }
     }
 
     func ended(at t: Double) -> String? {
         if t >= Self.maxSeconds { return "cap" }
-        if speechAt != nil { return t - lastLoud >= Self.quietSeconds ? "quiet" : nil }
-        guard let sound = lastSound else { return t >= Self.waitSeconds ? "nothing" : nil }
-        // Sound that never stood out from the room: finished only once it has stopped, after the wait for speech.
-        return t >= Self.waitSeconds && t - sound >= Self.quietSeconds ? "quiet" : nil
+        guard let last = lastHeard else { return t >= Self.waitSeconds ? "nothing" : nil }
+        if speechAt != nil, let q = quietFrom, last - q >= Self.quietSeconds { return "quiet" }
+        if speechAt == nil, sound, t >= Self.waitSeconds, let q = silentFrom, last - q >= Self.quietSeconds { return "quiet" }
+        if speechAt == nil, !sound, t >= Self.waitSeconds { return "nothing" }
+        // Audio that has stopped coming isn't quiet: what was heard may have been cut off.
+        return t - last >= Self.stallSeconds ? "lost" : nil
     }
 }
 

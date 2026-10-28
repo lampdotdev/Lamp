@@ -4,8 +4,8 @@ import XCTest
 /// When a recording ends, as the hosts decide it: `LampVoiceEnd` in LampPage.swift (Mac, iPhone, iPad) and in Android's
 /// LampPageGateway.kt, each compiled from its own source and run through the same recordings, by level and time. Speech
 /// from the very first moment is heard as speech; sound that never stood out from the room is still sent once it has
-/// really stopped, and never ended as finished while it goes on; and the clock ends a recording whose audio has stopped
-/// coming. On Android also `LampVoiceTake`, the
+/// really stopped, and never ended as finished while it goes on; quiet is only quiet that was heard, so a recording
+/// whose audio stops coming mid-sentence ends as lost, not as finished; and the clock ends it either way. On Android also `LampVoiceTake`, the
 /// loop around the microphone: a recording cancelled while no audio comes ends at once, on its own, and a read that
 /// fails is a failure, not a wait.
 final class VoiceEndTests: XCTestCase {
@@ -26,8 +26,10 @@ final class VoiceEndTests: XCTestCase {
             // Speech that's been heard and then goes on without a pause isn't taken for the room.
             ("talking on", words + run(4, 0.2) + run(3, 0.003), "quiet", 6.4...6.8),
             ("silence", run(7, 0.001), "nothing", 5.9...6.1),
-            // Audio stops coming after a few words: the clock ends it.
-            ("audio stops", words, "quiet", 2.4...2.8),
+            // Audio stops coming mid-sentence (the microphone stalls or goes away): quiet is only what was heard, so
+            // this ends as lost, which nothing acts on, a second after the last sound came.
+            ("audio stops", words, "lost", 2.35...2.5),
+            ("sound then nothing", run(3, 0.1), "lost", 3.95...4.1),
             ("no audio", [], "nothing", 5.9...6.1),
             ("too long", (0..<40).flatMap { _ in run(0.2, 0.2) + run(0.2, 0.003) }, "cap", 14.9...15.1),
         ]

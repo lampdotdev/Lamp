@@ -1296,8 +1296,9 @@ enum DeviceSupport {
        *     LampVoice.speak('Added milk.').then(function (finished) { ... });
        *
        * A recording ends by itself only after quiet that was really heard ('quiet'), as 'nothing' when no sound at all
-       * came in 6 seconds, or at 15 seconds ('cap', which may have cut the person off: never act on it), on the clock
-       * whether audio is still coming or not. Only 'quiet', 'stopped' and 'cap' carry `audio`.
+       * came in 6 seconds, as 'error' when the microphone stops sending part way (what it heard may be cut off), or at
+       * 15 seconds ('cap', which may have cut the person off: never act on it), on the clock whether audio is still
+       * coming or not. Only 'quiet', 'stopped' and 'cap' carry `audio`.
        */
       var voiceApple = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampVoice;
       var voiceAndroid = !voiceApple && window.lampVoiceHost && typeof window.lampVoiceHost.postMessage === 'function' ? window.lampVoiceHost : null;
