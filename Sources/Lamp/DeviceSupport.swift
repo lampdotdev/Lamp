@@ -510,7 +510,8 @@ enum DeviceSupport {
         function attempt(i, round) {
           if (left() <= 0) return Promise.reject(new Failure('Lamp on your Mac took too long to answer.'));
           if (i >= list.length) {
-            // What the person said is paid for once it's heard: each way to the Mac once, never all of them again.
+            // What the person said is paid for once it's heard: each way to the Mac once, never all of them again. Lamp
+            // knows a recording by its id, so one that reaches it twice this way is still transcribed and charged once.
             if (round === 0 && left() > 4000 && path !== '/ai/hear') return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
             return Promise.reject(new Failure('Couldn\'t reach Lamp on your Mac. Keep this device on the same Wi-Fi as the Mac, with Lamp open, and try again.'));
           }
@@ -1036,13 +1037,15 @@ enum DeviceSupport {
          * What the person said, as text: `audio` is a WAV in base64 as `LampVoice.listen` gives it (16 kHz mono 16-bit,
          * at most 15 seconds), transcribed by Lamp on the Mac with the AI set up there (OpenRouter's Scribe), which
          * pays for it. Resolves { text, nothing (true when no words were heard), seconds }. Check
-         * `LampAI.isAvailable('hear')` first. It's sent once: a request that times out may still have been paid for.
+         * `LampAI.isAvailable('hear')` first. Each call is transcribed and paid for once, even when it reaches Lamp by
+         * more than one way to the Mac; a call that times out on the page's side may still have been paid for.
          *
          *     LampAI.hear(heard.audio).then(function (r) { if (!r.nothing) ask(r.text); });
          */
         hear: function (audio, options) {
           var o = options || {};
-          return post('/ai/hear', { audio: String(audio || '') }, o.timeout || 45000, o.deadline).then(function (reply) {
+          var op = 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+          return post('/ai/hear', { audio: String(audio || ''), op: op }, o.timeout || 45000, o.deadline).then(function (reply) {
             return { text: typeof reply.text === 'string' ? reply.text : '', nothing: reply.nothing === true || !reply.text, seconds: reply.seconds || 0 };
           });
         },
@@ -1291,8 +1294,10 @@ enum DeviceSupport {
        *     LampVoice.stop('s1');     // keep what was said so far      LampVoice.cancel('s1');   // throw it away
        *     LampVoice.speak('Added milk.').then(function (finished) { ... });
        *
-       * A recording ends by itself after a moment of quiet following speech, after 6 seconds with nothing said, or at
-       * 15 seconds ('cap', which may have cut the person off). Only 'quiet', 'stopped' and 'cap' carry `audio`.
+       * A recording ends by itself after a moment of quiet following speech, at 6 seconds when nothing stood out from
+       * the room ('nothing' when no sound came at all; otherwise it's sent as 'quiet' to be transcribed), or at 15
+       * seconds ('cap', which may have cut the person off), on the clock whether audio is still coming or not. Only
+       * 'quiet', 'stopped' and 'cap' carry `audio`.
        */
       var voiceApple = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampVoice;
       var voiceAndroid = !voiceApple && window.lampVoiceHost && typeof window.lampVoiceHost.postMessage === 'function' ? window.lampVoiceHost : null;

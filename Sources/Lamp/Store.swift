@@ -11290,7 +11290,7 @@ final class Store: ObservableObject {
         // One step of the app's own agent loop (`LampAI.act`): its body has no prompt, so it goes before that check.
         // What the person said, as text (`LampAI.hear`): its body is audio, not a prompt, so it goes before that check too.
         if request.path == "/ai/hear" {
-            let (status, json, cost) = await AppHear.handle(request.body)
+            let (status, json, cost) = await AppHear.handle(request.body, app: project.id)
             if cost > 0 { record(project, cost: cost) }
             return (status, json)
         }

@@ -112,8 +112,6 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
 /// the iPhone and iPad, the app leaving the screen) cancels it whether the page says so or not.
 @MainActor final class LampPageVoice: NSObject, WKScriptMessageHandlerWithReply, AVSpeechSynthesizerDelegate {
     static let rate = 16_000.0
-    /// The longest one recording may be, and how long silence may go on before anything is said.
-    static let maxSeconds = 15.0, waitSeconds = 6.0, quietSeconds = 1.2
 
     private let scheme: String
     private weak var page: WKWebView?
@@ -122,9 +120,12 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
     private var session = ""
     private var pcm = Data()
     private var reply: (@MainActor @Sendable (Any?, String?) -> Void)?
-    private var speechAt: Double?, quietSince: Double?, noise = 0.0, started = Date(), peak = 0.0
+    private var end = LampVoiceEnd(), started = 0.0
+    /// Asks `end` on the clock, so a recording ends on time even when audio stops coming.
+    private var tick: Timer?
     private let voice = AVSpeechSynthesizer()
-    private var spoken: (@MainActor @Sendable (Any?, String?) -> Void)?
+    /// Each utterance (kept, so its identity isn't reused) with its reply, so a late callback for one never answers another.
+    private var spoken: [ObjectIdentifier: (AVSpeechUtterance, @MainActor @Sendable (Any?, String?) -> Void)] = [:]
     #if os(iOS)
     private var leaving: NSObjectProtocol?
     #endif
@@ -179,7 +180,7 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         }
         #endif
         return ["listen": input, "speak": true, "permission": permission, "why": input ? "" : "This device has no microphone.",
-                "maxSeconds": Self.maxSeconds]
+                "maxSeconds": LampVoiceEnd.maxSeconds]
     }
 
     private func listen(session tag: String, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) async {
@@ -206,7 +207,7 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
             session = ""
             return replyHandler(["ended": "error", "error": "The microphone isn't available."], nil)
         }
-        pcm = Data(); speechAt = nil; quietSince = nil; noise = 0; peak = 0; started = Date()
+        pcm = Data(); end = LampVoiceEnd(); started = ProcessInfo.processInfo.systemUptime
         reply = replyHandler
         input.installTap(onBus: 0, bufferSize: 2048, format: from) { [weak self] buffer, _ in
             // On the audio thread: converted to 16 kHz mono 16-bit here, the rest on the main thread.
@@ -219,6 +220,16 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
             return replyHandler(["ended": "error", "error": "The microphone didn't start: \(error.localizedDescription)"], nil)
         }
         self.engine = engine
+        tick = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check(session: tag) }
+        }
+    }
+
+    private var elapsed: Double { ProcessInfo.processInfo.systemUptime - started }
+
+    private func check(session tag: String) {
+        guard tag == session, engine != nil, let ended = end.ended(at: elapsed) else { return }
+        finish(ended)
     }
 
     nonisolated private static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter, to format: AVAudioFormat) -> Data? {
@@ -234,8 +245,7 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         return Data(bytes: samples[0], count: Int(out.frameLength) * 2)
     }
 
-    /// Each converted chunk: kept, its level told to the page, and the end of what was said worked out from the quiet
-    /// after it: speech is what stands out from the room's own level, and only quiet after speech ends a recording.
+    /// Each converted chunk: kept, its level told to the page, and whether that ends it asked of `end`.
     private func heard(_ chunk: Data, session tag: String) {
         guard tag == session, engine != nil else { return }
         pcm.append(chunk)
@@ -244,15 +254,9 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
             for s in raw.bindMemory(to: Int16.self) { let v = Double(s) / 32768; sum += v * v; top = max(top, abs(v)) }
         }
         let level = (sum / Double(max(1, chunk.count / 2))).squareRoot()
-        peak = max(peak, top)
-        let t = Date().timeIntervalSince(started)
-        if t < 0.3 { noise = max(noise, level) }
-        let loud = level > max(noise * 3, 0.02)
-        if loud { if speechAt == nil { speechAt = t }; quietSince = nil } else if speechAt != nil, quietSince == nil { quietSince = t }
-        tell(["event": "level", "session": tag, "level": min(1, level * 4), "speech": speechAt != nil])
-        if t >= Self.maxSeconds { finish("cap") }
-        else if speechAt == nil, t >= Self.waitSeconds { finish("nothing") }
-        else if let q = quietSince, t - q >= Self.quietSeconds { finish("quiet") }
+        end.heard(level: level, top: top, at: elapsed)
+        tell(["event": "level", "session": tag, "level": min(1, level * 4), "speech": end.speechAt != nil])
+        check(session: tag)
     }
 
     /// Ends the recording: kept as a WAV unless it was cancelled, or nothing was said.
@@ -261,11 +265,12 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         self.engine = nil
+        tick?.invalidate(); tick = nil
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
         let seconds = Double(pcm.count / 2) / Self.rate
-        var answer: [String: Any] = ["ended": ended, "seconds": seconds, "peak": peak, "speech": speechAt != nil]
+        var answer: [String: Any] = ["ended": ended, "seconds": seconds, "peak": end.peak, "speech": end.speechAt != nil]
         if ended == "stopped" || ended == "quiet" || ended == "cap" { answer["audio"] = Self.wav(pcm).base64EncodedString() }
         pcm = Data(); session = ""
         reply?(answer, nil); reply = nil
@@ -288,8 +293,6 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
     private func speak(_ text: String, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         guard !text.isEmpty, engine == nil else { return replyHandler(false, nil) }
         if voice.isSpeaking { voice.stopSpeaking(at: .immediate) }
-        spoken?(false, nil)
-        spoken = replyHandler
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -297,14 +300,45 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
             ?? AVSpeechSynthesisVoice(language: "en-US")
+        spoken[ObjectIdentifier(utterance)] = (utterance, replyHandler)
         voice.speak(utterance)
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.spoken?(true, nil); self.spoken = nil }
+        let key = ObjectIdentifier(utterance)
+        Task { @MainActor in self.spoken.removeValue(forKey: key)?.1(true, nil) }
     }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.spoken?(false, nil); self.spoken = nil }
+        let key = ObjectIdentifier(utterance)
+        Task { @MainActor in self.spoken.removeValue(forKey: key)?.1(false, nil) }
+    }
+}
+
+/// When one recording ends, from its levels and the clock alone (the same rule as LampVoiceEnd in Android's
+/// LampPageGateway.kt): speech is a level three times the room's, and above a floor. The room is the quietest it has
+/// been lately: it follows a dip at once and rises back over a couple of seconds, so speech from the very first moment
+/// counts as soon as its first pause shows the room. Quiet for 1.2 s after speech ends it; at 6 s with no speech it
+/// ends as nothing, unless something above the floor was heard, which is sent to be transcribed rather than thrown
+/// away; at 15 s it ends cut off. Asked on a timer as well as for each chunk, so it ends on time when audio stops. A
+/// rule of thumb on levels, not a way of telling speech from a television.
+struct LampVoiceEnd {
+    static let maxSeconds = 15.0, waitSeconds = 6.0, quietSeconds = 1.2, floor = 0.02, rise = 2.0
+    private(set) var speechAt: Double?
+    private(set) var peak = 0.0
+    private var room: Double?, at = 0.0, lastLoud = 0.0, sound = false
+
+    mutating func heard(level: Double, top: Double, at t: Double) {
+        peak = max(peak, top)
+        if let r = room, level >= r { room = r + (level - r) * min(1, (t - at) / Self.rise) } else { room = level }
+        at = t
+        if level > Self.floor { sound = true }
+        if level > max((room ?? 0) * 3, Self.floor) { if speechAt == nil { speechAt = t }; lastLoud = t }
+    }
+
+    func ended(at t: Double) -> String? {
+        if t >= Self.maxSeconds { return "cap" }
+        guard speechAt != nil else { return t >= Self.waitSeconds ? (sound ? "quiet" : "nothing") : nil }
+        return t - lastLoud >= Self.quietSeconds ? "quiet" : nil
     }
 }
 

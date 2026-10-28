@@ -5,7 +5,8 @@ import XCTest
 /// Home HQ's Ask (Resources/Starters/homehq/Web/js/agent.js) by voice, with stand-ins for the sheet, the app around the
 /// page (`LampVoice`) and Lamp (`LampAI.hear`, `LampAI.act`): one press listens, the press that opened it can't stop it,
 /// and nothing heard, transcribed or answered after Ask closes is acted on; a recording cut off at the limit isn't
-/// acted on either; and where there's no voice, typing is there.
+/// acted on either; a transcription that a newer recording or typing has overtaken is dropped; and where there's no
+/// voice, typing is there.
 @MainActor
 final class HomeHQVoiceTests: XCTestCase {
     private let agent = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -36,9 +37,9 @@ final class HomeHQVoiceTests: XCTestCase {
               dayText: function () { return '2026-10-28'; }, now: function () { return new Date(); }, changesOf: function () { return []; }, resetIdle: function () {},
               person: function () { return { name: 'x' }; },
               sheet: function (html, o) { registry = {}; sheet = o; var s = el('sheet'); s.innerHTML = html; registry['[data-ask-form]'] = el('form'); if (html.indexOf('data-ask-form hidden') > -1) registry['[data-ask-form]'].hidden = true; o.onMount(s, function () { o.onClose(); }); } };
-            var listenDone = null, hearDone = null, actDone = null, acts = [];
+            var listenDone = null, hearDone = null, hears = [], actDone = null, acts = [], statusDone = null;
             var LampVoice = {
-              status: function () { return Promise.resolve(\(voice)); },
+              status: function () { return \(voice == "held" ? "new Promise(function (r) { statusDone = r; })" : "Promise.resolve(\(voice))"); },
               listen: function (o) { log.push('listen:' + o.session); return new Promise(function (r) { listenDone = r; }); },
               stop: function (s) { log.push('stop:' + s); return Promise.resolve(); },
               cancel: function (s) { log.push('cancel:' + s); return Promise.resolve(); },
@@ -48,7 +49,7 @@ final class HomeHQVoiceTests: XCTestCase {
             var LampAI = {
               act: function (request) { acts.push(request); log.push('act'); var r; var p = new Promise(function (x) { r = x; });
                 actDone = r; return { id: 't' + acts.length, result: p, cancel: function () { log.push('cancel turn'); } }; },
-              hear: function (audio) { log.push('hear'); return new Promise(function (r) { hearDone = r; }); },
+              hear: function (audio) { log.push('hear'); return new Promise(function (r) { hearDone = r; hears.push(r); }); },
               isAvailable: function (what) { return Promise.resolve(what === 'hear' ? \(hear) : true); },
               whenText: String, date: function (t) { return new Date(); }
             };
@@ -128,5 +129,52 @@ final class HomeHQVoiceTests: XCTestCase {
         settle(c)
         XCTAssertEqual(log(c), [])
         XCTAssertEqual(c.evaluateScript("registry['[data-ask-form]'].hidden")?.toBool(), false)
+    }
+
+    func testTypingInsteadDropsATranscriptionStillOnItsWay() throws {
+        let c = try page()
+        c.evaluateScript("App.openAsk();")
+        settle(c)
+        c.evaluateScript("listenDone({ ended: 'quiet', audio: 'UklGRg==', seconds: 1.4, speech: true });")
+        settle(c)
+        // While "Add milk" is being worked out, the person types something else, and that turn finishes.
+        c.evaluateScript("""
+            registry['[data-ask-type]'].fire('click');
+            registry['[data-ask-input]'].value = 'Mark the dishes done'; registry['[data-ask-form]'].fire('submit');
+            """)
+        settle(c)
+        c.evaluateScript("actDone({ done: [], failed: [], skipped: [], reply: 'Done.', turn: {} });")
+        settle(c)
+        c.evaluateScript("hearDone({ text: 'Add milk', nothing: false });")
+        settle(c)
+        XCTAssertEqual(c.evaluateScript("JSON.stringify(acts)")?.toString(), #"["Mark the dishes done"]"#)
+    }
+
+    func testAnOlderRecordingsTranscriptIsDroppedOnceAnotherHasStarted() throws {
+        let c = try page()
+        c.evaluateScript("App.openAsk();")
+        settle(c)
+        c.evaluateScript("listenDone({ ended: 'quiet', audio: 'UklGRg==', seconds: 1.4, speech: true });")
+        settle(c)
+        // Talk again while the first is still being worked out; the first's words come back during the second.
+        c.evaluateScript("registry['[data-ask-talk]'].fire('click');")
+        settle(c)
+        c.evaluateScript("hears[0]({ text: 'Add milk', nothing: false });")
+        settle(c)
+        XCTAssertEqual(c.evaluateScript("acts.length")?.toInt32(), 0)
+        c.evaluateScript("listenDone({ ended: 'quiet', audio: 'UklGRg==', seconds: 1.1, speech: true });")
+        settle(c)
+        c.evaluateScript("hears[1]({ text: 'Add eggs', nothing: false });")
+        settle(c)
+        XCTAssertEqual(c.evaluateScript("JSON.stringify(acts)")?.toString(), #"["Add eggs"]"#)
+    }
+
+    func testAskOpenedBeforeTheVoiceAnswersStillListens() throws {
+        let c = try page(voice: "held")
+        c.evaluateScript("App.openAsk();")
+        settle(c)
+        c.evaluateScript("statusDone({ listen: true, speak: true, permission: 'granted' });")
+        settle(c)
+        XCTAssertEqual(log(c), ["listen:ask1-1"])
     }
 }

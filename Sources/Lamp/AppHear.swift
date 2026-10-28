@@ -20,42 +20,33 @@ enum AppHear {
 
     struct Failure: Error, Equatable { let status: Int; let message: String }
 
-    /// A WAV as the hosts make it, read back: its PCM samples' byte count and length in seconds. Anything else
-    /// (another format, a header that lies about its size, too short or too long) is a sentence why not.
+    /// A WAV exactly as the hosts write it, read back: its PCM samples' byte count and length in seconds. The hosts
+    /// write one header, 44 bytes, and the samples straight after it, so that is all that's taken: every field of it,
+    /// the RIFF and data lengths true to the file, and nothing before or after the samples. Anything else is a
+    /// sentence why not, before anything is paid for.
     static func check(wav data: Data) -> Result<(bytes: Int, seconds: Double), Failure> {
         func bad(_ why: String) -> Result<(bytes: Int, seconds: Double), Failure> { .failure(Failure(status: 400, message: why)) }
         let b = [UInt8](data)
         func u32(_ i: Int) -> Int { Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 }
         func u16(_ i: Int) -> Int { Int(b[i]) | Int(b[i + 1]) << 8 }
         func tag(_ i: Int) -> String { String(decoding: b[i..<i + 4], as: UTF8.self) }
-        guard b.count >= 44, tag(0) == "RIFF", tag(8) == "WAVE" else { return bad("The audio isn't a WAV.") }
-        // The chunks after the header, in order: `fmt ` first, then `data` (others, such as LIST, are skipped).
-        var i = 12
-        var format: (pcm: Int, channels: Int, rate: Int, bits: Int)?
-        while i + 8 <= b.count {
-            let name = tag(i), size = u32(i + 4), body = i + 8
-            if name == "fmt " {
-                guard size >= 16, body + 16 <= b.count else { return bad("The WAV's format is cut short.") }
-                format = (u16(body), u16(body + 2), u32(body + 4), u16(body + 14))
-            } else if name == "data" {
-                guard let f = format else { return bad("The WAV has no format before its audio.") }
-                guard f.pcm == 1, f.channels == 1, f.rate == sampleRate, f.bits == 16 else {
-                    return bad("The audio must be 16 kHz mono 16-bit PCM; this is \(f.rate) Hz, \(f.channels) channel(s), \(f.bits)-bit, format \(f.pcm).")
-                }
-                // The samples actually there, never what the header claims beyond them.
-                guard size <= b.count - body else { return bad("The WAV says it holds more audio than it does.") }
-                guard size % 2 == 0 else { return bad("The WAV's audio isn't whole 16-bit samples.") }
-                let seconds = Double(size / 2) / Double(sampleRate)
-                guard seconds >= minSeconds else { return bad("That was too short to hear anything.") }
-                guard size <= maxAudioBytes else { return .failure(Failure(status: 413, message: "At most \(Int(maxSeconds)) seconds can be heard at once.")) }
-                return .success((size, seconds))
-            }
-            i = body + size + (size % 2)
+        guard b.count >= 44, tag(0) == "RIFF", tag(8) == "WAVE", tag(12) == "fmt ", tag(36) == "data" else {
+            return bad("The audio isn't a WAV as Lamp's apps record it.")
         }
-        return bad("The WAV has no audio.")
+        guard u32(16) == 16, u16(20) == 1, u16(22) == 1, u32(24) == sampleRate, u16(34) == 16 else {
+            return bad("The audio must be 16 kHz mono 16-bit PCM; this is \(u32(24)) Hz, \(u16(22)) channel(s), \(u16(34))-bit, format \(u16(20)).")
+        }
+        guard u32(28) == sampleRate * 2, u16(32) == 2 else { return bad("The WAV's header doesn't add up.") }
+        let size = u32(40)
+        guard u32(4) == b.count - 8, size == b.count - 44 else { return bad("The WAV's lengths aren't the file's.") }
+        guard size % 2 == 0 else { return bad("The WAV's audio isn't whole 16-bit samples.") }
+        let seconds = Double(size / 2) / Double(sampleRate)
+        guard seconds >= minSeconds else { return bad("That was too short to hear anything.") }
+        guard size <= maxAudioBytes else { return .failure(Failure(status: 413, message: "At most \(Int(maxSeconds)) seconds can be heard at once.")) }
+        return .success((size, seconds))
     }
 
-    /// The OpenRouter request: Scribe, without the ums and false starts (`no_verbatim`, as Switchboard asks).
+    /// The OpenRouter request: Scribe, without the ums and false starts (`no_verbatim`).
     static func openRouterBody(audio base64: String) -> [String: Any] {
         ["model": model, "input_audio": ["data": base64, "format": "wav"],
          "provider": ["options": ["elevenlabs": ["no_verbatim": true]]]]
@@ -80,15 +71,23 @@ enum AppHear {
                               cost: (usage["cost"] as? NSNumber)?.doubleValue ?? 0))
     }
 
+    typealias Transcribe = @MainActor (String) async -> Result<Heard, Failure>
+
+    /// Each recording the page sends carries its own id (`op`). The page tries each way to the Mac in turn, so the same
+    /// recording can arrive again when an answer is lost on the way back; it's transcribed and charged once, and the
+    /// copy waits for, or is given, that one answer. Kept per app for a few minutes.
+    private static var heard: [String: (at: Date, answer: Task<(Int, [String: Any], Double), Never>)] = [:]
+    static let keepFor: TimeInterval = 300
+
     /// One request, end to end: the probe, or the audio checked and transcribed. The status, the JSON and the cost.
-    /// It is one attempt: a step that times out on the page's side may still be billed here, and isn't sent twice.
-    @MainActor static func handle(_ data: Data) async -> (Int, [String: Any], Double) {
+    @MainActor static func handle(_ data: Data, app: String, hasKey: Bool = Provider.hasKey,
+                                  transcribe: @escaping Transcribe = openRouter) async -> (Int, [String: Any], Double) {
         guard data.count <= maxBody else { return (413, ["error": "At most \(Int(maxSeconds)) seconds can be heard at once."], 0) }
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return (400, ["error": "Send the audio as JSON."], 0) }
         if body["probe"] as? Bool == true {
-            return (200, ["hear": Provider.hasKey, "why": Provider.hasKey ? "" : unsupported, "max": maxSeconds], 0)
+            return (200, ["hear": hasKey, "why": hasKey ? "" : unsupported, "max": maxSeconds], 0)
         }
-        guard Provider.hasKey else { return (501, ["error": unsupported, "needs": "text", "setup": "openrouter"], 0) }
+        guard hasKey else { return (501, ["error": unsupported, "needs": "text", "setup": "openrouter"], 0) }
         guard let base64 = body["audio"] as? String, let wav = Data(base64Encoded: base64) else {
             return (400, ["error": "Send the audio as a base64 WAV in `audio`."], 0)
         }
@@ -96,6 +95,25 @@ enum AppHear {
         case .failure(let f): return (f.status, ["error": f.message], 0)
         case .success: break
         }
+        let now = Date()
+        heard = heard.filter { now.timeIntervalSince($0.value.at) < keepFor }
+        let op = (body["op"] as? String).flatMap { $0.isEmpty || $0.count > 80 ? nil : app + "\u{1}" + $0 }
+        if let op, let earlier = heard[op] {
+            let (status, json, _) = await earlier.answer.value
+            return (status, json, 0)
+        }
+        let answer = Task { @MainActor () -> (Int, [String: Any], Double) in
+            switch await transcribe(base64) {
+            case .success(let heard): return (200, ["text": heard.text, "seconds": heard.seconds, "nothing": heard.text.isEmpty], heard.cost)
+            case .failure(let f): return (f.status, ["error": f.message], 0)
+            }
+        }
+        if let op { heard[op] = (now, answer) }
+        return await answer.value
+    }
+
+    /// Scribe through OpenRouter, once.
+    @MainActor static func openRouter(_ base64: String) async -> Result<Heard, Failure> {
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/audio/transcriptions")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
@@ -105,14 +123,9 @@ enum AppHear {
         do {
             request.httpBody = try JSONSerialization.data(withJSONObject: openRouterBody(audio: base64))
             let (reply, response) = try await URLSession.shared.data(for: request)
-            switch read(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: reply) {
-            case .success(let heard):
-                return (200, ["text": heard.text, "seconds": heard.seconds, "nothing": heard.text.isEmpty], heard.cost)
-            case .failure(let f):
-                return (f.status, ["error": f.message], 0)
-            }
+            return read(status: (response as? HTTPURLResponse)?.statusCode ?? 0, body: reply)
         } catch {
-            return (502, ["error": "Couldn't reach OpenRouter to hear that: \(error.localizedDescription)"], 0)
+            return .failure(Failure(status: 502, message: "Couldn't reach OpenRouter to hear that: \(error.localizedDescription)"))
         }
     }
 }

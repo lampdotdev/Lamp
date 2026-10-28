@@ -202,10 +202,11 @@ A capability given to one engine must be given to all of them that can take it, 
   the page lets the route through and the app's route can take it.
 - **Hearing for apps** (`LampAI.hear` in Web/lamp.js, `/ai/hear`, `Sources/Lamp/AppHear.swift`): the page's host
   records (`LampVoice`, devices guide) and the page sends a WAV in base64; the gateway checks it is 16 kHz mono 16-bit
-  PCM, 0.3 to 15 seconds, its header true to its size, before anything is paid for, then transcribes it with
+  PCM, 0.3 to 15 seconds, with exactly the header the hosts write and nothing more, before anything is paid for, then transcribes it with
   `elevenlabs/scribe-v2` through OpenRouter with `no_verbatim`, the key staying on the Mac and OpenRouter's reported
-  `usage.cost` recorded as the app's. No key is a 501 with `needs: text`; it's sent once (lamp.js and the Android
-  host don't try it again after a moment), so a timeout may still have been paid for. `isAvailable('hear')` asks the
+  `usage.cost` recorded as the app's. No key is a 501 with `needs: text`. lamp.js and the Android host try each way to
+  the Mac once, not again after a moment, and each recording carries its id (`op`): the same one arriving again is
+  transcribed and charged once (kept five minutes per app). A timeout on the device may still have been paid for. `isAvailable('hear')` asks the
   route itself, as `act`'s does.
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from

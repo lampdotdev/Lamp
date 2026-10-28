@@ -88,6 +88,9 @@ enum GameAndroid {
     /// A screen's Ask listens (LampPageVoice), asked for only when the person first talks to it.
     private static let recordLine = "    <uses-permission android:name=\"android.permission.RECORD_AUDIO\" />\n"
         + "    <uses-feature android:name=\"android.hardware.microphone\" android:required=\"false\" />\n"
+        // And reads Ask's answers out, through whichever text-to-speech engine the device has (seen from Android 11 on
+        // only when asked for).
+        + "    <queries><intent><action android:name=\"android.intent.action.TTS_SERVICE\" /></intent></queries>\n"
 
     /// The game's activity for a game on its own: without the lines that answer the page's `Lamp.wish`, each marked so.
     static func withoutWish(activity: String) -> String {
@@ -226,7 +229,8 @@ enum GameAndroid {
             val token = install.optString("token")
             val list = install.optJSONArray("routes") ?: return failure("Couldn't reach Lamp. Open Lamp on your Mac and try again.")
             val bytes = body.toByteArray(Charsets.UTF_8)
-            // What the person said is paid for once heard: tried on each way to the Mac once, never again after a moment.
+            // What the person said is paid for once heard: tried on each way to the Mac once, never again after a moment
+            // (Lamp knows the recording by the id lamp.js gave it, so two ways reaching it still pay once).
             for (attempt in 0 until (if (path == "/ai/hear") 1 else 2)) {
                 for (i in 0 until list.length()) {
                     val route = list.optJSONObject(i) ?: continue
@@ -265,43 +269,66 @@ enum GameAndroid {
      *  device gives an app (a TV remote's included, which Android hands over as the voice-recognition source), as
      *  16 kHz mono 16-bit PCM in a WAV for the page to have transcribed (`LampAI.hear`); and what the page says back,
      *  read out. Asking what's possible never prompts: only `listen` asks for the microphone. One recording at a time,
-     *  tagged with the page's session; a stop keeps it, a cancel throws it away, and the app leaving the screen or the
-     *  page loading again cancels it whether the page says so or not. Only the page's own origin, in its main frame. */
+     *  each with its own stop (`LampVoiceTake`), tagged with the page's session; a stop keeps it, a cancel throws it
+     *  away, and the app leaving the screen or the page loading again cancels it whether the page says so or not. Every
+     *  answer goes back to the page that asked, and none to a page loaded since. Only the page's own origin, in its
+     *  main frame. */
     object LampPageVoice {
         private const val RATE = 16000
-        private const val MAX_SECONDS = 15.0; private const val WAIT_SECONDS = 6.0; private const val QUIET_SECONDS = 1.2
+        /** One call from the page: answered on its own page's channel, and only while that page is still the one shown. */
+        private class Call(val id: Int, val proxy: androidx.webkit.JavaScriptReplyProxy, val page: Int, val tag: String = "")
         private var activity: android.app.Activity? = null
         private var web: WebView? = null
-        private var reply: androidx.webkit.JavaScriptReplyProxy? = null
-        @Volatile private var session = ""
-        @Volatile private var stopAs: String? = null
-        private var waiting: Pair<String, Int>? = null      // the session and call asking for the microphone
+        @Volatile private var page = 0                       // counts the pages loaded
+        @Volatile private var take: LampVoiceTake? = null    // the recording now
+        private var worker: Thread? = null
+        private var waiting: Call? = null                    // the listen asking for the microphone
         private var tts: android.speech.tts.TextToSpeech? = null
         private var ttsReady = false
-        private val spoken = mutableMapOf<String, Int>()     // utterance -> call id
+        private var speeches = 0                             // a later speak, hush or cancel overtakes an earlier one
+        private var queued: Pair<Call, () -> Unit>? = null   // a speak waiting for the voice to start
+        private val spoken = java.util.concurrent.ConcurrentHashMap<String, Call>()
 
         fun attach(activity: android.app.Activity, web: WebView, origin: String) {
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
             this.activity = activity; this.web = web
             WebViewCompat.addWebMessageListener(web, "lampVoiceHost", setOf(origin)) { _, message, _, isMainFrame, proxy ->
-                val call = try { JSONObject(message.data ?: "") } catch (e: Exception) { null }
-                if (!isMainFrame || call == null) return@addWebMessageListener
-                reply = proxy
-                val id = call.optInt("id"); val tag = call.optString("session")
-                when (call.optString("cmd")) {
-                    "status" -> answer(id, status())
-                    "listen" -> listen(tag, id)
-                    "stop" -> { if (tag == session) stopAs = "stopped"; answer(id, JSONObject().put("ok", true)) }
-                    "cancel" -> { if (tag == session) cancel() else if (waiting?.first == tag) waiting = null; answer(id, JSONObject().put("ok", true)) }
-                    "speak" -> speak(call.optString("text"), id)
-                    "hush" -> { tts?.stop(); answer(id, JSONObject().put("ok", true)) }
-                    else -> answer(id, JSONObject().put("error", "Unknown."))
+                val msg = try { JSONObject(message.data ?: "") } catch (e: Exception) { null }
+                if (!isMainFrame || msg == null) return@addWebMessageListener
+                val tag = msg.optString("session")
+                val call = Call(msg.optInt("id"), proxy, page, tag)
+                when (msg.optString("cmd")) {
+                    "status" -> answer(call, status())
+                    "listen" -> listen(call)
+                    "stop" -> { take?.takeIf { it.tag == tag }?.stop("stopped"); answer(call, JSONObject().put("ok", true)) }
+                    "cancel" -> {
+                        take?.takeIf { it.tag == tag }?.stop("cancelled")
+                        waiting?.takeIf { it.tag == tag }?.let { waiting = null; answer(it, JSONObject().put("ended", "cancelled")) }
+                        answer(call, JSONObject().put("ok", true))
+                    }
+                    "speak" -> speak(msg.optString("text"), call)
+                    "hush" -> { hush(); answer(call, JSONObject().put("ok", true)) }
+                    else -> answer(call, JSONObject().put("error", "Unknown."))
                 }
             }
         }
 
-        /** The app left the screen, or the page loads again: nothing goes on being heard. */
-        fun cancel() { waiting = null; if (session.isNotEmpty()) stopAs = "cancelled"; tts?.stop() }
+        /** The app left the screen: nothing goes on being heard or said, and a listen waiting for the microphone is
+         *  answered as cancelled. */
+        fun cancel() {
+            waiting?.let { waiting = null; answer(it, JSONObject().put("ended", "cancelled")) }
+            take?.stop("cancelled")
+            hush()
+        }
+
+        /** The page loads again: as leaving the screen, and nothing still under way answers the new page. */
+        fun newPage() { cancel(); page++ }
+
+        private fun hush() {
+            speeches++
+            queued?.let { queued = null; answer(it.first, JSONObject().put("done", false)) }
+            tts?.stop()
+        }
 
         private fun granted() = activity?.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
@@ -315,112 +342,174 @@ enum GameAndroid {
             val inputs = (a?.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager)
                 ?.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)?.size ?: 0
             return JSONObject().put("listen", inputs > 0).put("speak", true).put("permission", permission)
-                .put("why", if (inputs > 0) "" else "This device has no microphone.").put("maxSeconds", MAX_SECONDS)
+                .put("why", if (inputs > 0) "" else "This device has no microphone.").put("maxSeconds", LampVoiceEnd.MAX)
         }
 
-        private fun listen(tag: String, id: Int) {
+        private fun listen(call: Call) {
             cancel()
             if (!granted()) {
-                waiting = tag to id
+                waiting = call
                 activity?.requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 7307)
                 return
             }
-            record(tag, id)
+            record(call)
         }
 
         /** The person's answer to the system's question (MainActivity passes it on). Closed meanwhile: nothing starts. */
         fun permissionResult(code: Int, allowed: Boolean) {
             if (code != 7307) return
-            val (tag, id) = waiting ?: return
+            val call = waiting ?: return
             waiting = null
-            if (!allowed) { answer(id, JSONObject().put("ended", "denied")); return }
-            record(tag, id)
+            if (call.page != page) return
+            if (!allowed) { answer(call, JSONObject().put("ended", "denied")); return }
+            record(call)
         }
 
-        private fun record(tag: String, id: Int) {
-            tts?.stop()
-            session = tag; stopAs = null
-            thread {
-                val result = try { capture(tag) } catch (e: Exception) { JSONObject().put("ended", "error").put("error", e.message ?: "The microphone failed.") }
-                if (session == tag) session = ""
-                answer(id, result)
+        private fun record(call: Call) {
+            val mine = LampVoiceTake(call.tag)
+            val before = worker
+            take = mine
+            worker = thread {
+                // The recording before lets the microphone go first (it ends within a frame of being cancelled).
+                before?.join(2000)
+                val result = try { capture(mine, call) } catch (e: Exception) { JSONObject().put("ended", "error").put("error", e.message ?: "The microphone failed.") }
+                web?.post { if (take === mine) take = null }
+                answer(call, result)
             }
         }
 
         /** Records until the person stops speaking, a stop, a cancel or the limit; levels go to the page as it goes. */
-        private fun capture(tag: String): JSONObject {
+        private fun capture(mine: LampVoiceTake, call: Call): JSONObject {
+            mine.stopAs?.let { return JSONObject().put("ended", it) }
             val min = android.media.AudioRecord.getMinBufferSize(RATE, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT)
             @Suppress("MissingPermission")
             val rec = android.media.AudioRecord(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE,
                 android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT, maxOf(min, RATE))
-            if (rec.state != android.media.AudioRecord.STATE_INITIALIZED) { rec.release(); return JSONObject().put("ended", "error").put("error", "The microphone didn't open.") }
-            val pcm = java.io.ByteArrayOutputStream()
-            val buf = ShortArray(RATE / 25)                  // 40 ms
-            val bytes = java.nio.ByteBuffer.allocate(buf.size * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            var noise = 0.0; var peak = 0.0; var speechAt = -1.0; var quietSince = -1.0
-            var ended = "cap"
-            rec.startRecording()
-            val routed = rec.routedDevice?.type ?: -1
             try {
-                while (true) {
-                    val asked = stopAs
-                    if (asked != null) { ended = asked; break }
-                    val n = rec.read(buf, 0, buf.size)
-                    if (n <= 0) continue
-                    bytes.clear(); var sum = 0.0; var top = 0.0
-                    for (i in 0 until n) { val v = buf[i] / 32768.0; sum += v * v; top = maxOf(top, kotlin.math.abs(v)); bytes.putShort(buf[i]) }
-                    pcm.write(bytes.array(), 0, n * 2)
-                    val level = kotlin.math.sqrt(sum / n); peak = maxOf(peak, top)
-                    val t = pcm.size() / 2.0 / RATE
-                    if (t < 0.3) noise = maxOf(noise, level)
-                    if (level > maxOf(noise * 3, 0.02)) { if (speechAt < 0) speechAt = t; quietSince = -1.0 } else if (speechAt >= 0 && quietSince < 0) quietSince = t
-                    event(JSONObject().put("event", "level").put("session", tag).put("level", minOf(1.0, level * 4)).put("speech", speechAt >= 0))
-                    if (t >= MAX_SECONDS) { ended = "cap"; break }
-                    if (speechAt < 0 && t >= WAIT_SECONDS) { ended = "nothing"; break }
-                    if (quietSince >= 0 && t - quietSince >= QUIET_SECONDS) { ended = "quiet"; break }
+                if (rec.state != android.media.AudioRecord.STATE_INITIALIZED) return JSONObject().put("ended", "error").put("error", "The microphone didn't open.")
+                rec.startRecording()
+                if (rec.recordingState != android.media.AudioRecord.RECORDSTATE_RECORDING) return JSONObject().put("ended", "error").put("error", "The microphone didn't start.")
+                val routed = rec.routedDevice?.type ?: -1
+                // Never waits for audio: the clock ends it on time, and a cancel within a frame, even when nothing comes.
+                val ended = mine.run({ buf, from -> rec.read(buf, from, buf.size - from, android.media.AudioRecord.READ_NON_BLOCKING) }, System::nanoTime) { level, speech ->
+                    event(call, JSONObject().put("event", "level").put("session", mine.tag).put("level", minOf(1.0, level * 4)).put("speech", speech))
                 }
-            } finally { rec.stop(); rec.release() }
-            val audio = pcm.toByteArray()
-            val out = JSONObject().put("ended", ended).put("seconds", audio.size / 2.0 / RATE).put("peak", peak)
-                .put("speech", speechAt >= 0).put("input", routed)
-            if (ended == "stopped" || ended == "quiet" || ended == "cap") out.put("audio", android.util.Base64.encodeToString(wav(audio), android.util.Base64.NO_WRAP))
-            return out
+                val audio = mine.pcm.toByteArray()
+                val out = JSONObject().put("ended", ended).put("seconds", audio.size / 2.0 / RATE).put("peak", mine.end.peak)
+                    .put("speech", mine.end.speechAt >= 0).put("input", routed)
+                if (ended == "stopped" || ended == "quiet" || ended == "cap") out.put("audio", android.util.Base64.encodeToString(wav(audio), android.util.Base64.NO_WRAP))
+                return out
+            } finally {
+                try { rec.stop() } catch (e: Exception) {}
+                rec.release()
+            }
         }
 
         private fun wav(pcm: ByteArray): ByteArray {
             val h = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            h.put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVEfmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
+            h.put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVE".toByteArray()).put("fmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
                 .putInt(RATE).putInt(RATE * 2).putShort(2).putShort(16).put("data".toByteArray()).putInt(pcm.size)
             return h.array() + pcm
         }
 
-        private fun speak(text: String, id: Int) {
-            val a = activity ?: return answer(id, JSONObject().put("done", false))
-            if (text.isEmpty() || session.isNotEmpty()) return answer(id, JSONObject().put("done", false))
-            fun say() {
-                val utterance = "u$id"
-                spoken[utterance] = id
-                tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, utterance)
+        /** Reads the words out; resolves once they're said to the end, or false when they couldn't be or were cut off. */
+        private fun speak(text: String, call: Call) {
+            val a = activity ?: return answer(call, JSONObject().put("done", false))
+            if (text.isEmpty() || take != null) return answer(call, JSONObject().put("done", false))
+            hush()
+            val asked = speeches
+            val say = {
+                val u = "u${call.page}-${call.id}"
+                if (asked != speeches || call.page != page) answer(call, JSONObject().put("done", false))
+                else {
+                    spoken[u] = call
+                    if (tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, u) != android.speech.tts.TextToSpeech.SUCCESS)
+                        spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) }
+                }
             }
             if (tts != null && ttsReady) return say()
+            queued = call to say
+            if (tts != null) return                           // already starting: it says the latest when it's ready
             tts = android.speech.tts.TextToSpeech(a) { status ->
-                ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS
-                if (!ttsReady) { answer(id, JSONObject().put("done", false)); return@TextToSpeech }
-                tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-                    override fun onStart(u: String) {}
-                    override fun onDone(u: String) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", true)) } }
-                    @Deprecated("Deprecated in Java") override fun onError(u: String) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) } }
-                    override fun onStop(u: String, interrupted: Boolean) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) } }
-                })
-                say()
+                web?.post {
+                    ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS
+                    if (ttsReady) tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                        override fun onStart(u: String) {}
+                        override fun onDone(u: String) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", true)) } }
+                        @Deprecated("Deprecated in Java") override fun onError(u: String) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) } }
+                        override fun onStop(u: String, interrupted: Boolean) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) } }
+                    }) else { tts?.shutdown(); tts = null }
+                    val next = queued; queued = null
+                    if (next != null) { if (ttsReady) next.second() else answer(next.first, JSONObject().put("done", false)) }
+                }
             }
         }
 
-        private fun answer(id: Int, body: JSONObject) = post(body.put("id", id))
-        private fun event(body: JSONObject) = post(body)
-        private fun post(body: JSONObject) {
-            val w = web ?: return; val r = reply ?: return
-            w.post { try { r.postMessage(body.toString()) } catch (e: Exception) {} }
+        private fun answer(call: Call, body: JSONObject) = post(call, body.put("id", call.id))
+        private fun event(call: Call, body: JSONObject) = post(call, body)
+        private fun post(call: Call, body: JSONObject) {
+            val w = web ?: return
+            w.post { if (call.page == page) try { call.proxy.postMessage(body.toString()) } catch (e: Exception) {} }
+        }
+    }
+
+    /** When one recording ends, from its levels and the clock alone (the same rule as LampVoiceEnd in LampPage.swift):
+     *  speech is a level three times the room's, and above a floor. The room is the quietest it has been lately: it
+     *  follows a dip at once and rises back over a couple of seconds, so speech from the very first moment counts as
+     *  soon as its first pause shows the room. Quiet for 1.2 s after speech ends it; at 6 s with no speech it ends as
+     *  nothing, unless something above the floor was heard, which is sent to be transcribed rather than thrown away; at
+     *  15 s it ends cut off. Asked every frame whether audio comes or not, so it ends on time when audio stops. A rule
+     *  of thumb on levels, not a way of telling speech from a television. */
+    class LampVoiceEnd {
+        companion object { const val MAX = 15.0; const val WAIT = 6.0; const val QUIET = 1.2; const val FLOOR = 0.02; const val RISE = 2.0 }
+        var speechAt = -1.0; private set
+        var peak = 0.0; private set
+        private var room = -1.0; private var at = 0.0; private var lastLoud = 0.0; private var sound = false
+        @Synchronized fun heard(level: Double, top: Double, t: Double) {
+            peak = maxOf(peak, top)
+            room = if (room < 0 || level < room) level else room + (level - room) * minOf(1.0, (t - at) / RISE)
+            at = t
+            if (level > FLOOR) sound = true
+            if (level > maxOf(room * 3, FLOOR)) { if (speechAt < 0) speechAt = t; lastLoud = t }
+        }
+        @Synchronized fun ended(t: Double): String? = when {
+            t >= MAX -> "cap"
+            speechAt < 0 -> if (t >= WAIT) (if (sound) "quiet" else "nothing") else null
+            t - lastLoud >= QUIET -> "quiet"
+            else -> null
+        }
+    }
+
+    /** One recording, with its own stop: a stop or cancel meant for one never reaches another. `run` reads 40 ms
+     *  frames from `read` (what's there, without waiting: 0 when nothing has come) until a stop, a cancel or
+     *  LampVoiceEnd says it's over, checking both between every read. */
+    class LampVoiceTake(val tag: String) {
+        @Volatile var stopAs: String? = null; private set
+        val end = LampVoiceEnd()
+        val pcm = java.io.ByteArrayOutputStream()
+        fun stop(how: String) { if (stopAs == null) stopAs = how }
+        fun run(read: (ShortArray, Int) -> Int, now: () -> Long, level: (Double, Boolean) -> Unit): String {
+            val started = now()
+            val frame = ShortArray(640)
+            var filled = 0
+            while (true) {
+                stopAs?.let { return it }
+                end.ended((now() - started) / 1e9)?.let { return it }
+                val n = read(frame, filled)
+                if (n < 0) throw java.io.IOException("The microphone stopped working ($n).")
+                if (n == 0) { Thread.sleep(10); continue }
+                filled += n
+                if (filled < frame.size) continue
+                filled = 0
+                var sum = 0.0; var top = 0.0
+                for (v in frame) {
+                    val x = v / 32768.0; sum += x * x; top = maxOf(top, kotlin.math.abs(x))
+                    pcm.write(v.toInt() and 0xff); pcm.write((v.toInt() shr 8) and 0xff)
+                }
+                val l = kotlin.math.sqrt(sum / frame.size)
+                end.heard(l, top, (now() - started) / 1e9)
+                level(l, end.speechAt >= 0)
+            }
         }
     }
 
@@ -561,7 +650,7 @@ enum GameAndroid {
                     } catch (e: Exception) { notFound() }
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = request.url.host != HOST
-                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { LampPageVoice.cancel() } // a screen
+                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { LampPageVoice.newPage() } // a screen
             }
             web.webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {

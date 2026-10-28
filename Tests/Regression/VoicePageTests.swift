@@ -4,14 +4,15 @@ import XCTest
 
 /// `LampVoice` and `LampAI.hear` in lamp.js, against stand-ins for the app around the page and for Lamp: what a page
 /// learns about a host that can't hear (or an old one that says nothing), that a recording's levels reach only its own
-/// session, and that what was said is sent to Lamp once, never tried again after a moment as other AI calls are.
+/// session, and that what was said goes to each way to the Mac once, under one id, never tried again after a moment
+/// as other AI calls are.
 @MainActor
 final class VoicePageTests: XCTestCase {
     private func page(apple: Bool = false, install: String? = nil, xhr: Bool = false) throws -> JSContext {
         let context = try XCTUnwrap(JSContext())
         context.exceptionHandler = { _, value in XCTFail(value?.toString() ?? "?") }
         context.evaluateScript("""
-            var window = this, timers = [], store = {}, voiceCalls = [], gateway = [], opened = [];
+            var window = this, timers = [], store = {}, voiceCalls = [], gateway = [], opened = [], sent = [];
             var console = { error: function () {}, log: function () {} };
             window.addEventListener = function () {}; window.removeEventListener = function () {};
             var navigator = {}, document = { addEventListener: function () {} };
@@ -34,7 +35,7 @@ final class VoicePageTests: XCTestCase {
             store['lamp:install.token'] = JSON.stringify({ app: 'board', token: 't' });
             function XMLHttpRequest() {} XMLHttpRequest.prototype.open = function (m, url) { this.url = url; };
             XMLHttpRequest.prototype.setRequestHeader = function () {};
-            XMLHttpRequest.prototype.send = function () { opened.push(this.url); var x = this; x.onerror(); };
+            XMLHttpRequest.prototype.send = function (b) { opened.push(this.url); sent.push(b); var x = this; x.onerror(); };
             """ : "")
             """)
         var js = DeviceSupport.webJS
@@ -116,6 +117,10 @@ final class VoicePageTests: XCTestCase {
         c.evaluateScript("timers.forEach(function (f) { f(); });")
         settle(c)
         XCTAssertEqual((value(c, "opened") as? [String])?.count, 2, "each way to the Mac once")
+        // Both with the recording's own id, by which Lamp transcribes and charges it once.
+        let ops = Set(((value(c, "sent.map(function (b) { return JSON.parse(b).op; })") as? [String]) ?? []))
+        XCTAssertEqual(ops.count, 1)
+        XCTAssertFalse(ops.first?.isEmpty ?? true)
         XCTAssertNotNil(value(c, "heard") as? String)
         c.evaluateScript("opened = []; timers = []; LampAI.ask('hi').then(null, function (e) { asked = e.message; });")
         settle(c)

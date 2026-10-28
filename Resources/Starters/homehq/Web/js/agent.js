@@ -13,9 +13,10 @@
   // `session` counts each time Ask opens, closes or the page hides: what started under one session (a follow-up listen,
   // what was heard, an answer) does nothing once it has changed. `pending` is a question back in progress: the request
   // it came from, every question and answer of the chain so far, what's asked now and what was already done, so the
-  // answer is read against all of them.
+  // answer is read against all of them. `heard` counts what was said: a recording, its transcription, and typing all
+  // take a new count, so a transcription that comes back after the person has typed or talked again is dropped.
   var S = { turn: null, voice: null, hear: false, listening: false, listenTag: '', armedAt: 0, pending: null, last: null,
-            el: null, session: 0, followUp: null, tags: 0 };
+            el: null, session: 0, followUp: null, tags: 0, heard: 0, ready: null };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
     'each part of the day, and the shopping list. You act for whoever is talking to it.\n' +
@@ -202,35 +203,37 @@
 
   function listen() {
     if (!canHear() || S.listening || S.turn || !S.el || document.hidden) return;
-    var session = S.session, tag = 'ask' + session + '-' + (++S.tags);
+    var session = S.session, tag = 'ask' + session + '-' + (++S.tags), heard = ++S.heard;
     hush();
     S.listening = true; S.listenTag = tag; S.armedAt = Date.now();
     voiceState('listening', 'Listening… say what you want.');
     var stop = S.el.querySelector('[data-ask-stop]');
     if (stop) stop.focus();
-    LampVoice.listen({ session: tag, onLevel: function (l) { if (live(session)) meter(l.level); } }).then(function (heard) {
+    LampVoice.listen({ session: tag, onLevel: function (l) { if (live(session)) meter(l.level); } }).then(function (audio) {
       // Heard after Ask closed or the page hid: dropped, never transcribed, never a turn.
       if (session !== S.session || tag !== S.listenTag) return;
       S.listening = false;
       if (!live(session)) return;
-      var ended = heard.ended;
+      var ended = audio.ended;
       if (ended === 'cancelled') return voiceState('idle', '');
       if (ended === 'denied') { voiceState('idle', ''); line('ask-them', 'Home HQ can’t use the microphone. Allow it in Settings, or type instead.'); return showTyping(); }
       if (ended === 'nothing') {
         voiceState('idle', '');
-        return line('ask-them', heard.peak < 0.01 ? 'I didn’t hear anything: no sound reached the microphone.' : 'I didn’t hear anything. Press Talk and try again.');
+        return line('ask-them', audio.peak < 0.01 ? 'I didn’t hear anything: no sound reached the microphone.' : 'I didn’t hear anything. Press Talk and try again.');
       }
       // Fifteen seconds may have cut the request off: never act on half of it.
       if (ended === 'cap') { voiceState('idle', ''); return line('ask-them is-partly', 'That was longer than I can take at once. Say it again, a little shorter.'); }
-      if (ended === 'error' || !heard.audio) { voiceState('idle', ''); return line('ask-them is-partly', App.esc(heard.error || 'The microphone didn’t work.')); }
+      if (ended === 'error' || !audio.audio) { voiceState('idle', ''); return line('ask-them is-partly', App.esc(audio.error || 'The microphone didn’t work.')); }
       voiceState('hearing', 'Working out what you said…');
-      LampAI.hear(heard.audio).then(function (r) {
-        if (!live(session)) return;
+      // Only while it's still the last thing said: talking again or typing meanwhile drops it.
+      function current() { return live(session) && heard === S.heard; }
+      LampAI.hear(audio.audio).then(function (r) {
+        if (!current()) return;
         voiceState('idle', '');
         if (r.nothing) return line('ask-them', 'I didn’t catch that. Press Talk and try again.');
         ask(r.text);
       }, function (e) {
-        if (!live(session)) return;
+        if (!current()) return;
         voiceState('idle', '');
         line('ask-them is-partly', App.esc(e && e.message || 'I couldn’t hear that.'));
       });
@@ -243,6 +246,13 @@
     if (e && e.repeat) return;
     if (!S.listening || Date.now() - S.armedAt < 700) return;
     LampVoice.stop(S.listenTag);
+  }
+  // Typing instead: a recording is let go, and what was being worked out from one is dropped.
+  function typeInstead() {
+    S.heard++;
+    if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); }
+    voiceState('idle', '');
+    showTyping();
   }
   function showTyping() {
     if (!S.el) return;
@@ -284,12 +294,12 @@
         clearInterval(S.awake);
         S.awake = setInterval(App.resetIdle, 1000);
         var input = sheet.querySelector('[data-ask-input]');
-        sheet.querySelector('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; ask(t); });
+        sheet.querySelector('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; S.heard++; if (!S.listening) voiceState('idle', ''); ask(t); });
         sheet.querySelector('[data-ask-undo]').addEventListener('click', undo);
         var talk = sheet.querySelector('[data-ask-talk]'), stop = sheet.querySelector('[data-ask-stop]'), type = sheet.querySelector('[data-ask-type]');
         if (talk) talk.addEventListener('click', listen);
         if (stop) { stop.addEventListener('click', stopListening); stop.addEventListener('keydown', function (e) { if (e.repeat) e.preventDefault(); }); }
-        if (type) type.addEventListener('click', function () { if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); voiceState('idle', ''); } showTyping(); });
+        if (type) type.addEventListener('click', typeInstead);
         // With a voice, opening Ask is listening (one press); otherwise it's typing.
         if (voice && S.voice.permission !== 'denied') listen();
         else if (voice) { voiceState('idle', ''); talk.focus(); }
@@ -302,7 +312,17 @@
   // is let go and no follow-up listen starts.
   document.addEventListener('visibilitychange', function () { if (document.hidden) end(); });
 
-  App.openAsk = open;
+  // Ask pressed before the voice has answered (just after the page loads): it waits for it a moment, so the sheet opens
+  // listening where it can, and typed after at most a second and a half either way.
+  function openWhenReady() {
+    if (!S.ready) return open();
+    var opened = false;
+    function go() { if (!opened) { opened = true; open(); } }
+    S.ready.then(go, go);
+    setTimeout(go, 1500);
+  }
+
+  App.openAsk = openWhenReady;
   App.on('ready', function () {
     if (!window.LampAI || !LampAI.act) return;
     LampAI.isAvailable('act').then(function (yes) {
@@ -311,13 +331,13 @@
       var b = document.createElement('button');
       b.className = 'rail-item rail-ask';
       b.innerHTML = App.icon('mic', 26) + '<span>Ask</span>';
-      b.addEventListener('click', open);
+      b.addEventListener('click', openWhenReady);
       rail.insertBefore(b, settings);
     });
     // Voice: asked of the app around the page (never prompting), and whether Lamp can transcribe.
-    if (window.LampVoice) LampVoice.status().then(function (v) {
+    if (window.LampVoice) S.ready = LampVoice.status().then(function (v) {
       S.voice = v;
-      if (v.listen) LampAI.isAvailable('hear').then(function (yes) { S.hear = yes; });
-    });
+      if (v.listen) return LampAI.isAvailable('hear').then(function (yes) { S.hear = yes; });
+    }).then(function () { S.ready = null; }, function () { S.ready = null; });
   });
 })();

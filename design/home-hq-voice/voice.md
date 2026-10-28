@@ -17,8 +17,14 @@ into text, and `act` does it.
 How a host records:
 
 - **Format:** both hosts convert to 16 kHz mono signed 16-bit little-endian PCM in a WAV.
-- **When it ends:** after 1.2 s of quiet that follows speech, after 6 s with nothing said (`nothing`), or at 15 s
-  (`cap`). Speech is whatever stands three times above the room's level measured in the first 0.3 s.
+- **When it ends:** after 1.2 s of quiet that follows speech, or at 15 s (`cap`). At 6 s with no speech it ends as
+  `nothing` if no sound came, and otherwise sends what it has to be transcribed. Speech is a level three times the
+  room's: the quietest it has been lately, which follows a dip at once and rises back over a couple of seconds. So
+  speech from the first moment counts once its first pause shows the room. The limits run on the clock, so a
+  recording whose audio stops coming still ends. This is a rule of thumb on levels, not a way of telling speech from a
+  television.
+- **One at a time:** each recording has its own stop. A new one, a cancel or a page load ends the one before, which
+  answers only the page that asked for it.
 - **What reaches the page:** levels go to the page tagged with the page's session.
 - **Asking:** `status` never prompts; only `listen` asks for the microphone.
 - **Closing:** a page reload, or the app leaving the screen, cancels a recording whether the page says so or not.
@@ -28,14 +34,16 @@ How a host records:
 **The page transcribes it with `LampAI.hear`, at `/ai/hear` (`AppHear.swift`):**
 
 - **Checked first:** before anything is paid for, the gateway checks the audio is a WAV in that exact format, 0.3 to
-  15 s long, and that its header matches its size. Its body limit is its own, about 650 KB.
+  15 s long, with exactly the 44-byte header the hosts write and nothing else in the file. Its body limit is its own,
+  about 650 KB.
 - **The call:** `elevenlabs/scribe-v2` through OpenRouter, with `provider.options.elevenlabs.no_verbatim`, using the
   key Lamp keeps on the Mac. The device never holds the key.
 - **The bill:** the `usage.cost` OpenRouter reports is recorded as the app's. The OpenRouter account set up in Lamp pays.
 - **Errors, each in words the person can act on:** no key (501, `needs: text`), a key OpenRouter doesn't accept, no
   credit, OpenRouter busy, network failure.
-- **Sent once:** lamp.js and the Android relay try each way to the Mac once, and not again after a moment. A request
-  that times out may still have been paid for.
+- **Paid once:** lamp.js and the Android relay try each way to the Mac once, and not again after a moment. Each
+  recording carries its own id, so one that reaches Lamp by two ways is transcribed and charged once (Lamp keeps the
+  answer for five minutes per app). A request that times out on the device may still have been paid for.
 - **Availability:** `isAvailable('hear')` asks the route through the host, so an older host answers false.
 
 ## Home HQ's Ask
@@ -56,6 +64,8 @@ How a host records:
 
 - **Typing:** "Type instead" is in every voice sheet, and the typed form shows wherever there's no voice. Ask never
   hides for lack of a microphone.
+- **Typing or talking again:** "Type instead", a typed question or another recording drops a transcription still on
+  its way.
 - **Cancelling:** Back, closing or the page hiding ends the session. The recording is cancelled, and a recording,
   transcript or answer that comes back later is dropped, so no write follows. A question back is listened for only once
   the reply has been read out to the end.

@@ -626,7 +626,9 @@ routes, `/ai`, `/ai/status`, `/ai/image`, `/ai/decide`, `/ai/act` and `/ai/hear`
 only from the app's own page; the page's voice, `LampVoice` in lamp.js, is answered there too: `LampPageVoice` in LampPage.swift records with
 AVAudioEngine and `LampPageVoice` in LampPageGateway.kt with AudioRecord's voice-recognition source, which on an Android TV box takes a
 remote's microphone, both as 16 kHz mono 16-bit WAV, a screen's Android manifest asking for RECORD_AUDIO; asking what's possible never prompts,
-and a recording ends with the page's session, its reload or the app leaving the screen), and `LampNative.call(name, args)` reaches Swift the agent writes in
+and a recording ends with the page's session, its reload or the app leaving the screen; each recording has its own stop,
+its limits run on the clock rather than on audio arriving (`LampVoiceEnd`, the same rule in both hosts), and its answer
+goes only to the page that asked), and `LampNative.call(name, args)` reaches Swift the agent writes in
 `Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
 which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.
 Registering a call makes the Mac copy compiled rather than copied from Lamp's player.
