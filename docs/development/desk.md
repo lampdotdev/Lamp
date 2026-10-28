@@ -111,7 +111,9 @@ links and the repository's website points to. `scripts/publish-starters.sh` refr
 repository's latest and stages it with the built Lamp Dev (`--stage-starter-repos … --trees`, as a wish is staged,
 with an identity derived from the starter and a fixed export time, so an unchanged repository makes no commit),
 pushes one commit of what's Lamp's, never the app itself, and moves the pin in starter.md to it, fetching the tree;
-`--dry-run` only stages. Run it after changing Lamp's own files, before the release that ships the change, and commit
+`--dry-run` only stages. The pictures it puts up are the repository's, except ones changed in the fetched tree since
+its commit (an icon `StarterIconsTests` drew there, a new preview put there), which go over them; a repository it
+can't fetch stops it, so nothing older is ever pushed over a repository's latest. Run it after changing Lamp's own files, before the release that ships the change, and commit
 the starter.md files it moved. The drawn icon of a repository published before it lived there is still read from
 beside starter.md until the publish puts it up (`Starters.iconFolder(of:)`); that folder goes once every one has.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame

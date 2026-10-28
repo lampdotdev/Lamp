@@ -25,8 +25,9 @@ enum StarterRepos {
     /// `STAGE_STARTERS=1`: each starter's tree into `<folder>/<starter>`, and a game's page into `<pages>/<starter>`,
     /// then quits. `--trees` names a folder holding each starter's repository freshly cloned (`<folder>/<starter>`),
     /// which stands in for the fetched tree: the publish refreshes what's Lamp's on the repository's latest, never on
-    /// the pinned commit. `--from-wish` stages one starter (a folder in Resources/Starters with only its starter.md
-    /// yet) from a wish on this Mac, for its first publish.
+    /// the pinned commit, so a starter with no clone there is left out rather than staged from the pin. `--from-wish`
+    /// stages one starter (a folder in Resources/Starters with only its starter.md yet) from a wish on this Mac, for
+    /// its first publish.
     static func stageFromCommandLine() -> Never {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: commandLineFlag), index + 1 < arguments.count else {
@@ -66,10 +67,14 @@ enum StarterRepos {
             }
             starters = [starter]
         } else if let trees {
-            starters = starters.map { starter in
+            starters = starters.compactMap { starter in
                 var fresh = starter
                 let latest = trees.appendingPathComponent(starter.folder.lastPathComponent)
-                if fm.fileExists(atPath: latest.appendingPathComponent("lamp-app.json").path) { fresh.tree = latest }
+                guard fm.fileExists(atPath: latest.appendingPathComponent("lamp-app.json").path) else {
+                    print("Left out \(starter.name): no clone of its repository in \(trees.path)")
+                    return nil
+                }
+                fresh.tree = latest
                 return fresh
             }
         }

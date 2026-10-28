@@ -3,7 +3,8 @@
 # names), where the starters are made: Lamp's own files so `./build.sh` builds it, the README, license and pictures,
 # the description, and a game's page on the gh-pages branch, served by GitHub Pages at <account>.github.io/<folder>.
 # Each repository's latest is cloned and staged as Put on GitHub stages a wish (the app in it stays exactly what the
-# repository has: this never puts the app itself up), one commit of the difference goes up (none when there's none),
+# repository has: this never puts the app itself up; a repository that can't be fetched stops it, so nothing older
+# ever goes up in place of the latest), one commit of the difference goes up (none when there's none),
 # and the starter's pin moves to it (Resources/Starters/<folder>/starter.md: `repository:` and `commit:`, with the tree
 # fetched). Every copy of a starter made by a Lamp built from then on names that commit on its chain, which Update
 # from GitHub… merges against and Send Changes Back… goes on top of.
@@ -15,7 +16,9 @@
 #   scripts/publish-starters.sh --dry-run [...]                  stages and says what it would do, without GitHub
 #
 # Run it after changing Lamp's own files, before the release that ships the change; a repository that's the same
-# makes no commit. Needs gh, signed in to an account that can push to those repositories (and make one, for --new).
+# makes no commit. The pictures are the repository's, except ones drawn afresh in the fetched tree since its commit
+# (StarterIconsTests draws there; a new preview put there counts too), which go up. Needs gh, signed in to an account
+# that can push to those repositories (and make one, for --new).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -52,7 +55,8 @@ if (( ! DRY )); then
 fi
 
 # Each repository's latest, cloned, is what the staging works from: the refresh lands on the repository's main, whatever
-# the pin says. A new starter has no repository yet: its wish stands in.
+# the pin says. Pictures changed in the fetched tree since its commit are drawn afresh, and go over the clone's. A new
+# starter has no repository yet: its wish stands in.
 mkdir -p "$WORK/latest"
 if [[ -n "$NEW" ]]; then
   STAGE_STARTERS=1 "$BIN" --stage-starter-repos "$WORK/trees" "$WORK/pages" --from-wish "$NEW" "$WISH"
@@ -62,7 +66,14 @@ else
     if (( $#only )) && [[ ${only[(Ie)$folder]} -eq 0 ]]; then continue; fi
     url="$(sed -n 's/^repository: *//p' "$starter" | head -1)"
     [[ -n "$url" ]] || continue
-    GIT_TERMINAL_PROMPT=0 "$GIT" clone -q --depth 1 "${url%/}.git" "$WORK/latest/$folder" 2>/dev/null || echo "$folder: couldn't fetch $url; staging the pinned tree" >&2
+    GIT_TERMINAL_PROMPT=0 "$GIT" clone -q --depth 1 "${url%/}.git" "$WORK/latest/$folder" 2>/dev/null \
+      || { echo "$folder: couldn't fetch $url (nothing published, so the latest is never replaced by older)" >&2; exit 1; }
+    tree="Resources/Starters/$folder/tree"
+    if [[ -d "$tree/.git" ]] && [[ -n "$("$GIT" -C "$tree" status --porcelain -- .github 2>/dev/null)" ]]; then
+      echo "$folder: pictures drawn since its commit"
+      rm -rf "$WORK/latest/$folder/.github"
+      [[ -d "$tree/.github" ]] && cp -R "$tree/.github" "$WORK/latest/$folder/.github"
+    fi
   done
   STAGE_STARTERS=1 "$BIN" --stage-starter-repos "$WORK/trees" "$WORK/pages" --trees "$WORK/latest"
 fi
