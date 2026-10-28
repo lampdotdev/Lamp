@@ -186,7 +186,7 @@ Hosts are kept in memory only (`Store.hosts`).
 Settings → Your Devices lists, in this order (`HomeNetwork.List`): the person's devices, set up with Lamp (away ones
 too); then, under "Found on your network, not set up", what Lamp makes apps for or controls that's only found (the kits'
 devices, what integrations find, `Integrations.devices`, and what a starter controls, `HomeNetwork.controlled`, a Sonos
-now, "Apps can control it"); then the devices Lamp could learn, with "Lamp could learn to work with this" and Set Up…:
+now, "Apps can control it"); then the devices Lamp could learn:
 those that answered the SSDP scan that nothing knows, read from their UPnP description (routers left out), and hosts
 that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `device(for:)`, named by maker and model,
 never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this
@@ -210,7 +210,9 @@ every request in it carries `Agent.deviceSetupNote` in place of the app's notes,
 waiting") stays about the device. Lamp refuses the app tools there (`Store.deviceSetupRefusal`: looks, use, versions,
 art, kinds, connectors, `write_wish`), leaving the integration, skills, notes and the chat's cards. When
 `device_integration` keeps an integration it looks for the device at once, puts each found one's next step in that
-chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup").
+chat, and moves the conversation to the device's new id, so the setup window's Ask About Setup… leads back to it. Each kind of card has its gallery entries ("Device setup"). Every device in that group shows only Set Up… (Pair… for a phone), never its first setup step ("Turn on developer mode
+on it"): that step is for the setup window Set Up… opens (`DevicesSection.end`). A device set up with Lamp shows its
+next step beside it.
 
 **Windows packages.** A declared app kind may say `wrap: "msix"`: the package step leaves a zip of the app's files and
 Lamp makes the package itself (`MSIX`, MSIX.swift), with nothing outside Lamp: the zip read as plain files only (no
