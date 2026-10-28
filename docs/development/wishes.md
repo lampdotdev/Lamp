@@ -205,7 +205,11 @@ which the agent writes when it brings such work in (`Agent.Rules.about`, in ever
 and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds to: a starter's copy begins it with the
 starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
 stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by Put on GitHub
-and by opening a repository, "Generated apps"). The info panel, the About window and a repository's README link it. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
+and by opening a repository, "Generated apps") and the commit of it the wish has (`commit`: the one it was opened at,
+the last one merged in by Update from GitHub…, or the last one Put on GitHub pushed; shown nowhere, it's what an update
+is merged from and a contribution goes back on top of). The same wish put somewhere else is a link of its own
+(`Remix.sameLink`), so the chain keeps where a wish came from beside where it was put; `Credits.origin(own:)` is the
+former. The info panel, the About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
 changed is still shown and shared. Lamp keeps only what passes `Credits.checked`, from the agent and from a shared file
 alike. It's shown first in the wish's info panel and, for a Mac app, in its About window (Credits.html, written into the

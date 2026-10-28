@@ -179,8 +179,10 @@ enum Sharing {
     }
 
     /// `repository` is where the wish is going as it's exported (Put on GitHub), named on the chain's last link so
-    /// whoever opens the file sees where the wish lives.
-    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil) throws -> URL {
+    /// whoever opens the file sees where the wish lives, with `commit`, the one up there now. A share that names no
+    /// place names where the wish was last put (`GitHubRepo.kept`), so a file shared from a wish on GitHub still says
+    /// where it lives and what commit it's at.
+    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
         // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
@@ -233,7 +235,9 @@ enum Sharing {
         // are the wish's; when one of its apps in a folder goes at the file's root, paths into that folder lose it.
         let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
         func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
-        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project), url: repository))
+        let kept = repository == nil ? GitHubRepo.kept(for: project) : nil
+        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url,
+                                                          commit: commit ?? kept?.commit))
         carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
         carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
@@ -732,7 +736,6 @@ enum Sharing {
     @discardableResult
     static func install(_ package: Package, into project: LampProject, replacing: Bool = false) throws -> Bool {
         let fm = FileManager.default
-        var newArtwork = false
         // Swap the code there for the shared code; keep Lamp's own LampSupport.swift. The widget goes the
         // same way: whatever widget the app had is gone, and the file's, if it has one, takes its place
         // (Lamp's own file there is written again before the build).
@@ -804,6 +807,16 @@ enum Sharing {
         } else if fm.fileExists(atPath: browserFile.path) {
             try fm.removeItem(at: browserFile)
         }
+        return try installIcon(package, into: project)
+    }
+
+    /// The shared icon into the app: its design (icon.json) and its artwork, which lives in Lamp's own folder outside
+    /// the versions. True when the artwork is different now. Also what a merge takes when the icon changed upstream
+    /// (`Upstream.merge`).
+    @discardableResult
+    static func installIcon(_ package: Package, into project: LampProject) throws -> Bool {
+        let fm = FileManager.default
+        var newArtwork = false
         if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
            let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
             Icons.save(spec, for: project)

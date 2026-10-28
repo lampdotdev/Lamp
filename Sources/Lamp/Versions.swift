@@ -31,7 +31,8 @@ struct AppVersion: Identifiable, Hashable {
     var isLampNote: Bool {
         ["Undid “", "Restored to “", "Rename to "].contains { message.hasPrefix($0) }
             || ["Scaffold", "Imported from a shared file", "Updated from a shared file",
-                "Before updating from a shared file", "Fix a crash on launch"].contains(message)
+                "Before updating from a shared file", "Before bringing in an update", "Merged the latest from GitHub",
+                "Merged a newer shared file", "Fix a crash on launch"].contains(message)
     }
     var shortID: String { String(id.prefix(8)) }
 }
@@ -519,34 +520,38 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
-    /// What the agent hears with the request Lamp sends when the latest of a wish comes from its repository and the wish
-    /// was changed here since it arrived (`Store.mergeUpdate`): where the new code is, which version came from there last,
-    /// and how to bring it in. Written in place of any other note, since that request is the next one.
-    static func rememberMerge(_ project: LampProject, from repository: String?, since arrival: String?, lastTree: Bool) {
-        let place = repository.map { "its repository on GitHub (\($0))" } ?? "where it came from"
-        let base: String
-        if lastTree {
-            base = "\(Store.upstreamLastFolder)/ holds what came from there last, as it was brought in: what differs between it and "
-                + "\(Store.upstreamFolder)/ is what changed upstream, and what differs between it and the wish's files is what was changed here"
-        } else if let arrival {
-            base = "Version \(arrival.prefix(12)) of this wish is the one that came from there last, so `git diff \(arrival.prefix(12)) HEAD -- . ':!.lamp'` "
-                + "shows what was changed here since; the other differences between \(Store.upstreamFolder)/ and the wish's files are what changed upstream"
-        } else {
-            base = "This wish's versions (`git log`) show what was changed here since it arrived; the other differences between "
-                + "\(Store.upstreamFolder)/ and the wish's files are what changed upstream"
-        }
+    /// What the agent hears with the request Lamp sends when the latest of a wish was merged into it by git
+    /// (`Upstream.merge`) and some files conflicted: which files hold markers, what the markers mean, how to read each
+    /// side, and how to settle them. Written in place of any other note, since that request is the next one.
+    static func rememberConflicts(_ project: LampProject, files: [String], from place: String) {
+        let list = files.map { "- \($0)" }.joined(separator: "\n")
         let note = """
 
 
-        Note from Lamp: the user chose to bring in the latest version of this wish from \(place). Lamp checked that \
-        code and put it in \(Store.upstreamFolder)/, laid out as this wish is (Sources/, Assets/, APP.md, and any other \
-        app's folder), without Lamp's own files. The wish was changed here since it arrived, so the new code is not in \
-        place yet: that is this request. \(base). Bring in what changed upstream and keep what was changed here. Where \
-        both changed the same thing, settle it yourself when what the person wants is clear (a fix upstream to \
-        code they didn't touch, a change here that upstream merely moved); ask them with the ask tool only where it \
-        isn't, then go on. credits.json is already updated by Lamp: leave it. When it's all in, move \
-        \(Store.upstreamFolder)/ to \(Store.upstreamLastFolder)/ (in place of what's there) so the next update can tell \
-        what changed from what, and tell the person what came in and what you kept of theirs.
+        Note from Lamp: the user chose to bring in the latest version of this wish from \(place). Lamp merged it into \
+        the wish's files with git: what changed only upstream and what changed only here is already in place. These \
+        files changed in the same places on both sides and hold conflict markers (`<<<<<<< HEAD` begins what this wish \
+        had, `=======` divides it from what came from upstream, `>>>>>>> \(Upstream.ref)` ends it):
+        \(list)
+        Settle each one: bring in what changed upstream and keep what was changed here. Settle it yourself when what the \
+        person wants is clear (a fix upstream to code they didn't touch, a change here that upstream merely moved); ask \
+        them with the ask tool only where it isn't, then go on. `git show HEAD:<path>` is a file as this wish had it \
+        before the merge, and `git show \(Upstream.ref):<path>` is it as it is upstream. Leave no marker behind: the app \
+        has to build. credits.json is already updated by Lamp: leave it. When it's all in, tell the person what came in \
+        and what you kept of theirs.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// Remembers that the latest of the wish was merged in by git with nothing left to settle, so the agent reads the
+    /// files again on the next request.
+    static func rememberMerged(_ project: LampProject, from place: String) {
+        let note = """
+
+
+        Note from Lamp: before this message, the user brought in the latest version of this wish from \(place). Lamp \
+        merged it into the wish's files with git, keeping what was changed here, and saved the result as a version. The \
+        files may no longer match what you remember from this conversation: read them again before editing.
         """
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }

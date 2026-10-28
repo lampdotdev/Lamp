@@ -19,7 +19,7 @@ enum Gallery {
         var id: String { group + "/" + name }
     }
 
-    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + remixEntries + transitionEntries + deviceEntries
+    static let entries: [Entry] = chatEntries + screenEntries + askEntries + approvalEntries + buildEntries + activityEntries + progressEntries + pointedEntries + importEntries + wishLinkEntries + publishEntries + repoEntries + contributeEntries + remixEntries + transitionEntries + deviceEntries
 
     static var groups: [String] {
         entries.map(\.group).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
@@ -887,6 +887,44 @@ enum Gallery {
         repo("Up, changed since", stage: .ready, up: true),
         repo("Up, wide", stage: .done(unchanged: false), up: true, width: 480),
     ]
+
+    /// The card that sends a remix's changes back to the repository it came from, from checking them to the pull
+    /// request being open, in the chat's place at its narrowest and widest.
+    private static let contributeEntries: [Entry] = [
+        contribute("Checking", stage: .preparing),
+        contribute("Needs GitHub's tool", stage: .needsGitHub(.install)),
+        contribute("Needs a sign-in", stage: .needsGitHub(.signIn)),
+        contribute("Own repository", stage: .refused("github.com/someone/new-york is your own repository: Put on GitHub updates it.")),
+        contribute("Ready", stage: .ready),
+        contribute("Ready, no fork yet", stage: .ready, fork: false,
+                   notes: ["You have no fork of someone/new-york yet: Lamp makes one on your account (else/new-york) first."]),
+        contribute("Ready, share-alike", stage: .ready, notes: ["Engine is GPL-3.0-or-later, so this remix is too: anyone may share it on under the same license."]),
+        contribute("Working", stage: .working("Opening the pull request…")),
+        contribute("Couldn't send", stage: .failed("GitHub didn't take it: the connection was lost.")),
+        contribute("Nothing to send", stage: .failed("someone/new-york already has everything this wish has: there's nothing to send.")),
+        contribute("Sent", stage: .done("https://github.com/someone/new-york/pull/4")),
+        contribute("Sent and copied", stage: .done("https://github.com/someone/new-york/pull/4"), copied: true),
+        contribute("Sent, wide", stage: .done("https://github.com/someone/new-york/pull/4"), width: 480),
+    ]
+
+    private static func contribute(_ name: String, stage: ContributeCard.Stage, fork: Bool = true, notes: [String] = [], copied: Bool = false,
+                                   width: CGFloat? = nil) -> Entry {
+        Entry(group: "GitHub", name: "Send back: " + name) {
+            let folder = Starters.folder?.appendingPathComponent("newyork")
+            let ready = stage != .preparing
+            let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+                                      stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
+                                      credit: "Based on Slop New York by Mr.doob", notes: notes, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
+                                      canSend: stage == .ready || { if case .failed = stage { true } else { false } }(),
+                                      send: {}, fix: {}, openRequest: {}, copy: {}, close: {}, width: width)
+            return AnyView(card
+                .frame(width: width == nil ? 340 : nil)
+                .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                .fixedSize(horizontal: false, vertical: true))
+        }
+    }
 
     private static func repo(_ name: String, stage: RepoCard.Stage, notes: [String] = [], link: Bool = false, up: Bool = false, copied: Bool = false,
                              canChooseLicense: Bool = true, width: CGFloat? = nil) -> Entry {

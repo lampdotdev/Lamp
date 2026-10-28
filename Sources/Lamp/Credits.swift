@@ -41,6 +41,10 @@ struct Credits: Codable, Equatable {
         /// Where the wish lives, https only: its repository on GitHub, written as it's put there (`GitHubRepo`) or
         /// opened from there (`RepoImport`), so a remix of a remix links each repository.
         var url: String?
+        /// The commit of that repository this wish has: the one it was opened from (`RepoImport`), the last one merged
+        /// in (`Upstream`), or the last one Put on GitHub pushed. The base the next update is merged against and the
+        /// parent a contribution goes back on top of; shown nowhere.
+        var commit: String?
     }
 
     /// A picture made with AI, by its path in the wish.
@@ -157,10 +161,13 @@ struct Credits: Codable, Equatable {
                                             commit: newer.commit ?? source.commit, license: newer.license ?? source.license,
                                             licenseFile: newer.licenseFile ?? source.licenseFile)
         }
-        for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameWish(as: remix) }) { result.remixOf.append(remix) }
-        // A wish both name keeps the address it has, or takes the one the newer file gives.
-        for (index, remix) in result.remixOf.enumerated() where remix.url == nil {
-            if let url = other.remixOf.first(where: { $0.sameWish(as: remix) })?.url { result.remixOf[index].url = url }
+        for remix in other.remixOf where !result.remixOf.contains(where: { $0.sameLink(as: remix) }) { result.remixOf.append(remix) }
+        // A link both have keeps the address it has, or takes the one the newer file gives; its commit is the newer
+        // file's when that names one (an update merged in moves it on), else what was known.
+        for (index, remix) in result.remixOf.enumerated() {
+            guard let newer = other.remixOf.first(where: { $0.sameLink(as: remix) }) else { continue }
+            if remix.url == nil, let url = newer.url { result.remixOf[index].url = url }
+            if let commit = newer.commit { result.remixOf[index].commit = commit }
         }
         for picture in other.generated where !result.generated.contains(picture) { result.generated.append(picture) }
         return result.checked
@@ -168,18 +175,30 @@ struct Credits: Codable, Equatable {
 
     /// The chain with one more wish at its end. The same wish shared again (an update, a second share) stays one link,
     /// named as it's called now, and only when it's already the last: a wish that came back after another took it on
-    /// is a link of its own. A link that knows where the wish lives keeps that when the share names no place (a wish
-    /// opened from its repository and shared on as a file), and takes the new place when it does.
+    /// is a link of its own. A link that knows where the wish lives keeps that, and its commit, when the share names
+    /// no place (a wish opened from its repository and shared on as a file). Put somewhere else (a wish opened from
+    /// one repository and put on the person's own), the wish gets a second link, so the chain still names where it
+    /// came from: that's what an update is merged from and a contribution goes back to (`origin`).
     func remixed(from remix: Remix) -> Credits {
         var result = self
-        if let last = result.remixOf.last, last.sameWish(as: remix) {
+        if let last = result.remixOf.last, last.sameLink(as: remix) {
             var link = remix
             if link.url == nil { link.url = last.url }
+            if link.commit == nil { link.commit = last.commit }
             result.remixOf[result.remixOf.count - 1] = link
         } else {
             result.remixOf.append(remix)
         }
         return result.checked
+    }
+
+    /// Where the wish came from, when that's a repository: the last link naming one that isn't the wish's own (where
+    /// Put on GitHub put it, `own`). Nil for a wish that came from a starter or a file, or lives only where it was made.
+    func origin(own: String?) -> Remix? {
+        remixOf.last { link in
+            guard let url = link.url else { return false }
+            return own.map { Source.plain(url) != Source.plain($0) } ?? true
+        }
     }
 
     // MARK: What a person reads
@@ -295,7 +314,7 @@ extension Credits.Source {
         return name.lowercased() == other.name.lowercased()
     }
 
-    private static func plain(_ url: String) -> String {
+    static func plain(_ url: String) -> String {
         var url = url.lowercased()
         while url.hasSuffix("/") { url.removeLast() }
         if url.hasSuffix(".git") { url.removeLast(4) }
@@ -308,12 +327,20 @@ extension Credits.Remix {
         guard let name = Credits.text(name) else { return nil }
         let starter = starter.flatMap(Credits.text).flatMap { $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" } ? $0 : nil }
         let wish = wish.flatMap { UUID(uuidString: $0.trimmed)?.uuidString }
-        return Credits.Remix(name: name, starter: starter, wish: wish, url: Credits.validURL(url))
+        return Credits.Remix(name: name, starter: starter, wish: wish, url: Credits.validURL(url), commit: Credits.validCommit(commit))
     }
 
     func sameWish(as other: Credits.Remix) -> Bool {
         if let wish, let theirs = other.wish { return wish == theirs }
         if let starter, let theirs = other.starter { return starter == theirs }
         return wish == nil && other.wish == nil && starter == nil && other.starter == nil && name == other.name
+    }
+
+    /// The same wish at the same place: one link. The same wish at another place is a link of its own (a remix opened
+    /// from one repository and put on another), so where it came from stays on the chain.
+    func sameLink(as other: Credits.Remix) -> Bool {
+        guard sameWish(as: other) else { return false }
+        guard let url, let theirs = other.url else { return true }
+        return Credits.Source.plain(url) == Credits.Source.plain(theirs)
     }
 }
