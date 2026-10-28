@@ -1,9 +1,10 @@
 #!/bin/zsh
-# Brings a starter changed as a wish in Lamp back into Resources/Starters/<folder>, the starter's source of truth: its
-# code and files as the import reads them (never Lamp's own files), APP.md, what it declares, its about.json line and
-# what it's based on (credits.json). Its starter.md, preview.png and icon pictures stay as they are. Review the change
-# with git, then publish it (scripts/publish-starters.sh). See "Turning an app made with Lamp into a starter" in
-# docs/development/desk.md.
+# Brings one starter into Resources/Starters/<folder>, Lamp's copy of it, from a wish changed in Lamp, a folder holding
+# a repository's tree, or an address: its code and files as the import reads them (never Lamp's own files), APP.md,
+# what it declares, its about.json line and what it's based on (credits.json). Its starter.md, preview.png and icon
+# pictures stay as they are. The starter's repository on GitHub is where it's made (scripts/pull-starters.sh brings
+# every starter up to its repository and records the commit); a wish pulled from here is a draft to look at with git
+# and send to the repository. See "Changing a starter" in docs/development/desk.md.
 #
 #   scripts/pull-starter.sh newyork ~/Library/Application\ Support/Lamp\ Dev/Apps/<wish folder>
 #   scripts/pull-starter.sh newyork https://github.com/lampdotdev/newyork     (cloned first)

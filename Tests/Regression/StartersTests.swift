@@ -107,7 +107,7 @@ final class StartersTests: XCTestCase {
             let starter = try XCTUnwrap(Starters.read(folder), folder.lastPathComponent)
             let work = root.appendingPathComponent(folder.lastPathComponent)
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
-            let (tree, _) = try StarterRepos.stage(starter, in: work.appendingPathComponent("stage"))
+            let (tree, _, _) = try StarterRepos.stage(starter, in: work.appendingPathComponent("stage"))
             let package = try RepoImport.open(folder: tree)
             defer { try? fm.removeItem(at: package.folder) }
             let copy = work.appendingPathComponent("starter")

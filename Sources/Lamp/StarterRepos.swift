@@ -2,12 +2,15 @@ import CryptoKit
 import Foundation
 import LampSidebarKit
 
-/// Lamp's starters as repositories on GitHub (`Starters.account`, one each): each starter made into a wish the way the
-/// desk makes one and laid out as Put on GitHub lays a wish out (`GitHubRepo.stage`: the shared file's contents with
-/// its checks, Lamp's own files so `./build.sh` builds it, a README, an MIT license), so it opens with File → Open from
-/// GitHub…, and a copy on someone's desk takes the latest of it (Update from GitHub…) and sends changes back to it
-/// (Send Changes Back…). `scripts/publish-starters.sh` runs this, puts each tree up and writes the address and commit
-/// into the starter's starter.md, which every copy made from then on carries on its chain (`Starters.copy`).
+/// Lamp's starters as repositories on GitHub (`Starters.account`, one each), where the starters are made: a change to
+/// one goes to its repository (from Lamp, Send Changes Back…; or a push by whoever has access), and Lamp's copy in
+/// Resources/Starters follows (`scripts/pull-starters.sh`, `pull`). Each is laid out as Put on GitHub lays a wish out
+/// (`GitHubRepo.stage`: the shared file's contents with its checks, Lamp's own files so `./build.sh` builds it, a
+/// README, an MIT license), so it opens with File → Open from GitHub…, and a copy on someone's desk takes the latest
+/// of it (Update from GitHub…) and sends changes back to it. `scripts/publish-starters.sh` runs `stage` to refresh
+/// what's Lamp's in each repository (Lamp's own files, the README, the pictures, a game's page) and writes the address
+/// and commit into the starter's starter.md, which every copy made from then on carries on its chain
+/// (`Starters.copy`); it never puts the app itself up, which is the repository's to change.
 ///
 /// The tree is the same every time for the same starter, so a starter that didn't change makes no new commit: its
 /// identity is derived from the starter (never a random one), its export time is fixed, and the shared file isn't in
@@ -19,7 +22,9 @@ enum StarterRepos {
     static let commandLineFlag = "--stage-starter-repos"
 
     /// `Lamp --stage-starter-repos <folder> [<pages>]`, with `STAGE_STARTERS=1`: each starter's tree into
-    /// `<folder>/<starter>`, and a game's page into `<pages>/<starter>`, then quits.
+    /// `<folder>/<starter>`, what in it is Lamp's rather than the app's listed in `<folder>/<starter>.derived` (so the
+    /// publish can tell a change to the app, which isn't its to make, from one to Lamp's files), and a game's page
+    /// into `<pages>/<starter>`, then quits.
     static func stageFromCommandLine() -> Never {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: commandLineFlag), index + 1 < arguments.count else {
@@ -41,11 +46,12 @@ enum StarterRepos {
             }
             do {
                 try fm.createDirectory(at: root, withIntermediateDirectories: true)
-                let (tree, page) = try stage(starter, in: root)
+                let (tree, page, derived) = try stage(starter, in: root)
                 let to = out.appendingPathComponent(starter.folder.lastPathComponent)
                 try? fm.removeItem(at: to)
                 try fm.createDirectory(at: out, withIntermediateDirectories: true)
                 try fm.copyItem(at: tree, to: to)
+                try (derived.joined(separator: "\n") + "\n").write(to: out.appendingPathComponent(starter.folder.lastPathComponent + ".derived"), atomically: true, encoding: .utf8)
                 if let page, let pages {
                     let pageTo = pages.appendingPathComponent(starter.folder.lastPathComponent)
                     try? fm.removeItem(at: pageTo)
@@ -245,8 +251,10 @@ enum StarterRepos {
         Starters.account + "/" + Starters.repositoryName(of: starter.folder.lastPathComponent)
     }
 
-    /// One starter's tree, and a game's page, in work folders under `root`.
-    static func stage(_ starter: Starters.Starter, in root: URL) throws -> (tree: URL, page: URL?) {
+    /// One starter's tree, and a game's page, in work folders under `root`, with the paths in the tree that are Lamp's
+    /// rather than the app's (`derived`: Lamp's own files, the README, license and pictures, .gitignore and the
+    /// manifest; a folder's with a trailing slash).
+    static func stage(_ starter: Starters.Starter, in root: URL) throws -> (tree: URL, page: URL?, derived: [String]) {
         let fm = FileManager.default
         let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
         try Template.fill(project)
@@ -287,12 +295,16 @@ enum StarterRepos {
         let page = try stagePage(project, starter: starter, repo: repo, in: root)
         if page != nil { showcase.play = Publish.pageURL(repo) }
         let (app, parts) = Sharing.layout(of: project)
+        var derived = [".gitignore", "README.md", "LICENSE", "lamp-app.json", ".github/"]
+        for (one, folder) in [(app, "")] + parts.map { ($0, $0.dir.lastPathComponent + "/") } {
+            derived += GitHubRepo.ownedPaths(in: one).map { folder + $0 }
+        }
         let build = GitHubRepo.Build(alone: app.platform.target.recipe.buildsAlone, app: app.platform.target.identity.name, others: !parts.isEmpty)
         // Its credits are what it's based on; the chain would name only the starter itself, which is this page.
         try Data(GitHubRepo.readme(for: project, credits: Credits(upstream: based.upstream, generated: based.generated),
                                    open: Publish.OpenInLamp(link: nil, file: nil), build: build, repo: repo, showcase: showcase).utf8)
             .write(to: tree.appendingPathComponent("README.md"))
-        return (tree, page)
+        return (tree, page, derived)
     }
 
     /// A game's page as Publish stages one to play in any browser (`Publish.stage`), with the credit bar, the starter's

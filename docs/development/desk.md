@@ -88,15 +88,20 @@ are Mac apps (or a game or a screen, when starter.md says `kind: game` or `kind:
 is) that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
 
-Each starter Lamp can share also lives on GitHub, a public repository in the Lamp team's account
+Each starter Lamp can share is made in a public repository of its own in the Lamp team's account on GitHub
 (github.com/lampdotdev/<folder>, the account `Starters.account` names), laid out as Put on GitHub lays a wish out
 (`StarterRepos.stage`: the starter made into a wish the way the desk makes one, then `GitHubRepo.stage`, with an MIT
 license, no shared file beside the code, an identity derived from the starter and a fixed export time, so the same
-starter is always the same tree and an unchanged one makes no commit). `scripts/publish-starters.sh` stages them
-with the built Lamp Dev (`--stage-starter-repos`), puts each up and writes `repository:` and `commit:` into its
-starter.md; `--dry-run` only stages. A copy carries both on the starter's link on its chain (`Starters.copy`), so its
-Update from GitHub… merges against the exact commit it began from and Send Changes Back… offers a change to the starter
-itself. A copy made before starters named a repository gets the address from the starter this Lamp ships
+starter is always the same tree). The repository is the starter; `Resources/Starters/<folder>` is Lamp's copy of it,
+what Lamp ships and tests, brought up to the repository's main by `scripts/pull-starters.sh` (each repository read as
+the import reads one, `StarterRepos.pull`, with the commit written into starter.md). `scripts/publish-starters.sh`
+goes the other way for what's Lamp's alone: it stages each starter with the built Lamp Dev (`--stage-starter-repos`)
+and refreshes Lamp's own files, the README, license and pictures, the description and a game's page in the
+repository, writing `repository:` and `commit:` into starter.md; it refuses a starter whose copy differs from its
+repository in the app itself (the staging lists what's Lamp's in `<folder>.derived`), since that change belongs in
+the repository first; `--dry-run` only stages. A copy carries the address and commit on the starter's link on its
+chain (`Starters.copy`), so its Update from GitHub… merges against the exact commit it began from and Send Changes
+Back… offers a change to the starter itself. A copy made before starters named a repository gets the address from the starter this Lamp ships
 (`Starters.located`) and is merged against the version it began with ("From Lamp", an arrival like a shared file's).
 A starter of a kind Lamp doesn't share yet has no repository until it can. A starter based on someone else's work
 (New York, Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
@@ -146,17 +151,22 @@ without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800
 it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured with its
 panel open.
 
-**Changing a starter.** `Resources/Starters/<folder>` is the starter; its repository on GitHub is what the publish
-makes of it, and a change made there is overwritten by the next publish. A change is best made in Lamp Dev, where it's
-played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>, the starter as it
-is now), ask for the change, then bring it back with `scripts/pull-starter.sh <folder> <the wish's folder>` (after
-`./build.sh`; a folder holding a repository's tree works too, and an address, which the script clones first). It reads the wish as the import does
-(`StarterRepos.pull`) and writes the starter's code and files, APP.md, what it declares, its about.json line and
-credits.json, each only when it differs, leaving starter.md, preview.png and the icon's pictures as they are; it says
-so when the icon's design changed (draw it again, step 5 below) and when the wish began from an older version of the
-starter than the one here, whose changes the pull would take back. Look at the change with git, run
-`scripts/check-starters.sh <folder>`, then publish. `scripts/pull-starter.sh --check` publishes every starter to a
-folder and brings it back: each must come back unchanged (`StartersTests` does the same for the Mac starters).
+**Changing a starter.** The starter is its repository on GitHub, so a change goes there, and Lamp's copy follows. A
+change is best made in Lamp Dev, where it's played as it's made: open the starter with File → Open from GitHub…
+(github.com/lampdotdev/<folder>, the starter as it is now), ask for the change, then Send Changes Back… from the
+chat's Share menu, which opens a pull request on the repository for whoever looks after it to merge (anyone with
+push access to the repository can also push there from a checkout). Then, in this repo, `scripts/pull-starters.sh
+<folder>` (after `./build.sh`) brings `Resources/Starters/<folder>` up to the repository's main: it reads the
+repository as the import does (`StarterRepos.pull`) and writes the starter's code and files, APP.md, what it
+declares, its about.json line and credits.json, each only when it differs, leaving starter.md, preview.png and the
+icon's pictures as they are, and records the commit in starter.md; it says so when the icon's design changed (draw it
+again, step 5 below). Look at the change with git, run `scripts/check-starters.sh <folder>` and `swift test --filter
+StartersTests`, and open a pull request here. Before a release, `scripts/pull-starters.sh` with no names brings every
+starter up to date. To look at a wish's changes here before sending them to the repository,
+`scripts/pull-starter.sh <folder> <the wish's folder>` writes one wish into the copy the same way (it says when the
+wish began from an older version of the starter than the copy, whose changes it would take back); the publish then
+refuses the copy until the change is in the repository. `scripts/pull-starter.sh --check` stages every starter as its
+repository would be and brings it back: each must come back unchanged (`StartersTests` does the same for one).
 Bringing in what changed in work a starter is based on (Slop New York for New York) is a request like any other:
 "Bring in what's new in <repository> since <the commit credits.json names>, keeping our changes", which the agent
 ports, moving the commit in credits.json on.
@@ -188,6 +198,7 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
 6. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --dry-run` to see it stage (a game says "with its
    page"), then `scripts/publish-starters.sh`, signed in with `gh` to an account that can make repositories in
    lampdotdev. It makes the public repository (and a game's page), and fills in the starter's `repository:` and
-   `commit:`; commit that starter.md with the starter, and look at the repository's README on GitHub. Run it again
-   whenever a starter changes, before the release that ships the change: unchanged starters make no commit.
+   `commit:`; commit that starter.md with the starter, and look at the repository's README on GitHub. From then on
+   the repository is where the starter is made ("Changing a starter" above); run the publish again before a release,
+   after `scripts/pull-starters.sh`, to refresh what's Lamp's in each repository: unchanged ones make no commit.
 

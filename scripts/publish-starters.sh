@@ -1,21 +1,27 @@
 #!/bin/zsh
-# Puts each of Lamp's starters on GitHub, a public repository each in the Lamp team's account for them (<account>/
-# <folder>, the account as `Starters.account` names it), laid out as Put on GitHub lays a wish out, and writes the repository's address and the commit it's at into
-# the starter's starter.md (`repository:` and `commit:`). Every copy of a starter made by a Lamp built from then on
-# names that commit on its chain, which Update from GitHub… merges against and Send Changes Back… goes on top of.
+# Refreshes what's Lamp's in each starter's repository on GitHub (<account>/<folder>, the account as `Starters.account`
+# names it; a public repository each, made here when missing): Lamp's own files so `./build.sh` builds it, the README,
+# license and pictures, the description, and a game's page on the gh-pages branch, served by GitHub Pages at
+# <account>.github.io/<folder>. It writes the repository's address and the commit it's at into the starter's starter.md
+# (`repository:` and `commit:`): every copy of a starter made by a Lamp built from then on names that commit on its
+# chain, which Update from GitHub… merges against and Send Changes Back… goes on top of.
 #
-# A game's page goes on the repository's gh-pages branch, served by GitHub Pages at <account>.github.io/<folder>, which its
-# README links as "Play it in your browser".
+# The repository is where the starter is made; Resources/Starters is Lamp's copy of it (scripts/pull-starters.sh). So
+# this never puts the app itself up: a starter whose copy here differs from its repository in the app (its code, files,
+# notes, credits) is refused, with what to do (pull it, or send the change to the repository first).
 #
-# Run it after a starter changes, before the release that ships the change, and commit the starter.md files it touches:
-#   ./build.sh && scripts/publish-starters.sh
-# A starter whose tree is the same as what's up makes no commit. Needs gh, signed in to an account that can make
-# repositories in that account. `--dry-run` stages the trees and says what it would do, without GitHub.
+# Run it before a release, after pulling, and commit the starter.md files it touches:
+#   ./build.sh && scripts/pull-starters.sh && scripts/publish-starters.sh            every starter
+#   scripts/publish-starters.sh newyork hours                                          some, by folder name
+# A starter whose tree is the same as what's up makes no commit. Needs gh, signed in to an account that can push to
+# those repositories. `--dry-run` stages the trees and says what it would do, without GitHub.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DRY=0
-[[ "${1:-}" == "--dry-run" ]] && DRY=1
+failed=0
+[[ "${1:-}" == "--dry-run" ]] && { DRY=1; shift; }
+only=("$@")
 ACCOUNT="$(sed -n 's/.*static let account = "\(.*\)".*/\1/p' Sources/Lamp/Starters.swift)"
 
 APP=(build/Lamp\ Dev*.app(N/om[1]))
@@ -35,6 +41,7 @@ fi
 
 for tree in "$WORK"/trees/*(N/); do
   folder="${tree:t}"
+  if (( $#only )) && [[ ${only[(Ie)$folder]} -eq 0 ]]; then continue; fi
   repo="$ACCOUNT/$folder"
   starter="Resources/Starters/$folder/starter.md"
   if (( DRY )); then
@@ -49,11 +56,22 @@ for tree in "$WORK"/trees/*(N/); do
     gh repo create "$repo" --public >/dev/null
     (cd "$clone" && "$GIT" init -q -b main)
   fi
-  # The starter as it is now in place of what's there: one commit of the difference, or none.
+  # The starter as it is now in place of what's there: one commit of the difference, or none. The app itself is the
+  # repository's to change: a difference there (anything but what Lamp writes, listed by the staging) stops this one.
   find "$clone" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
   cp -R "$tree"/. "$clone"/
   cd "$clone"
   "$GIT" add -A
+  excluded=()
+  while IFS= read -r derived; do [[ -n "$derived" ]] && excluded+=(":(exclude)$derived"); done < "$tree.derived"
+  if "$GIT" rev-parse -q --verify HEAD >/dev/null && ! "$GIT" diff --cached --quiet -- . "${excluded[@]}"; then
+    echo "$repo: the app differs from the repository's, which is where it's made:" >&2
+    "$GIT" diff --cached --stat -- . "${excluded[@]}" | sed 's/^/    /' >&2
+    echo "    Pull it (scripts/pull-starters.sh $folder) or send the change to the repository first (Send Changes Back… from Lamp, or a push there)." >&2
+    cd "$OLDPWD"
+    failed=1
+    continue
+  fi
   if "$GIT" rev-parse -q --verify HEAD >/dev/null && "$GIT" diff --cached --quiet; then
     echo "$repo: unchanged"
   else
@@ -100,14 +118,7 @@ for tree in "$WORK"/trees/*(N/); do
     gh repo edit "$repo" --homepage "$page" >/dev/null
   fi
   # The address and commit into starter.md's front matter, in place of any there.
-  /usr/bin/python3 - "$starter" "https://github.com/$repo" "$sha" <<'PY'
-import sys
-path, url, sha = sys.argv[1:]
-lines = [l for l in open(path).read().split("\n") if not l.startswith(("repository:", "commit:"))]
-end = lines.index("---", 1)
-at = next((i for i in range(1, end) if lines[i].startswith("tweaks:")), end)
-lines[at:at] = [f"repository: {url}", f"commit: {sha}"]
-open(path, "w").write("\n".join(lines))
-PY
+  /usr/bin/python3 scripts/starter-commit.py "$starter" "https://github.com/$repo" "$sha"
 done
+(( failed )) && exit 1
 (( DRY )) || echo "Commit the starter.md files that changed (git status Resources/Starters)."
