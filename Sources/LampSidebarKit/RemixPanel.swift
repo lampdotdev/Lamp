@@ -78,6 +78,19 @@ public enum RemixLink {
             }
         }
 
+        /// A repository as Lamp wrote it into an app's chat (`Sidebar.install`), checked as the site and Lamp check a link's:
+        /// an https github.com address of an owner and a name, and a commit of hex. Nil for anything else.
+        public static func repository(_ url: String?, commit: String?) -> Origin? {
+            guard let url, let rest = url.hasPrefix("https://github.com/") ? url.dropFirst("https://github.com/".count) : nil else { return nil }
+            let parts = rest.split(separator: "/", omittingEmptySubsequences: false)
+            let plain = { (part: Substring) in !part.isEmpty && !part.hasPrefix("-") && !part.hasPrefix(".")
+                && part.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) } }
+            guard parts.count == 2, plain(parts[0]), plain(parts[1]) else { return nil }
+            let commit = commit.flatMap { $0.isEmpty ? nil : $0 }
+            if let commit, !((7...40).contains(commit.count) && commit.allSatisfy(\.isHexDigit)) { return nil }
+            return .repository(url: url, commit: commit)
+        }
+
         /// The same as JSON, for a page's own script (`Publish.withCreditBar`).
         public var json: [String: String] {
             Dictionary(uniqueKeysWithValues: queryItems.compactMap { item in item.value.map { (item.name, $0) } })

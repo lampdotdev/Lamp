@@ -9924,7 +9924,7 @@ final class Store: ObservableObject {
     /// Apps whose installed copy is to be made again from the build on disk once they quit (`refreshInstalled`).
     private var refreshWhenQuit: Set<String> = []
 
-    /// What the installed copy carries about itself changed (its suggestions, its Share Link: what `Sidebar.install`
+    /// What the installed copy carries about itself changed (its suggestions, its Share Link, its repository: what `Sidebar.install`
     /// writes into the chat beside it, for a Mac without Lamp): the copy is made again from the build on disk, signed
     /// as before, now if the app isn't open, else at its next quit. Nothing is built, and only a build that is the app
     /// the person has goes in: never one set aside after a crash, one still watched for its crash, one a live change

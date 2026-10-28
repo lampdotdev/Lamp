@@ -57,12 +57,15 @@ enum Sidebar {
             "LampApp": project.id,
             // Where Lamp listens for it.
             "LampPort": Int(Edition.sidebarPort),
-            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, and the
-            // wish's Share Link when it has one.
+            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, the
+            // wish's Share Link when it has one, and the repository it was put on, at the commit last pushed, which a
+            // remix starts from a copy of (`RemixLink.Origin`). Not a starter's: a copy may have been changed since.
             "LampHost": Edition.bundleID,
             "LampAbout": AppDescription.description(of: project) ?? "",
             "LampSuggestions": (RemixSuggestions.load(project) ?? []).map(\.plist),
             "LampShareLink": WishLink.kept(for: project)?.url.absoluteString ?? "",
+            "LampRepository": GitHubRepo.kept(for: project).map { GitHubRepo.url($0.repo) } ?? "",
+            "LampCommit": GitHubRepo.kept(for: project)?.commit ?? "",
         ]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: appex.appendingPathComponent("Contents/Info.plist"))

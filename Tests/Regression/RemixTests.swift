@@ -21,6 +21,13 @@ final class RemixTests: XCTestCase {
         let starter = RemixOffer(name: "New York", about: nil, suggestions: [], shareLink: linked.shareLink, origin: .starter("newyork"))
         let copied = try XCTUnwrap(RemixLink.url(for: starter, ask: "Add a helicopter tour"))
         XCTAssertEqual(copied.absoluteString, "https://lamp.dev/?starter=newyork&ask=Add%20a%20helicopter%20tour")
+        // What an installed app's chat read back from its Info.plist: only a github.com repository with a commit of hex.
+        XCTAssertEqual(RemixLink.Origin.repository("https://github.com/someone/paper-planes", commit: "0123abcd"),
+                       .repository(url: "https://github.com/someone/paper-planes", commit: "0123abcd"))
+        XCTAssertNil(RemixLink.Origin.repository("", commit: ""))
+        XCTAssertNil(RemixLink.Origin.repository("https://github.com/someone/paper-planes/tree/main", commit: nil))
+        XCTAssertNil(RemixLink.Origin.repository("https://example.com/someone/paper-planes", commit: nil))
+        XCTAssertNil(RemixLink.Origin.repository("https://github.com/someone/paper-planes", commit: "--upload-pack"))
         XCTAssertEqual(RemixOffer(name: "X", about: nil, suggestions: [], shareLink: nil).suggestions, RemixOffer.fallback)
     }
 

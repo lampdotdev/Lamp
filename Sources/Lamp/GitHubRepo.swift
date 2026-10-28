@@ -467,7 +467,10 @@ enum GitHubRepo {
                                                                   isPrivate: card.isPrivate, license: card.license) { step in
                     Task { @MainActor in GitHubRepoCards.shared.cards[id]?.stage = .working(step) }
                 }
+                let before = GitHubRepo.kept(for: project)
                 GitHubRepo.keep(kept, for: project)
+                // The chat beside the installed app names the repository and commit for a remix (`Sidebar.install`).
+                if before?.repo != kept.repo || before?.commit != kept.commit { Store.shared.refreshInstalled(project) }
                 try? FileManager.default.removeItem(at: staged.folder.deletingLastPathComponent())
                 cards[project.id]?.staged = nil
                 cards[project.id]?.kept = kept
