@@ -35,7 +35,8 @@ echo "Signing as: $SIGN_IDENTITY"
 rm -rf "$DIST" && mkdir -p "$DIST"
 # Builds into dist/, not build/, so a release never replaces the Lamp you run day to day.
 FLAVOR="$FLAVOR" BUILD_DIR="$DIST/build" APP_VERSION="$VERSION" SIGN_IDENTITY="$SIGN_IDENTITY" "$HERE/build.sh"
-mv "$DIST/build/$NAME.app" "$DIST/" && rmdir "$DIST/build"
+# The build folder also holds what build.sh made on the way (a nightly's icon), so it goes whole, not with rmdir.
+mv "$DIST/build/$NAME.app" "$DIST/" && rm -rf "$DIST/build"
 codesign --verify --deep --strict "$DIST/$NAME.app"
 
 notarize() {

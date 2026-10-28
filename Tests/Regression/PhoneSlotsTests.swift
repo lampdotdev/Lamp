@@ -20,6 +20,7 @@ final class PhoneSlotsTests: XCTestCase {
         // Lamp's own only: another developer's app of the same team is never offered.
         XCTAssertEqual(team, ["dev.lamp.app.notes.abcde12345", "dev.lamp.app.steps.abcde12345", "dev.lamp.dev.app.timer.abcde12345"])
         XCTAssertTrue(PhoneSlots.isLampApp("dev.lamp.dev.nice-worktree.app.timer.abcde12345"))
+        XCTAssertTrue(PhoneSlots.isLampApp("dev.lamp.nightly.app.timer.abcde12345"))
         let now = Date()
         let notes = PhoneSlots.Known(bundleID: "dev.lamp.app.notes.abcde12345", expires: now.addingTimeInterval(5 * 86400))
         let steps = PhoneSlots.Known(bundleID: "dev.lamp.app.steps.abcde12345", expires: now.addingTimeInterval(6 * 86400))
