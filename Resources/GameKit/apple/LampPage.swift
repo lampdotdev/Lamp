@@ -8,6 +8,7 @@
 // person's mail, calendar, reminders, photos…) is answered by Swift in Sources/Native.swift, the app's own code, with
 // Lamp's building blocks in LampSupport.swift. Only the app's own page, in its main frame, is answered.
 import Combine
+import CryptoKit
 import Foundation
 import UniformTypeIdentifiers
 import WebKit
@@ -393,6 +394,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     private weak var page: WKWebView?
     private var epoch = "", gen = 0
     private var have: [String: String] = [:]
+    private var served: Set<String> = []
     private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("LampPage")
     private static var manifest: URL { cache.appendingPathComponent("changes.json") }
     /// Where this copy is, for Lamp: a phone's copy takes a change when Lamp installs it again, not this way.
@@ -423,6 +425,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
             let gone = Set(kept["gone"] as? [String] ?? [])
             if hashes.values.allSatisfy({ FileManager.default.fileExists(atPath: Self.cache.appendingPathComponent($0).path) }) {
                 have = hashes
+                served = gone
                 files.take(changed: hashes.mapValues { Self.cache.appendingPathComponent($0) }, gone: gone)
             }
         }
@@ -454,10 +457,16 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
     private func take(_ answer: [String: Any], gen next: Int) async throws {
         let hashes = answer["files"] as? [String: String] ?? [:]
         let gone = Set(answer["gone"] as? [String] ?? [])
+        let now = answer["now"] as? Bool ?? false
+        // What this copy already serves (Lamp asked again after its own restart): nothing for the page to do.
+        if hashes == have, gone == served, !now { gen = next; return }
         try FileManager.default.createDirectory(at: Self.cache, withIntermediateDirectories: true)
-        for (path, hash) in hashes where !FileManager.default.fileExists(atPath: Self.cache.appendingPathComponent(hash).path) {
-            let file = try await call("/app/page/file", ["gen": next, "path": path], timeout: 60)
-            guard let text = file["data"] as? String, let data = Data(base64Encoded: text) else { throw URLError(.cannotDecodeContentData) }
+        for (_, hash) in hashes where !FileManager.default.fileExists(atPath: Self.cache.appendingPathComponent(hash).path) {
+            let file = try await call("/app/page/file", ["place": Self.place, "hash": hash], timeout: 60)
+            // Kept under its hash only when it is what the hash names.
+            guard let text = file["data"] as? String, let data = Data(base64Encoded: text), Self.name(of: data) == hash else {
+                throw URLError(.cannotDecodeContentData)
+            }
             try data.write(to: Self.cache.appendingPathComponent(hash), options: .atomic)
         }
         files.take(changed: hashes.mapValues { Self.cache.appendingPathComponent($0) }, gone: gone)
@@ -465,11 +474,12 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         let kept = Set(hashes.values)
         for old in Set(have.values).subtracting(kept) { try? FileManager.default.removeItem(at: Self.cache.appendingPathComponent(old)) }
         have = hashes
+        served = gone
         if let data = try? JSONSerialization.data(withJSONObject: ["bundle": Self.bundle, "files": hashes, "gone": Array(gone)]) {
             try? data.write(to: Self.manifest, options: .atomic)
         }
         gen = next
-        let change: [String: Any] = ["gen": next, "changed": answer["changed"] as? [String] ?? [], "now": answer["now"] as? Bool ?? false, "pill": Self.place != "mac"]
+        let change: [String: Any] = ["gen": next, "changed": answer["changed"] as? [String] ?? [], "now": now, "pill": Self.place != "mac"]
         guard let page, let json = try? JSONSerialization.data(withJSONObject: change) else { return }
         let taken = try? await page.evaluateJavaScript("window.__lampLive ? window.__lampLive(\(String(decoding: json, as: UTF8.self))) : false", in: nil, contentWorld: .page)
         // A page without Lamp's game runtime is opened again as it is.
@@ -477,6 +487,11 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
             page.reload()
             tell(next, "reloading")
         }
+    }
+
+    /// A file's name in the caches, as Lamp names it: the first half of its SHA-256.
+    private static func name(of data: Data) -> String {
+        SHA256.hash(data: data).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
     /// What the page did with a change (lamp-game.js): put in, reopened, waiting for a pause, back where it was.

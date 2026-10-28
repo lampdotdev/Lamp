@@ -40,7 +40,7 @@ import Foundation
 
     /// The change the copy has been given: every file that differs from what it was installed with, by its hash, and
     /// those it no longer has.
-    private struct Given {
+    private struct Given: Codable {
         var gen: Int
         var files: [String: String]
         var gone: [String]
@@ -71,6 +71,23 @@ import Foundation
     private static func folder(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/page-live") }
     private static func record(_ project: LampProject, _ place: Place) -> URL { folder(project).appendingPathComponent("\(place.rawValue).json") }
     private static func copies(_ project: LampProject, _ place: Place) -> URL { folder(project).appendingPathComponent(place.rawValue) }
+    private static func givenRecord(_ project: LampProject, _ place: Place) -> URL { folder(project).appendingPathComponent("\(place.rawValue)-given.json") }
+
+    /// What the copy at `key` was last given, kept on disk beside its install: an app left open across Lamp's restart
+    /// still serves it, so the next change is measured against it, not against the install.
+    private func lastGiven(_ project: LampProject, _ key: Key) -> Given? {
+        if let known = given[key] { return known }
+        guard let data = AppFile.read(Self.givenRecord(project, key.place), in: project),
+              var kept = try? JSONDecoder().decode(Given.self, from: data) else { return nil }
+        kept.now = false
+        given[key] = kept
+        return kept
+    }
+
+    private func give(_ change: Given, to key: Key, in project: LampProject) {
+        given[key] = change
+        if let data = try? JSONEncoder().encode(change) { try? AppFolder.write(data, to: Self.givenRecord(project, key.place), in: project.dir) }
+    }
 
     // MARK: Installs
 
@@ -83,6 +100,7 @@ import Foundation
         installs[key] = record
         given[key] = nil
         held.remove(key)
+        AppFolder.remove(Self.givenRecord(project, place), in: project.dir)
         if let data = try? JSONEncoder().encode(record) { try? AppFolder.write(data, to: Self.record(project, place), in: project.dir) }
         AppFolder.remove(Self.copies(project, place), in: project.dir)
     }
@@ -113,14 +131,15 @@ import Foundation
         guard !now.isEmpty else { return .cannot }
         // Measured against the install, so the copy gets the whole difference however many changes it missed; what
         // this change changed is measured against what it has now.
-        let before = given[key].map { given in
+        let before = lastGiven(project, key).map { given in
             installed.files.filter { !given.gone.contains($0.key) }.merging(given.files) { $1 }
         } ?? installed.files
         let files = now.filter { installed.files[$0.key] != $0.value }
         let gone = installed.files.keys.filter { now[$0] == nil }.sorted()
         let changed = Set(now.keys).union(before.keys).filter { now[$0] != before[$0] }
             .filter { $0 != GamePage.deviceFile && $0 != GamePage.buildFile }.sorted()
-        guard !changed.isEmpty else { return .unchanged }
+        // The copy already has this build: still waiting for a pause when it said so, and otherwise in.
+        guard !changed.isEmpty else { return held.contains(key) ? .held : .unchanged }
         // The files handed over are copied out of the build, which the next change rewrites while the app may still be
         // fetching them.
         let web = Self.web(of: project, at: place), copies = Self.copies(project, place)
@@ -135,7 +154,7 @@ import Foundation
             AppFolder.remove(copies.appendingPathComponent(name), in: project.dir)
         }
         let gen = (given[key]?.gen ?? 0) + 1
-        given[key] = Given(gen: gen, files: files, gone: gone, changed: changed)
+        give(Given(gen: gen, files: files, gone: gone, changed: changed), to: key, in: project)
         held.remove(key)
         let said = await answer(key, gen: gen)
         switch said {
@@ -153,7 +172,7 @@ import Foundation
             guard held.contains(key), var change = given[key] else { continue }
             change.gen += 1
             change.now = true
-            given[key] = change
+            give(change, to: key, in: project)
             held.remove(key)
             wake(key)
             asked = true
@@ -191,7 +210,7 @@ import Foundation
         let key = Key(id: project.id, place: place)
         heard[key] = Date()
         let after = (body["epoch"] as? String) == epoch ? body["after"] as? Int ?? 0 : 0
-        func newer() -> Given? { given[key].flatMap { $0.gen > after ? $0 : nil } }
+        func newer() -> Given? { lastGiven(project, key).flatMap { $0.gen > after ? $0 : nil } }
         if newer() == nil {
             let id = UUID()
             await withCheckedContinuation { (waiter: CheckedContinuation<Void, Never>) in
@@ -209,15 +228,16 @@ import Foundation
         return (200, ["epoch": epoch, "gen": change.gen, "files": change.files, "gone": change.gone, "changed": change.changed, "now": change.now])
     }
 
-    /// One of the files of the change, by its path in Web/ (`/app/page/file`).
+    /// One of the files of the change (`/app/page/file`): the copy kept for `place` under the hash the change named,
+    /// which the app checks against what it gets.
     func file(_ body: [String: Any], for project: LampProject) -> (Int, [String: Any]) {
-        guard let path = body["path"] as? String else { return (404, ["error": "Not found"]) }
-        for place in [Place.mac, .simulator] {
-            guard let hash = given[Key(id: project.id, place: place)]?.files[path],
-                  let data = AppFile.read(Self.copies(project, place).appendingPathComponent(hash), in: project) else { continue }
-            return (200, ["data": data.base64EncodedString()])
+        guard let place = (body["place"] as? String).flatMap(Place.init(rawValue:)), let hash = body["hash"] as? String,
+              hash.count == 32, hash.allSatisfy(\.isHexDigit),
+              lastGiven(project, Key(id: project.id, place: place))?.files.values.contains(hash) == true,
+              let data = AppFile.read(Self.copies(project, place).appendingPathComponent(hash), in: project) else {
+            return (404, ["error": "Not found"])
         }
-        return (404, ["error": "Not found"])
+        return (200, ["data": data.base64EncodedString()])
     }
 
     /// What the page did with a change (`/app/page/state`): the first word of a change answers `put`; a held change
