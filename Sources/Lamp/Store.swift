@@ -3304,6 +3304,9 @@ final class Store: ObservableObject {
         }
         var ask = mention.ask
         if !mention.asksForApp {
+            // The chat takes the fetch's end a moment after it's said (`SidebarServer`), and nothing reaches it while
+            // the question is open: it's let catch up first, so what's behind the question isn't still "Getting…".
+            try? await Task.sleep(for: .milliseconds(300))
             let choice = askToAdapt(source, ask)
             // The wish may have been stopped or deleted while the question was open.
             guard turns[id] === turn, !turn.stopped, let current = projects.first(where: { $0.id == id }) else {
