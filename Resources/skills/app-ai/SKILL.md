@@ -30,6 +30,10 @@ the Mac, `UIImage` on iPhone, `LampImage` in an app for both) when the AI needs 
 create or edit pictures, use `LampAI.makeImage(...)`, `LampAI.editImage(...)` or `LampAI.editImages(...)`; these take
 10–60 seconds. Show a ProgressView while waiting and show errors in the UI.
 
+A page's `LampAI.act` (the person asking the app to do things, with the app's own reads and writes) has no Swift
+form yet. A native app doing that asks `LampAI.ask(..., as:)` for its plan and follows the rules in the web-app skill's
+"Doing things for the person".
+
 ## Decisions
 
 Decisions are your default tool for anything that depends on meaning. `LampAI.isTrue`, `LampAI.choose`,

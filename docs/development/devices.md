@@ -628,7 +628,13 @@ A kind that takes places has what its places give it, not what its kind could (`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
 app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's common host, shared by
 `LampWebGame.swift` and `LampWebApp.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
-routes, only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
+routes, `/ai`, `/ai/status`, `/ai/image`, `/ai/decide`, `/ai/act` and `/ai/hear`, the same list as Android's `LampPageGateway.kt` and the TV preview's,
+only from the app's own page; the page's voice, `LampVoice` in lamp.js, is answered there too: `LampPageVoice` in LampPage.swift records with
+AVAudioEngine and `LampPageVoice` in LampPageGateway.kt with AudioRecord's voice-recognition source, which on an Android TV box takes a
+remote's microphone, both as 16 kHz mono 16-bit WAV, a screen's Android manifest asking for RECORD_AUDIO; asking what's possible never prompts,
+and a recording ends with the page's session, its reload or the app leaving the screen; each recording has its own stop,
+its limits run on the clock rather than on audio arriving (`LampVoiceEnd`, the same rule in both hosts), and its answer
+goes only to the page that asked), and `LampNative.call(name, args)` reaches Swift the agent writes in
 `Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
 which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.
 Registering a call makes the Mac copy compiled rather than copied from Lamp's player.

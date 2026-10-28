@@ -426,7 +426,7 @@ enum GameKit {
         hasher.update(data: Data((webBuildSh + webPackageSwift + Controllers.pageJS).utf8))
         // And Lamp's Android app around it, with the Kotlin blocks a game of several apps carries there, so a game on
         // Android built by an earlier Lamp is built again rather than shown to its wish's other apps as out of date.
-        hasher.update(data: Data((GameAndroid.mainActivity + GameAndroid.pageWish + GameAndroid.wishBuildGradle + Template.androidSupportKotlin).utf8))
+        hasher.update(data: Data((GameAndroid.mainActivity + GameAndroid.pageGateway + GameAndroid.screenManifest + GameAndroid.pageWish + GameAndroid.wishBuildGradle + Template.androidSupportKotlin).utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }()
 
