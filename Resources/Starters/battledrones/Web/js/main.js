@@ -115,8 +115,9 @@ async function startGame(feed, resume = null) {
     });
     if (bar)
         bar.style.width = "100%";
-    // (let the full bar paint before the scene build blocks the main thread)
-    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    // (let the full bar paint before the scene build blocks the main thread: a timer, since Lamp's preview plays the
+    // page out of sight, where no animation frame comes)
+    await new Promise((r) => setTimeout(r, 20));
     scene = new GameScene(document.getElementById("game"), dpr(), art, feed, { resume, seats: seatsFor() });
     matchStarted(scene);
     window.addEventListener("resize", () => scene.resize());

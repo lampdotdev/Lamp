@@ -352,6 +352,9 @@ enum TVs {
         guard fm.fileExists(atPath: files.appendingPathComponent("index.html").path) else {
             throw Failure(message: "The app has no \(folder)/index.html yet.")
         }
+        // A game's page is told the device it's on, as every copy of it is (`GamePage`): its runtime imports what's
+        // written, and without it the page never starts.
+        if GameKit.isGame(project) { try GamePage.stage(files, in: dir, for: GamePage.place(for: project, at: .tv)) }
         let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
         // The TV page learns where its phone page is from Lamp's own script, in the copy only: the address is this
         // Mac's on the network now, which isn't the app's to keep.

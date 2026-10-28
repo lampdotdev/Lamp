@@ -220,26 +220,54 @@ function matchFrame(pad, f, scene) {
 export function frame(f, scene) {
     if (pads.off) {
         if (cursor) cursor.hidden = true;
+        // In the lobby the remote's highlight stays (above); a controller there takes a seat instead.
+        menus = !scene;
         return;
     }
     const pad = merged(f.pads);
     const used = pad.down || Math.abs(pad.lx) > 0.3 || Math.abs(pad.ly) > 0.3 || Math.abs(pad.rx) > 0.3 || Math.abs(pad.ry) > 0.3 || pad.rt > 0.3;
     if (used)
         usedAt = f.time;
-    const playing = input().kind === "controller" && usedAt >= 0;
+    // A controller or a TV's remote, once it's used, until the mouse or a finger takes over.
+    const playing = usedAt >= 0 && input().kind !== "touch";
     document.body.classList.toggle("onpad", playing);
     if (!playing) {
         if (cursor) cursor.hidden = true;
         focus(null);
         return;
     }
-    if (scene && !scene.over)
+    menus = !(scene && !scene.over);
+    if (!menus)
         matchFrame(pad, f, scene);
     else {
         if (cursor) cursor.hidden = true;
         menuFrame(pad, f.time);
     }
 }
+
+// The mouse or a finger on the screen takes over from the controller.
+window.addEventListener("pointerdown", (e) => { if (e.isTrusted) usedAt = -1; }, { capture: true, passive: true });
+
+// In the menus, the arrows, Return and Esc (a Samsung or LG TV's remote, whose keys come as the keyboard's) move the
+// highlight and press, as a controller's d-pad, A and B do. In a match the game reads them itself.
+let menus = true;
+const ARROWS = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+window.addEventListener("keydown", (e) => {
+    // (the lobby for playing together too, where controllers take seats but the remote still moves the highlight)
+    if (!e.isTrusted || !menus || /^(INPUT|TEXTAREA)$/.test(e.target.tagName))
+        return;
+    const dir = ARROWS[e.code] || ARROWS[{ 37: "ArrowLeft", 38: "ArrowUp", 39: "ArrowRight", 40: "ArrowDown" }[e.keyCode]];
+    if (dir) {
+        e.preventDefault();
+        usedAt = Math.max(usedAt, 0);
+        document.body.classList.add("onpad");
+        step(dir);
+    }
+    else if ((e.code === "Enter" || e.keyCode === 13) && focused) {
+        e.preventDefault();
+        focused.click();
+    }
+}, { capture: true });
 
 // The legend follows the controller in the player's hands (an Xbox's letters, a PlayStation's shapes).
 onInput(() => { if (legend || input().kind === "controller") drawLegend(); });
