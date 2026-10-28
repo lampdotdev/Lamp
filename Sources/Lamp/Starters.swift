@@ -5,7 +5,9 @@ import LampSidebarKit
 /// change into their own, which shows what Lamp does better than a question about what to make. Each is a
 /// folder in Resources/Starters: the app's code (Sources/, Widget/, Share/), its pictures (Assets/), APP.md for the agent that changes it,
 /// icon.json, about.json, capabilities.json when it needs one, preview.png (the picture the desk shows on hover),
-/// and starter.md, which is Lamp's: the wish's name and what the sidebar offers to change first. They're copied once, on the first launch, and from then on
+/// and starter.md, which is Lamp's: the wish's name, what the sidebar offers to change first, and where the starter lives
+/// on GitHub (`repository:` and the `commit:` of it this Lamp ships, written by `scripts/publish-starters.sh`), so a copy
+/// can take the latest of it and send changes back as any wish opened from GitHub can. They're copied once, on the first launch, and from then on
 /// they're the person's like any other wish; a later Lamp with other starters gives those only to new people.
 /// `scripts/check-starters.sh` type-checks them against this checkout's LampSupport.swift.
 /// A release ships each one built as well (`PrebuiltStarters`), so it's ready before Apple's build tools are.
@@ -21,6 +23,25 @@ enum Starters {
         let tweaks: [Tweak]
         /// What kind of wish it is (`kind:` in starter.md): a Mac app unless it says otherwise, as a game does.
         var kind: Platform = .mac
+        /// Where the starter lives on GitHub (`repository:`), laid out as Put on GitHub lays a wish out
+        /// (`StarterRepos`), and the commit there this Lamp ships (`commit:`).
+        var repository: String? = nil
+        var commit: String? = nil
+    }
+
+    /// Where Lamp's own starters live: a repository each in the Lamp team's account on GitHub.
+    static let account = "RooCodeInc"
+    static func repositoryName(of folder: String) -> String { "lamp-starter-" + folder }
+
+    /// A starter's link on a copy's chain, with where the starter lives filled in from the starter this Lamp ships
+    /// when the copy was made before starters named one: the address only, since the commit the copy came from isn't
+    /// known (an update then merges against the version the copy began with).
+    static func located(_ link: Credits.Remix) -> Credits.Remix {
+        guard link.url == nil, let folder = link.starter,
+              let shipped = bundled.first(where: { $0.folder.lastPathComponent == folder }), let url = shipped.repository else { return link }
+        var link = link
+        link.url = url
+        return link
     }
 
     /// A change the chat offers, with the symbol on its tile (`- drop.fill: Add a water counter` in starter.md;
@@ -106,7 +127,7 @@ enum Starters {
         var lines = text.components(separatedBy: .newlines)[...]
         guard lines.first?.trimmed == "---" else { return nil }
         lines = lines.dropFirst()
-        var name = "", offer = "", tweaks: [Tweak] = [], kind = Platform.mac
+        var name = "", offer = "", tweaks: [Tweak] = [], kind = Platform.mac, repository: String? = nil, commit: String? = nil
         for line in lines {
             let trimmed = line.trimmed
             if trimmed == "---" { break }
@@ -118,12 +139,14 @@ enum Starters {
                 case "name": name = value
                 case "offer": offer = value
                 case "kind": kind = Targets.all.first { $0.platform.rawValue == value }?.platform ?? .mac
+                case "repository": repository = Credits.validURL(value)
+                case "commit": commit = Credits.validCommit(value)
                 default: break
                 }
             }
         }
         guard !name.isEmpty else { return nil }
-        return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks, kind: kind)
+        return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks, kind: kind, repository: repository, commit: commit)
     }
 
     /// A symbol's name is lowercase words joined by dots, so `Group: by client` stays words.
@@ -220,9 +243,11 @@ enum Starters {
         }
         try fm.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
         // Its credits, the work it's built on (credits.json in the starter's folder), with the starter itself as the
-        // first wish it was remixed from.
+        // first wish it was remixed from, named where it lives and at the commit this Lamp ships: what Update from
+        // GitHub… merges against and Send Changes Back… goes on top of.
         let credits = Credits.read(starter.folder.appendingPathComponent(Credits.file)) ?? Credits()
-        try Credits.arrive(credits.remixed(from: Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent)), in: project)
+        let link = Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent, url: starter.repository, commit: starter.commit)
+        try Credits.arrive(credits.remixed(from: link), in: project)
         let icon = starter.folder.appendingPathComponent(iconFolder)
         for made in iconFiles(of: project) {
             let shipped = icon.appendingPathComponent(made.lastPathComponent)
