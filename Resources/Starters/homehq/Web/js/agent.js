@@ -3,9 +3,10 @@
 // screen shows the change through sync; the copy that heard you says what happened, built from what actually ran
 // (never from the AI's own words), and offers Undo for what's still as the turn left it.
 //
-// The Ask button shows only where it works: LampAI.isAvailable('act') (this page, the app around it and the AI set up in
-// Lamp can all take it). Speaking and listening are the app's own (Sources/Native.swift: voice, listen, stop, speak),
-// on the Mac, iPhone and iPad; elsewhere it's typed.
+// The Ask button shows wherever it works: LampAI.isAvailable('act') (this page, the app around it and the AI set up in
+// Lamp can all take it). Where the app around the page can hear (LampVoice: the Mac, iPhone and iPad, Android and
+// Android TV, a TV remote's microphone included) and Lamp can transcribe (LampAI.isAvailable('hear')), opening Ask
+// listens straight away: one press on the rail's Ask, then talk. Typing stays one press away everywhere (Type instead).
 (function () {
   'use strict';
   var D = window.DATA;
@@ -13,7 +14,8 @@
   // what was heard, an answer) does nothing once it has changed. `pending` is a question back in progress: the request
   // it came from, every question and answer of the chain so far, what's asked now and what was already done, so the
   // answer is read against all of them.
-  var S = { turn: null, voice: null, listening: false, pending: null, last: null, el: null, session: 0, followUp: null };
+  var S = { turn: null, voice: null, hear: false, listening: false, listenTag: '', armedAt: 0, pending: null, last: null,
+            el: null, session: 0, followUp: null, tags: 0 };
 
   var ABOUT = 'Home HQ is a family dashboard on the kitchen wall: the family, today and the calendar, the chores for ' +
     'each part of the day, and the shopping list. You act for whoever is talking to it.\n' +
@@ -87,24 +89,24 @@
     return text || 'Done.';
   }
 
-  // ------------------------------------------------------------ voice (the app's own, where there is one)
-  function native() { return !!(window.LampNative && LampNative.available); }
+  // ------------------------------------------------------------ voice (the app around the page's, where it has one)
+  function canHear() { return !!(S.voice && S.voice.listen && S.hear); }
   // Resolves true once the words have been said to the end; false when there's no voice, or they were cut off.
   function speak(text) {
     if (!(S.voice && S.voice.speak && text)) return Promise.resolve(false);
-    return LampNative.call('speak', { text: text }).then(function (done) { return done === true; }, function () { return false; });
+    return LampVoice.speak(text).then(function (done) { return done === true; }, function () { return false; });
   }
+  function hush() { if (S.voice && S.voice.speak) LampVoice.hush(); }
   function live(session) { return session === S.session && !!S.el && !document.hidden; }
-  // Ends this session: nothing it started (a follow-up listen, a turn, what was being heard) carries on.
+  // Ends this session: nothing it started (a follow-up listen, a recording, a transcription, a turn) carries on.
   function end() {
     S.session++;
     clearTimeout(S.followUp);
     S.followUp = null;
     if (S.turn) { S.turn.cancel(); S.turn = null; busy(false); }
-    if (S.listening) { S.listening = false; LampNative.call('stop', { cancel: true }).then(null, function () {}); }
+    if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); }
     hush();
   }
-  function hush() { if (S.voice && S.voice.speak) LampNative.call('stop', { cancel: true }).then(null, function () {}); }
 
   // ------------------------------------------------------------ the sheet
   function line(cls, html) {
@@ -165,7 +167,7 @@
       if (App.changesOf(r.turn).length && S.el) S.el.querySelector('[data-ask-undo]').hidden = false;
       // A question back: listen for the answer once it has been said to the end, while Ask is still open.
       speak(spoken).then(function (said) {
-        if (!said || !r.ask || !S.voice || !S.voice.listen || !live(session)) return;
+        if (!said || !r.ask || !canHear() || !live(session)) return;
         S.followUp = setTimeout(function () { if (live(session)) listen(); }, 300);
       });
     });
@@ -185,40 +187,88 @@
     S.el.querySelector('[data-ask-undo]').hidden = true;
   }
 
+  // The voice controls: Talk when idle, Stop while listening, the level as it's heard, and what's happening.
+  function voiceState(kind, words) {
+    if (!S.el) return;
+    var talk = S.el.querySelector('[data-ask-talk]'), stop = S.el.querySelector('[data-ask-stop]');
+    if (talk) talk.hidden = kind === 'listening';
+    if (stop) stop.hidden = kind !== 'listening';
+    S.el.classList.toggle('is-listening', kind === 'listening');
+    var said = S.el.querySelector('[data-ask-voice-state]');
+    if (said) said.textContent = words || '';
+    if (kind !== 'listening') meter(0);
+  }
+  function meter(level) { var m = S.el && S.el.querySelector('[data-meter]'); if (m) m.style.width = Math.round(Math.min(1, level) * 100) + '%'; }
+
   function listen() {
-    if (!S.voice || !S.voice.listen || S.listening || S.turn || !S.el || document.hidden) return;
-    var session = S.session;
+    if (!canHear() || S.listening || S.turn || !S.el || document.hidden) return;
+    var session = S.session, tag = 'ask' + session + '-' + (++S.tags);
     hush();
-    S.listening = true;
-    if (S.el) S.el.classList.add('is-listening');
-    var words = D.people.map(function (p) { return p.name; }).concat(D.chores.map(function (c) { return c.title; }));
-    LampNative.call('listen', { words: words.slice(0, 80) }).then(function (heard) {
-      // Heard after Ask closed or the page hid: dropped, never a new turn.
-      if (session !== S.session) return;
+    S.listening = true; S.listenTag = tag; S.armedAt = Date.now();
+    voiceState('listening', 'Listening… say what you want.');
+    var stop = S.el.querySelector('[data-ask-stop]');
+    if (stop) stop.focus();
+    LampVoice.listen({ session: tag, onLevel: function (l) { if (live(session)) meter(l.level); } }).then(function (heard) {
+      // Heard after Ask closed or the page hid: dropped, never transcribed, never a turn.
+      if (session !== S.session || tag !== S.listenTag) return;
       S.listening = false;
-      if (S.el) S.el.classList.remove('is-listening');
-      if (!live(session) || !heard || heard.ended === 'cancelled' || heard.ended === 'interrupted' || !heard.text) return;
-      ask(heard.text);
-    }, function () {
-      if (session !== S.session) return;
-      S.listening = false;
-      if (S.el) S.el.classList.remove('is-listening');
+      if (!live(session)) return;
+      var ended = heard.ended;
+      if (ended === 'cancelled') return voiceState('idle', '');
+      if (ended === 'denied') { voiceState('idle', ''); line('ask-them', 'Home HQ can’t use the microphone. Allow it in Settings, or type instead.'); return showTyping(); }
+      if (ended === 'nothing') {
+        voiceState('idle', '');
+        return line('ask-them', heard.peak < 0.01 ? 'I didn’t hear anything: no sound reached the microphone.' : 'I didn’t hear anything. Press Talk and try again.');
+      }
+      // Fifteen seconds may have cut the request off: never act on half of it.
+      if (ended === 'cap') { voiceState('idle', ''); return line('ask-them is-partly', 'That was longer than I can take at once. Say it again, a little shorter.'); }
+      if (ended === 'error' || !heard.audio) { voiceState('idle', ''); return line('ask-them is-partly', App.esc(heard.error || 'The microphone didn’t work.')); }
+      voiceState('hearing', 'Working out what you said…');
+      LampAI.hear(heard.audio).then(function (r) {
+        if (!live(session)) return;
+        voiceState('idle', '');
+        if (r.nothing) return line('ask-them', 'I didn’t catch that. Press Talk and try again.');
+        ask(r.text);
+      }, function (e) {
+        if (!live(session)) return;
+        voiceState('idle', '');
+        line('ask-them is-partly', App.esc(e && e.message || 'I couldn’t hear that.'));
+      });
     });
   }
 
+  // Stop keeps what was said so far. Not in the first moment after listening starts: the press that opened Ask (its key
+  // coming up, or repeating) mustn't also end what it began.
+  function stopListening(e) {
+    if (e && e.repeat) return;
+    if (!S.listening || Date.now() - S.armedAt < 700) return;
+    LampVoice.stop(S.listenTag);
+  }
+  function showTyping() {
+    if (!S.el) return;
+    var form = S.el.querySelector('[data-ask-form]');
+    form.hidden = false;
+    S.el.querySelector('[data-ask-input]').focus();
+  }
+
   function open() {
+    var voice = canHear();
     App.sheet('<div class="sheet-pad ask"><div class="label">Ask Home HQ</div>' +
       '<div class="ask-log" aria-live="polite"></div>' +
-      '<form class="ask-row" data-ask-form>' +
-      (S.voice && S.voice.listen ? '<button type="button" class="btn ask-mic" data-ask-mic aria-label="Talk">' + App.icon('mic', 26) + '</button>' : '') +
+      (voice ? '<div class="ask-voice"><button type="button" class="btn btn--solid ask-talk" data-ask-talk>' + App.icon('mic', 26) + 'Talk</button>' +
+        '<button type="button" class="btn btn--solid ask-stop" data-ask-stop hidden>Stop</button>' +
+        '<div class="ask-meter"><i data-meter></i></div><span class="ask-voice-state" data-ask-voice-state></span>' +
+        '<button type="button" class="btn btn--ghost ask-type" data-ask-type>Type instead</button></div>' : '') +
+      '<form class="ask-row" data-ask-form' + (voice ? ' hidden' : '') + '>' +
       '<input class="ask-input" data-ask-input placeholder="Add milk · Mark the dishes done · What\'s on after school?" autocomplete="off">' +
       '<button class="btn btn--solid" data-ask-send>Ask</button></form>' +
       '<button class="btn btn--ghost ask-undo" data-ask-undo hidden>' + App.icon('undo', 22) + 'Undo</button>' +
-      (S.voice && S.voice.permission === 'denied' ? '<p class="sheet-p">To talk to Home HQ, turn on the microphone and speech recognition for it in System Settings.</p>' : '') +
+      (S.voice && S.voice.listen && !S.hear ? '<p class="sheet-p">Talking needs OpenRouter set up in Lamp on the Mac. You can type instead.</p>' : '') +
       '</div>', {
       cls: 'sheet--wide',
       onClose: function () {
-        // Closing ends the session: an answer, what's heard or a follow-up listen that comes after does nothing.
+        // Closing ends the session: a recording is thrown away, and an answer, a transcript or a follow-up listen that
+        // comes after does nothing.
         end();
         S.pending = null;
         clearInterval(S.awake);
@@ -236,12 +286,14 @@
         var input = sheet.querySelector('[data-ask-input]');
         sheet.querySelector('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; ask(t); });
         sheet.querySelector('[data-ask-undo]').addEventListener('click', undo);
-        var mic = sheet.querySelector('[data-ask-mic]');
-        if (mic) mic.addEventListener('click', function () {
-          if (S.listening) LampNative.call('stop', {}).then(null, function () {});
-          else listen();
-        });
-        if (mic && S.voice.permission !== 'denied') listen(); else input.focus();
+        var talk = sheet.querySelector('[data-ask-talk]'), stop = sheet.querySelector('[data-ask-stop]'), type = sheet.querySelector('[data-ask-type]');
+        if (talk) talk.addEventListener('click', listen);
+        if (stop) { stop.addEventListener('click', stopListening); stop.addEventListener('keydown', function (e) { if (e.repeat) e.preventDefault(); }); }
+        if (type) type.addEventListener('click', function () { if (S.listening) { S.listening = false; LampVoice.cancel(S.listenTag); voiceState('idle', ''); } showTyping(); });
+        // With a voice, opening Ask is listening (one press); otherwise it's typing.
+        if (voice && S.voice.permission !== 'denied') listen();
+        else if (voice) { voiceState('idle', ''); talk.focus(); }
+        else input.focus();
       }
     });
   }
@@ -262,7 +314,10 @@
       b.addEventListener('click', open);
       rail.insertBefore(b, settings);
     });
-    // Voice: asked of the app itself, since LampNative.available only says there's an app around the page.
-    if (native()) LampNative.call('voice', {}).then(function (v) { S.voice = v || null; }, function () { S.voice = null; });
+    // Voice: asked of the app around the page (never prompting), and whether Lamp can transcribe.
+    if (window.LampVoice) LampVoice.status().then(function (v) {
+      S.voice = v;
+      if (v.listen) LampAI.isAvailable('hear').then(function (yes) { S.hear = yes; });
+    });
   });
 })();

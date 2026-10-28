@@ -79,8 +79,15 @@ enum GameAndroid {
     }
     private static let screenLine = "// a screen", gameLine = "// a game"
 
-    /// A screen's manifest: no game to the system.
-    static var screenManifest: String { manifest.replacingOccurrences(of: "        android:isGame=\"true\"\n", with: "") }
+    /// A screen's manifest: no game to the system, and it may listen.
+    static var screenManifest: String {
+        manifest.replacingOccurrences(of: "        android:isGame=\"true\"\n", with: "")
+            .replacingOccurrences(of: internetLine, with: internetLine + recordLine)
+    }
+    private static let internetLine = "    <uses-permission android:name=\"android.permission.INTERNET\" />\n"
+    /// A screen's Ask listens (LampPageVoice), asked for only when the person first talks to it.
+    private static let recordLine = "    <uses-permission android:name=\"android.permission.RECORD_AUDIO\" />\n"
+        + "    <uses-feature android:name=\"android.hardware.microphone\" android:required=\"false\" />\n"
 
     /// The game's activity for a game on its own: without the lines that answer the page's `Lamp.wish`, each marked so.
     static func withoutWish(activity: String) -> String {
@@ -165,7 +172,7 @@ enum GameAndroid {
 
     /// What a new Lamp's Android host is made of, for the builds it changes (`Target.Recipe.inputs`): its folder isn't
     /// among a page's sources.
-    static var stamp: String { manifest + mainActivity + pageGateway + aloneBuildGradle + wishBuildGradle }
+    static var stamp: String { manifest + screenManifest + mainActivity + pageGateway + aloneBuildGradle + wishBuildGradle }
 
     /// The page's LampAI (Web/lamp.js's `lampGatewayHost`), answered by the app with its own token, which Lamp writes
     /// into the app's storage as it installs it (`Adb.tellApp`), as the app around the page answers it on the Mac
@@ -185,7 +192,7 @@ enum GameAndroid {
     import kotlin.concurrent.thread
 
     object LampPageGateway {
-        private val routes = setOf("/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act")
+        private val routes = setOf("/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear")
 
         /** Answers the page at `origin`, the page's own, in its main frame: no other page or frame reaches Lamp. */
         fun attach(web: WebView, origin: String) {
@@ -219,7 +226,8 @@ enum GameAndroid {
             val token = install.optString("token")
             val list = install.optJSONArray("routes") ?: return failure("Couldn't reach Lamp. Open Lamp on your Mac and try again.")
             val bytes = body.toByteArray(Charsets.UTF_8)
-            for (attempt in 0 until 2) {
+            // What the person said is paid for once heard: tried on each way to the Mac once, never again after a moment.
+            for (attempt in 0 until (if (path == "/ai/hear") 1 else 2)) {
                 for (i in 0 until list.length()) {
                     val route = list.optJSONObject(i) ?: continue
                     val left = (deadline - System.currentTimeMillis()).toInt()
@@ -250,6 +258,169 @@ enum GameAndroid {
                     ?: throw java.io.IOException("Lamp's answer couldn't be read.")
                 return status to String(all, split + 4, all.size - split - 4)
             }
+        }
+    }
+
+    /** The page's LampVoice (Web/lamp.js's `lampVoiceHost`): what the person says, recorded by whatever microphone this
+     *  device gives an app (a TV remote's included, which Android hands over as the voice-recognition source), as
+     *  16 kHz mono 16-bit PCM in a WAV for the page to have transcribed (`LampAI.hear`); and what the page says back,
+     *  read out. Asking what's possible never prompts: only `listen` asks for the microphone. One recording at a time,
+     *  tagged with the page's session; a stop keeps it, a cancel throws it away, and the app leaving the screen or the
+     *  page loading again cancels it whether the page says so or not. Only the page's own origin, in its main frame. */
+    object LampPageVoice {
+        private const val RATE = 16000
+        private const val MAX_SECONDS = 15.0; private const val WAIT_SECONDS = 6.0; private const val QUIET_SECONDS = 1.2
+        private var activity: android.app.Activity? = null
+        private var web: WebView? = null
+        private var reply: androidx.webkit.JavaScriptReplyProxy? = null
+        @Volatile private var session = ""
+        @Volatile private var stopAs: String? = null
+        private var waiting: Pair<String, Int>? = null      // the session and call asking for the microphone
+        private var tts: android.speech.tts.TextToSpeech? = null
+        private var ttsReady = false
+        private val spoken = mutableMapOf<String, Int>()     // utterance -> call id
+
+        fun attach(activity: android.app.Activity, web: WebView, origin: String) {
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
+            this.activity = activity; this.web = web
+            WebViewCompat.addWebMessageListener(web, "lampVoiceHost", setOf(origin)) { _, message, _, isMainFrame, proxy ->
+                val call = try { JSONObject(message.data ?: "") } catch (e: Exception) { null }
+                if (!isMainFrame || call == null) return@addWebMessageListener
+                reply = proxy
+                val id = call.optInt("id"); val tag = call.optString("session")
+                when (call.optString("cmd")) {
+                    "status" -> answer(id, status())
+                    "listen" -> listen(tag, id)
+                    "stop" -> { if (tag == session) stopAs = "stopped"; answer(id, JSONObject().put("ok", true)) }
+                    "cancel" -> { if (tag == session) cancel() else if (waiting?.first == tag) waiting = null; answer(id, JSONObject().put("ok", true)) }
+                    "speak" -> speak(call.optString("text"), id)
+                    "hush" -> { tts?.stop(); answer(id, JSONObject().put("ok", true)) }
+                    else -> answer(id, JSONObject().put("error", "Unknown."))
+                }
+            }
+        }
+
+        /** The app left the screen, or the page loads again: nothing goes on being heard. */
+        fun cancel() { waiting = null; if (session.isNotEmpty()) stopAs = "cancelled"; tts?.stop() }
+
+        private fun granted() = activity?.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        fun status(): JSONObject {
+            val a = activity
+            val permission = when {
+                granted() -> "granted"
+                a != null && a.shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO) -> "denied"
+                else -> "ask"
+            }
+            val inputs = (a?.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager)
+                ?.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)?.size ?: 0
+            return JSONObject().put("listen", inputs > 0).put("speak", true).put("permission", permission)
+                .put("why", if (inputs > 0) "" else "This device has no microphone.").put("maxSeconds", MAX_SECONDS)
+        }
+
+        private fun listen(tag: String, id: Int) {
+            cancel()
+            if (!granted()) {
+                waiting = tag to id
+                activity?.requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 7307)
+                return
+            }
+            record(tag, id)
+        }
+
+        /** The person's answer to the system's question (MainActivity passes it on). Closed meanwhile: nothing starts. */
+        fun permissionResult(code: Int, allowed: Boolean) {
+            if (code != 7307) return
+            val (tag, id) = waiting ?: return
+            waiting = null
+            if (!allowed) { answer(id, JSONObject().put("ended", "denied")); return }
+            record(tag, id)
+        }
+
+        private fun record(tag: String, id: Int) {
+            tts?.stop()
+            session = tag; stopAs = null
+            thread {
+                val result = try { capture(tag) } catch (e: Exception) { JSONObject().put("ended", "error").put("error", e.message ?: "The microphone failed.") }
+                if (session == tag) session = ""
+                answer(id, result)
+            }
+        }
+
+        /** Records until the person stops speaking, a stop, a cancel or the limit; levels go to the page as it goes. */
+        private fun capture(tag: String): JSONObject {
+            val min = android.media.AudioRecord.getMinBufferSize(RATE, android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT)
+            @Suppress("MissingPermission")
+            val rec = android.media.AudioRecord(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE,
+                android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT, maxOf(min, RATE))
+            if (rec.state != android.media.AudioRecord.STATE_INITIALIZED) { rec.release(); return JSONObject().put("ended", "error").put("error", "The microphone didn't open.") }
+            val pcm = java.io.ByteArrayOutputStream()
+            val buf = ShortArray(RATE / 25)                  // 40 ms
+            val bytes = java.nio.ByteBuffer.allocate(buf.size * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            var noise = 0.0; var peak = 0.0; var speechAt = -1.0; var quietSince = -1.0
+            var ended = "cap"
+            rec.startRecording()
+            val routed = rec.routedDevice?.type ?: -1
+            try {
+                while (true) {
+                    val asked = stopAs
+                    if (asked != null) { ended = asked; break }
+                    val n = rec.read(buf, 0, buf.size)
+                    if (n <= 0) continue
+                    bytes.clear(); var sum = 0.0; var top = 0.0
+                    for (i in 0 until n) { val v = buf[i] / 32768.0; sum += v * v; top = maxOf(top, kotlin.math.abs(v)); bytes.putShort(buf[i]) }
+                    pcm.write(bytes.array(), 0, n * 2)
+                    val level = kotlin.math.sqrt(sum / n); peak = maxOf(peak, top)
+                    val t = pcm.size() / 2.0 / RATE
+                    if (t < 0.3) noise = maxOf(noise, level)
+                    if (level > maxOf(noise * 3, 0.02)) { if (speechAt < 0) speechAt = t; quietSince = -1.0 } else if (speechAt >= 0 && quietSince < 0) quietSince = t
+                    event(JSONObject().put("event", "level").put("session", tag).put("level", minOf(1.0, level * 4)).put("speech", speechAt >= 0))
+                    if (t >= MAX_SECONDS) { ended = "cap"; break }
+                    if (speechAt < 0 && t >= WAIT_SECONDS) { ended = "nothing"; break }
+                    if (quietSince >= 0 && t - quietSince >= QUIET_SECONDS) { ended = "quiet"; break }
+                }
+            } finally { rec.stop(); rec.release() }
+            val audio = pcm.toByteArray()
+            val out = JSONObject().put("ended", ended).put("seconds", audio.size / 2.0 / RATE).put("peak", peak)
+                .put("speech", speechAt >= 0).put("input", routed)
+            if (ended == "stopped" || ended == "quiet" || ended == "cap") out.put("audio", android.util.Base64.encodeToString(wav(audio), android.util.Base64.NO_WRAP))
+            return out
+        }
+
+        private fun wav(pcm: ByteArray): ByteArray {
+            val h = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            h.put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVEfmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
+                .putInt(RATE).putInt(RATE * 2).putShort(2).putShort(16).put("data".toByteArray()).putInt(pcm.size)
+            return h.array() + pcm
+        }
+
+        private fun speak(text: String, id: Int) {
+            val a = activity ?: return answer(id, JSONObject().put("done", false))
+            if (text.isEmpty() || session.isNotEmpty()) return answer(id, JSONObject().put("done", false))
+            fun say() {
+                val utterance = "u$id"
+                spoken[utterance] = id
+                tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, utterance)
+            }
+            if (tts != null && ttsReady) return say()
+            tts = android.speech.tts.TextToSpeech(a) { status ->
+                ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS
+                if (!ttsReady) { answer(id, JSONObject().put("done", false)); return@TextToSpeech }
+                tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(u: String) {}
+                    override fun onDone(u: String) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", true)) } }
+                    @Deprecated("Deprecated in Java") override fun onError(u: String) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) } }
+                    override fun onStop(u: String, interrupted: Boolean) { spoken.remove(u)?.let { answer(it, JSONObject().put("done", false)) } }
+                })
+                say()
+            }
+        }
+
+        private fun answer(id: Int, body: JSONObject) = post(body.put("id", id))
+        private fun event(body: JSONObject) = post(body)
+        private fun post(body: JSONObject) {
+            val w = web ?: return; val r = reply ?: return
+            w.post { try { r.postMessage(body.toString()) } catch (e: Exception) {} }
         }
     }
 
@@ -390,6 +561,7 @@ enum GameAndroid {
                     } catch (e: Exception) { notFound() }
                 }
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = request.url.host != HOST
+                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { LampPageVoice.cancel() } // a screen
             }
             web.webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
@@ -399,6 +571,7 @@ enum GameAndroid {
             }
             setContentView(web)
             LampPageGateway.attach(web, "https://$HOST")
+            LampPageVoice.attach(this, web, "https://$HOST") // a screen
             LampPageWish.attach(web, "https://$HOST") // the wish's other apps
             (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
             immerse()
@@ -422,7 +595,16 @@ enum GameAndroid {
             }
         }
 
-        override fun onPause() { super.onPause(); web.onPause() }
+        override fun onPause() {
+            super.onPause()
+            LampPageVoice.cancel() // a screen
+            web.onPause()
+        }
+        // The person's answer to the microphone question LampPageVoice asked. // a screen
+        override fun onRequestPermissionsResult(code: Int, permissions: Array<String>, results: IntArray) { // a screen
+            super.onRequestPermissionsResult(code, permissions, results) // a screen
+            LampPageVoice.permissionResult(code, results.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED) // a screen
+        } // a screen
 
         // A controller that goes away mid-press leaves nothing held: the page sees it let go, and its touch controls
         // can come back.

@@ -287,7 +287,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
         // anyone's and would use AI as the app.
         guard isOwnPage(message), let call = message.body as? [String: Any], let path = call["path"] as? String,
-              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/app/phone-page", "/app/controller", "/app/wish"].contains(path),
+              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear", "/app/phone-page", "/app/controller", "/app/wish"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
             replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
             return

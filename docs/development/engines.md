@@ -200,6 +200,13 @@ A capability given to one engine must be given to all of them that can take it, 
   `--json-schema`/`--output-schema` paths, a GGUF model through `response_format`, and mlx_lm.server has neither.
   `LampAI.isAvailable('act')` asks `/ai/act` itself (`probe`), so it's true only when lamp.js has `act`, the app around
   the page lets the route through and the app's route can take it.
+- **Hearing for apps** (`LampAI.hear` in Web/lamp.js, `/ai/hear`, `Sources/Lamp/AppHear.swift`): the page's host
+  records (`LampVoice`, devices guide) and the page sends a WAV in base64; the gateway checks it is 16 kHz mono 16-bit
+  PCM, 0.3 to 15 seconds, its header true to its size, before anything is paid for, then transcribes it with
+  `elevenlabs/scribe-v2` through OpenRouter with `no_verbatim`, the key staying on the Mac and OpenRouter's reported
+  `usage.cost` recorded as the app's. No key is a 501 with `needs: text`; it's sent once (lamp.js and the Android
+  host don't try it again after a moment), so a timeout may still have been paid for. `isAvailable('hear')` asks the
+  route itself, as `act`'s does.
 - **Using other apps** (`ComputerUse`): two drivers behind one `ComputerUse.Job`. When the ChatGPT app has
   its Computer Use plugin installed, Lamp drives that (`CodexComputerUse`: the `cua_repl` MCP server from
   `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<newest>/.mcp.json`, one `js` tool in which the

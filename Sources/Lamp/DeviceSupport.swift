@@ -510,7 +510,8 @@ enum DeviceSupport {
         function attempt(i, round) {
           if (left() <= 0) return Promise.reject(new Failure('Lamp on your Mac took too long to answer.'));
           if (i >= list.length) {
-            if (round === 0 && left() > 4000) return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
+            // What the person said is paid for once it's heard: each way to the Mac once, never all of them again.
+            if (round === 0 && left() > 4000 && path !== '/ai/hear') return new Promise(function (r) { setTimeout(r, 3000); }).then(function () { return attempt(0, 1); });
             return Promise.reject(new Failure('Couldn\'t reach Lamp on your Mac. Keep this device on the same Wi-Fi as the Mac, with Lamp open, and try again.'));
           }
           return exchange(list[i], path, token, text, Math.min(timeout, left())).then(function (answer) {
@@ -986,6 +987,8 @@ enum DeviceSupport {
           // 'act' is asked of /ai/act itself: true only when this lamp.js has it, the app around the page lets the
           // route through (an older one answers Not found) and the AI that answers the app can take it.
           if (capability === 'act') return post('/ai/act', { probe: true }, 10000).then(function (reply) { return reply.act === true; }, function () { return false; });
+          // 'hear' the same way: this lamp.js, the app around the page and the AI set up in Lamp can all take it.
+          if (capability === 'hear') return post('/ai/hear', { probe: true }, 10000).then(function (reply) { return reply.hear === true; }, function () { return false; });
           return post('/ai/status', {}, 10000).then(function (reply) { return reply[capability] === true; }, function () { return false; });
         },
 
@@ -1028,6 +1031,21 @@ enum DeviceSupport {
          * Throw `LampAI.refuse('sentence')` from `check` or `run` to say why something can't be done.
          */
         act: function (request, options) { return act(request, options); },
+
+        /**
+         * What the person said, as text: `audio` is a WAV in base64 as `LampVoice.listen` gives it (16 kHz mono 16-bit,
+         * at most 15 seconds), transcribed by Lamp on the Mac with the AI set up there (OpenRouter's Scribe), which
+         * pays for it. Resolves { text, nothing (true when no words were heard), seconds }. Check
+         * `LampAI.isAvailable('hear')` first. It's sent once: a request that times out may still have been paid for.
+         *
+         *     LampAI.hear(heard.audio).then(function (r) { if (!r.nothing) ask(r.text); });
+         */
+        hear: function (audio, options) {
+          var o = options || {};
+          return post('/ai/hear', { audio: String(audio || '') }, o.timeout || 45000, o.deadline).then(function (reply) {
+            return { text: typeof reply.text === 'string' ? reply.text : '', nothing: reply.nothing === true || !reply.text, seconds: reply.seconds || 0 };
+          });
+        },
 
         /** An error whose message the model hears as why a call couldn't be done. */
         refuse: function (message) { return new Failure(String(message)); },
@@ -1260,8 +1278,74 @@ enum DeviceSupport {
         }
       };
 
+
+      /**
+       * The person's voice, where the app around the page has a microphone (the Mac, iPhone and iPad; Android and
+       * Android TV, a remote's microphone included): what they say, recorded for `LampAI.hear`, and what the page says
+       * back, read out. Everywhere else (a TV's browser, the Xbox, an older app around the page) `status` says so and
+       * nothing else happens. Asking what's possible never prompts; `listen` asks for the microphone the first time.
+       *
+       *     LampVoice.status().then(function (v) { v.listen; v.speak; v.permission; });   // 'granted' | 'ask' | 'denied' | 'none'
+       *     LampVoice.listen({ session: 's1', onLevel: function (l) { bar(l.level, l.speech); } })
+       *       .then(function (r) { r.ended; r.audio; });   // ended: 'quiet' | 'stopped' | 'cap' | 'nothing' | 'cancelled' | 'denied' | 'error'
+       *     LampVoice.stop('s1');     // keep what was said so far      LampVoice.cancel('s1');   // throw it away
+       *     LampVoice.speak('Added milk.').then(function (finished) { ... });
+       *
+       * A recording ends by itself after a moment of quiet following speech, after 6 seconds with nothing said, or at
+       * 15 seconds ('cap', which may have cut the person off). Only 'quiet', 'stopped' and 'cap' carry `audio`.
+       */
+      var voiceApple = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampVoice;
+      var voiceAndroid = !voiceApple && window.lampVoiceHost && typeof window.lampVoiceHost.postMessage === 'function' ? window.lampVoiceHost : null;
+      var voiceLevels = {}, voiceAsked = {}, voiceId = 0;
+      function voiceEvent(m) {
+        if (!m) return;
+        if (m.event === 'level' && voiceLevels[m.session]) { try { voiceLevels[m.session]({ level: m.level || 0, speech: !!m.speech }); } catch (e) {} }
+        else if (m.id && voiceAsked[m.id]) { var done = voiceAsked[m.id]; delete voiceAsked[m.id]; done(m); }
+      }
+      window.__lampVoice = voiceEvent;
+      if (voiceAndroid) voiceAndroid.onmessage = function (e) { var m; try { m = JSON.parse(e.data); } catch (x) { return; } voiceEvent(m); };
+      function voiceCall(command, args) {
+        var call = { cmd: command };
+        for (var k in args || {}) if (args.hasOwnProperty(k)) call[k] = args[k];
+        if (voiceApple) {
+          return voiceApple.postMessage(call).then(function (r) { return r; }, function () { return null; });
+        }
+        if (voiceAndroid) {
+          return new Promise(function (resolve) { call.id = ++voiceId; voiceAsked[call.id] = resolve; voiceAndroid.postMessage(JSON.stringify(call)); });
+        }
+        return Promise.resolve(null);
+      }
+      var NO_VOICE = { listen: false, speak: false, permission: 'none', why: 'This device has no way to hear here.', maxSeconds: 0 };
+      var LampVoice = {
+        status: function () {
+          if (!voiceApple && !voiceAndroid) return Promise.resolve(NO_VOICE);
+          // An app around the page from before it could hear answers nothing, or an error: that's no voice, not a wait.
+          var late = new Promise(function (r) { setTimeout(function () { r(null); }, 3000); });
+          return Promise.race([voiceCall('status'), late]).then(function (s) {
+            if (!s || s.error || typeof s.listen !== 'boolean') return NO_VOICE;
+            return { listen: s.listen, speak: !!s.speak, permission: s.permission || 'ask', why: s.why || '', maxSeconds: s.maxSeconds || 15 };
+          });
+        },
+        listen: function (options) {
+          var o = options || {}, session = String(o.session || ('v' + Date.now()));
+          if (typeof o.onLevel === 'function') voiceLevels[session] = o.onLevel;
+          return voiceCall('listen', { session: session }).then(function (r) {
+            delete voiceLevels[session];
+            if (!r) return { ended: 'error', error: 'This device has no way to hear here.' };
+            return { ended: r.ended || 'error', audio: r.audio || null, seconds: r.seconds || 0, peak: r.peak || 0, speech: !!r.speech, error: r.error || '' };
+          });
+        },
+        stop: function (session) { return voiceCall('stop', { session: String(session) }).then(function () {}); },
+        cancel: function (session) { delete voiceLevels[String(session)]; return voiceCall('cancel', { session: String(session) }).then(function () {}); },
+        speak: function (text) {
+          return voiceCall('speak', { text: String(text || '') }).then(function (r) { return r === true || !!(r && r.done === true); });
+        },
+        hush: function () { return voiceCall('hush').then(function () {}); }
+      };
+
       window.LampAI = LampAI;
       window.LampQuestion = LampQuestion;
+      window.LampVoice = LampVoice;
       window.LampNative = LampNative;
       window.LampStore = LampStore;
       window.LampAssets = LampAssets;

@@ -3417,7 +3417,8 @@ extension Agent.Rules {
     the app goes in `data`, never into the prompt. Show progress while a call runs and `error.message` when it fails; \
     where a feature depends on AI, check `LampAI.isAvailable('text')` and show a short note when it can't answer. \
     Read LampAI's comment in lamp.js before using it; never call an AI service yourself. To let the person ask the app \
-    to do things in their own words, use `LampAI.act` and read "Doing things for the person" in the web-app skill first.
+    to do things in their own words, use `LampAI.act` and read "Doing things for the person" in the web-app skill first; \
+    to let them say it, `LampVoice` and `LampAI.hear`, in the same section.
     """
 
     /// Sound in a web app on a device (the TV kit's and a declared web kind's): the browser's own Web Audio, which

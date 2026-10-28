@@ -38,9 +38,11 @@ views. The credit stays on the page (the settings drawer's last line), in about.
   `LampAI.act`, with the reads and writes in `js/actions.js`; every copy of the screen shows the change, and the copy
   that heard you says what actually ran (built from the result, never the AI's words) and offers Undo for what's still
   as it left it. It asks back for who, which day and time, and which of two that both fit. New events go on Home HQ's
-  own calendar, never the family's shared one, and nothing is deleted. The button shows only where
-  `LampAI.isAvailable('act')` is true; talking (the mic, the reply read out) is `Sources/Native.swift`'s `voice`,
-  `listen`, `stop` and `speak`, on-device recognition only, on the Mac, iPhone and iPad; elsewhere it's typed.
+  own calendar, never the family's shared one, and nothing is deleted. The button shows wherever
+  `LampAI.isAvailable('act')` is true. Where the app around the page can hear (`LampVoice`: the Mac, iPhone, iPad,
+  Android and Android TV, a remote's microphone included) and Lamp can transcribe (`LampAI.hear`), pressing Ask
+  listens straight away, with the level showing, Stop, and Type instead; what's said is transcribed on the Mac and the
+  reply read out. Back cancels: nothing heard or answered after it is acted on. Elsewhere Ask is typed.
 - **Family and Chores** (from Settings, `views/editor.js`): the family (a name, a color each, Stars for those who
   earn them, and pets, with a picture instead of a color) and the chore list by part of the day (a picture, who, how many stars), changed on the screen and saved as
   they're changed. The editor's own picture and color lists are at its top.
@@ -78,7 +80,7 @@ views. The credit stays on the page (the settings drawer's last line), in about.
 - `Web/css/tokens.css` (colors, type sizes, the fonts in `Web/fonts/`), `Web/css/base.css` (the stage, rail, cards,
   sheets, the settings drawer, focus), and one file per view in `Web/css/views/`.
 - `Sources/Native.swift`: what the page asks of the Mac, iPhone or iPad: `calendars`, `events`, `albums` and `photos`
-  (JPEGs at 1600 px as data URLs), and Ask's `voice`, `listen`, `stop` and `speak` (`Voice`). Each runs only once the person turns it on in Settings, so the system asks for
+  (JPEGs at 1600 px as data URLs). Each runs only once the person turns it on in Settings, so the system asks for
   access then.
 
 ## Any screen, any size

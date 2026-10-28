@@ -20,7 +20,7 @@ opening comment for the whole list. What it gives:
   on it, check `LampAI.isAvailable('text')` and show a short note when it can't answer: away from the Mac's Wi‑Fi, or
   with Lamp closed, it can't.
 - **LampAI.act**: the person asks the app to do something in their own words, and the app's own reads and writes do
-  it; "Doing things for the person" below.
+  it; "Doing things for the person" below, with **LampVoice** and **LampAI.hear** for saying it.
 - **LampStore**: what the app saves, as JSON on the device. Once something is saved, only ever add to it: a new field
   gets a default where it's read, and a saved one is never renamed or retyped, because people rely on their data
   through every change.
@@ -52,6 +52,20 @@ seconds a turn). Its comment in lamp.js has the shapes. This is the one recipe f
   is hidden.
 - `about` says what the app is and its rules for asking back: which person, which day and time, which of two things
   that both fit.
+
+Saying it instead of typing it: where the app around the page has a microphone (`LampVoice.status()`, which never
+prompts: the Mac, iPhone and iPad, Android and Android TV, a TV remote's microphone included) and Lamp can transcribe
+(`LampAI.isAvailable('hear')`), `LampVoice.listen({ session, onLevel })` records what's said and `LampAI.hear(audio)`
+turns it into text for `act`. Their comments in lamp.js have the details. The recipe:
+
+- One deliberate press starts listening (opening the app's Ask), never a key that means something else on the remote;
+  show the level as it's heard, a Stop that the opening press can't trigger, and "Type instead" wherever text can be
+  typed. Never hide a typed way in because there's no voice.
+- Give every recording a session of the page's own, and cancel it (`LampVoice.cancel`) when the person closes or the
+  page hides; drop any recording, transcript or answer that comes back for a session that has ended.
+- Act only on `quiet` and `stopped`: `cap` may have cut the person off, so ask them to say it again shorter; say so
+  plainly for `nothing` and `denied`.
+- Read the reply out with `LampVoice.speak`, and listen again for an answer only once it has finished.
 
 ## The person's own things
 

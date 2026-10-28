@@ -7,6 +7,7 @@
 // app with the app's own token, never the page's; what it asks of this device (`LampNative.call` in lamp.js: the
 // person's mail, calendar, reminders, photos…) is answered by Swift in Sources/Native.swift, the app's own code, with
 // Lamp's building blocks in LampSupport.swift. Only the app's own page, in its main frame, is answered.
+import AVFoundation
 import Combine
 import CryptoKit
 import Foundation
@@ -58,6 +59,7 @@ import UIKit
         configuration.userContentController.addScriptMessageHandler(gateway, contentWorld: .page, name: "lampGateway")
         configuration.userContentController.addScriptMessageHandler(LampPageNative(scheme: scheme), contentWorld: .page, name: "lampNative")
         configuration.userContentController.add(LampPageWish(scheme: scheme), contentWorld: .page, name: "lampWish") // the wish's other apps
+        configuration.userContentController.addScriptMessageHandler(LampPageVoice(scheme: scheme), contentWorld: .page, name: "lampVoice")
         configuration.userContentController.add(LampPageLog(), name: "lampLog")
         // The page's console, into the app's log.
         configuration.userContentController.addUserScript(WKUserScript(source: """
@@ -79,7 +81,7 @@ import UIKit
 
 /// The page's way to Lamp: only the routes LampAI uses, with the app's own token.
 final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
-    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act"]
+    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/ai/act", "/ai/hear"]
     private let scheme: String
     init(scheme: String) { self.scheme = scheme }
 
@@ -100,6 +102,209 @@ final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
             let body = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"Couldn't reach Lamp on your Mac. Open Lamp and try again."}"#
             DispatchQueue.main.async { replyHandler(["status": status, "body": body], nil) }
         }.resume()
+    }
+}
+
+/// The page's `LampVoice` (Web/lamp.js): what the person says, recorded by this device's microphone as 16 kHz mono
+/// 16-bit PCM in a WAV, for the page to have transcribed (`LampAI.hear`); and what the page says back, read out. Asking
+/// what's possible (`status`) never prompts: only `listen` asks for the microphone. One recording at a time, each tagged
+/// with the page's session; a stop keeps it, a cancel throws it away, and the page reloading or going away (or, on
+/// the iPhone and iPad, the app leaving the screen) cancels it whether the page says so or not.
+@MainActor final class LampPageVoice: NSObject, WKScriptMessageHandlerWithReply, AVSpeechSynthesizerDelegate {
+    static let rate = 16_000.0
+    /// The longest one recording may be, and how long silence may go on before anything is said.
+    static let maxSeconds = 15.0, waitSeconds = 6.0, quietSeconds = 1.2
+
+    private let scheme: String
+    private weak var page: WKWebView?
+    private var loading: NSKeyValueObservation?
+    private var engine: AVAudioEngine?
+    private var session = ""
+    private var pcm = Data()
+    private var reply: (@MainActor @Sendable (Any?, String?) -> Void)?
+    private var speechAt: Double?, quietSince: Double?, noise = 0.0, started = Date(), peak = 0.0
+    private let voice = AVSpeechSynthesizer()
+    private var spoken: (@MainActor @Sendable (Any?, String?) -> Void)?
+    #if os(iOS)
+    private var leaving: NSObjectProtocol?
+    #endif
+
+    init(scheme: String) {
+        self.scheme = scheme
+        super.init()
+        voice.delegate = self
+        #if os(iOS)
+        leaving = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.finish("cancelled") }
+        }
+        #endif
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        guard LampPage.isOwnPage(message, scheme: scheme), let call = message.body as? [String: Any], let command = call["cmd"] as? String else {
+            return replyHandler(["error": "Not for this page."], nil)
+        }
+        if page !== message.webView {
+            page = message.webView
+            // A reload or another page: whatever was being heard is let go.
+            loading = message.webView?.observe(\.isLoading, options: [.new]) { [weak self] _, change in
+                guard change.newValue == true else { return }
+                MainActor.assumeIsolated { self?.finish("cancelled") }
+            }
+        }
+        let tag = call["session"] as? String ?? ""
+        switch command {
+        case "status": replyHandler(status(), nil)
+        case "listen": Task { await listen(session: tag, replyHandler) }
+        case "stop": if tag == session { finish("stopped") }; replyHandler(true, nil)
+        case "cancel": if tag == session { finish("cancelled") }; replyHandler(true, nil)
+        case "speak": speak(call["text"] as? String ?? "", replyHandler)
+        case "hush": if voice.isSpeaking { voice.stopSpeaking(at: .immediate) }; replyHandler(true, nil)
+        default: replyHandler(["error": "Unknown."], nil)
+        }
+    }
+
+    /// What this device can do, without asking anything of the person.
+    func status() -> [String: Any] {
+        #if os(iOS)
+        let input = AVAudioSession.sharedInstance().isInputAvailable
+        let permission: String = switch AVAudioApplication.shared.recordPermission {
+        case .granted: "granted"; case .denied: "denied"; default: "ask"
+        }
+        #else
+        let input = AVCaptureDevice.default(for: .audio) != nil
+        let permission: String = switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: "granted"; case .denied, .restricted: "denied"; default: "ask"
+        }
+        #endif
+        return ["listen": input, "speak": true, "permission": permission, "why": input ? "" : "This device has no microphone.",
+                "maxSeconds": Self.maxSeconds]
+    }
+
+    private func listen(session tag: String, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) async {
+        finish("cancelled")
+        session = tag
+        #if os(iOS)
+        let allowed = await AVAudioApplication.requestRecordPermission()
+        #else
+        let allowed = await AVCaptureDevice.requestAccess(for: .audio)
+        #endif
+        // Closed, or another recording asked for, while the system was asking: nothing starts.
+        guard session == tag, page != nil else { return replyHandler(["ended": "cancelled"], nil) }
+        guard allowed else { session = ""; return replyHandler(["ended": "denied"], nil) }
+        if voice.isSpeaking { voice.stopSpeaking(at: .immediate) }
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+        try? AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        #endif
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let from = input.outputFormat(forBus: 0)
+        guard from.sampleRate > 0, let to = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Self.rate, channels: 1, interleaved: true),
+              let converter = AVAudioConverter(from: from, to: to) else {
+            session = ""
+            return replyHandler(["ended": "error", "error": "The microphone isn't available."], nil)
+        }
+        pcm = Data(); speechAt = nil; quietSince = nil; noise = 0; peak = 0; started = Date()
+        reply = replyHandler
+        input.installTap(onBus: 0, bufferSize: 2048, format: from) { [weak self] buffer, _ in
+            // On the audio thread: converted to 16 kHz mono 16-bit here, the rest on the main thread.
+            guard let chunk = Self.convert(buffer, with: converter, to: to) else { return }
+            Task { @MainActor in self?.heard(chunk, session: tag) }
+        }
+        do { try engine.start() } catch {
+            input.removeTap(onBus: 0)
+            reply = nil; session = ""
+            return replyHandler(["ended": "error", "error": "The microphone didn't start: \(error.localizedDescription)"], nil)
+        }
+        self.engine = engine
+    }
+
+    nonisolated private static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter, to format: AVAudioFormat) -> Data? {
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate) + 32
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        var given = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if given { status.pointee = .noDataNow; return nil }
+            given = true; status.pointee = .haveData; return buffer
+        }
+        guard error == nil, out.frameLength > 0, let samples = out.int16ChannelData else { return nil }
+        return Data(bytes: samples[0], count: Int(out.frameLength) * 2)
+    }
+
+    /// Each converted chunk: kept, its level told to the page, and the end of what was said worked out from the quiet
+    /// after it: speech is what stands out from the room's own level, and only quiet after speech ends a recording.
+    private func heard(_ chunk: Data, session tag: String) {
+        guard tag == session, engine != nil else { return }
+        pcm.append(chunk)
+        var sum = 0.0, top = 0.0
+        chunk.withUnsafeBytes { raw in
+            for s in raw.bindMemory(to: Int16.self) { let v = Double(s) / 32768; sum += v * v; top = max(top, abs(v)) }
+        }
+        let level = (sum / Double(max(1, chunk.count / 2))).squareRoot()
+        peak = max(peak, top)
+        let t = Date().timeIntervalSince(started)
+        if t < 0.3 { noise = max(noise, level) }
+        let loud = level > max(noise * 3, 0.02)
+        if loud { if speechAt == nil { speechAt = t }; quietSince = nil } else if speechAt != nil, quietSince == nil { quietSince = t }
+        tell(["event": "level", "session": tag, "level": min(1, level * 4), "speech": speechAt != nil])
+        if t >= Self.maxSeconds { finish("cap") }
+        else if speechAt == nil, t >= Self.waitSeconds { finish("nothing") }
+        else if let q = quietSince, t - q >= Self.quietSeconds { finish("quiet") }
+    }
+
+    /// Ends the recording: kept as a WAV unless it was cancelled, or nothing was said.
+    private func finish(_ ended: String) {
+        guard let engine else { if ended == "cancelled" { session = "" }; return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        self.engine = nil
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
+        let seconds = Double(pcm.count / 2) / Self.rate
+        var answer: [String: Any] = ["ended": ended, "seconds": seconds, "peak": peak, "speech": speechAt != nil]
+        if ended == "stopped" || ended == "quiet" || ended == "cap" { answer["audio"] = Self.wav(pcm).base64EncodedString() }
+        pcm = Data(); session = ""
+        reply?(answer, nil); reply = nil
+    }
+
+    static func wav(_ pcm: Data) -> Data {
+        var d = Data()
+        func u32(_ v: Int) { var x = UInt32(v).littleEndian; d.append(Data(bytes: &x, count: 4)) }
+        func u16(_ v: Int) { var x = UInt16(v).littleEndian; d.append(Data(bytes: &x, count: 2)) }
+        d.append(Data("RIFF".utf8)); u32(36 + pcm.count); d.append(Data("WAVEfmt ".utf8)); u32(16); u16(1); u16(1)
+        u32(Int(rate)); u32(Int(rate) * 2); u16(2); u16(16); d.append(Data("data".utf8)); u32(pcm.count); d.append(pcm)
+        return d
+    }
+
+    private func tell(_ message: [String: Any]) {
+        guard let page, let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        page.evaluateJavaScript("window.__lampVoice && window.__lampVoice(\(String(decoding: data, as: UTF8.self)))", in: nil, in: .page) { _ in }
+    }
+
+    private func speak(_ text: String, _ replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        guard !text.isEmpty, engine == nil else { return replyHandler(false, nil) }
+        if voice.isSpeaking { voice.stopSpeaking(at: .immediate) }
+        spoken?(false, nil)
+        spoken = replyHandler
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+        voice.speak(utterance)
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.spoken?(true, nil); self.spoken = nil }
+    }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.spoken?(false, nil); self.spoken = nil }
     }
 }
 
