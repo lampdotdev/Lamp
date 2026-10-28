@@ -278,6 +278,7 @@ extension Agent {
             + Parts.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
             + Agent.newApp(project)
+            + GitHubProjects.note(for: prompt)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
         var env: [String: String] = ["LAMP_PROMPT": prompt, "LAMP_SYSTEM": systemPrompt(for: project), "LAMP_DIR": project.dir.path,
                                      "PATH": ToolLocator.userPath]

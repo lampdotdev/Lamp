@@ -302,7 +302,8 @@ enum Agent {
 
     - When a request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request \
     asks: fetch the project with `github_project` only when you need its contents, never with git, gh or a download of \
-    your own, and credit it with build_from before using any of it.
+    your own, and credit it with build_from before using any of it. A project the person names is that project, with \
+    its author's credit: never rewrite it from memory in its place.
     """
 
     private static let connectorRules = """

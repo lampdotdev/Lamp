@@ -272,6 +272,17 @@ extension Store {
 }
 
 extension GitHubProjects {
+    /// A line with a request that names a project on GitHub, sent with it as Lamp's other notes are: which skill says
+    /// how to go about it. It says nothing of what the person wants (the request does), only where the way is.
+    static func note(for request: String) -> String {
+        let names = request.split(whereSeparator: \.isWhitespace).contains { token in
+            let bare = token.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]{}\"'“”‘’`.,;:!?"))
+            return bare.lowercased().contains("github.com/") && RepoImport.source(from: bare) != nil
+        }
+        guard names else { return "" }
+        return "\n\n---\nThis request names a project on GitHub (from Lamp, not part of the request above): open the github-projects skill with `read_skill` before doing anything with it, and take its code and assets only through `github_project`."
+    }
+
     static func fetched(_ snapshot: Snapshot) -> String {
         let terms = RepoLicenses.files(in: snapshot.folder)
         let licenses = terms.filter { !RepoLicenses.isNotice($0.lastPathComponent) }

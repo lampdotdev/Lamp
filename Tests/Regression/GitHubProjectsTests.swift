@@ -159,6 +159,16 @@ final class GitHubProjectsTests: XCTestCase {
         XCTAssertNil(Credits.read(wish.dir.appendingPathComponent(Credits.file)))
     }
 
+    func testARequestNamingAProjectIsPointedAtTheSkillWhateverItAsks() {
+        for request in ["make this into a game https://github.com/gabrielecirulli/2048",
+                        "explain this repo https://github.com/ofrohn/d3-celestial",
+                        "<https://github.com/remvze/moodist>"] {
+            XCTAssertTrue(GitHubProjects.note(for: request).contains("github-projects skill"), request)
+        }
+        XCTAssertEqual(GitHubProjects.note(for: "make me a 2048 game"), "")
+        XCTAssertEqual(GitHubProjects.note(for: "see github.com for ideas"), "")
+    }
+
     // MARK: Helpers
 
     private func call(_ store: Store, _ arguments: [String: Any], on wish: LampProject, failing: Bool = false) async throws -> String {
