@@ -2,7 +2,7 @@
 name: Hot Shelf
 offer: Make Hot Shelf yours
 repository: https://github.com/lampdotdev/hotshelf
-commit: 9b383b43680e70b65f65da11cbfc2781b5240186
+commit: f24d27128d1c5893612af724149c2a36b1c563bc
 tweaks:
   - cabinet: Make it a realistic kitchen cabinet
   - list.bullet: Show ingredients on every tag
