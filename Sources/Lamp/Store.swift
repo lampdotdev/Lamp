@@ -3369,7 +3369,7 @@ final class Store: ObservableObject {
         let place = source.map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
         let merged: Upstream.Merged
         do {
-            merged = try await Upstream.merge(package, into: project, from: source, base: origin?.commit, arrival: arrival)
+            merged = try await Upstream.merge(package, into: project, from: source, commit: origin?.commit, arrival: arrival)
             if let credits = package.credits { try Credits.add(credits, to: project) }
         } catch {
             _ = await Versions.git("git read-tree --reset -u HEAD && git clean -fdq -e .lamp -- . ':!\(Attachments.folder)'", cwd: project.dir) { _ in }
@@ -3377,6 +3377,14 @@ final class Store: ObservableObject {
             finish(project)
             log(project, .error, Self.updateFailed)
             return
+        }
+        // An app the package brings that the wish doesn't have yet is made as an update makes one; the apps it has
+        // were merged in their folders.
+        if !merged.newParts.isEmpty {
+            var arriving = package
+            arriving.parts = merged.newParts
+            let notIn = await installParts(of: arriving, into: project)
+            if !notIn.isEmpty { log(project, .error, "\(notIn.joined(separator: ", ")) couldn't be put in place.") }
         }
         guard merged.conflicts.isEmpty else {
             Versions.rememberConflicts(project, files: merged.conflicts, from: place)

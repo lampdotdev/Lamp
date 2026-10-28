@@ -166,7 +166,7 @@ final class SidebarServer {
         // The chat, and how far an open card has been answered in Lamp's window, which isn't the Store's.
         watching = Store.shared.objectWillChange.merge(with: AskProgresses.shared.objectWillChange)
             .merge(with: WishLinkCards.shared.objectWillChange).merge(with: PublishCards.shared.objectWillChange)
-            .merge(with: GitHubRepoCards.shared.objectWillChange).sink { [weak self] _ in
+            .merge(with: GitHubRepoCards.shared.objectWillChange).merge(with: ContributeCards.shared.objectWillChange).sink { [weak self] _ in
             DispatchQueue.main.async { self?.scheduleUpdate() }
         }
         // A key, a model chosen in Settings or for the app, or Not Now changes what an offer's card says.

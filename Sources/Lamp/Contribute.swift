@@ -85,16 +85,17 @@ enum Contribute {
         guard checkedOut.ok else { throw Failure(message: "Couldn't prepare the pull request: \(checkedOut.output.trimmed.suffix(200))") }
 
         // The wish as it is now in the parent's place, but for what's the repository's own: its README and license
-        // stay its owner's, and its credits take only what the wish newly uses.
+        // stay its owner's (a license the wish's credits name at the root is that one), and its credits, read before
+        // anything goes, keep their chain and take only what the wish newly uses.
+        let theirs = Credits.read(work.appendingPathComponent(Credits.file)) ?? Credits()
         let kept: Set<String> = [".git", "README.md", "LICENSE"]
         for item in try fm.contentsOfDirectory(at: work, includingPropertiesForKeys: nil) where !kept.contains(item.lastPathComponent) {
             try fm.removeItem(at: item)
         }
         for item in try fm.contentsOfDirectory(at: staged.folder, includingPropertiesForKeys: nil)
-        where !["README.md", Credits.file].contains(item.lastPathComponent) {
+        where !["README.md", Credits.file].contains(item.lastPathComponent) && !fm.fileExists(atPath: work.appendingPathComponent(item.lastPathComponent).path) {
             try fm.copyItem(at: item, to: work.appendingPathComponent(item.lastPathComponent))
         }
-        let theirs = Credits.read(work.appendingPathComponent(Credits.file)) ?? Credits()
         try theirs.merged(with: Credits(upstream: staged.credits.upstream, generated: staged.credits.generated)).encoded()
             .write(to: work.appendingPathComponent(Credits.file), options: .atomic)
 

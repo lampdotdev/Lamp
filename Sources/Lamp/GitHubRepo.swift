@@ -230,6 +230,17 @@ enum GitHubRepo {
         return first == second
     }
 
+    /// Whether two credits files say the same, apart from the commits on the chain.
+    static func creditsMatch(_ a: Data?, _ b: Data?) -> Bool {
+        func plain(_ data: Data?) -> Credits? {
+            guard var credits = data.flatMap(Credits.decoded) else { return data == nil ? Credits() : nil }
+            for index in credits.remixOf.indices { credits.remixOf[index].commit = nil }
+            return credits
+        }
+        guard let first = plain(a), let second = plain(b) else { return false }
+        return first == second
+    }
+
     // MARK: Putting it up
 
     /// Puts the staged tree in `repo` (made, if it's new, public or private as asked) as one commit on top of what's
@@ -290,10 +301,14 @@ enum GitHubRepo {
             // Unchanged when nothing but the export's own marks differ: the shared file's manifest says when it was made,
             // and the file is zipped afresh each time. The manifest's other fields matter (which device an app opens on),
             // so it's compared with only its time left out; the archive follows the manifest.
-            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp"], cwd: clone, timeout: 60).ok {
+            // The chain names the commit up there (`Sharing.export`), which each push moves on: the credits compare
+            // without it, so real credit changes count and the bookkeeping doesn't.
+            if await Subprocess.run(git, ["diff", "--cached", "--quiet", "--", ".", ":(exclude)lamp-app.json", ":(exclude)*.lampapp", ":(exclude)\(Credits.file)"], cwd: clone, timeout: 60).ok {
                 let before = await Subprocess.run(git, ["show", "HEAD:lamp-app.json"], cwd: clone, mergeErrors: false, timeout: 30)
+                let credits = await Subprocess.run(git, ["show", "HEAD:\(Credits.file)"], cwd: clone, mergeErrors: false, timeout: 30)
                 if before.ok, let after = try? Data(contentsOf: clone.appendingPathComponent("lamp-app.json")),
-                   manifestsMatch(Data(before.output.utf8), after) {
+                   manifestsMatch(Data(before.output.utf8), after),
+                   creditsMatch(credits.ok ? Data(credits.output.utf8) : nil, try? Data(contentsOf: clone.appendingPathComponent(Credits.file))) {
                     return (Repo(repo: repo, url: url, license: license, commit: await head(git, in: clone)), false)
                 }
             }

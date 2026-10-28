@@ -181,7 +181,9 @@ enum Sharing {
     /// `repository` is where the wish is going as it's exported (Put on GitHub), named on the chain's last link so
     /// whoever opens the file sees where the wish lives, with `commit`, the one up there now. A share that names no
     /// place names where the wish was last put (`GitHubRepo.kept`), so a file shared from a wish on GitHub still says
-    /// where it lives and what commit it's at.
+    /// where it lives and what commit it's at. A wish that lives nowhere names the version of its own history the
+    /// file is made from, so a file that comes back from whoever it was sent to can be merged against that version
+    /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
     static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil) throws -> URL {
         // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
         // other apps are read off its folder, as Lamp lists them.
@@ -236,8 +238,8 @@ enum Sharing {
         let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
         func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
         let kept = repository == nil ? GitHubRepo.kept(for: project) : nil
-        var carried = credits.remixed(from: Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url,
-                                                          commit: commit ?? kept?.commit))
+        let me = Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url, commit: commit ?? kept?.commit)
+        var carried = credits.remixed(from: me.url == nil ? ownVersionLink(me, of: project, chain: credits) : me)
         carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
         carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
         try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
@@ -300,6 +302,20 @@ enum Sharing {
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
         made = true
         return output
+    }
+
+    /// A wish that lives nowhere names the version of its own history on its link: the version the file is made
+    /// from, unless the link already names one that isn't a version here (the sender's, on a copy sharing on), which
+    /// stays. Nothing on a wish with no history yet.
+    private static func ownVersionLink(_ link: Credits.Remix, of project: LampProject, chain: Credits) -> Credits.Remix {
+        var link = link
+        if let known = chain.remixOf.last(where: { $0.sameLink(as: link) })?.commit,
+           !Versions.gitBlocking("git merge-base --is-ancestor \(known) HEAD", cwd: project.dir).ok {
+            return link
+        }
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
+        link.commit = head.ok ? Credits.validCommit(head.output.trimmed) : nil
+        return link
     }
 
     /// What one app went into the file with, for the number the file gives itself.
@@ -811,30 +827,40 @@ enum Sharing {
     }
 
     /// The shared icon into the app: its design (icon.json) and its artwork, which lives in Lamp's own folder outside
-    /// the versions. True when the artwork is different now. Also what a merge takes when the icon changed upstream
-    /// (`Upstream.merge`).
+    /// the versions. True when the artwork is different now.
     @discardableResult
     static func installIcon(_ package: Package, into project: LampProject) throws -> Bool {
+        guard let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
+              let spec = try? JSONDecoder().decode(IconSpec.self, from: data) else { return false }
+        Icons.save(spec, for: project)
+        return installArtwork(package, into: project, spec: spec)
+    }
+
+    /// The shared icon's artwork alone, for the design the app has now (its icon.json as it is, which a merge has
+    /// already settled, `Upstream.merge`): never the design in the file. Nothing for a design that doesn't read.
+    @discardableResult
+    static func installArtwork(_ package: Package, into project: LampProject) throws -> Bool {
+        guard let spec = Icons.load(project) else { return false }
+        return installArtwork(package, into: project, spec: spec)
+    }
+
+    private static func installArtwork(_ package: Package, into project: LampProject, spec: IconSpec) -> Bool {
         let fm = FileManager.default
         var newArtwork = false
-        if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
-           let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
-            Icons.save(spec, for: project)
-            // A glass design is kept only once it passes the same checks as one Lamp drew.
-            if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
-                newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
-                try? Icons.save(glass, for: project, spec: spec)
-            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
-            // game's painting fills its tile.
-            } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-               spec.game || Icons.isCutOut(art) {
-                let url = Icons.artURL(project, spec: spec)
-                newArtwork = (try? Data(contentsOf: url)) != art
-                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? art.write(to: url)
-                // The sender's picture takes the place of a glass design kept here for the same icon.
-                try? fm.removeItem(at: Icons.glassURL(project, spec: spec))
-            }
+        // A glass design is kept only once it passes the same checks as one Lamp drew.
+        if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
+            newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
+            try? Icons.save(glass, for: project, spec: spec)
+        // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
+        // game's painting fills its tile.
+        } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+           spec.game || Icons.isCutOut(art) {
+            let url = Icons.artURL(project, spec: spec)
+            newArtwork = (try? Data(contentsOf: url)) != art
+            try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? art.write(to: url)
+            // The sender's picture takes the place of a glass design kept here for the same icon.
+            try? fm.removeItem(at: Icons.glassURL(project, spec: spec))
         }
         return newArtwork
     }
