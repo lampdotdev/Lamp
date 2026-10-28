@@ -104,11 +104,21 @@ final class PossibleDevicesTests: XCTestCase {
     /// Lamp still shows its next step.
     func testAFoundDeviceRowOffersOnlySetUp() {
         let rokuFound = roku("FOUND", kept: false, address: "10.0.0.41")
-        XCTAssertEqual(DevicesSection.end(for: foundTV, setup: foundTV.setup(), controls: nil), .setUp)
-        XCTAssertEqual(DevicesSection.end(for: rokuFound, setup: rokuFound.setup(), controls: nil), .setUp)
+        XCTAssertEqual(DevicesSection.end(for: foundTV, setup: foundTV.setup()), .setUp)
+        XCTAssertEqual(DevicesSection.end(for: rokuFound, setup: rokuFound.setup()), .setUp)
         var keptHere = keptTV
         keptHere.connected = true
-        XCTAssertEqual(DevicesSection.end(for: keptHere, setup: .needs("Turn on Developer Mode on it"), controls: nil), .step("Turn on Developer Mode on it"))
+        XCTAssertEqual(DevicesSection.end(for: keptHere, setup: .needs("Turn on Developer Mode on it")), .step("Turn on Developer Mode on it"))
+    }
+
+    /// A found device an app can already control, a Sonos speaker, offers Set Up… like every other found device.
+    func testAFoundDeviceAnAppControlsOffersSetUpLikeTheRest() {
+        let sonos = Device(id: "net:10.0.0.51", kind: .other, maker: "Sonos", model: "One", modelID: "S18", name: "Kitchen",
+                           os: "", osVersion: "", reach: .network)
+        let list = HomeNetwork.List(devices: [sonos], hosts: [])
+        XCTAssertEqual(list.possible.map(\.id), [sonos.id])
+        XCTAssertNotNil(list.controls[sonos.id])
+        XCTAssertEqual(DevicesSection.end(for: sonos, setup: sonos.setup()), .setUp)
     }
 
     /// A TV chosen under Try On and forgotten since keeps a way into its setup beside its ticked row.

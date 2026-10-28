@@ -186,7 +186,7 @@ Hosts are kept in memory only (`Store.hosts`).
 Settings → Your Devices lists, in this order (`HomeNetwork.List`): the person's devices, set up with Lamp (away ones
 too); then, under "Found on your network, not set up", what Lamp makes apps for or controls that's only found (the kits'
 devices, what integrations find, `Integrations.devices`, and what a starter controls, `HomeNetwork.controlled`, a Sonos
-now, "Apps can control it"); then the devices Lamp could learn:
+so far); then the devices Lamp could learn:
 those that answered the SSDP scan that nothing knows, read from their UPnP description (routers left out), and hosts
 that offer a Bonjour service that isn't plumbing (`HomeNetwork.couldLearn`, `device(for:)`, named by maker and model,
 never by the names they go by); then everything else, folded under Everything Else on Your Network: the router, this

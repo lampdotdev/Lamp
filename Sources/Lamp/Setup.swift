@@ -940,14 +940,14 @@ struct DevicesSection: View {
         let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
         Section("Your Devices") {
             // The person's devices; then what's only found on the network, which may be a neighbor's: what Lamp makes apps
-            // for or controls, then what it could learn; then the rest of the network, folded.
+            // for or controls, then what it could learn, each offering Set Up… alike; then the rest of the network, folded.
             ForEach(list.works) { device in
-                row(device, controls: list.controls[device.id])
+                row(device)
             }
             if !list.possible.isEmpty || !list.couldLearn.isEmpty {
                 Text("Found on your network, not set up").font(.caption).foregroundStyle(.secondary)
                 ForEach(list.possible + list.couldLearn) { device in
-                    row(device, controls: list.controls[device.id])
+                    row(device)
                 }
             }
             if !list.others.isEmpty || list.unnamed > 0 {
@@ -986,13 +986,13 @@ struct DevicesSection: View {
         }
     }
 
-    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else: what its
-    /// setup asks first ("Turn on developer mode on it") is for the setup that button opens, not a warning on a device
-    /// the person may never set up. A device set up with Lamp shows its next step, if it has one.
-    enum RowEnd: Equatable { case controls(String), away(String), ready, setUp, step(String), words(String) }
+    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else, even one an
+    /// app can already control: what its setup asks first ("Turn on developer mode on it") is for the setup that button
+    /// opens, not a warning on a device the person may never set up. A device set up with Lamp shows its next step, if
+    /// it has one.
+    enum RowEnd: Equatable { case away(String), ready, setUp, step(String), words(String) }
 
-    static func end(for device: Device, setup: Device.Setup, controls: String?) -> RowEnd {
-        if let controls { return .controls(controls) }
+    static func end(for device: Device, setup: Device.Setup) -> RowEnd {
         if device.isAway { return .away(device.status) }
         guard device.isSetUp else { return .setUp }
         switch setup {
@@ -1049,7 +1049,7 @@ struct DevicesSection: View {
         .help(HomeNetwork.facts(host))
     }
 
-    private func row(_ device: Device, controls: String? = nil) -> some View {
+    private func row(_ device: Device) -> some View {
         let setup = device.setup(team: team)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: device.kind.symbol).foregroundStyle(.secondary).frame(width: 20)
@@ -1063,9 +1063,7 @@ struct DevicesSection: View {
                 }
             }
             Spacer()
-            switch Self.end(for: device, setup: setup, controls: controls) {
-            case .controls(let words):
-                Text("Apps can control it").foregroundStyle(.secondary).help(words)
+            switch Self.end(for: device, setup: setup) {
             case .away(let words):
                 Text(words).foregroundStyle(.secondary)
                     .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
