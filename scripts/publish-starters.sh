@@ -81,13 +81,15 @@ for tree in "$WORK"/trees/*(N/); do
         echo "$repo page: unchanged"
       else
         "$GIT" -c user.name="Lamp" -c user.email="$LOGIN@users.noreply.github.com" commit -q -m "The page to play"
-        "$GIT" -c credential.helper= -c "credential.helper=!gh auth git-credential" push -q "https://github.com/$repo.git" HEAD:gh-pages
+        "$GIT" -c credential.helper= -c "credential.helper=!gh auth git-credential" push -q "https://github.com/$repo.git" HEAD:gh-pages 2>&1 | grep -v '^remote:' || true
         echo "$repo page: $("$GIT" rev-parse --short HEAD)"
       fi
     )
     page="https://${ACCOUNT:l}.github.io/$folder/"
+    # Pushing gh-pages may turn Pages on by itself; turned on already is fine.
     gh api "repos/$repo/pages" >/dev/null 2>&1 \
-      || gh api -X POST "repos/$repo/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null
+      || gh api -X POST "repos/$repo/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1 \
+      || gh api "repos/$repo/pages" >/dev/null
     gh repo edit "$repo" --homepage "$page" >/dev/null
   fi
   # The address and commit into starter.md's front matter, in place of any there.
