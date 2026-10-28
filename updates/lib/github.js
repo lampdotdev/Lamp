@@ -21,19 +21,32 @@ export async function releases({ nightlies = false } = {}) {
   return (await response.json()).filter((release) => !release.draft && (nightlies ? true : !release.prerelease));
 }
 
-/** A nightly: a pre-release the nightly workflow published, tagged nightly-<version>. */
+/** The nightly: the one rolling pre-release the nightly workflow keeps, tagged "nightly" (nightly-<version> before). */
 export function isNightly(release) {
-  return Boolean(release.prerelease) && /^nightly-[0-9][0-9A-Za-z.+-]*$/.test(release.tag_name);
+  return Boolean(release.prerelease) && /^nightly(-[0-9][0-9A-Za-z.+-]*)?$/.test(release.tag_name);
 }
 
 /**
- * A release's DMG asset: Lamp-<version>.dmg, Lamp-Nightly-<version>.dmg for a nightly, or Forge-<version>.dmg for
- * releases from before the rename. A release republished since the rename can carry both, with sparkle.json
- * describing the Lamp one, so the Lamp DMG wins whenever it's there.
+ * A release's DMG assets, newest first: Lamp-<version>.dmg, Lamp-Nightly-<version>.dmg for the nightly, or
+ * Forge-<version>.dmg for releases from before the rename. A release republished since the rename can carry both, with
+ * sparkle.json describing the Lamp one, so the Lamp DMGs come first; the nightly release keeps its last few DMGs
+ * (nightly.yml), so an update offer made before a push can still fetch the build it names.
  */
+export function dmgAssets(release) {
+  const named = (prefix) => release.assets
+    .filter((asset) => new RegExp(`^${prefix}-[0-9][0-9A-Za-z.+-]*\\.dmg$`).test(asset.name))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return [...named("Lamp"), ...named("Lamp-Nightly"), ...named("Forge")];
+}
+
+/** The release's newest DMG asset. */
 export function dmgAsset(release) {
-  const named = (prefix) => release.assets.find((asset) => new RegExp(`^${prefix}-[0-9][0-9A-Za-z.+-]*\\.dmg$`).test(asset.name));
-  return named("Lamp") ?? named("Lamp-Nightly") ?? named("Forge");
+  return dmgAssets(release)[0];
+}
+
+/** Whether a name is one a DMG asset may have: what a download may ask for by name. */
+export function isDmgName(name) {
+  return /^(Lamp|Lamp-Nightly|Forge)-[0-9][0-9A-Za-z.+-]*\.dmg$/.test(name);
 }
 
 /** The release's sparkle.json (version, signature, length), written by the release workflow. */

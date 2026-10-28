@@ -1,7 +1,12 @@
 // Sparkle's appcasts, built from the GitHub releases that carry a sparkle.json: /appcast.xml for Lamp, from the
-// releases, and /nightly/appcast.xml (?stream=nightly) for Lamp Nightly, from the nightlies alone (pre-releases from
-// .github/workflows/nightly.yml). Two apps, two feeds; neither ever sees the other's builds.
-import { dmgAsset, isNightly, releases, sparkleInfo } from "../lib/github.js";
+// releases, and /nightly/appcast.xml (?stream=nightly) for Lamp Nightly, from the one rolling nightly pre-release
+// (.github/workflows/nightly.yml). Two apps, two feeds; neither ever sees the other's builds.
+//
+// A release's enclosure is /download/<tag>: its one DMG. The nightly's names its DMG too (/download/nightly/<file>),
+// since the release's DMG is replaced by every push while this feed is cached for a quarter of an hour and an update
+// window may stay open longer: the DMG the feed signed must stay the one the link gives, and the workflow keeps the
+// last few so it does.
+import { dmgAssets, isNightly, releases, sparkleInfo } from "../lib/github.js";
 
 const escape = (text) => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -14,9 +19,16 @@ export async function GET(request) {
     const all = await releases({ nightlies: nightly });
     const listed = (nightly ? all.filter(isNightly) : all).slice(0, 10);
     for (const release of listed) {
-      const dmg = dmgAsset(release);
-      const info = dmg && (await sparkleInfo(release));
+      const info = dmgAssets(release).length ? await sparkleInfo(release) : null;
       if (!info?.signature) continue;   // released before auto-update: Sparkle can't verify it
+      // The DMG sparkle.json describes, named for its version. The nightly's must be that one: its release keeps
+      // several, and a sparkle.json whose DMG isn't there yet (a push still uploading, or cut short) describes no
+      // file this feed could offer, so the item waits for the next read rather than pair the signature with another.
+      const dmgs = dmgAssets(release);
+      const named = dmgs.find((asset) => asset.name.endsWith(`-${info.shortVersion || info.version}.dmg`));
+      const dmg = isNightly(release) ? named : named ?? dmgs[0];
+      if (!dmg) continue;
+      const link = isNightly(release) ? `${origin}/download/nightly/${encodeURIComponent(dmg.name)}` : `${origin}/download/${encodeURIComponent(release.tag_name)}`;
       items.push(`    <item>
       <title>${escape(release.name || release.tag_name)}</title>
       <pubDate>${new Date(release.published_at).toUTCString()}</pubDate>
@@ -24,7 +36,7 @@ export async function GET(request) {
       <sparkle:shortVersionString>${escape(info.shortVersion || info.version)}</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>${escape(info.minimumSystemVersion || "14.0")}</sparkle:minimumSystemVersion>
       <description><![CDATA[${(release.body_html || "").replace(/]]>/g, "]]&gt;")}]]></description>
-      <enclosure url="${origin}/download/${encodeURIComponent(release.tag_name)}" length="${Number(info.length) || dmg.size}"
+      <enclosure url="${link}" length="${Number(info.length) || dmg.size}"
         type="application/octet-stream" sparkle:edSignature="${escape(info.signature)}"/>
     </item>`);
     }
