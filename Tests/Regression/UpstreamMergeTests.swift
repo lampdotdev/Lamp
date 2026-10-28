@@ -56,15 +56,15 @@ final class UpstreamMergeTests: XCTestCase {
 
         // A file that came back from someone this wish was sent to names the version it was made from: that version is
         // the base, so what they added comes in and what changed here since stays, with no repository anywhere.
+        // Settled as the wish had it, which is the last version: nothing new to save.
         try "A\nb\nC\n".write(to: file, atomically: true, encoding: .utf8)
-        let settled = await Versions.save(app.project, message: "Settled")
-        XCTAssertTrue(settled)
+        _ = await Versions.save(app.project, message: "Settled")
         let identity = try XCTUnwrap(Sharing.identity(of: app.project))
-        let back = try package(code: "A\nb\nc\nd\n", credits: #"{"remixOf": [{"name": "Coin Flip", "wish": "\#(identity)", "commit": "\#(sent ?? "")"}]}"#)
+        let back = try package(code: "z\nA\nb\nc\n", credits: #"{"remixOf": [{"name": "Coin Flip", "wish": "\#(identity)", "commit": "\#(sent ?? "")"}]}"#)
         defer { try? FileManager.default.removeItem(at: back.folder) }
         let returned = try await Upstream.merge(back, into: app.project, from: nil, commit: nil, arrival: arrival)
         XCTAssertEqual(returned.base, .own(sent ?? ""))
         XCTAssertEqual(returned.conflicts, [])
-        XCTAssertEqual(code(), "A\nb\nC\nd\n")
+        XCTAssertEqual(code(), "z\nA\nb\nC\n")
     }
 }

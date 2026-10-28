@@ -306,30 +306,39 @@ Both since the wish kept the sender's identity (`existingCopy`). A wish unchange
 at again once the update owns the wish, since a turn may have run while the review waited) takes the new code in
 place. One changed here is merged by git (`Upstream.merge`, from `Store.mergeUpdate`), never replaced: the wish's own
 git gets the repository as its `upstream` remote and fetches the recorded commit one deep (through `Versions.git`, so
-confined to the wish's folder with the network open, and only ever fetched from); that commit's tree is read as the
-import reads one (`Upstream.filteredTree`: Lamp's own files, the repository's own files, credits.json, the chat's
-attachments and Lamp's records left out, in an index of the merge's own under `.lamp/merge`) as the base, and the
-reviewed package is staged as the import would install it (`Upstream.stage`: the code the review read, the app's
-files, its notes and declarations, never Lamp's own files or the icon's pictures) and committed on top of the base at
+confined to the wish's folder with the network open, and only ever fetched from); that commit's tree is read as a
+repository is (`RepoImport.open`) and staged as the import would install it, and so is the reviewed package
+(`Upstream.stage`: the code the review read, an Android app's moved into this Mac's package as `AndroidFiles.install`
+moves it, the app's files, its notes and declarations, never Lamp's own files or the icon's pictures), each a tree in
+the wish's git made in an index of the merge's own (`.lamp/merge`), the second committed on top of the first at
 `refs/lamp/upstream`. `git merge-tree` merges the wish's files, the base and that commit three ways and the result
 goes into the index and the files (`git read-tree --reset -u`), with the version saved first so Versions can bring the
-wish back. What changed only upstream or only here is in place with no agent; the icon's pictures and the
-description follow when they changed upstream and not here (`Sharing.installIcon`). A clean merge is saved ("Merged
-the latest from GitHub"), noted for the agent (`Versions.rememberMerged`) and built. Files both sides changed in the
-same place keep git's conflict markers, and a request goes to the agent with a note naming them
+wish back. What changed only upstream or only here is in place with no agent; the icon's pictures follow when the
+icon changed upstream, for the design as git merged it (`Sharing.installArtwork`, never the file's design in place of
+one changed here), the description when it changed upstream and not here, and an app the package brings that the
+wish doesn't have is made as an update makes one (`Store.installParts`, `Merged.newParts`). A clean merge is saved
+("Merged the latest from GitHub"), noted for the agent (`Versions.rememberMerged`) and built. Files both sides changed
+in the same place keep git's conflict markers, and a request goes to the agent with a note naming them
 (`Versions.rememberConflicts`: what the markers mean, `git show HEAD:<path>` and `git show refs/lamp/upstream:<path>`
 for each side), to settle the obvious itself and ask (`ask`) only where it can't tell. The credits are merged by Lamp
 either way, which moves the chain's commit on to the one fetched, so the next update is measured from there; the
-wish's history stays a line (the merge is one version, never a merge commit), and nothing of it leaves. A wish from a
-shared file, or opened before Lamp recorded commits, is merged the same way against the version that arrived. The
-review sheet says so (`ImportReviewCard.changedHere`, "Already here, changed here" in the gallery).
+wish's history stays a line (the merge is one version, never a merge commit), and nothing of it leaves.
+
+The base, in order (`Upstream.Base`): the repository's commit, fetched; else the version of this wish's own history
+the file says it was made from (`Upstream.ownVersion`: a file shared from a wish that lives nowhere names the version
+its export was made from, `Sharing.export`, and a copy sharing on keeps that rather than naming its own, so a file
+that comes back from whoever it was sent to merges against the version they were given, with no repository anywhere);
+else what the last update brought in (`refs/lamp/upstream`, so a second update of a wish from a file isn't measured
+against the first arrival again); else the version that arrived (its tree as a shared file carries it,
+`Upstream.filteredTree`); else nothing. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
+changed here" in the gallery).
 
 A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share menu
 (`SidebarToolbar.canContribute`, `Contribute`, its card `ContributeCards` and `ContributeCard`, shaped as Put on
 GitHub's). It stages the wish as Put on GitHub does (`GitHubRepo.stage`: the same checks for licenses and keys), forks
 the repository to the person's account with `gh` when they have no fork (`Contribute.fork`), fetches the recorded
 commit into a folder of Lamp's, puts the staged tree over it with the repository's README and license left as its
-owner wrote them and its credits.json taking only what the wish newly uses, commits that once in the person's name,
+owner wrote them (read first) and its credits.json keeping its chain and taking only what the wish newly uses, commits that once in the person's name,
 pushes it to a branch of the fork and opens a pull request on the repository (`Contribute.send`). The request's text
 (`Contribute.summary`) is the wish's line, the names its versions since it arrived were given (never the requests
 themselves, never the chat) and the files changed. The person's own repository is refused (Put on GitHub updates it).

@@ -206,8 +206,9 @@ and `remixOf`, the wishes it was made from, oldest first, which only Lamp adds t
 starter, and a shared file carries the wish being shared as its last link (`Sharing.export`; the same wish shared again
 stays one link), with where that wish lives when Lamp knows it (`url`: its repository on GitHub, written by Put on GitHub
 and by opening a repository, "Generated apps") and the commit of it the wish has (`commit`: the one it was opened at,
-the last one merged in by Update from GitHub…, or the last one Put on GitHub pushed; shown nowhere, it's what an update
-is merged from and a contribution goes back on top of). The same wish put somewhere else is a link of its own
+the last one merged in by Update from GitHub…, or the last one Put on GitHub pushed; for a wish that lives nowhere, the
+version of its own history the file was made from; shown nowhere, it's what an update is merged from and a contribution
+goes back on top of, "Generated apps"). The same wish put somewhere else is a link of its own
 (`Remix.sameLink`), so the chain keeps where a wish came from beside where it was put; `Credits.origin(own:)` is the
 former. The info panel, the About window and a repository's README link the chain. Credit is only added to: what a wish arrived with (a starter's copy, a file opened) is kept in
 `.lamp/credits-arrived.json` and read back with the file (`Credits.load`), so a source the file lost while the wish was
