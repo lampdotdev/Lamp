@@ -71,11 +71,58 @@ export function load(name) {
     try { return text == null ? null : JSON.parse(text); } catch (e) { return null; }
 }
 
-// A file beside the page (assets/ship.glb), as bytes.
+// A file beside the page (assets/ship.glb), as bytes. Loaded through here (or texture(), model() and sound.load()),
+// a file Lamp changes while the game is played can be put into it without starting again (see "Changes while it's
+// played" below).
 export async function asset(path) {
-    const answer = await fetch(path);
+    loaded.add(clean(path));
+    const answer = await fetch(fresh(path));
     if (!answer.ok) { log(`asset: no ${path}`); return null; }
     return answer.arrayBuffer();
+}
+
+// The files the game loaded through the runtime, and how the runtime puts a new copy of each in by itself.
+const loaded = new Set(), swaps = new Map();
+const clean = path => String(path).replace(/^\.?\//, '').split(/[?#]/)[0];
+// Asked again after a change, a file is asked for by a new address, so nothing on the way keeps the old one.
+let changes = 0;
+const fresh = path => changes ? `${path}${String(path).includes('?') ? '&' : '?'}lamp=${changes}` : path;
+
+// A picture beside the page as a three.js texture, set up by `setup(texture)` (its color space, wrapping, repeat…). A
+// new copy of the picture goes into the same texture while the game is played, so every material using it shows it.
+export async function texture(path, setup) {
+    const THREE = await import('three');
+    const loader = new THREE.TextureLoader();
+    const made = await loader.loadAsync(fresh(path));
+    if (setup) setup(made);
+    loaded.add(clean(path));
+    swaps.set(clean(path), [...(swaps.get(clean(path)) || []), async () => {
+        const again = await loader.loadAsync(fresh(path));
+        made.image = again.image;
+        made.needsUpdate = true;
+        again.dispose();
+    }]);
+    return made;
+}
+
+// A glTF model beside the page (.glb or .gltf), as a THREE.Group holding its scene, with its animations in
+// `group.animations`. A new copy of the file replaces what's inside the group while the game is played, where the group
+// is: a copy made with clone(), and a mixer playing its animations, are the game's to make again in assetChanged.
+export async function model(path) {
+    const THREE = await import('three');
+    const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+    const loader = new GLTFLoader();
+    const group = new THREE.Group();
+    const fill = gltf => { group.clear(); group.add(gltf.scene); group.animations = gltf.animations; };
+    fill(await loader.loadAsync(fresh(path)));
+    group.name = clean(path);
+    loaded.add(clean(path));
+    swaps.set(clean(path), [...(swaps.get(clean(path)) || []), async () => {
+        const old = [...group.children];
+        fill(await loader.loadAsync(fresh(path)));
+        for (const child of old) child.traverse(o => { o.geometry && o.geometry.dispose(); });
+    }]);
+    return group;
 }
 
 // MARK: Sound, mixed by the browser's Web Audio; the preview plays nothing and says what was played
@@ -140,9 +187,15 @@ export const sound = {
     // A sound file beside the page (.wav, .ogg, .mp3, .m4a), decoded whole: load each in init, never per frame.
     async load(path) {
         const s = made(null, path);
-        const ctx = context();
-        if (!ctx) return s;
-        try { s.buffer = await ctx.decodeAudioData(await (await fetch(path)).arrayBuffer()); } catch (e) { log(`sound: couldn't load ${path}`); }
+        // A new copy of the file is decoded into the same sound, so what plays it next plays the new one.
+        const decode = async () => {
+            const ctx = context();
+            if (!ctx) return;
+            try { s.buffer = await ctx.decodeAudioData(await (await fetch(fresh(path))).arrayBuffer()); } catch (e) { log(`sound: couldn't load ${path}`); }
+        };
+        loaded.add(clean(path));
+        swaps.set(clean(path), [...(swaps.get(clean(path)) || []), decode]);
+        await decode();
         return s;
     },
     // Plays an effect, and gives the voice playing it (null when it didn't): volume 0 to 1, pan -1 to 1, pitch 1 as
@@ -647,10 +700,14 @@ function fit() {
 // The renderer may be a WebGLRenderer or, from 'three/webgpu', a WebGPURenderer (initialized before game() is called). A 2D
 // game calls phaser() from lamp-phaser.js instead, which calls this with Phaser's canvas.
 // `sharp: true` keeps it drawn at 1920x1080 however slow frames are (the log still says how fast they come).
-export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false }) {
+// `snapshot`, `restore`, `busy` and `assetChanged` keep the player's place through a change Lamp makes while the game is
+// played (see "Changes while it's played" below).
+export async function game({ renderer: given, init, frame, touch: buttons, keyboard = true, sharp = false,
+                             snapshot, restore, busy, assetChanged }) {
     renderer = given;
     adapting = !sharp;
     frameFunction = frame;
+    hooks = { snapshot, restore, busy, assetChanged };
     if (buttons === false) drawsTouch = false;
     else if (buttons != null) touchButtons = buttons;
     readsKeyboard = keyboard !== false;
@@ -675,16 +732,168 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         }
     }
     if (preview) return runPreview();
+    await putBack();
     let last = 0;
     const loop = now => {
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
         last = now;
         measure(now);
         step(dt);
+        live();
         requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
 }
+
+// MARK: Changes while it's played
+//
+// Lamp changes the game while the person plays it. A change of files the game loaded through the runtime (asset(),
+// texture(), model(), sound.load()) goes into the running game: the runtime puts a new copy of what it loaded in itself,
+// and then calls the game's `assetChanged(path)` for each changed file, which replaces anything of the game's own made
+// from it (a material from a shader's source, a clone of a model, a level read from JSON) and returns true when it has.
+// A change of code (a .js, .html or .css file), or of a file nothing put in, opens the page again with the new code,
+// keeping the player's place: just before, `snapshot()` gives what matters of where the game is (the level, the
+// player's position, the camera, the score, the mode…) as plain JSON, and once the new code's init has run,
+// `restore(state)` puts the game back there. A game without them starts again, from its own save() and load(). If
+// restore throws, the game starts fresh, and the log says so.
+// While `busy()` is true (a match or a round under way, a race, a fight) a change of code waits, and goes in at the
+// next moment busy() is false (a pause, between rounds); the person can also put it in at once. Where the app around the
+// page has no Reload of Lamp's own, the page shows a small "Reload to apply" to press.
+// Wherever else the game is played (Android, the Xbox, a TV, a phone), a change reaches it when Lamp installs it there
+// again: the runtime keeps the latest snapshot, and the new copy restores it once, when it opens.
+
+let hooks = {}, started = false, waiting = null, pill = null;
+const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
+const tellHost = (gen, state) => { try { const h = host(); h && h.postMessage({ gen, state }); } catch (e) {} };
+// What a change of these is, is code: the page is opened again for it.
+const CODE = /\.(m?js|html?|css)$/i;
+// Each copy of the page names its build (lamp-build.js, written with lamp-device.js), so a snapshot is restored only by a
+// newer build. A copy without one restores only what the page itself kept for its reopening.
+let buildID = null;
+const build = preview ? Promise.resolve(null) : import('./lamp-build.js').then(m => (buildID = m.default), () => null);
+const LIVE = 'lamp.live', LAST = 'lamp.live.last';
+const store = kind => { try { return kind === 'session' ? sessionStorage : localStorage; } catch (e) { return null; } };
+
+function takeSnapshot() {
+    if (!hooks.snapshot) return null;
+    try {
+        const state = hooks.snapshot();
+        return state === undefined ? null : JSON.parse(JSON.stringify(state));
+    } catch (e) { log(`Lamp: snapshot() failed (${e && e.message || e}).`); return null; }
+}
+
+function isBusy() {
+    try { return !!(hooks.busy && hooks.busy()); } catch (e) { return false; }
+}
+
+// Lamp's app around the page hands it a change: `changed` the files changed, `gen` its number, `now` when the person
+// pressed Reload, `pill` when the page is to show its own Reload. Returns true: the page takes changes.
+window.__lampLive = change => {
+    if (preview) return false;
+    if (waiting) change = { ...change, changed: [...new Set([...waiting.changed, ...change.changed])] };
+    waiting = null;
+    changes = Math.max(changes + 1, change.gen || 0);
+    apply(change);
+    return true;
+};
+
+async function apply(change) {
+    const paths = (change.changed || []).map(clean);
+    // Not started yet: nothing to keep.
+    if (!started) { tellHost(change.gen, 'reloading'); location.reload(); return; }
+    if (paths.length && !paths.some(p => CODE.test(p))) {
+        let all = true;
+        for (const path of paths) {
+            let done = false;
+            for (const swap of swaps.get(path) || []) { try { await swap(); done = true; } catch (e) { log(`Lamp: couldn't put in the new ${path} (${e && e.message || e}).`); } }
+            if (hooks.assetChanged) { try { if (await hooks.assetChanged(path)) done = true; } catch (e) { log(`Error: assetChanged('${path}'): ${e && e.message || e}`); } }
+            if (!done) all = false;
+        }
+        if (all) { log(`Lamp: put in ${paths.join(', ')} while the game ran.`); tellHost(change.gen, 'swapped'); return; }
+    }
+    if (isBusy() && !change.now) {
+        waiting = change;
+        tellHost(change.gen, 'held');
+        if (change.pill) showPill();
+        return;
+    }
+    reopen(change);
+}
+
+// Opens the page again with the new code, with the player's place kept for the new code to restore.
+function reopen(change) {
+    hidePill();
+    const state = takeSnapshot();
+    try { store('session').setItem(LIVE, JSON.stringify({ state, input: current, padName, gen: change.gen })); } catch (e) {}
+    log(state == null ? 'Lamp: opening the game again for a change of its code; it has no snapshot(), so it starts from its own saves.'
+        : 'Lamp: opening the game again for a change of its code, keeping where the player was.');
+    tellHost(change.gen, 'reloading');
+    location.reload();
+}
+
+// Each frame: a waiting change goes in once the game isn't busy; the latest snapshot is kept for the next install.
+let kept = 0;
+function live() {
+    if (waiting && !isBusy()) { const change = waiting; waiting = null; reopen(change); }
+    if (hooks.snapshot && time - kept >= 5) { kept = time; keepLast(); }
+}
+
+function keepLast() {
+    if (!buildID) return;
+    const state = takeSnapshot();
+    if (state == null) return;
+    try { store('local').setItem(LAST, JSON.stringify({ build: buildID, at: Date.now(), state, input: current })); } catch (e) {}
+}
+if (!preview) {
+    window.addEventListener('pagehide', () => { if (started) keepLast(); });
+    document.addEventListener('visibilitychange', () => { if (started && document.hidden) keepLast(); });
+}
+
+// After init: the place the page kept for its reopening, or else the latest snapshot of an older build (Lamp installed
+// a new one since), once.
+async function putBack() {
+    const session = store('session'), local = store('local');
+    let said = null, reopened = false;
+    try { said = JSON.parse(session.getItem(LIVE) || 'null'); session.removeItem(LIVE); reopened = !!said; } catch (e) {}
+    if (said && said.fresh) { tellHost(said.gen, 'fresh'); return finish(); }
+    const id = await build;
+    if (!said) {
+        try {
+            const last = JSON.parse(local.getItem(LAST) || 'null');
+            // Within a quarter of an hour: an install that follows a change, not a game opened again another day.
+            if (last && id && last.build !== id && Date.now() - last.at < 15 * 60 * 1000) { said = last; local.removeItem(LAST); }
+        } catch (e) {}
+    }
+    if (said && said.input && said.input.kind) { current = said.input; padName = said.padName || ''; for (const changed of listeners) try { changed(input()); } catch (e) {} }
+    if (said && said.state != null && hooks.restore) {
+        try {
+            await hooks.restore(said.state);
+            log(reopened ? 'Lamp: the game is back where it was, with the new code.' : 'Lamp: the game is back where it was before it was installed again.');
+            tellHost(said.gen, 'restored');
+        } catch (e) {
+            // Half put back is worse than fresh: the page opens once more without the snapshot.
+            log(`Lamp: couldn't put the game back where it was (restore failed: ${e && e.message || e}), so it starts fresh.`);
+            try { session.setItem(LIVE, JSON.stringify({ fresh: true, gen: said.gen })); } catch (e2) {}
+            location.reload();
+            return new Promise(() => {});
+        }
+    } else if (reopened) tellHost(said.gen, 'started');
+    finish();
+    function finish() { started = true; }
+}
+
+function showPill() {
+    if (pill) { pill.style.display = 'block'; return; }
+    pill = document.createElement('button');
+    pill.textContent = 'Reload to apply';
+    pill.style.cssText = 'position:fixed;z-index:20;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));'
+        + 'padding:8px 16px;border:0;border-radius:18px;background:rgba(20,20,24,.72);color:#fff;font:600 15px -apple-system,system-ui,sans-serif;'
+        + '-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)';
+    const press = e => { e.stopPropagation(); e.preventDefault(); if (waiting) { const change = waiting; waiting = null; reopen(change); } };
+    pill.addEventListener('pointerdown', press);
+    document.body.append(pill);
+}
+function hidePill() { if (pill) pill.style.display = 'none'; }
 
 // MARK: Lamp's preview: the script played out of sight, a picture where it says
 

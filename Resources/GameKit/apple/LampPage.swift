@@ -289,12 +289,23 @@ final class LampPageLog: NSObject, WKScriptMessageHandler {
 
 // MARK: - Serving and showing the page
 
-/// The page's files, from the app's bundle (Web/), each a plain file inside it, at <scheme>://app/.
+/// The page's files, from the app's bundle (Web/), each a plain file inside it, at <scheme>://app/; and those Lamp has
+/// changed since the bundle was built, while the app is open (`LampPageLive`), from the copies it was handed.
 final class LampPageFiles: NSObject, WKURLSchemeHandler {
     let scheme: String
     private let folder = Bundle.main.resourceURL?.appendingPathComponent("Web")
+    /// The files Lamp changed since this bundle was built, by their path in Web/, and those it took away.
+    private let lock = NSLock()
+    private var changed: [String: URL] = [:]
+    private var gone: Set<String> = []
 
     init(scheme: String) { self.scheme = scheme }
+
+    func take(changed: [String: URL], gone: Set<String>) {
+        lock.lock(); defer { lock.unlock() }
+        self.changed = changed
+        self.gone = gone
+    }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         guard let url = task.request.url else { return task.didFailWithError(URLError(.badURL)) }
@@ -318,6 +329,12 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         guard let folder, url.host == "app" else { return nil }
         let root = folder.standardizedFileURL.path + "/"
         let path = url.path.isEmpty || url.path.hasSuffix("/") ? url.path + "index.html" : url.path
+        let relative = String(path.drop(while: { $0 == "/" }))
+        lock.lock()
+        let newer = changed[relative], removed = gone.contains(relative)
+        lock.unlock()
+        if let newer { return try? Data(contentsOf: newer) }
+        if removed { return nil }
         let file = folder.appendingPathComponent(path).standardizedFileURL
         guard file.path.hasPrefix(root), let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
               values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
@@ -328,11 +345,14 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
 /// The web view the page is shown in: its sound and pictures without a tap first, nothing to scroll or bounce.
 @MainActor enum LampPageView {
     /// A page that logs its own errors (a game's runtime does) leaves `catchErrors` off, or each would be logged twice.
-    static func make(_ files: LampPageFiles, catchErrors: Bool = true) -> WKWebView {
+    /// `live` takes Lamp's changes while the app is open (`LampPageLive`).
+    static func make(_ files: LampPageFiles, catchErrors: Bool = true, live: Bool = false) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(files, forURLScheme: files.scheme)
         // LampAI and the page's calls of this device, and its console into the app's log.
         LampPage.attach(to: configuration, scheme: files.scheme, catchErrors: catchErrors)
+        let changes = live ? LampPageLive(files: files) : nil
+        if let changes { configuration.userContentController.add(changes, contentWorld: .page, name: "lampLive") }
         configuration.mediaTypesRequiringUserActionForPlayback = []
         #if os(iOS)
         configuration.allowsInlineMediaPlayback = true
@@ -347,6 +367,7 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         view.scrollView.bounces = false
         view.scrollView.contentInsetAdjustmentBehavior = .never
         #endif
+        changes?.start(view)
         view.load(URLRequest(url: URL(string: "\(files.scheme)://app/index.html")!))
         return view
     }
@@ -356,5 +377,124 @@ final class LampPageFiles: NSObject, WKURLSchemeHandler {
         guard let canvas, size.width > 0, size.height > 0 else { return }
         let zoom = min(size.width / canvas.width, size.height / canvas.height)
         if abs(view.pageZoom - zoom) > 0.001 { view.pageZoom = zoom }
+    }
+}
+
+// MARK: - Changes while it's open
+
+/// Lamp's changes to the page while the app is open. The app asks Lamp what has changed (a request Lamp answers when
+/// there's a change, or after a while with nothing), fetches the files that differ from its bundle into its caches, has
+/// `LampPageFiles` serve them in place of the bundle's, and tells the page (`window.__lampLive` in lamp-game.js), which
+/// puts new pictures, models and sounds in as it runs and opens itself again for new code, keeping the player's place.
+/// What the page did is told back to Lamp, which says so in the chat. The files are kept for the next launch of this
+/// same bundle, so the app opens as Lamp last changed it; a new bundle (Lamp installed the app again) starts from its own.
+@MainActor final class LampPageLive: NSObject, WKScriptMessageHandler {
+    private let files: LampPageFiles
+    private weak var page: WKWebView?
+    private var epoch = "", gen = 0
+    private var have: [String: String] = [:]
+    private static let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("LampPage")
+    private static var manifest: URL { cache.appendingPathComponent("changes.json") }
+    /// Where this copy is, for Lamp: a phone's copy takes a change when Lamp installs it again, not this way.
+    #if os(macOS)
+    private static let place = "mac"
+    #elseif targetEnvironment(simulator)
+    private static let place = "simulator"
+    #else
+    private static let place = "phone"
+    #endif
+
+    /// This bundle, by its program's date and size: a new install is another.
+    private static let bundle: String = {
+        guard let url = Bundle.main.executableURL,
+              let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return "" }
+        return "\(Int(values.contentModificationDate?.timeIntervalSince1970 ?? 0))-\(values.fileSize ?? 0)"
+    }()
+
+    init(files: LampPageFiles) {
+        self.files = files
+        super.init()
+        // The changes this bundle was last given, kept from an earlier launch.
+        if let data = try? Data(contentsOf: Self.manifest), let kept = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           kept["bundle"] as? String == Self.bundle, let hashes = kept["files"] as? [String: String] {
+            let gone = Set(kept["gone"] as? [String] ?? [])
+            if hashes.values.allSatisfy({ FileManager.default.fileExists(atPath: Self.cache.appendingPathComponent($0).path) }) {
+                have = hashes
+                files.take(changed: hashes.mapValues { Self.cache.appendingPathComponent($0) }, gone: gone)
+            }
+        }
+    }
+
+    func start(_ view: WKWebView) {
+        page = view
+        guard Self.place != "phone" else { return }
+        Task { await listen() }
+    }
+
+    private func listen() async {
+        var pause: UInt64 = 2
+        while page != nil {
+            do {
+                let answer = try await call("/app/page/live", ["after": gen, "epoch": epoch, "place": Self.place, "bundle": Self.bundle], timeout: 60)
+                pause = 2
+                if let e = answer["epoch"] as? String, e != epoch { epoch = e; gen = 0 }
+                guard let next = answer["gen"] as? Int, next > gen || answer["now"] as? Bool == true else { continue }
+                try await take(answer, gen: next)
+            } catch {
+                // Lamp closed, or not reachable: asked again in a while.
+                try? await Task.sleep(nanoseconds: pause * 1_000_000_000)
+                pause = min(pause * 2, 30)
+            }
+        }
+    }
+
+    private func take(_ answer: [String: Any], gen next: Int) async throws {
+        let hashes = answer["files"] as? [String: String] ?? [:]
+        let gone = Set(answer["gone"] as? [String] ?? [])
+        try FileManager.default.createDirectory(at: Self.cache, withIntermediateDirectories: true)
+        for (path, hash) in hashes where !FileManager.default.fileExists(atPath: Self.cache.appendingPathComponent(hash).path) {
+            let file = try await call("/app/page/file", ["gen": next, "path": path], timeout: 60)
+            guard let text = file["data"] as? String, let data = Data(base64Encoded: text) else { throw URLError(.cannotDecodeContentData) }
+            try data.write(to: Self.cache.appendingPathComponent(hash), options: .atomic)
+        }
+        files.take(changed: hashes.mapValues { Self.cache.appendingPathComponent($0) }, gone: gone)
+        // Files no copy names any more go.
+        let kept = Set(hashes.values)
+        for old in Set(have.values).subtracting(kept) { try? FileManager.default.removeItem(at: Self.cache.appendingPathComponent(old)) }
+        have = hashes
+        if let data = try? JSONSerialization.data(withJSONObject: ["bundle": Self.bundle, "files": hashes, "gone": Array(gone)]) {
+            try? data.write(to: Self.manifest, options: .atomic)
+        }
+        gen = next
+        let change: [String: Any] = ["gen": next, "changed": answer["changed"] as? [String] ?? [], "now": answer["now"] as? Bool ?? false, "pill": Self.place != "mac"]
+        guard let page, let json = try? JSONSerialization.data(withJSONObject: change) else { return }
+        let taken = try? await page.evaluateJavaScript("window.__lampLive ? window.__lampLive(\(String(decoding: json, as: UTF8.self))) : false", in: nil, contentWorld: .page)
+        // A page without Lamp's game runtime is opened again as it is.
+        if taken as? Bool != true {
+            page.reload()
+            tell(next, "reloading")
+        }
+    }
+
+    /// What the page did with a change (lamp-game.js): put in, reopened, waiting for a pause, back where it was.
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let said = message.body as? [String: Any], let state = said["state"] as? String else { return }
+        tell(said["gen"] as? Int ?? gen, state)
+    }
+
+    private func tell(_ gen: Int, _ state: String) {
+        Task { _ = try? await call("/app/page/state", ["gen": gen, "state": state, "epoch": epoch, "place": Self.place], timeout: 10) }
+    }
+
+    private func call(_ path: String, _ body: [String: Any], timeout: TimeInterval) async throws -> [String: Any] {
+        guard let url = URL(string: lampGateway + path) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = "POST"
+        request.setValue("Bearer " + LampInstall.token, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     }
 }

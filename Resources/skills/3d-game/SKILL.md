@@ -40,7 +40,10 @@ device) or tell the person why 3D in a page can't run there.
 
 - Shapes made in code (boxes, spheres, cylinders, extruded outlines), well lit and colored, often look better than
   mismatched models, and cost little. A model the game needs (a .glb) goes in Web/ and loads once in `init` with
-  `new GLTFLoader().loadAsync('ship.glb')`.
+  lamp-game.js's `model('ship.glb')` (a group holding its scene, with `group.animations`), and a picture with
+  `texture('bricks.png', t => { t.colorSpace = THREE.SRGBColorSpace; })`: a new copy of either goes into the running
+  game, inside the same group or texture. A clone of the model, or a mixer playing its animations, is made again in
+  `assetChanged(path)` (the game skill, "Changes while it's played").
 - One or two lights computed in the shader are the safe start. MeshStandardMaterial looks good under them;
   MeshLambertMaterial or MeshBasicMaterial cost less.
 - Make every mesh, material and texture once in `init` and reuse it; many copies of one shape are one

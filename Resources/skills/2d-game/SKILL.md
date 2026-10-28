@@ -163,6 +163,10 @@ Nothing is loaded from the network, ever: the art is in Web/ or made in code.
 The game skill's: effects from `sound.tone` for each thing the player does or meets (a jump sliding up, a coin's two
 quick notes, noise for a hit), made once; music quiet or none. The best score, levels reached and settings with
 `save(name, value)` and `load(name)`, read with a default for anything new (`load('best') ?? 0`).
+`snapshot()` and `restore(state)` in phaser() keep the player's place through a change (the scene, the player's
+position, the score, the time), and `busy()` holds a change of code during a round (the game skill, "Changes while
+it's played"). A picture Phaser's loader read goes in again through `assetChanged(path)` in phaser() (load it again and
+swap the texture), or the page opens again with the snapshot.
 
 ### Keeping it smooth on the slowest place
 

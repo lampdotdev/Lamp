@@ -453,7 +453,8 @@ enum GameKit {
 
     /// build.sh's one way to put the page into what it builds (the Mac's app, the simulator's, Android's assets): Web/,
     /// its files only, with the device it's for beside a game's runtime as Lamp resolved it (`GamePage`, handed over as
-    /// LAMP_PAGE_DEVICE). A game's page built without one stops the build rather than claim another device's facts.
+    /// LAMP_PAGE_DEVICE), and which build it is (`GamePage.buildFile`). A game's page built without a device stops the
+    /// build rather than claim another device's facts.
     static let stagePageSh = """
     stage_page() {
       if find Web -type l | grep -q .; then echo "Web/ holds a shortcut to another file. Put the file itself there." >&2; exit 1; fi
@@ -463,6 +464,8 @@ enum GameKit {
       if [ -f "$1/\(GamePage.runtimeFile)" ]; then
         if [ -z "${LAMP_PAGE_DEVICE:-}" ]; then echo "Lamp builds the game, saying which device its page is for: build it from Lamp." >&2; exit 1; fi
         printf '%s' "$LAMP_PAGE_DEVICE" > "$1/\(GamePage.deviceFile)"
+        BUILD="$(cd "$1" && find . -type f ! -name \(GamePage.deviceFile) ! -name \(GamePage.buildFile) -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 | shasum -a 256 | cut -c1-16)"
+        printf '%s"%s";\\n' "\(GamePage.buildPrefix)" "$BUILD" > "$1/\(GamePage.buildFile)"
       fi
     }
 
@@ -765,7 +768,7 @@ extension Agent {
     static func gamePrompt(for project: LampProject) -> String {
         let web = GameKit.engine(project) == .web, ownLoop = GameKit.ownsLoop(project)
         // A page made for the Xbox before Lamp's game runtime keeps its own loop, and its own way of being tried.
-        let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound]
+        let kit = ownLoop ? [Rules.gameOwnLoop] : [web ? Rules.gameWebKit : Rules.gameKit, web ? Rules.gameWebSound : Rules.gameSound] + (web ? [Rules.gameWebLive] : [])
         let rules = [web ? Rules.gameWebEdit : Rules.gameEdit, Rules.ask, Rules.shell] + kit + (web ? [Rules.pageNative] : []) + [Rules.gameBudget, Rules.icon, Rules.about,
                      web ? Rules.gameWebAssets : Rules.gameAssets, ownLoop ? Rules.gameOwnLoopTry : Rules.gameTry, Rules.appMd, Rules.audience,
                      Skills.index(Skills.offered(.game)), Rules.begin, Rules.finish]
@@ -778,7 +781,7 @@ extension Agent {
     /// The rules for a game that's one of a wish's apps, in a folder of its own: the game's own, for the files there,
     /// without those about the wish as a whole. A game made beside other apps is a page, as every new game is.
     static func gamePrompt(part folder: String, alone: Bool = false) -> String {
-        let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
+        let rules = [Rules.gameWebEdit, Rules.gameWebKit, Rules.gameWebSound, Rules.gameWebLive, Rules.pageNative, Rules.gameBudget, Rules.gameWebAssets,
                      Rules.gameTry, alone ? "" : Rules.gameAmongApps + Rules.wishTalk, Skills.index(Skills.offered(.game))]
         return (Rules.partHeader("a game drawn with three.js or Phaser in Web/, at home on the Mac and played on any other device that takes a page (make_app_for's table of devices) once it's put there", folder: folder)
                 + "\n\nRules:\n" + rules.joined())
@@ -848,7 +851,7 @@ extension Agent.Rules {
 
     /// What `make_app_for` answers with when an app becomes a game.
     static func gameChange(_ project: LampProject) -> String {
-        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + pageNative + gameBudget + gameTry
+        GameKit.engine(project) == .web ? gameWebEdit + gameWebKit + gameWebSound + gameWebLive + pageNative + gameBudget + gameTry
             : gameEdit + gameKit + gameSound + gameBudget + gameTry
     }
 
@@ -897,7 +900,7 @@ extension Agent.Rules {
     once the import map names it: the 3d-game skill says when a game needs it and how), then \
     game.js as a module: keep that. game.js makes a `THREE.WebGLRenderer({ antialias: true })` and calls \
     `game({ renderer, init, frame, touch })` once: Lamp sizes the canvas to 1920x1080 and fits it to the window or \
-    screen, runs `init` once (it may be async, to load models with `GLTFLoader().loadAsync('ship.glb')` or sounds), \
+    screen, runs `init` once (it may be async, to load models with lamp-game.js's `model('ship.glb')` or sounds), \
     then `frame(f)` about 60 times a second, which moves things by `f.dt` and ends with `renderer.render(scene, \
     camera)`. Never call requestAnimationFrame, setTimeout or setInterval for the game, nor read the clock, \
     Math.random or localStorage: use `f.dt`, `f.time`, `random()`, `save(name, value)` and `load(name)` from \
@@ -925,6 +928,20 @@ extension Agent.Rules {
     1920x1080. Plain modern JavaScript, nothing loaded from the network.
     """
 
+    /// How a change goes into the game while it's played (lamp-game.js, "Changes while it's played"; `PageLive`).
+    static let gameWebLive = """
+    - Your changes go into the game while the person plays it, so write it to keep their place. Give game() (or phaser()) \
+    `snapshot()`, returning as plain JSON everything that says where the game is (the level or mode, the player's position, \
+    heading and speed, what they ride or hold, the camera, the score, lives, time, the time of day…), and `restore(state)`, \
+    which puts all of that back after init has run with the new code; keep both current as you add state, and let restore \
+    take a snapshot from before your change (a missing field keeps its start value). Load pictures, models, sounds and \
+    data through lamp-game.js (`texture('bricks.png')`, `model('car.glb')`, `sound.load('hit.wav')`, `asset('level.json')`), \
+    never by a URL of your own, so a new copy goes into the running game; where the game makes something of its own from \
+    a file (a material from shader source, clones of a model, a level from JSON), give game() `assetChanged(path)`, which \
+    makes it again and returns true. While a match, race or round is on, `busy()` returns true: a change of code waits \
+    for the next pause and the person can press Reload. A change of code with no snapshot starts the game again.
+    """
+
     static let gameWebSound = """
     - Sound: a game has it, through `sound` in lamp-game.js, never an <audio> tag or a library. Give each thing the \
     player does or meets a short effect, under a second: a jump, a hit, a pickup, a menu move, a win. Make them in \
@@ -940,7 +957,7 @@ extension Agent.Rules {
 
     static let gameWebAssets = """
     - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac. A model, picture \
-    or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there. Prefer shapes \
+    or sound the game uses is copied into Web/, which goes into the app, and loaded by its path there through lamp-game.js. Prefer shapes \
     and colors made in code to files: a game of simple shapes, well lit and well colored, looks better than one of \
     mismatched models.
     """

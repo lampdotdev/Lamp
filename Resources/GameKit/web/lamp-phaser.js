@@ -65,8 +65,10 @@ async function settled(g) {
 // no smoothing, positions rounded); `physics` Phaser's physics config (Arcade for most games); `background` the color
 // behind everything; `touch` and `keyboard` as game() in lamp-game.js takes them (the touch buttons a phone shows, or
 // false for a game that draws its own; keyboard: false for a game that reads keys itself). `config` is anything more of
-// Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's.
-export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {} }) {
+// Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's. `snapshot`,
+// `restore`, `busy` and `assetChanged` keep the player's place through a change, as game() takes them.
+export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {},
+                               snapshot, restore, busy, assetChanged }) {
     // What lamp-game.js fits to the screen at 1920x1080's shape: Phaser fits its canvas inside it (Phaser's FIT, so a
     // click is read where it lands however big the window is).
     const stage = document.createElement('div');
@@ -81,7 +83,7 @@ export async function phaser({ scenes, pixelArt = false, physics, background = '
     };
     let g = null;
     return game({
-        renderer, touch, keyboard, sharp: true,
+        renderer, touch, keyboard, sharp: true, snapshot, restore, busy, assetChanged,
         async init() {
             g = phaserGame = new Phaser.Game(Object.assign({}, config, {
                 type: config.type ?? Phaser.AUTO, parent: stage, width: WIDTH, height: HEIGHT,

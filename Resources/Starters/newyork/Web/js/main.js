@@ -848,7 +848,33 @@ async function initApp() {
 
   // The city reads its own keys and draws its own touch controls; a controller, and the preview's moves, come as the
   // first pad. The canvas goes back under the HUD, where the page laid it out.
-  game({ renderer, frame, touch: false, keyboard: false });
+  // Lamp: where the player is, kept through a change Lamp makes while the city is played (lamp-game.js, "Changes while
+  // it's played"): the mode, where each of the person, car, bike and helicopter is, which way it faces and how fast it
+  // goes, the camera and its zoom, and the time of day. restore() runs once the new code has built the city; a field an
+  // older snapshot lacks keeps its start value.
+  function snapshot() {
+    const entities = Object.fromEntries(Object.entries(controllerManager.entities).map(([mode, entity]) => [mode, {
+      x: entity.position.x, y: entity.position.y, z: entity.position.z, heading: entity.heading, speed: entity.speed || 0
+    }]));
+    return { version: 1, activeMode: controllerManager.activeMode, entities, camera: cameraSystem.activePresetId,
+             zoom: cameraSystem.zoomMultiplier, time: lightingSystem.activePresetId };
+  }
+  function restore(state) {
+    if (state?.version !== 1) return;
+    for (const mode of Object.keys(controllerManager.entities)) {
+      const p = state.entities?.[mode];
+      if (!p || ![p.x, p.y, p.z, p.heading].every(Number.isFinite)) continue;
+      controllerManager.setMode(mode);
+      controllerManager.teleportActiveTo(p.x, p.z, p.heading, p.y);
+      if (Number.isFinite(p.speed)) controllerManager.entities[mode].speed = p.speed;
+    }
+    selectMode(Object.hasOwn(controllerManager.entities, state.activeMode) ? state.activeMode : controllerManager.activeMode);
+    if (state.time) selectTime(state.time);
+    if (state.camera) selectCamera(state.camera, true);
+    if (Number.isFinite(state.zoom)) cameraSystem.zoomMultiplier = state.zoom;
+  }
+
+  game({ renderer, frame, touch: false, keyboard: false, snapshot, restore });
   container.appendChild(renderer.domElement);
 }
 

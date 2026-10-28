@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// What a game's page is told about the device it's on, so it never works out where it is: the device's row in the
@@ -17,6 +18,10 @@ enum GamePage {
     static let deviceFile = "lamp-device.js"
     /// The runtime whose presence makes a page a game's, which needs the device.
     static let runtimeFile = "lamp-game.js"
+    /// Which build of the page a copy is, beside the device: a name for its files' contents, so the runtime restores
+    /// the snapshot an older build kept once a newer one is installed (lamp-game.js, "Changes while it's played").
+    static let buildFile = "lamp-build.js"
+    static let buildPrefix = "export default "
 
     /// The row of the device this copy of the project's page is for: where the project is built for now, or the
     /// destination given (the preview is played on this Mac). The project's family picks out its row among those
@@ -71,6 +76,23 @@ enum GamePage {
     static func stage(_ page: URL, in root: URL, descriptor: () throws -> String) throws {
         guard AppFile.read(page.appendingPathComponent(runtimeFile), inFolder: root) != nil else { return }
         try AppFolder.write(try descriptor(), to: page.appendingPathComponent(deviceFile), in: root)
+        try AppFolder.write(buildPrefix + "\"\(buildName(of: page, in: root))\";\n", to: page.appendingPathComponent(buildFile), in: root)
+    }
+
+    /// A name for the page's files as they are, the device and build files left out.
+    static func buildName(of page: URL, in root: URL) -> String {
+        let base = page.standardizedFileURL.path + "/"
+        let files = (FileManager.default.enumerator(at: page, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects as? [URL] ?? [])
+            .map { String($0.standardizedFileURL.path.dropFirst(base.count)) }
+            .filter { $0 != deviceFile && $0 != buildFile }
+            .sorted()
+        var hasher = SHA256()
+        for path in files {
+            guard let data = AppFile.read(page.appendingPathComponent(path), inFolder: root) else { continue }
+            hasher.update(data: Data(path.utf8))
+            hasher.update(data: Data(SHA256.hash(data: data)))
+        }
+        return hasher.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     /// What build.sh is handed to write into the copy of the page it builds (`LAMP_PAGE_DEVICE`): the device the

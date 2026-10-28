@@ -45,11 +45,12 @@ struct LampGameScreen: View {
     }
 }
 
-/// The page that is the game, served by Lamp's common host (LampPage.swift): it logs its own errors.
+/// The page that is the game, served by Lamp's common host (LampPage.swift): it logs its own errors, and takes Lamp's
+/// changes while it's open (`LampPageLive`).
 @MainActor enum LampGamePage {
     static let files = LampPageFiles(scheme: "lamp-game")
 
-    static func make() -> WKWebView { LampPageView.make(files, catchErrors: false) }
+    static func make() -> WKWebView { LampPageView.make(files, catchErrors: false, live: true) }
 }
 
 #if os(macOS)
