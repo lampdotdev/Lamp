@@ -3394,10 +3394,13 @@ final class Store: ObservableObject {
     private static func stageUpstream(_ package: Sharing.Package, into folder: URL) throws {
         let fm = FileManager.default
         let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
+        // A file may be listed twice (a license the credits name inside a part is in the wish's list and the part's; one
+        // beside the app's own files is among them too): the later copy replaces the earlier, as the install's does.
         func put(_ file: URL, at relative: String, in to: URL) throws {
             guard !relative.split(separator: "/").contains(where: { $0 == ".." }) else { return }
             let target = to.appendingPathComponent(relative)
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
             try fm.copyItem(at: file, to: target)
         }
         func stage(_ app: Sharing.Package, into to: URL) throws {
