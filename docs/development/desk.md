@@ -146,6 +146,21 @@ without Lamp's chat). Shrink it to at most 800 px on the long side (`sips -Z 800
 it was taken on (names, folders, accounts). A starter that opens no window (the menu bar) is pictured with its
 panel open.
 
+**Changing a starter.** `Resources/Starters/<folder>` is the starter; its repository on GitHub is what the publish
+makes of it, and a change made there is overwritten by the next publish. A change is best made in Lamp Dev, where it's
+played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>, the starter as it
+is now), ask for the change, then bring it back with `scripts/pull-starter.sh <folder> <the wish's folder>` (after
+`./build.sh`; a folder holding a repository's tree works too, and an address, which the script clones first). It reads the wish as the import does
+(`StarterRepos.pull`) and writes the starter's code and files, APP.md, what it declares, its about.json line and
+credits.json, each only when it differs, leaving starter.md, preview.png and the icon's pictures as they are; it says
+so when the icon's design changed (draw it again, step 5 below) and when the wish began from an older version of the
+starter than the one here, whose changes the pull would take back. Look at the change with git, run
+`scripts/check-starters.sh <folder>`, then publish. `scripts/pull-starter.sh --check` publishes every starter to a
+folder and brings it back: each must come back unchanged (`StartersTests` does the same for the Mac starters).
+Bringing in what changed in work a starter is based on (Slop New York for New York) is a request like any other:
+"Bring in what's new in <repository> since <the commit credits.json names>, keeping our changes", which the agent
+ports, moving the commit in credits.json on.
+
 **Turning an app made with Lamp into a starter.** The app's folder is under `~/Library/Application Support/Lamp
 Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resources/Starters/<folder>`:
 

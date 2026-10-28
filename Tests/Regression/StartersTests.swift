@@ -90,4 +90,38 @@ final class StartersTests: XCTestCase {
             }
         }
     }
+    /// A starter put on GitHub and brought back from there unchanged is the starter it was, file for file: what the
+    /// publish stages and what the pull writes back agree (`StarterRepos.stage`, `StarterRepos.pull`). Fireside has the
+    /// most kinds of files (code, a share extension, its own files, what it declares); `scripts/pull-starter.sh --check`
+    /// does every starter with the app, games and screens included, which need Lamp's own bundle.
+    func testAStarterComesBackFromItsRepositoryUnchanged() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("lamp-pull-starters-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        for folder in [starters.appendingPathComponent("fireside")] {
+            let starter = try XCTUnwrap(Starters.read(folder), folder.lastPathComponent)
+            let work = root.appendingPathComponent(folder.lastPathComponent)
+            try fm.createDirectory(at: work, withIntermediateDirectories: true)
+            let (tree, _) = try StarterRepos.stage(starter, in: work.appendingPathComponent("stage"))
+            let package = try RepoImport.open(folder: tree)
+            defer { try? fm.removeItem(at: package.folder) }
+            let copy = work.appendingPathComponent("starter")
+            try fm.copyItem(at: folder, to: copy)
+            // Staged from the starter as it is, the wish names its starter without the commit the publish gives it
+            // (only the repository knows that), which the pull is right to point out.
+            let notes = try StarterRepos.pull(package, into: copy)
+            XCTAssertEqual(notes.filter { !$0.hasPrefix("Careful: this wish doesn't say") }, [], folder.lastPathComponent)
+            func files(_ dir: URL) -> [String: Data] {
+                var found: [String: Data] = [:]
+                for case let file as URL in fm.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator()
+                where (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true && !file.path.contains("/Prebuilt") {
+                    found[Sharing.relativePath(of: file, in: dir)] = try? Data(contentsOf: file)
+                }
+                return found
+            }
+            let before = files(folder), after = files(copy)
+            XCTAssertEqual(Set(after.keys).symmetricDifference(before.keys).sorted(), [], "\(folder.lastPathComponent): files added or taken out")
+            XCTAssertEqual(before.keys.filter { before[$0] != after[$0] }.sorted(), [], "\(folder.lastPathComponent): files changed")
+        }
+    }
 }

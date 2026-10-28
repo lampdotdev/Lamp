@@ -20,6 +20,10 @@ struct LampApp: App {
         if ProcessInfo.processInfo.environment["STAGE_STARTERS"] == "1", CommandLine.arguments.contains(StarterRepos.commandLineFlag) {
             StarterRepos.stageFromCommandLine()
         }
+        // And a starter changed as a wish in Lamp, back into it (`scripts/pull-starter.sh`).
+        if ProcessInfo.processInfo.environment["STAGE_STARTERS"] == "1", CommandLine.arguments.contains(StarterRepos.pullFlag) {
+            StarterRepos.pullFromCommandLine()
+        }
         // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
         if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
     }
