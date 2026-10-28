@@ -11463,8 +11463,7 @@ final class Store: ObservableObject {
                 alert.addButton(withTitle: "Open Settings")
                 alert.addButton(withTitle: "Not Now")
                 if await present(alert) == .alertFirstButtonReturn {
-                    UserDefaults.standard.set("apps", forKey: "settingsTab")
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    SettingsMenu.show(tab: "apps")
                 }
             }
             return (503, ["error": "Using other apps is turned off. Turn on “Let apps use your other apps” in Lamp → Settings → Apps, then try again."])

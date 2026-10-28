@@ -1216,9 +1216,7 @@ final class SidebarServer {
             }
         case .infoAction(let action):
             AppInfoView.perform(action, for: project) { tab in
-                UserDefaults.standard.set(tab, forKey: "settingsTab")
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                SettingsMenu.show(tab: tab)
             }
             scheduleUpdate()
         case .tryOn(let id):
