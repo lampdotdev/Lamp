@@ -29,9 +29,10 @@ enum Starters {
         var commit: String? = nil
     }
 
-    /// Where Lamp's own starters live: a repository each in the Lamp team's account on GitHub.
+    /// Where Lamp's own starters live: a repository each, named as the starter's folder is, in the Lamp team's
+    /// account on GitHub for them.
     static let account = "RooCodeInc"
-    static func repositoryName(of folder: String) -> String { "lamp-starter-" + folder }
+    static func repositoryName(of folder: String) -> String { folder }
 
     /// A starter's link on a copy's chain, with where the starter lives filled in from the starter this Lamp ships
     /// when the copy was made before starters named one: the address only, since the commit the copy came from isn't

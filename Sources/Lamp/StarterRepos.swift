@@ -51,7 +51,7 @@ enum StarterRepos {
         exit(failed ? 1 : 0)
     }
 
-    /// The repository a starter goes in: "RooCodeInc/lamp-starter-newyork".
+    /// The repository a starter goes in: "<account>/newyork".
     static func repo(of starter: Starters.Starter) -> String {
         Starters.account + "/" + Starters.repositoryName(of: starter.folder.lastPathComponent)
     }

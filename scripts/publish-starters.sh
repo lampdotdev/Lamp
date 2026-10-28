@@ -1,19 +1,19 @@
 #!/bin/zsh
-# Puts each of Lamp's starters on GitHub, a public repository each in the Lamp team's account (RooCodeInc/lamp-starter-
-# <folder>), laid out as Put on GitHub lays a wish out, and writes the repository's address and the commit it's at into
+# Puts each of Lamp's starters on GitHub, a public repository each in the Lamp team's account for them (<account>/
+# <folder>, the account as `Starters.account` names it), laid out as Put on GitHub lays a wish out, and writes the repository's address and the commit it's at into
 # the starter's starter.md (`repository:` and `commit:`). Every copy of a starter made by a Lamp built from then on
 # names that commit on its chain, which Update from GitHub… merges against and Send Changes Back… goes on top of.
 #
 # Run it after a starter changes, before the release that ships the change, and commit the starter.md files it touches:
 #   ./build.sh && scripts/publish-starters.sh
 # A starter whose tree is the same as what's up makes no commit. Needs gh, signed in to an account that can make
-# repositories in RooCodeInc. `--dry-run` stages the trees and says what it would do, without GitHub.
+# repositories in that account. `--dry-run` stages the trees and says what it would do, without GitHub.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DRY=0
 [[ "${1:-}" == "--dry-run" ]] && DRY=1
-ACCOUNT="RooCodeInc"
+ACCOUNT="$(sed -n 's/.*static let account = "\(.*\)".*/\1/p' Sources/Lamp/Starters.swift)"
 
 APP=(build/Lamp\ Dev*.app(N/om[1]))
 [[ -n "${APP[1]:-}" ]] || { echo "Build Lamp Dev first (./build.sh)." >&2; exit 1; }
@@ -32,7 +32,7 @@ fi
 
 for tree in "$WORK"/trees/*(N/); do
   folder="${tree:t}"
-  repo="$ACCOUNT/lamp-starter-$folder"
+  repo="$ACCOUNT/$folder"
   starter="Resources/Starters/$folder/starter.md"
   if (( DRY )); then
     echo "$repo: $(cd "$tree" && find . -type f | wc -l | tr -d ' ') files"
