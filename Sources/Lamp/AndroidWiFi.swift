@@ -82,7 +82,6 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         AndroidTVs.settingUp = false
-        pairedHost = nil
         looking?.cancel()
         looking = nil
         window = nil
@@ -97,7 +96,6 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         guard selected != host else { return }
         selected = host
         moveOn()
-        pairedHost = nil
         code = ""
         state = .idle
     }
@@ -176,12 +174,17 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         state = .working("Pairing…")
         Task {
             defer { done(mine) }
-            let result = await AndroidTVs.exclusively("\(host):\(port)") { await Adb.pair(host: host, port: port, code: code) }
-            guard mine == generation else { return }
+            // Checked again once the address is free: a request that waited for it may be for a window since closed.
+            let result = await AndroidTVs.exclusively("\(host):\(port)") { [self] () async -> Adb.Pairing? in
+                guard mine == generation else { return nil }
+                return await Adb.pair(host: host, port: port, code: code)
+            }
+            // A pairing that worked holds whatever the window does next: the TV is reached over Wireless debugging.
+            if result == .paired { AndroidTVs.paired(at: host) }
+            guard let result, mine == generation else { return }
             switch result {
             case .paired:
                 self.code = ""
-                pairedHost = host
                 await connectAfterPairing(host: host, generation: mine)
             case .wrongCode:
                 // adb says the same when the code is wrong and when the screen closed meanwhile.
@@ -221,7 +224,10 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             state = .failed("Paired. Now type the address and port the TV's Wireless debugging screen shows, under IP address & port.")
             return
         }
-        _ = await AndroidTVs.exclusively("\(host):\(target)") { await Adb.connect(target: "\(host):\(target)") }
+        _ = await AndroidTVs.exclusively("\(host):\(target)") { [self] () async -> Bool? in
+            guard mine == generation else { return nil }
+            return await Adb.connect(target: "\(host):\(target)")
+        }
         guard mine == generation else { return }
         await waitUntilReady(host: host, generation: mine, seconds: 6)
     }
@@ -241,7 +247,7 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             state = .failed("Type the address and port the TV shows, like 192.168.1.20:5555.")
             return
         }
-        if pairedHost == host, port == 5555 || current?.legacyPort == port {
+        if AndroidTVs.requiresTLS(host), port == 5555 || current?.legacyPort == port {
             state = .failed("It's paired over Wireless debugging: type the port its Wireless debugging screen shows, not 5555.")
             return
         }
@@ -250,8 +256,11 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         state = .working("Connecting…")
         Task {
             defer { done(mine) }
-            let connected = await AndroidTVs.exclusively("\(host):\(port)") { await Adb.connect(target: "\(host):\(port)") }
-            guard mine == generation else { return }
+            let connected = await AndroidTVs.exclusively("\(host):\(port)") { [self] () async -> Bool? in
+                guard mine == generation else { return nil }
+                return await Adb.connect(target: "\(host):\(port)")
+            }
+            guard let connected, mine == generation else { return }
             guard connected else {
                 state = .failed(port == 5555 ? "The TV didn't answer. Check ADB debugging is on and it's on this Wi‑Fi."
                                              : "The TV didn't answer. Check Wireless debugging is on and it's on this Wi‑Fi.")
@@ -281,14 +290,11 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         devices.first { $0.kind == .android && $0.address == host && $0.adbState == "device" && (!tls || AndroidTVs.isTLS($0.adb, services: services)) }
     }
 
-    /// The device just paired over Wireless debugging: it's ready only once it's reached that way, and it's never
-    /// connected to on the old port. Kept until the person picks another device or closes the window.
-    private var pairedHost: String?
 
     /// Ready once adb lists the device at that address allowed and reading what it is.
     private func finishIfReady(host: String, generation mine: UUID) async -> Bool {
         let services = AndroidTVs.services((await Adb.run(["mdns", "services"], timeout: 10)).output)
-        guard let device = Self.ready(at: host, among: await Adb.devices(), services: services, tls: pairedHost == host) else { return false }
+        guard let device = Self.ready(at: host, among: await Adb.devices(), services: services, tls: AndroidTVs.requiresTLS(host)) else { return false }
         guard mine == generation else { return true }
         Store.shared.refreshDevices()
         state = .done("\(device.name) is connected. Choose it under Try On.")

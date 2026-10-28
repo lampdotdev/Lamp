@@ -126,6 +126,8 @@ struct Device: Identifiable, Hashable {
     var aliases: [String] = []
     var serialNumber: String?
     var transport: AndroidTVs.Transport?
+    /// An Android device answered whether it has the leanback feature: without that answer, it may be a TV or not.
+    var describedItself = false
     /// An Android device's pixels per inch, for turning its pictures' pixels into points.
     var density: Int?
     /// A TV's address on the network, and a Samsung TV's device id, which its certificate names.
@@ -350,6 +352,7 @@ struct Device: Identifiable, Hashable {
                             input: [tv ? "remote" : "touch"], features: tv ? ["tv"] : [], reach: emulator ? .thisMac : serial.contains(":") || AndroidTVs.isMDNS(serial) ? .network : .cable)
         device.adbState = state
         device.serialNumber = properties["ro.serialno"].flatMap { $0.isEmpty ? nil : $0 }
+        device.describedItself = ["true", "false"].contains(properties["leanback"] ?? "")
         if device.reach == .network { device.address = AndroidTVs.address(of: serial, services: []) }
         device.density = properties["density"].flatMap { Int($0) }
         if let size = properties["size"], let density = device.density {

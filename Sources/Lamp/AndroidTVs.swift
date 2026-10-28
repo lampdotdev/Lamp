@@ -55,9 +55,44 @@ enum AndroidTVs {
         keeping.lock()
         defer { keeping.unlock() }
         let before = kept()
-        let (resolved, records) = merge(devices, services: services, kept: before)
+        let (resolved, records) = merge(devices, services: services, kept: before, pairedAt: pairedHosts())
         if records != before { save(records) }
         return resolved
+    }
+
+    // MARK: Paired over Wireless debugging
+
+    /// Addresses this Mac paired with over Wireless debugging lately, by when. A pairing says the device there is to be
+    /// reached over its encrypted connection, never the old port, from the moment it worked, whether or not the window
+    /// was still open to see the connection: a record at that address is marked so at once, and one made there later
+    /// (`merge`'s `pairedAt`) too. It only ever takes the old port away, so an address is enough to go by; it's
+    /// forgotten after a day, when the router may have given the address to another device.
+    private static var pairedURL: URL { Edition.supportFolder.appendingPathComponent("Android/paired.json") }
+    static let pairingLasts: TimeInterval = 24 * 3600
+
+    static func paired(at host: String, now: Date = Date()) {
+        keeping.lock()
+        defer { keeping.unlock() }
+        var records = kept()
+        for index in records.indices where records[index].address == host { records[index].transport = .tls }
+        save(records)
+        var all = pairings(now: now)
+        all[host] = now.timeIntervalSince1970
+        try? FileManager.default.createDirectory(at: pairedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(all).write(to: pairedURL, options: .atomic)
+    }
+
+    private static func pairings(now: Date = Date()) -> [String: Double] {
+        let all = (try? Data(contentsOf: pairedURL)).flatMap { try? JSONDecoder().decode([String: Double].self, from: $0) } ?? [:]
+        return all.filter { now.timeIntervalSince1970 - $0.value < pairingLasts }
+    }
+
+    static func pairedHosts(now: Date = Date()) -> Set<String> { Set(pairings(now: now).keys) }
+
+    /// Whether the device at an address is to be reached over Wireless debugging only: paired there lately, or a kept
+    /// TV there that was.
+    static func requiresTLS(_ host: String) -> Bool {
+        pairedHosts().contains(host) || kept().contains { $0.address == host && $0.transport == .tls }
     }
 
     // MARK: What adb says
@@ -138,7 +173,7 @@ enum AndroidTVs {
     /// reach the same address and read the same serial; one adb can't see now is still listed, as away, so a choice
     /// of it isn't lost. Anything that isn't an authorized TV on the network, and every ambiguous one, stays as adb
     /// listed it. `newID` names a record made for a TV met for the first time.
-    static func merge(_ devices: [Device], services: [Service], kept: [Record],
+    static func merge(_ devices: [Device], services: [Service], kept: [Record], pairedAt: Set<String> = [],
                       newID: () -> String = { idPrefix + UUID().uuidString.lowercased() }) -> (devices: [Device], kept: [Record]) {
         var records = kept
         var out: [Device] = []
@@ -185,8 +220,9 @@ enum AndroidTVs {
                 index = records.count - 1
             }
             seen.insert(serial)
-            // Paired over Wireless debugging once, it's reached that way from then on.
-            if transports.contains(.tls) { records[index].transport = .tls }
+            // Paired over Wireless debugging once, it's reached that way from then on: seen connected so, or paired at
+            // its address (`pairedAt`) before its connection showed.
+            if transports.contains(.tls) || addresses.contains(where: { $0.map(pairedAt.contains) == true }) { records[index].transport = .tls }
             let record = records[index]
             let usable = group.indices.filter { record.transport == .legacy || transports[$0] == .tls }
             // adb's own name for the TV first: it's the selector adb keeps reconnecting by itself.
@@ -264,14 +300,15 @@ enum AndroidTVs {
     /// selector (an address and port, or adb's mDNS name) chosen before is a place, not a device: adb's mDNS name carrying
     /// the serial the TV there reads is adopted as that TV's record; any other TV answering there, recorded or not, is
     /// used only once the person chose that selector under Try On in this run of Lamp (`confirmed`). A phone over Wi‑Fi
-    /// is used as it was chosen: Lamp keeps no records of phones.
+    /// that said it isn't a TV is used as it was chosen: Lamp keeps no records of phones.
     static func choice(_ chosen: String, among devices: [Device], confirmed: Set<String>) -> Choice {
         if isRecord(chosen) { return devices.first { $0.id == chosen }.map { .use($0) } ?? .missing }
         let exact = devices.first { $0.id == chosen }
         guard chosen.contains(":") || isMDNS(chosen) else { return exact.map { .use($0) } ?? .missing }
         if let tv = devices.first(where: { adopts(chosen, as: $0) }) { return .adopt(tv) }
         guard let answering = exact ?? devices.first(where: { isRecord($0.id) && $0.aliases.contains(chosen) }) else { return .missing }
-        if !answering.features.contains("tv"), !isRecord(answering.id), answering.adbState == "device" { return .use(answering) }
+        // Only a device that said it isn't a TV is a phone: one whose description couldn't be read may be a TV.
+        if answering.describedItself, !answering.features.contains("tv"), !isRecord(answering.id), answering.adbState == "device" { return .use(answering) }
         return confirmed.contains(chosen) ? .use(answering) : .confirm(answering)
     }
 
@@ -311,6 +348,7 @@ enum AndroidTVs {
     /// a minute; true when one connected, so the listing is read again.
     static func reconnect(listed: [String], services: [Service], kept: [Record], now: Date = Date()) async -> Bool {
         var targets: [String] = []
+        let pairedAt = pairedHosts(now: now)
         attempts.lock()
         // While the person is connecting a device themselves, nothing else connects anything.
         if settingUp { attempts.unlock(); return false }
@@ -327,6 +365,8 @@ enum AndroidTVs {
             switch record.transport {
             case .tls:
                 target = services.first { $0.transport == .tls && $0.serial == record.serial && DeviceAddress.isPrivate($0.host) }.map { "\($0.host):\($0.port)" }
+            case .legacy where pairedAt.contains(record.address ?? ""):
+                target = nil
             case .legacy:
                 target = services.first { $0.transport == .legacy && $0.serial == record.serial && DeviceAddress.isPrivate($0.host) }.map { "\($0.host):\($0.port)" }
                     ?? record.address.flatMap { DeviceAddress.isPrivate($0) ? "\($0):5555" : nil }
@@ -363,7 +403,7 @@ enum AndroidTVs {
 
     /// Runs one of the window's own requests to an address once no reconnect of Lamp's is in flight to it, and keeps
     /// any from starting meanwhile.
-    static func exclusively<T>(_ target: String, _ work: () async -> T) async -> T {
+    static func exclusively<T>(_ target: String, _ work: () async -> T?) async -> T? {
         let host = host(of: target)
         while true {
             attempts.lock()

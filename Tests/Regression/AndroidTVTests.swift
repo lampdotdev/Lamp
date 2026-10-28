@@ -136,4 +136,26 @@ final class AndroidTVTests: XCTestCase {
         let quit = Subprocess.Result(status: 1, output: "", errors: "", timedOut: false)
         XCTAssertEqual(Adb.process(of: "dev.lamp.app", on: address, said: quit), .gone)
     }
+
+    /// A TV at an old choice's address whose description couldn't be read (no answer about its leanback feature) isn't
+    /// taken for a phone, which would be used as chosen: it's asked about like any TV there.
+    func testADeviceThatDidntSayWhatItIsIsAskedAbout() throws {
+        let old = "192.168.1.77:41000"
+        let devices = look("List of devices attached\n\(old)   device product:jarvis\n", "", [old: [:]], kept: [])
+        guard case .confirm = AndroidTVs.choice(old, among: devices, confirmed: []) else { return XCTFail("used without asking") }
+        let phone = look("List of devices attached\n\(old)   device product:pixel\n", "", [old: ["leanback": "false", "ro.serialno": "PHONE0123456"]], kept: [])
+        guard case .use = AndroidTVs.choice(old, among: phone, confirmed: []) else { return XCTFail("a phone that said so is used as chosen") }
+    }
+
+    /// A TV kept from its Fire‑style old port, then paired over Wireless debugging (with the window closed before its
+    /// encrypted connection showed), is never reached on 5555 again.
+    func testAPairingOutlivesTheWindow() throws {
+        let old = "192.168.1.50:5555"
+        let read = Adb.listed("List of devices attached\n\(old)   device product:jarvis\n").map { Device.from(adb: $0.serial, state: $0.state, properties: properties) }
+        let legacy = try XCTUnwrap(AndroidTVs.merge(read, services: [], kept: []).kept.first)
+        XCTAssertEqual(legacy.transport, .legacy)
+        let after = AndroidTVs.merge(read, services: [], kept: [legacy], pairedAt: ["192.168.1.50"])
+        XCTAssertEqual(after.kept.first?.transport, .tls)
+        XCTAssertTrue(try XCTUnwrap(after.devices.first { $0.id == legacy.id }).isAway)
+    }
 }

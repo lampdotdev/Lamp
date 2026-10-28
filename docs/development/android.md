@@ -109,9 +109,12 @@ address's 5555, once a minute at most (`AndroidTVs.reconnect`). A choice that na
 record's (`AndroidTVs.adopts`); any other TV answering there, recorded or not (an unrecorded one is one whose serial is
 a placeholder or answers at two addresses), is used only once the person chose that selector under Try On in this run
 of Lamp, since ports come round again and 5555 is every Fire TV's. Play, Android setup's check and Stop's fallback for an
-app Lamp isn't watching all go through it; a phone over Wi‑Fi is used as chosen. An open app's selector is read from its
+app Lamp isn't watching all go through it; a phone over Wi‑Fi is used as chosen, but only one that said it isn't a TV
+(`Device.describedItself`: a device whose description couldn't be read may be one). An open app's selector is read from its
 TV's record and checked by the serial the TV reads at each use (`Store.liveSerial`); one `use_app` call keeps the one
-it checked. The app's watch ends it only when the TV says its process is gone, not when the TV stops answering
-(`Adb.process`). After a pairing, the device is ready only once reached over Wireless debugging, and the window
-refuses 5555 for it. While the window is open Lamp's own reconnecting waits, and no two requests to one address run
-at once (`AndroidTVs.exclusively`). Each Lamp has its own adb key: pairing one doesn't let the other in. Android TV apps can't be shared as a file yet.
+it checked. The app's watch, and the check as it opens, end it only when the TV says its process is gone, at a selector
+checked by the TV's serial, not when the TV stops answering (`Adb.process`). A pairing over Wireless debugging is kept for a day by address (`AndroidTVs.paired`, Android/paired.json),
+whatever the window does next: a record there is marked to be reached that way at once, one made there later too, and
+nothing connects there on 5555; the window takes the device as ready only over Wireless debugging and refuses 5555 for
+it. It only takes the old port away, so an address is enough to go by. While the window is open Lamp's own reconnecting waits, and no two requests to one address run
+at once (`AndroidTVs.exclusively`); a request that waited for the address checks it's still wanted before it runs. Each Lamp has its own adb key: pairing one doesn't let the other in. Android TV apps can't be shared as a file yet.

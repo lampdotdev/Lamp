@@ -8937,8 +8937,9 @@ final class Store: ObservableObject {
                     guard let self, androidApps[project.id] === run else { return }
                     // A TV whose connection went (a new port) still has the app open: only the TV saying its process
                     // is gone ends it. Its selector is read from the record each time.
-                    let now = AndroidTVs.isRecord(key) ? devices.first { $0.udid == key && $0.adbState == "device" }?.adb : serial
-                    guard let now else { continue }
+                    // The selector is checked by the serial the TV reads there, so another device's answer at an
+                    // address the TV had is never taken for this app's; no fresh look every poll, though.
+                    guard let now = await liveSerial(run, looking: false) else { continue }
                     let state = await Adb.process(of: package, on: now)
                     if state != .unreachable, state != .running(pid) {
                         run.end()
@@ -8952,10 +8953,14 @@ final class Store: ObservableObject {
             // The verdict asks the device once more as the window ends, since the watch's reading may be half a second old.
             _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, confirm: {
                 guard run.alive else { return false }
+                // Not reaching the TV says nothing of the app: only its process being gone ends it.
                 guard let now = await self.liveSerial(run) else { return true }
-                let there = await Adb.pid(of: package, on: now) == pid
-                if !there { run.end() }
-                return there
+                switch await Adb.process(of: package, on: now) {
+                case .running(pid), .unreachable: return true
+                case .running, .gone:
+                    run.end()
+                    return false
+                }
             }, report: {
                 Runtime.logTail(project, lines: 40) ?? "The app quit right after opening, and printed nothing."
             })
@@ -9016,7 +9021,7 @@ final class Store: ObservableObject {
     /// The selector adb reaches an open app's device by now. A TV's changes while the app is open (a new port), and an
     /// address it had may be another device's since, so a TV's goes by its record, as the last look read it: nil while
     /// the record's TV isn't reachable. Each use reads it again and checks it, so a command goes to the TV it's meant for.
-    private func liveSerial(_ open: AndroidRun) async -> String? {
+    private func liveSerial(_ open: AndroidRun, looking: Bool = true) async -> String? {
         guard AndroidTVs.isRecord(open.device) else { return open.serial }
         // The last look's selector, checked by the serial the TV reads there; else a fresh look.
         func checked() async -> String? {
@@ -9025,6 +9030,7 @@ final class Store: ObservableObject {
             return device.adb
         }
         if let serial = await checked() { return serial }
+        guard looking else { return nil }
         await refreshAndroidDevices()
         return await checked()
     }
