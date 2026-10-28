@@ -58,7 +58,7 @@
   function said(d) {
     var r = d.result || {}, name = itemName(d);
     switch (d.name) {
-      case 'addGrocery': return r.already ? name + ' is already on the list' + (d.args.qty ? ', now ×' + r.item.qty : '') : r.addedBack ? 'Put ' + name + ' back on the list' : 'Added ' + name;
+      case 'addGrocery': return r.already ? (d.args.qty ? name + ' was on the list already, now ×' + r.item.qty : name + ' is already on the list') : r.addedBack ? 'Put ' + name + ' back on the list' : 'Added ' + name;
       case 'checkGrocery': return 'Ticked off ' + name;
       case 'completeChore': return 'Marked ' + name + ' done' + (r.stars ? ': ' + (App.person(r.stars.who).name) + ' has ' + r.stars.now + ' stars' : '');
       case 'uncompleteChore': return 'Took back ' + name;
@@ -186,10 +186,16 @@
         if (S.turn) { S.turn.cancel(); S.turn = null; }
         if (S.listening) LampNative.call('stop', { cancel: true }).then(null, function () {});
         hush();
+        clearInterval(S.awake);
         S.el = null;
       },
       onMount: function (sheet) {
         S.el = sheet;
+        // Talking isn't touching: while Ask is open the screen stays as it is, not off to the photo frame or the night
+        // clock (which would close the sheet and cancel the turn).
+        App.resetIdle();
+        clearInterval(S.awake);
+        S.awake = setInterval(App.resetIdle, 1000);
         var input = sheet.querySelector('[data-ask-input]');
         sheet.querySelector('[data-ask-form]').addEventListener('submit', function (e) { e.preventDefault(); var t = input.value; input.value = ''; ask(t); });
         sheet.querySelector('[data-ask-undo]').addEventListener('click', undo);
