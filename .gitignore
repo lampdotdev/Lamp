@@ -4,3 +4,4 @@ build/
 vendor/
 .claude/
 dist/
+Resources/Starters/*/tree/

@@ -193,7 +193,10 @@ rm -rf "$APP/Contents/Resources/Devices" && if [[ -d Resources/Devices ]]; then 
 cp scripts/signing-identity.sh "$APP/Contents/Resources/"   # gives the apps Lamp builds a stable signature
 cp -R Resources/ProviderLogos "$APP/Contents/Resources/"
 cp -R Resources/Onboarding "$APP/Contents/Resources/"
-cp -R Resources/Starters "$APP/Contents/Resources/"   # the wishes Lamp comes with (Starters.swift)
+# The wishes Lamp comes with (Starters.swift): each one's tree is its repository at the commit starter.md pins, fetched
+# here (never committed), and copied without the fetch's own git history.
+scripts/fetch-starters.sh
+rm -rf "$APP/Contents/Resources/Starters" && rsync -a --exclude '.git' Resources/Starters/ "$APP/Contents/Resources/Starters/"
 rm -rf "$APP/Contents/Resources/WebLibraries" && cp -R Resources/WebLibraries "$APP/Contents/Resources/"   # libraries device apps may take, such as three.js (DeviceSupport.Library)
 cp -R Resources/TVCertificates "$APP/Contents/Resources/"   # Samsung's public certificate authorities a TV app's signatures end in (TizenSigning)
 rm -rf "$APP/Contents/Resources/GameKit" && cp -R Resources/GameKit "$APP/Contents/Resources/GameKit"   # what a game is written against, and its hosts (GameKit.swift)
@@ -353,7 +356,7 @@ if [[ "${PREBUILD_STARTERS:-$DEFAULT_PREBUILD}" != 0 ]]; then
   KEY=$( {
     echo "$FLAVOR"; xcrun swiftc --version 2>&1; xcrun --show-sdk-version
     find Resources/Starters Sources/Lamp/Template*.swift Sources/Lamp/Connectors.swift Sources/Lamp/Starters.swift \
-      Sources/Lamp/PrebuiltStarters.swift Sources/Lamp/Edition.swift -type f ! -name '.DS_Store' ! -name Prebuilt.zip ! -path '*/Prebuilt/*' | LC_ALL=C sort | xargs shasum
+      Sources/Lamp/PrebuiltStarters.swift Sources/Lamp/Edition.swift -type f ! -name '.DS_Store' ! -name Prebuilt.zip ! -path '*/Prebuilt/*' ! -path '*/.git/*' | LC_ALL=C sort | xargs shasum
   } | shasum | cut -c1-16 )
   CACHE=".build/prebuilt-starters/$KEY"
   if [ "$FLAVOR" = dev ] && [ -d "$CACHE" ]; then

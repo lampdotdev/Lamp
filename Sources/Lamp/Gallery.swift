@@ -814,7 +814,7 @@ enum Gallery {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
-                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) },
+                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) },
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
@@ -855,7 +855,7 @@ enum Gallery {
         Entry(group: "Publish", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                    stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
                                    credit: "Based on Slop New York by Mr.doob",
                                    openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
@@ -912,7 +912,7 @@ enum Gallery {
         Entry(group: "GitHub", name: "Send back: " + name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                       stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
                                       credit: "Based on Slop New York by Mr.doob", notes: notes, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
                                       canSend: stage == .ready || { if case .failed = stage { true } else { false } }(),
@@ -931,7 +931,7 @@ enum Gallery {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                 stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
                                 credit: "Based on Slop New York by Mr.doob", openInLamp: link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,

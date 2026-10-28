@@ -20,7 +20,7 @@ final class GlassIconsExperimentTests: XCTestCase {
         let model = env["LAMP_GLASS_MODEL"] ?? GlassIcons.drawModel
         await withTaskGroup(of: Void.self) { group in
             for name in names.split(separator: ",").map(String.init) {
-                let starter = repo.appendingPathComponent("Resources/Starters/\(name)")
+                let starter = repo.appendingPathComponent("Resources/Starters/\(name)/\(Starters.treeFolder)")
                 guard let spec = try? JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: starter.appendingPathComponent("icon.json")))
                 else { continue }
                 let about = (try? String(contentsOf: starter.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""

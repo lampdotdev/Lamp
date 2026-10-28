@@ -1,6 +1,7 @@
 // Lamp's starters as the homepage shows them: one tape each on the shelf, with a remix of it beside it. The names,
-// credits and remixes are the starters' own (Resources/Starters/<id>/starter.md and credits.json), and each picture
-// is its preview.png, copied to src/assets/starters/<id>.png. A starter added there is added here by hand.
+// credits and remixes are the starters' own (Resources/Starters/<id>/starter.md, and the credits.json in its
+// repository), and each picture is its preview, copied to src/assets/starters/<id>.png. A starter added there is added
+// here by hand.
 
 export type Starter = {
   id: string;

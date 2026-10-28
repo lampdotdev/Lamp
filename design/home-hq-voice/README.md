@@ -12,7 +12,7 @@ piece of Lamp. The last one is a choice to make (see "Two ways to build the loop
 
 ## What's there today
 
-- **Home HQ is a screen**: one web page (`Resources/Starters/homehq/Web/`), shown on the Mac, iPhone and iPad inside
+- **Home HQ is a screen**: one web page (`Web/` in its repository, github.com/lampdotdev/homehq), shown on the Mac, iPhone and iPad inside
   Lamp's common app around a page (`Resources/GameKit/apple/LampPage.swift`), and on TVs, Android and the Xbox in their
   own hosts. Every copy keeps the family's data the same through the wish's shared collections (`Web/js/sync.js`:
   `people`, `chores`, `groceries`, `events`, `ticks`, `stars`, …), merged item by item, last write wins per item, with

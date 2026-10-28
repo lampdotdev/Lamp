@@ -2,11 +2,12 @@ import XCTest
 import AppKit
 @testable import Lamp
 
-/// The wishes Lamp comes with carry their icons ready-made (each starter's icon/ folder), so they're on the desk
-/// the moment the starters are, instead of being drawn one by one on a new person's Mac. This draws them again from
-/// each icon.json and the artwork shipped beside it (icon/art.json, a glass design, or icon/art.png, a game's painting)
-/// with Lamp's own drawing, the way an app's icon is made: run it after changing how icons are drawn, with Xcode
-/// installed so the Liquid Glass icon is compiled too.
+/// The wishes Lamp comes with carry their icons ready-made (the icon/ folder among the pictures in each starter's
+/// repository, `Starters.iconFolder(of:)`), so they're on the desk the moment the starters are, instead of being drawn
+/// one by one on a new person's Mac. This draws them again from each tree's icon.json and the artwork shipped beside
+/// the icon (icon/art.json, a glass design, or icon/art.png, a game's painting) with Lamp's own drawing, the way an
+/// app's icon is made, into the fetched tree, for scripts/publish-starters.sh to put up: run it after changing how
+/// icons are drawn, with Xcode installed so the Liquid Glass icon is compiled too.
 /// `LAMP_RENDER_STARTER_ICONS=1 swift test --filter StarterIconsTests` (or `=today` for one).
 ///
 /// After changing a starter's icon.json, or how artwork is drawn, draw its artwork again as an app's is (the best of
@@ -18,7 +19,6 @@ final class StarterIconsTests: XCTestCase {
             throw XCTSkip("Set LAMP_RENDER_STARTER_ICONS=1 to draw the starters' icons again.")
         }
         let fm = FileManager.default
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-starter-icons-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
         let paint = ProcessInfo.processInfo.environment["LAMP_PAINT_STARTER_ART"] == "1"
@@ -26,17 +26,22 @@ final class StarterIconsTests: XCTestCase {
             let key = try XCTUnwrap(ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"], "Drawing needs OPENROUTER_API_KEY.")
             KeyStore.useForThisRun(key, for: "openrouter")
         }
-        let folders = try fm.contentsOfDirectory(at: repo.appendingPathComponent("Resources/Starters"), includingPropertiesForKeys: nil)
-            .filter { $0.hasDirectoryPath && (only == "1" || only.split(separator: ",").contains(Substring($0.lastPathComponent))) }
+        let folders = try StarterTrees.folders()
+            .filter { only == "1" || only.split(separator: ",").contains(Substring($0.lastPathComponent)) }
         XCTAssertFalse(folders.isEmpty)
+        // Where each one is drawn to: the icon folder its repository will carry, in the fetched tree.
+        func drawnIcon(_ folder: URL) throws -> (tree: URL, icon: URL) {
+            let starter = try XCTUnwrap(Starters.read(folder))
+            return (starter.tree, starter.tree.appendingPathComponent(Starters.picturesFolder).appendingPathComponent(Starters.iconFolder))
+        }
 
         // Drawn all at once, since each takes a minute or two of looking and drawing again.
         let drawn = try await withThrowingTaskGroup(of: (URL, Icons.Artwork).self) { group in
             for folder in folders {
                 group.addTask {
                     let name = folder.lastPathComponent
-                    let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: folder.appendingPathComponent("icon.json")))
-                    let icon = folder.appendingPathComponent(Starters.iconFolder)
+                    let (tree, icon) = try drawnIcon(folder)
+                    let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: tree.appendingPathComponent("icon.json")))
                     let log: @MainActor (String) -> Void = { print("\(name): \($0)") }
                     guard paint else {
                         if let glass = GlassArt.load(from: icon.appendingPathComponent(Starters.glassFile)), !spec.game {
@@ -47,7 +52,7 @@ final class StarterIconsTests: XCTestCase {
                         return (folder, .picture(painting))
                     }
                     if spec.game { return (folder, .picture(try await Icons.generateBestArt(spec, appName: name, log: log))) }
-                    let about = (try? String(contentsOf: folder.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""
+                    let about = (try? String(contentsOf: tree.appendingPathComponent("APP.md"), encoding: .utf8)) ?? ""
                     return (folder, .glass(try await GlassIcons.generateBest(for: spec, appName: name, about: about, log: log)))
                 }
             }
@@ -55,9 +60,9 @@ final class StarterIconsTests: XCTestCase {
         }
 
         for (folder, art) in drawn {
-            let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: folder.appendingPathComponent("icon.json")))
+            let (tree, icon) = try drawnIcon(folder)
+            let spec = try JSONDecoder().decode(IconSpec.self, from: Data(contentsOf: tree.appendingPathComponent("icon.json")))
             let project = try Template.draft(name: folder.lastPathComponent, in: root)
-            let icon = folder.appendingPathComponent(Starters.iconFolder)
             _ = try await Icons.write(spec, art: art, for: project)
             try? fm.removeItem(at: icon)
             try fm.createDirectory(at: icon, withIntermediateDirectories: true)
@@ -75,7 +80,7 @@ final class StarterIconsTests: XCTestCase {
                 try fm.copyItem(at: made, to: icon.appendingPathComponent(made.lastPathComponent))
             }
             // What it was drawn from, so Lamp can tell when the app's icon.json has changed since.
-            try fm.copyItem(at: folder.appendingPathComponent("icon.json"), to: icon.appendingPathComponent("icon.json"))
+            try fm.copyItem(at: tree.appendingPathComponent("icon.json"), to: icon.appendingPathComponent("icon.json"))
             XCTAssertTrue(fm.fileExists(atPath: icon.appendingPathComponent("icon.png").path), folder.lastPathComponent)
             XCTAssertTrue(fm.fileExists(atPath: icon.appendingPathComponent("AppIcon.icns").path), folder.lastPathComponent)
             // Without the Liquid Glass one a Mac with Xcode would get a flatter icon for a starter than for its own apps.
