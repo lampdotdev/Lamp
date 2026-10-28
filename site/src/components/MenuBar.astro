@@ -1,40 +1,30 @@
 ---
-import { Image } from "astro:assets";
-import icon from "../assets/AppIcon.png";
 import { DOWNLOAD_URL } from "../lib/download";
 
 // The page we're on, so its link can say so.
 const here = Astro.url.pathname.replace(/\/$/, "") || "/";
-// On a phone Home is left out: the name beside it goes home too. Features, Pricing and AI go to the homepage's
-// sections of those names, in the page's order, and only where there's room for them beside the rest.
+// Remixes and Your devices go to the homepage's sections of those names, where there's room for them beside the
+// name and Download.
 const links = [
-  { href: "/", label: "Home", wide: true },
-  { href: "/#features", label: "Features", wider: true },
-  { href: "/#pricing", label: "Pricing", wider: true },
-  { href: "/#ai", label: "AI", wider: true },
-  { href: "/ideas", label: "Ideas" },
+  { href: "/#shelf", label: "Remixes" },
+  { href: "/#devices", label: "Your devices" },
 ];
 ---
 
 <!--
-  A floating menu bar on every page: a pill as wide as the page's content, of frosted glass, held a little below
-  the top of the window over whatever is there, as the page scrolls under it. On the homepage it starts inside the
-  hero card, which runs to the top of the window, inset from the card's edges as far on top as on the sides.
-  The name on the left; a few links and a small Download on the right, inset from the pill's edge as far as it
-  is from top and bottom, so the curves nest. What it covers (the pill and the space above it) is --menu-height
-  (global.css): pages start below it, and the ideas page's filters stay under it.
+  A bar across the top of every page, on the homepage's paper, over whatever scrolls under it, with a rule under
+  it like the edge of a label. The name on the left, sitting in the corner of a short, thick L in the sleeve's
+  stripes; a few links and Download on the right. What it covers is --menu-height (global.css): pages start below it, and the
+  ideas page's filters stay under it.
 -->
-<header class="pointer-events-none fixed inset-x-0 top-0 z-40 px-4 pt-4 sm:px-6 sm:pt-6">
-  <nav
-    aria-label="Lamp"
-    class="pointer-events-auto mx-auto flex h-14 max-w-[69rem] items-center justify-between rounded-full bg-white/78 pr-2 pl-3 shadow-[0_12px_36px_-14px_rgba(0,0,0,0.22),0_2px_6px_-2px_rgba(0,0,0,0.06)] backdrop-blur-2xl backdrop-saturate-[1.8]"
-  >
-    <a href="/" class="flex h-10 items-center gap-2.5 rounded-full pr-3.5 pl-1.5 transition hover:bg-black/[0.04] focus-visible:outline-2 focus-visible:outline-graphite">
-      <Image src={icon} alt="" width={26} height={26} densities={[1, 2]} class="size-6.5" />
-      <!-- On the narrowest phones the name gives its room to Download for Mac; the icon still says Lamp. -->
-      <span class="text-[16px] font-semibold tracking-tight max-[359px]:sr-only">Lamp</span>
+<header class="fixed inset-x-0 top-0 z-40 border-b-2 border-tape bg-paper/92 backdrop-blur-md">
+  <nav aria-label="Lamp" class="mx-auto flex h-16 max-w-[80rem] items-center justify-between gap-4 px-4 sm:h-[4.5rem] sm:px-6">
+    <!-- On the narrowest phones the L is a little smaller, so Download for Mac always fits. -->
+    <a href="/" class="relative block h-[38px] w-[96px] shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-tape min-[400px]:h-[46px] min-[400px]:w-[118px]">
+      <span class="lamp-l absolute inset-0" aria-hidden="true"></span>
+      <span class="absolute bottom-[17px] left-[25px] text-[25px] leading-[0.74] font-black tracking-[-0.05em] min-[400px]:text-[31px]">lamp</span>
     </a>
-    <div class="flex items-center gap-1">
+    <div class="flex items-center gap-1 sm:gap-2">
       {
         links.map((link) => (
           <a
@@ -42,49 +32,46 @@ const links = [
             data-nav-link
             aria-current={here === link.href ? "page" : undefined}
             class:list={[
-              "group flex h-10 items-center rounded-full px-3 text-[14px] text-ink/70 transition hover:bg-black/[0.04] hover:text-ink focus-visible:outline-2 focus-visible:outline-graphite aria-[current=page]:text-ink sm:px-4",
-              link.wide && "hidden sm:flex",
-              link.wider && "hidden md:flex",
+              "flex h-10 items-center rounded-sm px-2.5 text-[15px] font-bold text-tape underline-offset-[6px] hover:underline focus-visible:outline-2 focus-visible:outline-tape aria-[current=page]:underline sm:px-3",
+              "hidden md:flex",
             ]}
           >
-            <!-- The page we're on is in bold. The bold word is always there, unseen, so the link keeps its width. -->
-            <span class="grid">
-              <span class="col-start-1 row-start-1 group-aria-[current=page]:font-semibold">{link.label}</span>
-              <span aria-hidden="true" class="invisible col-start-1 row-start-1 font-semibold">{link.label}</span>
-            </span>
+            {link.label}
           </a>
         ))
       }
       <a
         href={DOWNLOAD_URL}
         data-download-place="menu"
-        class="ml-1 inline-flex h-10 items-center rounded-full bg-linear-to-b from-[#ff8a24] to-[#e65c00] [text-shadow:0_1px_1px_rgb(140_50_0/0.35)] px-4 whitespace-nowrap sm:ml-2 sm:px-5 text-[14px] font-semibold text-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] ring-1 ring-white/30 ring-inset transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#b04e0a] active:scale-[0.97]"
+        class="ml-1 inline-flex h-11 items-center rounded-[6px] bg-tape px-4 text-[15px] font-extrabold whitespace-nowrap text-paper transition hover:-translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-tape sm:ml-2 sm:px-5"
       >
-        <!-- On a phone or a tablet it says what it's for, so nobody tries to put Lamp on an iPhone. -->
-        <span class="max-sm:hidden pointer-coarse:hidden">Download free</span><span class="hidden max-sm:inline pointer-coarse:inline">Download for Mac</span>
+        Download for Mac
       </a>
     </div>
   </nav>
 </header>
 
+<style>
+  /* The L: an upright as thick as its foot is tall, and a foot that runs under the whole name. */
+  .lamp-l {
+    clip-path: polygon(0 0, 19px 0, 19px calc(100% - 14px), 100% calc(100% - 14px), 100% 100%, 0 100%);
+    background: linear-gradient(150deg, #1f8a4a 0 16.6%, #7cbf3a 0 33.3%, #f6b81c 0 50%, #f08a1c 0 66.6%, #e2402a 0 83.3%, #d23778 0);
+  }
+</style>
+
 <script>
-  // On the homepage, the link to the section being read is the one marked, as the page scrolls; Home is marked
-  // everywhere else on it. A section is being read while it's under a line a third of the way down the window.
+  // On the homepage, the link to the section being read is the one underlined, as the page scrolls. A section is
+  // being read while it's under a line a third of the way down the window.
   if (location.pathname === "/") {
-    const links = [...document.querySelectorAll<HTMLAnchorElement>("a[data-nav-link]")].filter((link) => link.getAttribute("href") !== "/ideas");
-    const home = links.find((link) => link.getAttribute("href") === "/");
-    const sections = links
-      .map((link) => ({ link, section: document.getElementById(link.getAttribute("href")!.replace("/#", "")) }))
-      .filter((entry): entry is { link: HTMLAnchorElement; section: HTMLElement } => !!entry.section && entry.link !== home);
+    const sections = [...document.querySelectorAll<HTMLAnchorElement>("a[data-nav-link]")]
+      .filter((link) => link.getAttribute("href")!.startsWith("/#"))
+      .map((link) => ({ link, section: document.getElementById(link.getAttribute("href")!.slice(2)) }))
+      .filter((entry): entry is { link: HTMLAnchorElement; section: HTMLElement } => !!entry.section);
     const mark = () => {
       const line = innerHeight / 3;
-      const reading = sections.find(({ section }) => {
+      for (const { link, section } of sections) {
         const box = section.getBoundingClientRect();
-        return box.top <= line && box.bottom > line;
-      });
-      const current = reading?.link ?? home;
-      for (const link of links) {
-        if (link === current) link.setAttribute("aria-current", "page");
+        if (box.top <= line && box.bottom > line) link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
       }
     };

@@ -1,0 +1,39 @@
+/* Ask Home HQ (js/agent.js): a panel floating at the bottom, over the page, which stays in view behind it. What was
+   said, what's happening or what happened (wrapped in full, at a size read from across the room), and a few buttons. */
+.ask-float {
+  position: absolute; left: 50%; bottom: 1.5rem; transform: translateX(-50%); z-index: 55;
+  width: min(54rem, calc(100% - 3rem)); max-height: calc(100% - 3rem); overflow-y: auto;
+  display: flex; flex-direction: column; gap: .75rem;
+  padding: 1.5rem 1.75rem; border-radius: 1.75rem;
+  background: var(--paper); color: var(--ink);
+  box-shadow: 0 1.25rem 3.5rem rgba(0, 0, 0, .28), 0 0 0 1px var(--line);
+}
+.ask-past { display: flex; flex-direction: column; gap: .375rem; }
+.ask-past:empty { display: none; }
+.ask-was { font-size: 1.125rem; line-height: 1.35; color: var(--ink-2); opacity: .75; }
+.ask-was-you { font-style: italic; }
+.ask-you { font-size: 1.375rem; color: var(--ink-2); font-style: italic; }
+.ask-you:empty { display: none; }
+.ask-now { font-size: 1.75rem; line-height: 1.3; font-weight: 600; overflow-wrap: anywhere; }
+.ask-now:empty { display: none; }
+.ask-now.is-doing { font-weight: 400; color: var(--ink-2); font-style: italic; }
+.ask-now.is-partly { border-left: .25rem solid var(--ink); padding-left: .875rem; }
+.ask-note { font-size: 1.25rem; color: var(--ink-2); }
+.ask-note:empty { display: none; }
+.ask-meter { height: .625rem; border-radius: 1rem; background: var(--paper-2); overflow: hidden; }
+.ask-meter[hidden] { display: none; }
+.ask-meter i { display: block; height: 100%; width: 0; background: var(--ink); transition: width .08s linear; }
+.ask-acts { display: flex; flex-wrap: wrap; gap: .75rem; }
+.ask-act { min-width: 8rem; }
+.ask-act:focus, .ask-float input:focus, .ask-float [data-ask-send]:focus { outline: .25rem solid var(--amber); outline-offset: .1875rem; }
+.ask-row { display: flex; gap: .75rem; align-items: center; }
+.ask-row[hidden] { display: none; }
+.ask-input {
+  flex: 1; min-width: 0; min-height: var(--tap); padding: 0 1.25rem;
+  border: 2px solid var(--line); border-radius: 62.4375rem; background: var(--card);
+  font: inherit; font-size: 1.25rem;
+}
+.ask-input:focus { outline: none; border-color: var(--ink); }
+.is-listening .ask-act[data-ask-act="mic"] { background: var(--ink); color: var(--paper); }
+.narrow .ask-now { font-size: 1.375rem; }
+.narrow .ask-float { bottom: .75rem; width: calc(100% - 1.5rem); padding: 1.125rem 1.25rem; }

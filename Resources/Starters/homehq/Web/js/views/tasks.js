@@ -76,10 +76,7 @@
     btn.classList.add('is-checking');
     setTimeout(function () {
       delete V.pending[c.id];
-      c.done = true;
-      if (by) c.doneBy = by;
-      var earner = D.stars[c.who] != null ? c.who : (by && D.stars[by] != null ? by : null);
-      if (earner && c.stars) D.stars[earner] += c.stars;
+      var earner = App.chore.complete(c, by);
       render();
       App.emit('data');
       var laneList = listFor(c.who, r);
@@ -92,9 +89,7 @@
       App.toast('<b>' + App.esc(c.title) + '</b> done' + (earner && c.stars ? ' · +' + c.stars + '★ ' + App.person(earner).name : ''), {
         icon: 'check',
         undo: function () {
-          c.done = false;
-          delete c.doneBy;
-          if (earner && c.stars) D.stars[earner] -= c.stars;
+          App.chore.undo(c);
           render();
           App.emit('data');
         }
@@ -127,10 +122,7 @@
       var c = D.chores.filter(function (x) { return x.id === t.dataset.ch; })[0];
       if (!c || V.pending[c.id]) return;
       if (c.done) {
-        c.done = false;
-        var earner = D.stars[c.who] != null ? c.who : (c.doneBy && D.stars[c.doneBy] != null ? c.doneBy : null);
-        if (earner && c.stars) D.stars[earner] -= c.stars;
-        delete c.doneBy;
+        App.chore.undo(c);
         render();
         App.emit('data');
         return;

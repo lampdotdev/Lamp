@@ -8,7 +8,7 @@ license and key checks) goes too, and the page offers that exact wish to anyone 
 open in Lamp", on a Mac), which reviews it before it opens, as any shared file. Never the chat or the app's data.
 
 - The page (`/w/<id>`, `lib/shared-wish-page.js`, served by `api/wish-page.js` through a rewrite in `vercel.json`):
-  the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the homepage's and the
+  the ideas page with the shared wish's card open on it, the same card (`WishDialog.astro`) the
   ideas page's wishes open in, so it has their Download Lamp (which copies the wish with Lamp's mark, FIRST_IDEA.md)
   and, on a Mac, their "Already have Lamp? Open it with this wish" (`lamp://wish?text=…`), which waits for the click
   as theirs does. Closed, it leaves the visitor among more ideas. The function serves the built ideas page

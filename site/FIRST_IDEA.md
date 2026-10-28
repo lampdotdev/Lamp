@@ -1,6 +1,6 @@
 # The first-idea section
 
-Right under the homepage's hero, a short conversation helps a visitor find their first app before they
+On the ideas page, under its ideas, a short conversation helps a visitor find their first app before they
 download Lamp. A button under its heading starts it: four everyday situations at a time ("Can you relate to any of these?"), one or two questions
 about the one they pick, then the request in their own words, in a card they can edit, with one button that
 downloads Lamp and hands it the wish.
