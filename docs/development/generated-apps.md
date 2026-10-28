@@ -327,10 +327,13 @@ wish's history stays a line (the merge is one version, never a merge commit), an
 The base, in order (`Upstream.Base`): the repository's commit, fetched; else the version of this wish's own history
 the file says it was made from (`Upstream.ownVersion`: a file shared from a wish that lives nowhere names the version
 its export was made from, `Sharing.export`, and a copy sharing on keeps that rather than naming its own, so a file
-that comes back from whoever it was sent to merges against the version they were given, with no repository anywhere);
-else what the last update brought in (`refs/lamp/upstream`, so a second update of a wish from a file isn't measured
-against the first arrival again); else the version that arrived (its tree as a shared file carries it,
-`Upstream.filteredTree`); else nothing. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
+that comes back from whoever it was sent to merges against the version they were given, with no repository anywhere),
+unless the last update brought in was measured against that same version (a file coming back again names the version
+it was first given; the kept commit records its base as a trailer), in which case what that update brought in
+(`refs/lamp/upstream`: a change the sender took back since is then taken back here, rather than read as unchanged);
+else that, for a wish from a file updated more than once; else the version that arrived (its tree as a shared file
+carries it, `Upstream.filteredTree`); else nothing. A part the package brings that the wish doesn't have is in the
+kept tree (staged as the app it will be) but not in what's merged. The review sheet says so (`ImportReviewCard.changedHere`, "Already here,
 changed here" in the gallery).
 
 A wish that came from a repository can send its changes back: Send Changes Back… in the chat's Share menu
