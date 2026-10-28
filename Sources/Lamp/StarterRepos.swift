@@ -106,10 +106,7 @@ enum StarterRepos {
 
     /// The parts of a starter that come from the wish, each replaced whole so a file taken out there is taken out here.
     static let pulledFolders = ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, GameKit.webFolder, Sharing.Assets.folder]
-    /// Computed rather than stored: the sidebar declaration's name belongs to a main-actor class, which a stored
-    /// static can't reach from nowhere in particular.
-    static var pulledFiles: [String] { ["APP.md", Template.Capabilities.file, browserFile] }
-    private static var browserFile: String { BrowserCompanions.Declaration.file }
+    static let pulledFiles = ["APP.md", Template.Capabilities.file]
 
     /// Writes `package` into the starter's folder as the starter keeps it: its code and files as the import would
     /// install them (`Upstream.stage`, never Lamp's own files), APP.md, what it declares, its description (about.json),
@@ -159,11 +156,10 @@ enum StarterRepos {
             if fm.fileExists(atPath: from.path) { try fm.copyItem(at: from, to: to) }
         }
         // What it declares is Lamp's to write from what passed the checks, so it's compared by what it says.
-        let capabilitiesFile = Template.Capabilities.file, browserFile = browserFile
+        let capabilitiesFile = Template.Capabilities.file
         func same(_ file: String, _ from: URL, _ to: URL) -> Bool {
             switch file {
             case capabilitiesFile: return Template.Capabilities.load(from).checked == Template.Capabilities.load(to).checked
-            case browserFile: return BrowserCompanions.Declaration.load(from) == BrowserCompanions.Declaration.load(to)
             default: return (try? Data(contentsOf: from)) == (try? Data(contentsOf: to))
             }
         }
