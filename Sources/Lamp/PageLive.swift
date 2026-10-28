@@ -46,6 +46,9 @@ import Foundation
         var gone: [String]
         var changed: [String]
         var now = false
+        /// The page said it holds this change for a pause, and hasn't said it went in since: kept with it, so a Lamp
+        /// started again while the game waits still shows Reload.
+        var waits: Bool? = nil
     }
 
     /// Lamp's launch: a copy that asked an earlier Lamp starts counting again.
@@ -81,6 +84,7 @@ import Foundation
               var kept = try? JSONDecoder().decode(Given.self, from: data) else { return nil }
         kept.now = false
         given[key] = kept
+        if kept.waits == true { held.insert(key) }
         return kept
     }
 
@@ -249,6 +253,11 @@ import Foundation
         let key = Key(id: project.id, place: place)
         let gen = body["gen"] as? Int ?? 0
         if state == "held" { held.insert(key) }
+        if let change = lastGiven(project, key), ["held", "swapped", "reloading"].contains(state) {
+            var marked = change
+            marked.waits = state == "held"
+            if marked.waits != (change.waits ?? false) { give(marked, to: key, in: project) }
+        }
         if let waiting = deciding[key], gen >= waiting.gen, ["swapped", "reloading", "held"].contains(state) {
             deciding[key] = nil
             waiting.answer.resume(returning: state)
