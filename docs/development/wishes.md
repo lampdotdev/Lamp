@@ -273,6 +273,35 @@ repository instead of leaving one behind and making another. Where a
 wish's page went is kept in Lamp's folder (`Published Pages.json`), so Update Page puts the wish as it is now in its
 place.
 
+#### Remixing a published page
+
+The credit bar's Remix… opens a panel over the page (the one beside an app on a Mac without Lamp, `RemixPanel`, drawn in
+the page's own HTML by `Publish.withCreditBar`): three things to change and a box. Continue with Lamp names what the
+page is a copy of when Lamp can copy it again (`OpenInLamp.origin`): a starter's own page names the starter's id
+(`StarterRepos.stagePage`), and a wish that's been Put on GitHub names its repository and the commit last pushed
+while that repository is public (as GitHub said at the push) and holds the wish as it is now (the wish's own version
+the push carried, with nothing unsaved then or now, `Versions.savedVersion`, `GitHubRepo.remixOrigin`): a private repository can't be fetched without a sign-in, and an older
+push would remix an older game than the one played. The request goes to `https://lamp.dev/?starter=newyork&ask=…` (or `?repo=…&commit=…&ask=…`),
+whose remix dialog (`RemixDialog.astro`, on the homepage) shows what it starts from with the request in a box, then
+Open in Lamp on a Mac (`lamp://wish?starter=…&text=…` or `?repo=…&commit=…&text=…`, `remixLink` in lib/wish.js) and
+Download for Mac (the request copied with Lamp's mark, whose value names the origin as a query does,
+`data-lamp-wish="starter=newyork"`). With neither, the panel goes to the Share Link page with the request, or to
+lamp.dev with a request that names the game (`RemixLink`), and the dialog shows only the request.
+
+Lamp takes such a link as a remix or not at all (`Wish.isRemix`, `Wish.remix`): a link naming a starter or repository
+badly is refused with an alert, never taken for a plain wish. Everything in it is untrusted: a starter only by a plain
+folder name that this Lamp ships and that runs here (`Store.starter(named:)`); a repository only as an https
+github.com address with nothing after its name, and a commit only in full, 40 hex digits (a shallow fetch takes no abbreviation) (`RepoImport.Source` with the
+commit as its ref). A starter is copied as Starter wishes' Add copies one (`Store.openCopy`, `put(starter:)`, its chain
+naming the starter at the commit this Lamp ships) and opened with its chat, the request written into its box
+(`writeIn`); another link for the same starter goes into that copy while nothing has been asked of it (its first build out of
+sight isn't). A repository
+goes through Open from GitHub…'s own fetch, review and credit (`importRepository`), the request kept beside it for the
+box. Nothing is sent or built from the link. During the welcome a starter's remix waits (`Onboarding.keptRemix`, saved
+like the welcome's wish) and opens once setup is done, in the desk's own copy of the starter, which was put there
+moments before; the Download's copy is found by the welcome's one look at the clipboard (`Wish.markedRemix`). Wish
+links are read as a browser's form writes them too (`Wish.items`: "+" is a space).
+
 The wish's list (`apps`) is what it should have, not what it has: the kind of each app, and for one it still waits for,
 what stops it (`needs`: this Mac can't build it yet, or its folder couldn't be made), so a quit or a failure between
 asking for an app and making it loses nothing. The list is in meta.json, which no version holds, so every version Lamp

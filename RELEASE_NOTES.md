@@ -5,6 +5,20 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.27.0
+
+- The desk shows your devices on a shelf between your wishes and the box where you wish.
+- Remix with git underneath:
+  - A wish remembers exactly what it was made from.
+  - Update from GitHub brings in the latest of the wish it came from, merging it with your own changes.
+  - Send Changes Back offers yours to it.
+- Starter wishes live on GitHub. A starter you've changed can take its starter's updates and send your changes back,
+  and New York has the latest Slop New York.
+- Share a screen or a web app as a file, put it on GitHub, or make it a starter, as you can a game.
+- A game opened again after a change starts where you were, without its title screen in the way.
+- Open Settings works from the chat beside an app, and comes up in front of it.
+- The Chrome sidebar is gone.
+
 ## 0.26.0
 
 - Games change while you play them. New pictures, models and sounds appear in place, a change to the game's code

@@ -10,6 +10,12 @@ enum Onboarding {
     /// A wish from the site and how far the welcome got. Saved, so that quitting during setup, or losing the
     /// window while away at an installer or a sign-in in the browser, comes back to setup with the wish intact.
     static let ideaKey = "welcomeIdea"
+    /// A remix from the site (a starter and the request), kept the same way: made once setup is done, in its place.
+    static let remixKey = "welcomeRemix"
+    static var keptRemix: Wish.Remix? {
+        get { UserDefaults.standard.data(forKey: remixKey).flatMap { try? JSONDecoder().decode(Wish.Remix.self, from: $0) } }
+        set { UserDefaults.standard.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: remixKey) }
+    }
     static let stepKey = "welcomeStep"
     /// When the welcome was first shown, for how long it took (`Analytics`).
     static let startedKey = "welcomeStarted"
@@ -109,6 +115,7 @@ struct OnboardingView: View {
             Analytics.capture(.welcomeStep, ["step": "\(step)"])
         }
         .onChange(of: store.arrivedWish) { arrive(animated: true) }
+        .onChange(of: store.arrivedRemix) { arrive(animated: true) }
         // Menus can be rebuilt at any moment, so Settings is set again at each update while the welcome is up: off
         // until it's finished. The welcome stays on screen a moment after that, fading out, and an update then must
         // leave Settings on, or ⌘, stays dead until Lamp is opened again.
@@ -126,21 +133,39 @@ struct OnboardingView: View {
 
     /// Takes a wish from the site: one its link brought or, the first time the welcome is ever shown, one its
     /// Download button left on the clipboard. That one look is all Lamp takes by itself.
+    /// A remix (a starter's, with a request) is kept in place of a wish and opened once setup is done; one of a
+    /// repository goes to the store, which keeps it for after setup as any repository opened then.
     private func arrive(animated: Bool) {
         var found = store.arrivedWish
         if found != nil { store.arrivedWish = nil }
+        var remix = store.arrivedRemix
+        if remix != nil { store.arrivedRemix = nil }
         let defaults = UserDefaults.standard
-        if found == nil, !defaults.bool(forKey: Wish.lookedKey) {
+        if found == nil, remix == nil, !defaults.bool(forKey: Wish.lookedKey) {
             defaults.set(true, forKey: Wish.lookedKey)
-            if prompt.trimmed.isEmpty, case .wish(let text) = Wish.look() { found = text }
+            if prompt.trimmed.isEmpty {
+                switch Wish.look() {
+                case .wish(let text): found = text
+                case .remix(let copied) where Store.starter(named: copied) != nil: remix = copied
+                case .remix(let copied): store.take(remix: copied)
+                default: break
+                }
+            }
         }
-        if let found { receive(found, animated: animated) }
+        if let remix {
+            Onboarding.keptRemix = remix
+            receive(remix.text ?? "", animated: animated)
+        } else if let found {
+            Onboarding.keptRemix = nil
+            receive(found, animated: animated)
+        }
     }
 
     /// Goes on to setup with the wish, with no hello in between: they have already said what they want, and
     /// it's made as soon as Lamp is ready. A dawn that fades meets them, as the site left off.
     private func receive(_ text: String, animated: Bool = true) {
-        prompt = text
+        // A remix's request waits for its copy, not for a new wish of its own.
+        prompt = Onboarding.keptRemix == nil ? text : ""
         if step != .setup {
             if animated { go(to: .setup) } else { step = .setup }
         }
@@ -179,6 +204,13 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .seconds(0.05))
             if let window { Chrome.restore(window, to: Onboarding.appSize) }
             store.openWaitingImport()
+            // A remix from the site: the desk's own copy of its starter, just put there, opened with the request in
+            // its box for them to send.
+            if let remix = Onboarding.keptRemix {
+                Onboarding.keptRemix = nil
+                if let starter = Store.starter(named: remix) { store.openCopy(of: starter, request: remix.text, reuseDesk: true) }
+                return
+            }
             // Without a wish from the site, the desk is where they land: Lamp's own wishes are there to use.
             guard !idea.isEmpty else { return }
             store.create(fromWelcome: true)

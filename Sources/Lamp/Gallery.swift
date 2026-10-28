@@ -758,6 +758,12 @@ enum Gallery {
                                                           capabilities: [], concerns: [], risk: .low,
                                                           reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true, detected: []),
                app: "Plant Care", existing: "Plant Care", changedHere: true),
+        review("Prepared update", ImportReview(
+            summary: "A 3D game of Manhattan you can explore on foot, by car, by bike or by helicopter, with synthesized city sounds.",
+            capabilities: ["Draws a 3D Manhattan you can explore", "Plays synthesized city sounds"],
+            concerns: [ImportReview.tooLarge], risk: .low, reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false),
+            asked: true, detected: found("Connects to the internet"), partial: true),
+               app: "New York Update", existing: "New York", prepared: true),
         review("Android app", ImportReview(summary: "Counts your taps on one screen and remembers the count after closing.",
                                            capabilities: [], concerns: [], risk: .low,
                                            reviewer: ImportReview.Reviewer(name: "Sonnet", onThisMac: false), asked: true,
@@ -772,10 +778,11 @@ enum Gallery {
     }
 
     private static func review(_ name: String, _ review: ImportReview?, app: String = "Drive Anywhere", description: String? = nil,
-                               existing: String? = nil, changedHere: Bool = false, android: Bool = false) -> Entry {
+                               existing: String? = nil, changedHere: Bool = false, android: Bool = false, prepared: Bool = false) -> Entry {
         Entry(group: "Shared wish", name: name) {
             AnyView(ImportReviewCard(name: app, description: description,
-                                     icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android)
+                                     icon: nil, review: review, existing: existing, changedHere: changedHere, cancel: {}, open: {}, update: {}, android: android,
+                                     prepared: prepared)
                 .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.quaternary))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
@@ -814,7 +821,7 @@ enum Gallery {
         Entry(group: "Share Link", name: name) {
             let folder = Starters.folder?.appendingPathComponent("diskmap")
             let card = WishLinkCard(
-                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) },
+                icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) },
                 picture: picture ? folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("preview.png")) } : nil,
                 values: .constant(values ?? .init(name: "Disk Map", line: diskMapLine, words: diskMapWish, includePicture: picture)),
                 limits: WishLink.cardLimits, link: link ? "https://lamp.dev/w/AyTkit4xCc" : nil, changed: !link || changed,
@@ -855,7 +862,7 @@ enum Gallery {
         Entry(group: "Publish", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = PublishCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                    stage: stage, repo: ready ? "someone/new-york" : nil, page: page ? "https://someone.github.io/new-york/" : nil,
                                    credit: "Based on Slop New York by Mr.doob",
                                    openInLamp: page ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes, size: ready ? "214 files · 12.1 MB" : nil,
@@ -912,7 +919,7 @@ enum Gallery {
         Entry(group: "GitHub", name: "Send back: " + name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = ContributeCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                       stage: stage, upstream: ready ? "someone/new-york" : nil, fork: ready && fork ? "else/new-york" : nil,
                                       credit: "Based on Slop New York by Mr.doob", notes: notes, size: ready ? "38 files · 1.2 MB" : nil, copied: copied,
                                       canSend: stage == .ready || { if case .failed = stage { true } else { false } }(),
@@ -931,7 +938,7 @@ enum Gallery {
         Entry(group: "GitHub", name: name) {
             let folder = Starters.folder?.appendingPathComponent("newyork")
             let ready = stage != .preparing
-            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("icon/icon.png")) }, name: "New York",
+            let card = RepoCard(icon: folder.flatMap { NSImage(contentsOf: $0.appendingPathComponent("\(Starters.treeFolder)/\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png")) }, name: "New York",
                                 stage: stage, repo: ready ? "someone/new-york" : nil, url: up ? "https://github.com/someone/new-york" : nil,
                                 credit: "Based on Slop New York by Mr.doob", openInLamp: link ? "lamp.dev/w/AyTkit4xCc" : nil, notes: notes,
                                 size: ready ? "38 files · 1.2 MB" : nil, copied: copied, update: up,
@@ -951,6 +958,7 @@ enum Gallery {
     private static let remixEntries: [Entry] = [
         remix("With a share link", link: true),
         remix("Without a share link"),
+        remix("On GitHub", link: true, origin: .repository(url: "https://github.com/someone/new-york", commit: "b95d5012397fa3fa345505f428f1189271218753")),
         remix("Lamp's own suggestions", link: true, suggestions: RemixOffer.fallback),
         remix("Wide", link: true, width: 480),
     ]
@@ -959,10 +967,10 @@ enum Gallery {
                               suggestions: [RemixIdea] = [RemixIdea(text: "Add a helicopter tour of Central Park", symbol: "airplane"),
                                                           RemixIdea(text: "Let me race a friend on the same phone", symbol: "flag.checkered"),
                                                           RemixIdea(text: "Show the time of day as it is in New York", symbol: "clock")],
-                              width: CGFloat? = nil) -> Entry {
+                              width: CGFloat? = nil, origin: RemixLink.Origin? = nil) -> Entry {
         Entry(group: "Remix", name: name) {
             let offer = RemixOffer(name: "New York", about: "Explore Manhattan on foot, by car, by bike or by helicopter.", suggestions: suggestions,
-                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil)
+                                   shareLink: link ? URL(string: "https://lamp.dev/w/AyTkit4xCc") : nil, origin: origin)
             return AnyView(RemixPanel(offer: offer) { _ in }
                 .frame(width: width ?? 320)
                 .background(AnyShapeStyle(ChatLook.paper), in: RoundedRectangle(cornerRadius: 16))

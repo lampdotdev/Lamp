@@ -85,7 +85,8 @@ final class Link: ChatLink {
         remix = RemixOffer(name: info["CFBundleName"] as? String ?? "this app",
                            about: (info["LampAbout"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                            suggestions: RemixIdea.from(plist: info["LampSuggestions"]),
-                           shareLink: (info["LampShareLink"] as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) })
+                           shareLink: (info["LampShareLink"] as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) },
+                           origin: .repository(info["LampRepository"] as? String, commit: info["LampCommit"] as? String))
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated { Link.shared.tryConnecting() }
         }

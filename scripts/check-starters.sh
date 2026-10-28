@@ -1,6 +1,8 @@
 #!/bin/zsh
-# Type-checks the wishes Lamp ships with (Resources/Starters) against this checkout's LampSupport.swift, as
-# a build would compile them: the app's Sources with the library, and a widget's Widget/ with its own file.
+# Type-checks the wishes Lamp ships with (Resources/Starters/<folder>/tree, fetched by scripts/fetch-starters.sh)
+# against this checkout's LampSupport.swift, as a build would compile them: the app's own Sources with the library,
+# and a widget's Widget/ with its own file. The copies of Lamp's files in each tree are left out: a build writes
+# this checkout's afresh.
 #
 #   scripts/check-starters.sh            every starter
 #   scripts/check-starters.sh today      one, by folder name
@@ -19,7 +21,7 @@ trap 'rm -rf "$work"' EXIT
 # LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
 services() {
   local type=$1
-  grep -rhoE "\b$type\.[a-z][A-Za-z0-9]*\b" "$here"/Resources/Starters/*/Sources 2>/dev/null | sed "s/^$type\.//" | sort -u |
+  grep -rhoE "\b$type\.[a-z][A-Za-z0-9]*\b" "$here"/Resources/Starters/*/tree/Sources 2>/dev/null | sed "s/^$type\.//" | sort -u |
     while read -r id; do
       grep -qE "static (let|var|func) $id\b" "$template" || print "        static var $id: $type { fatalError() }"
     done
@@ -49,10 +51,13 @@ check() {
 starters=("$here"/Resources/Starters/*(/))
 [ $# -gt 0 ] && starters=("$here/Resources/Starters/$1")
 failed=0
-for starter in $starters; do
-  name="${starter:t}"
+for folder in $starters; do
+  name="${folder:t}"
+  starter="$folder/tree"
+  if [ ! -d "$starter" ]; then print -- "✗ $name: no tree (run scripts/fetch-starters.sh)"; failed=1; continue; fi
   library=("$work/LampSupport.swift") macos=14.0
-  sources=("$starter"/Sources/**/*.swift(N))
+  # Lamp's own files (`Lamp*.swift`) are this checkout's, extracted above or added below, never the tree's copies.
+  sources=("$starter"/Sources/**/*.swift(N)); sources=(${sources:#*/Lamp[A-Z]*.swift})
   # A game's starter may have no Swift of its own (Lamp writes the app around its page): nothing to check.
   if (( ! $#sources )); then print -- "○ $name: no Swift to check"; continue; fi
   # A game's or a screen's Swift (Native.swift) answers its page through LampNative, in Lamp's LampPage.swift.
@@ -65,8 +70,9 @@ for starter in $starters; do
   else
     print "✗ $name"; cat "$work/$name.log"; failed=1
   fi
-  if [ -d "$starter/Widget" ]; then
-    if check 14.0 -D LAMP_WIDGET "$work/LampWidgetSupport.swift" "$starter"/Widget/**/*.swift(N) 2>"$work/$name-widget.log"; then
+  widget=("$starter"/Widget/**/*.swift(N)); widget=(${widget:#*/Lamp[A-Z]*.swift})
+  if (( $#widget )); then
+    if check 14.0 -D LAMP_WIDGET "$work/LampWidgetSupport.swift" $widget 2>"$work/$name-widget.log"; then
       print "✓ $name widget"
     else
       print "✗ $name widget"; cat "$work/$name-widget.log"; failed=1

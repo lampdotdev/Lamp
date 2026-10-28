@@ -403,6 +403,15 @@ enum Versions {
     }
 
     /// Files changed since the last version, by a turn that was stopped or didn't finish.
+    /// The version the wish's files are, when they're all saved in it: nil while anything is unsaved (a stopped turn's
+    /// changes), since then the files are no version at all. Waits for git, for what must say exactly what's exported.
+    nonisolated static func savedVersion(of dir: URL) -> String? {
+        let status = gitBlocking("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: dir)
+        guard status.ok, status.output.trimmed.isEmpty else { return nil }
+        let head = gitBlocking("git rev-parse HEAD", cwd: dir)
+        return head.ok ? Credits.validCommit(head.output.trimmed) : nil
+    }
+
     static func hasUnsavedChanges(_ project: LampProject) async -> Bool {
         var output = ""
         _ = await git("git status --porcelain -- . ':!\(Attachments.folder)'", cwd: project.dir) { output += $0 }
@@ -540,6 +549,12 @@ enum Versions {
         has to build. credits.json is already updated by Lamp: leave it. When it's all in, tell the person what came in \
         and what you kept of theirs.
         """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
+    /// What the agent hears with the request that brings in an update of the project a wish was made from
+    /// (`AppUpdates.note`), in place of any other note, since that request is the next one.
+    static func rememberAdaptedUpdate(_ project: LampProject, note: String) {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 

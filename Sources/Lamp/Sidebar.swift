@@ -39,6 +39,7 @@ enum Sidebar {
         guard applies(to: project), let program else { return }
         try fm.createDirectory(at: appex.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
         try fm.copyItem(at: program, to: appex.appendingPathComponent("Contents/MacOS/LampSidebar"))
+        let remix = GitHubRepo.remixOrigin(for: project)
         let info: [String: Any] = [
             "CFBundleExecutable": "LampSidebar",
             "CFBundleIdentifier": bundleID(for: project),
@@ -57,12 +58,16 @@ enum Sidebar {
             "LampApp": project.id,
             // Where Lamp listens for it.
             "LampPort": Int(Edition.sidebarPort),
-            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, and the
-            // wish's Share Link when it has one.
+            // For a Mac without Lamp (`RemixPanel`): which app Lamp is, the wish's line, what could be changed, the
+            // wish's Share Link when it has one, and the repository it was put on, at the commit last pushed, which a
+            // remix starts from a copy of (`GitHubRepo.remixOrigin`: public, and this version). Not a starter's: a copy
+            // may have been changed since.
             "LampHost": Edition.bundleID,
             "LampAbout": AppDescription.description(of: project) ?? "",
             "LampSuggestions": (RemixSuggestions.load(project) ?? []).map(\.plist),
             "LampShareLink": WishLink.kept(for: project)?.url.absoluteString ?? "",
+            "LampRepository": remix.map { if case .repository(let url, _) = $0 { url } else { "" } } ?? "",
+            "LampCommit": remix.map { if case .repository(_, let commit) = $0 { commit ?? "" } else { "" } } ?? "",
         ]
         try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
             .write(to: appex.appendingPathComponent("Contents/Info.plist"))
@@ -188,6 +193,7 @@ final class SidebarServer {
         connections[ObjectIdentifier(connection)] = connection
         MagicPanel.shared.follow(project.id)
         MagicPanel.shared.chatOpenedInApp(project)
+        MagicPanel.shared.chatPlaced(connection.projectID)
         connection.push(force: true)
     }
 
@@ -198,11 +204,12 @@ final class SidebarServer {
         if !connections.values.contains(where: { $0.projectID == id }) {
             dictations.removeValue(forKey: id)?.cancel()
             listening[id] = nil
-            // The app went in the middle of a turn (the person quit it, or it crashed): the turn's progress, its
-            // questions and Stop come up in Lamp's panel rather than nowhere. A reopen for a change brings its chat
-            // back beside the new copy before then.
-            if Store.shared.busy.contains(id), let project = Store.shared.projects.first(where: { $0.id == id }) {
-                MagicPanel.shared.showChatAfterQuit(project)
+            // The app went in the middle of a turn (the person quit it, or it crashed), or went because it moved off
+            // the Mac (to a TV, another device): the chat comes up in Lamp's panel rather than nowhere. A reopen for a
+            // change brings its chat back beside the new copy before then, and a plain quit leaves it closed (`ChatReturn`).
+            MagicPanel.shared.chatLeftApp(id)
+            if let project = Store.shared.projects.first(where: { $0.id == id }) {
+                MagicPanel.shared.showChatAfterQuit(project, because: Store.shared.busy.contains(id) ? .turnGoing : .appLeft)
             }
         }
     }
@@ -374,8 +381,14 @@ final class SidebarServer {
     /// Whether this wish's chat is beside its own Mac window: an app opening on this Mac whose place is a window, the
     /// wish's own or its one Mac app in a folder (`Store.chatApp`).
     static func besideItsApp(_ project: LampProject, place: WishPlace?) -> Bool {
+        onTheMac(project) && (place ?? .window) == .window
+    }
+
+    /// Whether the wish's chat app opens on this Mac, whatever its place there (a window, the menu bar): one that moved
+    /// to a TV or another device doesn't, and its chat has nowhere beside it to be.
+    static func onTheMac(_ project: LampProject) -> Bool {
         let app = Store.shared.chatApp(of: project)
-        return app.holdsApp && app.destination == .mac && app.hasMac && (place ?? .window) == .window
+        return app.holdsApp && app.destination == .mac && app.hasMac
     }
 
     /// Where each chat was being read, the first line in view, or none at its end (`SidebarCommand.scrolled`).

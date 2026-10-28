@@ -21,9 +21,10 @@ enum AndroidTools {
 
     /// ~/Library/Developer/Lamp/Android: one copy of the tools for every Lamp on this Mac, since they're large
     /// and the same for each. The sandbox lets a command read the person's developer folder and never write it.
-    static let folder = Edition.sharedDeveloperFolder.appendingPathComponent("Android")
-    static let jdkFolder = folder.appendingPathComponent("jdk")
-    static let sdkFolder = folder.appendingPathComponent("sdk")
+    /// Settable so a test can point every check at a folder of its own, never at the real tools.
+    nonisolated(unsafe) static var folder = Edition.sharedDeveloperFolder.appendingPathComponent("Android")
+    static var jdkFolder: URL { folder.appendingPathComponent("jdk") }
+    static var sdkFolder: URL { folder.appendingPathComponent("sdk") }
     static var gradleFolder: URL { folder.appendingPathComponent("gradle-\(gradleVersion)") }
     /// Gradle's own cache (its daemons' records, every dependency it fetched): shared by every app's build, in the
     /// caches folder the sandbox opens for writing.
@@ -31,7 +32,7 @@ enum AndroidTools {
     /// What adb and the emulator keep (adb's key, the emulator's settings) and the emulators Lamp made: Lamp's own,
     /// since Lamp runs both as itself.
     static let userHome = Edition.supportFolder.appendingPathComponent("Android/home")
-    static let avdHome = Edition.supportFolder.appendingPathComponent("Android/avd")
+    nonisolated(unsafe) static var avdHome = Edition.supportFolder.appendingPathComponent("Android/avd")
 
     static var javaHome: String { jdkFolder.appendingPathComponent("Contents/Home").path }
     static var java: String { javaHome + "/bin/java" }
@@ -72,7 +73,9 @@ enum AndroidTools {
     static let buildTools = "36.0.0"
     static let platformLevel = 36
     static let systemImage = "system-images;android-\(platformLevel);google_apis;\(isArm ? "arm64-v8a" : "x86_64")"
-    static let packages = ["platform-tools", "build-tools;\(buildTools)", "platforms;android-\(platformLevel)", "emulator", systemImage]
+    /// What a build and adb need, for a device of the person's; and what the emulator needs besides.
+    static let buildPackages = ["platform-tools", "build-tools;\(buildTools)", "platforms;android-\(platformLevel)"]
+    static let emulatorPackages = ["emulator", systemImage]
     /// The emulator Lamp makes: one phone, named so Try On can say which.
     static let avdName = "Lamp Phone"
     static let avdProfile = "pixel_9"
@@ -121,16 +124,21 @@ enum AndroidTools {
     static var hasJDK: Bool { FileManager.default.isExecutableFile(atPath: java) }
     static var hasCommandLineTools: Bool { FileManager.default.isExecutableFile(atPath: sdkmanager) }
     static var hasGradle: Bool { FileManager.default.isExecutableFile(atPath: gradle) }
-    static var hasPackages: Bool {
-        FileManager.default.isExecutableFile(atPath: adb) && FileManager.default.isExecutableFile(atPath: emulator)
+    static var hasBuildPackages: Bool {
+        FileManager.default.isExecutableFile(atPath: adb)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("build-tools/\(buildTools)/aapt2").path)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("platforms/android-\(platformLevel)/android.jar").path)
+    }
+    static var hasEmulatorPackages: Bool {
+        FileManager.default.isExecutableFile(atPath: emulator)
             && FileManager.default.fileExists(atPath: sdkFolder.appendingPathComponent("system-images/android-\(platformLevel)/google_apis/\(isArm ? "arm64-v8a" : "x86_64")/system.img").path)
     }
     static var hasEmulator: Bool { has(.phone) }
     static func has(_ kind: Emulator.Kind) -> Bool { FileManager.default.fileExists(atPath: avdHome.appendingPathComponent("\(kind.avd).avd/config.ini").path) }
-    /// Everything a build and the emulator need is here.
-    static var isReady: Bool { hasJDK && hasCommandLineTools && hasGradle && hasPackages && hasEmulator }
+    /// Everything a build and adb need: all a device of the person's asks of this Mac.
+    static var hasBuildTools: Bool { hasJDK && hasCommandLineTools && hasGradle && hasBuildPackages }
+    /// That, and the emulator.
+    static var isReady: Bool { hasBuildTools && hasEmulatorPackages && hasEmulator }
 
     enum Step: CaseIterable { case tools, emulator, device }
 
@@ -149,22 +157,19 @@ enum AndroidTools {
     }
 
     /// What's missing before an Android app can be built and opened, stopping at the first: the tools (one
-    /// download, which `install` does whole), the emulator Lamp makes from them, and the person's own device when
-    /// one is chosen (`serial`), which must be plugged in or on the network with debugging allowed to this Mac.
+    /// download, which `install` does whole), the emulator Lamp makes from them, or instead the person's own device
+    /// when one is chosen (`serial`), which must be plugged in or on the network with debugging allowed to this Mac.
+    /// A device needs no emulator, so neither its download nor its making is asked for.
     static func check(device serial: String? = nil, confirmed: Set<String> = []) async -> Report {
         var report = Report()
-        guard hasJDK, hasCommandLineTools, hasGradle, hasPackages else {
+        guard hasBuildTools, serial != nil || hasEmulatorPackages else {
             report.issue = Issue(step: .tools, title: "Download Android's tools",
-                                 message: "Lamp makes Android apps with Google's free tools, and they aren't on this Mac yet. Click Download: it's about 2 GB, so it can take a while. Nothing else on your Mac changes.", action: .download)
+                                 message: "Lamp makes Android apps with Google's free tools, and they aren't on this Mac yet. Click Download: "
+                                    + (serial == nil ? "it's about 2 GB, so it can take a while." : "it's under 1 GB, so it can take a few minutes.")
+                                    + " Nothing else on your Mac changes.", action: .download)
             return report
         }
         report.passed.append(.tools)
-        guard hasEmulator else {
-            report.issue = Issue(step: .emulator, title: "Set up the emulator",
-                                 message: "The emulator is an Android phone on your Mac's screen, where Lamp tries your app. Click Download and Lamp will make one.", action: .download)
-            return report
-        }
-        report.passed.append(.emulator)
         if let serial {
             let devices = await Adb.devices()
             let device: Device
@@ -181,8 +186,8 @@ enum AndroidTools {
                 report.issue = serial.contains(":") || AndroidTVs.isMDNS(serial)
                     ? Issue(step: .device, title: "Choose your device again",
                             message: "Lamp can't see it at the address it had. Turn its debugging back on, then choose it again under Try On. Then click Check Again.", action: .retry)
-                    : Issue(step: .device, title: "Plug in your Android device",
-                            message: "Lamp can't see it. Connect it to this Mac with its cable, unlock it, and allow USB debugging when it asks. Then click Check Again.", action: .retry)
+                    : Issue(step: .device, title: "Connect your Android device",
+                            message: "Lamp can't see it. Plug it into this Mac with its cable and unlock it, or for a TV on your Wi‑Fi, turn it on and connect it with Connect Over Wi‑Fi under Try On. Allow debugging when it asks, then click Check Again.", action: .retry)
                 return report
             }
             if case .needs(let step) = device.setup() {
@@ -191,6 +196,13 @@ enum AndroidTools {
                 return report
             }
             report.passed.append(.device)
+        } else {
+            guard hasEmulator else {
+                report.issue = Issue(step: .emulator, title: "Set up the emulator",
+                                     message: "The emulator is an Android phone on your Mac's screen, where Lamp tries your app. Click Download and Lamp will make one.", action: .download)
+                return report
+            }
+            report.passed.append(.emulator)
         }
         return report
     }
@@ -199,8 +211,9 @@ enum AndroidTools {
 
     /// Downloads and puts in place whatever `check` found missing, in order, saying how far it is (0…1) and what
     /// it's doing. A download that doesn't match its published checksum isn't used. Nothing is left half done: each
-    /// piece is unpacked beside its place and moved in whole.
-    static func install(progress: @escaping @Sendable (Double, String) -> Void) async throws {
+    /// piece is unpacked beside its place and moved in whole. `emulator` false: for a device of the person's, which
+    /// needs no emulator, so its download and its making are left for when one is chosen.
+    static func install(emulator: Bool = true, progress: @escaping @Sendable (Double, String) -> Void) async throws {
         let fm = FileManager.default
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try fm.createDirectory(at: userHome, withIntermediateDirectories: true)
@@ -208,7 +221,9 @@ enum AndroidTools {
         // Weights for the progress, by size: the tools and Gradle are small next to the packages.
         let steps: [(done: Bool, from: Double, to: Double, name: String)] = [
             (hasJDK, 0, 0.1, "Java"), (hasCommandLineTools, 0.1, 0.18, "Google's tools"), (hasGradle, 0.18, 0.26, "Gradle"),
-            (hasPackages, 0.26, 0.96, "the Android platform and emulator"), (hasEmulator, 0.96, 1, "the emulator")]
+            (hasBuildPackages && (!emulator || hasEmulatorPackages), 0.26, 0.96, emulator ? "the Android platform and emulator" : "the Android platform"),
+            (!emulator || hasEmulator, 0.96, 1, "the emulator")]
+        let packages = (hasBuildPackages ? [] : buildPackages) + (emulator && !hasEmulatorPackages ? emulatorPackages : [])
         if !hasJDK {
             try await fetch(jdk, into: jdkFolder, archive: .tar, from: steps[0].from, to: steps[0].to, name: steps[0].name, progress: progress)
             // Temurin's archive holds one folder, jdk-17…/Contents/Home: that folder's contents are what's kept.
@@ -233,7 +248,7 @@ enum AndroidTools {
             try flatten(gradleFolder)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: gradle)
         }
-        if !hasPackages {
+        if !packages.isEmpty {
             progress(steps[3].from, "Downloading \(steps[3].name)…")
             // Google's terms have to be accepted for each package; sdkmanager asks on its input.
             let accept = "/usr/bin/yes | \"$LAMP_SDKMANAGER\" --licenses > /dev/null 2>&1; \"$LAMP_SDKMANAGER\" --install " +
@@ -246,11 +261,11 @@ enum AndroidTools {
                     progress(steps[3].from + (steps[3].to - steps[3].from) * Double(percent) / 100, "Downloading \(steps[3].name)…")
                 }
             }
-            guard status == 0, hasPackages else {
+            guard status == 0, hasBuildPackages, !emulator || hasEmulatorPackages else {
                 throw Failure(message: "Google's tools couldn't download the Android platform.\n\n" + output.suffix(6).joined(separator: "\n"))
             }
         }
-        if !hasEmulator {
+        if emulator, !hasEmulator {
             progress(steps[4].from, "Making the emulator…")
             try await Emulator.create()
         }

@@ -221,10 +221,10 @@ enum PrebuiltStarters {
             }
             return found.subtracting(owned)
         }
-        let shipped = swiftFiles(in: starter.folder)
+        let shipped = swiftFiles(in: starter.tree)
         guard swiftFiles(in: project.dir) == shipped else { return false }
         return shipped.allSatisfy { file in
-            guard let theirs = fm.contents(atPath: starter.folder.appendingPathComponent(file).path) else { return false }
+            guard let theirs = fm.contents(atPath: starter.tree.appendingPathComponent(file).path) else { return false }
             return AppFile.read(project.dir.appendingPathComponent(file), in: project) == theirs
         }
     }

@@ -1,0 +1,204 @@
+---
+import { getImage } from "astro:assets";
+import { together } from "../lib/text";
+import { DOWNLOAD_URL } from "../lib/download";
+import { STARTERS } from "../lib/starters";
+
+// The starters the dialog can show, each with its picture, so a remix of one shows the tape it starts from.
+const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
+const known = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => {
+  const picture = pictures[`../assets/starters/${starter.id}.png`];
+  const shot = picture ? (await getImage({ src: picture, width: 720, format: "webp" })).src : "";
+  return [starter.id, { name: starter.name, by: starter.by, shot }];
+})));
+---
+
+<!--
+  A remix brought by a link from a published page's Remix panel, or from the panel beside an app on a Mac without Lamp
+  (`RemixLink` in Lamp): `?ask=` with the request, and, when the page names what it's a copy of, `starter=` or
+  `repo=` and `commit=` (lib/wish.js). It shows what the remix starts from (a starter's tape, a repository's name) and the
+  request in a box to change, then Open in Lamp on a Mac (a link Lamp opens on a fresh copy with the request waiting in
+  its chat) and Download for Mac, which copies the request with Lamp's mark, naming the starter or repository, for
+  Lamp's first open. The ideas page keeps its own card (WishDialog.astro); this one is dressed as the homepage is.
+-->
+<dialog data-remix aria-labelledby="remix-title" aria-describedby="remix-from" class="remix-dialog" data-starters={JSON.stringify(known)}>
+  <div class="remix-stripes" aria-hidden="true"></div>
+  <button type="button" data-close aria-label="Close" class="remix-close">
+    <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+  </button>
+  <div class="remix-body">
+    <!-- What it starts from: the starter's picture on a tape's label, or, for a repository or a wish alone, a blank
+         label with its name written on it. -->
+    <figure data-label class="remix-label">
+      <img data-shot alt="" hidden />
+      <p data-written class="remix-written" hidden></p>
+      <figcaption data-side class="remix-side" aria-hidden="true">SIDE A</figcaption>
+    </figure>
+    <div class="remix-words">
+      <p data-by class="remix-by"></p>
+      <h2 id="remix-title" data-title class="remix-title"></h2>
+      <p id="remix-from" data-from class="remix-from"></p>
+      <label for="remix-text" data-ask class="remix-ask">YOUR CHANGE</label>
+      <textarea id="remix-text" data-text rows="3" placeholder="Say what you'd change"></textarea>
+      <div class="remix-buttons">
+        <button type="button" data-open hidden class="remix-button remix-button-ink">Open in Lamp</button>
+        <a href={DOWNLOAD_URL} data-download-place="remix" data-download class="remix-button remix-button-lit">Download for Mac</a>
+      </div>
+      <p data-status class="remix-status" role="status" aria-live="polite">{together("For Macs with Apple Silicon and macOS 14 Sonoma or later")}</p>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  import { askFrom, copyWish, remixFrom, remixLink, wishLink } from "../../lib/wish.js";
+  import { track } from "../lib/analytics";
+
+  type Known = Record<string, { name: string; by: string; shot: string }>;
+  const dialog = document.querySelector<HTMLDialogElement>("[data-remix]")!;
+  const asked = askFrom(location.search);
+  const named = remixFrom(location.search);
+  const starters = JSON.parse(dialog.dataset.starters ?? "{}") as Known;
+  // Only a starter this site knows by its id; the request alone otherwise. Lamp checks the link again.
+  const starter = named?.starter ? starters[named.starter] : undefined;
+  const origin = named?.starter ? (starter ? named : null) : named;
+
+  if (asked || origin) {
+    const q = <T extends HTMLElement>(selector: string) => dialog.querySelector<T>(selector)!;
+    const title = q("[data-title]"), by = q("[data-by]"), from = q("[data-from]"), status = q("[data-status]");
+    const shot = q<HTMLImageElement>("[data-shot]"), written = q("[data-written]"), side = q("[data-side]");
+    const text = q<HTMLTextAreaElement>("[data-text]");
+    const openLink = q<HTMLButtonElement>("[data-open]"), download = q<HTMLAnchorElement>("[data-download]");
+    const idea = starter?.name ?? origin?.name ?? "your wish";
+
+    if (starter) {
+      title.textContent = `Remix ${starter.name}`;
+      by.textContent = `The original · by ${starter.by}`;
+      from.textContent = "Lamp opens a fresh copy with your change ready to send.";
+      shot.src = starter.shot;
+      shot.alt = `${starter.name}, the original`;
+      shot.hidden = false;
+    } else if (origin?.repo) {
+      title.textContent = `Remix ${origin.name}`;
+      by.textContent = `From github.com/${origin.owner}`;
+      from.textContent = "Lamp opens a fresh copy with your change ready to send.";
+      written.textContent = origin.name;
+      written.hidden = false;
+    } else {
+      title.textContent = "Your wish";
+      by.textContent = "From an app made with Lamp";
+      from.textContent = "Lamp makes it for you, starting with these words.";
+      written.textContent = "your idea here…";
+      q("[data-ask]").textContent = "YOUR WISH";
+      written.hidden = false;
+      side.textContent = "SIDE B";
+    }
+    text.value = asked ?? "";
+
+    // A page can't tell whether Lamp is installed, so the Mac that has it gets its own way in, beside Download.
+    openLink.hidden = !(/Mac/.test(navigator.platform) && navigator.maxTouchPoints < 2);
+    const fit = () => { text.style.height = "auto"; text.style.height = `${text.scrollHeight + 2}px`; };
+    text.addEventListener("input", fit);
+
+    // Closed, the page is the homepage again: a reload doesn't bring the dialog back.
+    dialog.addEventListener("close", () => {
+      const url = new URL(location.href);
+      for (const name of ["ask", "starter", "repo", "commit"]) url.searchParams.delete(name);
+      history.replaceState(history.state, "", url);
+    });
+    q("[data-close]").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+
+    openLink.addEventListener("click", () => {
+      const link = origin ? remixLink(origin, text.value) : wishLink(text.value);
+      if (!link) return text.focus();
+      track("idea_sent", { idea, place: "remix" });
+      status.textContent = "Off it goes. Nothing opened? Download Lamp first.";
+      location.href = link;
+    });
+
+    download.addEventListener("click", () => {
+      track("idea_download", { idea, place: "remix" });
+      // The download leaves this page where it is, so the copy finishes and the dialog can say what happens next.
+      copyWish(text.value, { origin }).then((copied) => {
+        download.textContent = "Downloading…";
+        const ready = starter ? `${starter.name} and your change will be there.` : origin ? "Your remix will be there." : "Your wish will be there.";
+        status.textContent = copied === "marked" ? `Open Lamp when it's ready. ${ready}`
+          : copied === "plain" ? "Your change is copied. Paste it into Lamp when it's ready."
+          : text.value.trim() ? "Copy your change, and paste it into Lamp when it's ready." : "Open Lamp when it's ready.";
+      });
+    });
+
+    dialog.showModal();
+    fit();
+    requestAnimationFrame(fit);
+    addEventListener("load", fit, { once: true });
+    // Ready to change, with the cursor at the end, where there's a pointer and a keyboard; on a touch screen the
+    // keyboard would cover the dialog before it's been read.
+    if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      text.focus({ preventScroll: true });
+      text.setSelectionRange(text.value.length, text.value.length);
+    }
+    track("idea_opened", { idea, place: "remix" });
+  }
+</script>
+
+<style>
+  /* The homepage's sleeve: cream paper in an ink frame with a hard shadow, the stripes across its top, the picture on a
+     tape's label, and the marker for what's written by hand. */
+  .remix-dialog {
+    --stripe-0: #1f8a4a; --stripe-1: #7cbf3a; --stripe-2: #f6b81c; --stripe-3: #f08a1c; --stripe-4: #e2402a; --stripe-5: #d23778;
+    margin: auto; padding: 0; width: min(56rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto;
+    background: #f7f2e3; color: var(--color-tape); border: 2px solid var(--color-tape);
+    box-shadow: 10px 10px 0 var(--color-tape); font-family: var(--font-sans);
+  }
+  .remix-dialog::backdrop { background: rgb(27 26 23 / 0.55); backdrop-filter: blur(4px); }
+  .remix-stripes {
+    height: 1.75rem; border-bottom: 2px solid var(--color-tape);
+    background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%,
+      var(--stripe-4) 0 83.3%, var(--stripe-5) 0);
+  }
+  .remix-close {
+    position: absolute; top: 2.5rem; right: 1rem; display: grid; place-items: center; width: 2.25rem; height: 2.25rem;
+    border-radius: 6px; background: var(--color-paper); color: var(--color-tape); box-shadow: inset 0 0 0 2px var(--color-tape); cursor: pointer;
+  }
+  .remix-close svg { width: 0.875rem; height: 0.875rem; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; }
+  .remix-body { display: grid; gap: 1.75rem; padding: 1.75rem; grid-template-columns: 1fr; }
+  @media (min-width: 48rem) { .remix-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); padding: 2.25rem; } }
+
+  /* A tape's label, a little askew, as the shelf's are. */
+  .remix-label {
+    position: relative; align-self: start; margin: 0.5rem 0 0; rotate: -1.5deg; background: var(--color-tape);
+    padding: 0.625rem; box-shadow: 6px 6px 0 rgb(27 26 23 / 0.25);
+  }
+  .remix-label img { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border: 2px solid var(--color-paper); }
+  .remix-written {
+    display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 1rem; background: #fbf8ee; color: #b8264f;
+    font-family: var(--font-marker); font-size: clamp(1.75rem, 4vw, 2.5rem); line-height: 1.1; text-align: center; overflow-wrap: anywhere;
+    background-image: repeating-linear-gradient(180deg, transparent 0 2.4rem, rgb(27 26 23 / 0.12) 2.4rem 2.5rem);
+  }
+  .remix-side { margin-top: 0.5rem; color: var(--color-paper); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; }
+
+  .remix-words { display: flex; flex-direction: column; min-width: 0; }
+  .remix-by { margin: 0 3rem 0.25rem 0; font-size: 1.125rem; font-weight: 800; font-style: italic; }
+  .remix-title { margin: 0 3rem 0 0; font-size: clamp(2.5rem, 5.5vw, 3.75rem); line-height: 0.92; font-weight: 900; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+  .remix-from { margin: 0.875rem 0 0; font-size: 1.0625rem; line-height: 1.45; color: #4a463c; }
+  .remix-ask { margin: 1.5rem 0 0.5rem; font-family: var(--font-mono); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; color: #a8361f; }
+  .remix-words textarea {
+    width: 100%; min-height: 5.5rem; resize: none; padding: 0.75rem 0.875rem; border-radius: 4px; background: #fffdf6;
+    border: 2px solid var(--color-tape); color: #b8264f; font-family: var(--font-marker); font-size: 1.375rem; line-height: 1.35;
+  }
+  .remix-words textarea::placeholder { color: #8c8577; }
+  .remix-words textarea:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 2px; }
+  .remix-buttons { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.25rem; }
+  .remix-button {
+    display: inline-flex; align-items: center; min-height: 3.25rem; padding: 0 1.5rem; border-radius: 6px;
+    font-size: 1.125rem; font-weight: 800; cursor: pointer; transition: translate 0.2s ease; box-shadow: inset 0 0 0 2px var(--color-tape);
+  }
+  .remix-button:hover { translate: 0 -2px; }
+  .remix-button:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 3px; }
+  .remix-button[hidden] { display: none; }
+  .remix-button-ink { background: var(--color-tape); color: var(--color-paper); }
+  .remix-button-lit { background: var(--stripe-2); color: var(--color-tape); }
+  .remix-status { margin: 0.875rem 0 0; font-size: 0.875rem; color: #4a463c; }
+  @media (prefers-reduced-motion: reduce) { .remix-button { transition: none; } .remix-label { rotate: 0deg; } }
+</style>

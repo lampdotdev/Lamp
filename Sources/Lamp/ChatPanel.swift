@@ -23,6 +23,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
         let arriving = open[id] == nil ? WishArrival.take() : nil
         let panel = open[id] ?? ChatPanel(id: id)
         open[id] = panel
+        MagicPanel.shared.chatPlaced(id)
         // Where the person is working when it first opens: the window they asked for it from (the desk, another chat).
         if !panel.placedOnce, let from = NSApp.keyWindow ?? NSApp.mainWindow, from !== panel.window, from.isVisible { panel.openedFrom = from.frame }
         panel.place()

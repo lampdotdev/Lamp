@@ -3,7 +3,7 @@ name: Home HQ
 kind: screen
 offer: Make Home HQ yours
 repository: https://github.com/lampdotdev/homehq
-commit: fb050b971cd1ffb2eaa225306681efc1e6db378e
+commit: 2e7052cfa927d02b9b43e758fd71239d71b204c1
 tweaks:
   - ipad.landscape: Put it on our kitchen tablet
   - photo.artframe: Put it on our photo frame

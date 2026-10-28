@@ -1,6 +1,6 @@
 # The first-idea section
 
-Right under the homepage's hero, a short conversation helps a visitor find their first app before they
+On the ideas page, under its ideas, a short conversation helps a visitor find their first app before they
 download Lamp. A button under its heading starts it: four everyday situations at a time ("Can you relate to any of these?"), one or two questions
 about the one they pick, then the request in their own words, in a card they can edit, with one button that
 downloads Lamp and hands it the wish.
@@ -9,7 +9,9 @@ The hand-off (`lib/wish.js` here, `Sources/Lamp/Wish.swift` in the app) has two 
 tell whether Lamp is installed:
 
 - **Download Lamp** copies the wish with a mark only Lamp looks for (an attribute in the clipboard's web
-  form; the plain text is just the wish). The first time Lamp opens it looks at the clipboard once and, if
+  form; the plain text is just the wish). A remix's Download (the homepage's remix dialog) puts what it starts from
+  in the mark's value (`data-lamp-wish="starter=newyork"`), and Lamp's first open offers a copy of that with the
+  request in its box. The first time Lamp opens it looks at the clipboard once and, if
   the mark is there, puts the wish in the first-app box. Anything else on the clipboard is left alone, and
   where macOS would ask before letting an app read it, Lamp doesn't read: the box offers "Paste my wish".
 - **Already have Lamp? Open it with this wish** opens `lamp://wish?text=…`: the card sinks back into the

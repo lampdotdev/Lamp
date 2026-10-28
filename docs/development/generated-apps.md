@@ -192,9 +192,13 @@ closes (`MagicPanel.chatOpenedInApp`). Where there's no Mac window to put it bes
 a menu bar app, a widget, a background app, an iPhone app, an app built by a Lamp from before the sidebar) the chat is in
 Lamp's panel, and setup cards' keys, sign-ins and Image Playground are in Lamp's sheet (`SetupSheet`), "The chat's one
 screen" in the chat guide. An app opened for its chat that never connects one (it couldn't start) has its chat shown in
-Lamp's panel (`MagicPanel.showChatIfAppNeverComes`), and so does one that crashes, or quits while a turn is going on,
-with its chat beside it (`MagicPanel.showChatAfterQuit`, once three seconds have passed with no copy running: a change
-that reopens the app leaves a moment with none). The chat is drawn by another process, which AppKit's focus doesn't follow
+Lamp's panel (`MagicPanel.showChatIfAppNeverComes`), and so does one that crashes, quits while a turn is going on, or
+quits because it moved off the Mac (to a TV, a phone or another device, whether the place was chosen just before the quit
+or just after), with its chat beside it (`MagicPanel.showChatAfterQuit`, once three seconds have passed with no copy
+running: a change that reopens the app leaves a moment with none). A plain quit of an app that still opens on the Mac
+leaves its chat closed, and so does a later change of device for an app whose chat the person closed (`ChatReturn`).
+Closing the chat beside the app only hides it, and its connection stays, so the app tells Lamp it was closed
+(`LampSidebar.close`, `MagicPanel.closedInApp`): a chat the person closed there stays closed when the app moves off the Mac. The chat is drawn by another process, which AppKit's focus doesn't follow
 (what had the keyboard, a list say, keeps it through a click in the chat), so once a click in the chat has landed the
 keyboard goes to it (`LampSidebar.watchClicks`). Point at the Screen is an item of the + by the message box, beside
 Attach a File…, in both chats (`ChatLook.MessageBar`'s `point`, `PlusMenu`) while the app is open on this Mac (`MagicPanel.point`; from Lamp's panel, Lamp comes back in front when it's done). It lets the person point at part of the app: the app lays a clear window over its own (`LampMagic.Picker`), kept above the app's own panels, sheets and alerts however high they float, but no higher, so other apps' windows still cover it (`Picker.keepOnTop`), and what's in them is pointed at and pictured as shown, outlines the smallest named
@@ -254,10 +258,34 @@ in the wish's record (`GitHubRepo.Repo.commit`), and an export names the kept re
 its caller names no place (`Sharing.export`), so a file shared from a wish that's on GitHub says where it lives too.
 A wish opened from one repository and put on another gets a second link for the new place (`Credits.remixed`,
 `Remix.sameLink`): the chain keeps where it came from, and `Credits.origin(own:)`, the last link naming a repository
-that isn't the wish's own, is what the info panel's Visit and Update from GitHub… and Send Changes Back go by
+that isn't the wish's own, is what the info panel's Visit and Check for Updates… and Send Changes Back go by
 (`AppInfoView.origin`).
 
-A wish whose chain names where it came from offers Update from GitHub… in its info panel
+Every wish with somewhere to be updated from has the same Check for Updates… in its Credits, Review Update… once
+there is one, with a row that says "An update is available" or "Your app is up to date" (`AppUpdates`). The check asks
+GitHub for the default branch's latest commit (`git ls-remote`, confined, no sign-in, no clone, no model), at most daily
+by itself and coalesced across wishes following the same repository, and compares it with the commit the wish has.
+Which repository a wish follows (`AppUpdates.route`): a wish from another wish follows that wish (below); a wish the agent
+made from someone's own project follows the work it's based on, the first `upstream` source, when that's on GitHub with
+the commit it was taken at. A source with no commit is offered nothing.
+
+An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version
+and makes a separate copy of it, unsaved changes included (`Sharing.export`, then a wish of its own with Lamp's files
+written afresh, "<Name> Update"): its own app, bundle id, data and agent session, so nothing the agent does or runs
+reaches the wish. The update is fetched into the copy's `.lamp/update/` (blobless, pinned to the commit the check saw:
+`latest/`, `files.txt`, `log.txt`, `changes.diff`, and the fetched `repo` for files as they were) and the request goes to
+the copy, with a note saying where it all is and how to port it (`AppUpdates.note`). The job, in the copy's
+`.lamp/update/job.json`, names the wish and the wish's version when the copy was made. After a turn in the copy that
+finished with no error (`Store.settleUpdate`) the copy takes the update's commit in its credits and the review opens
+(`Store.openPreparedReview`: `Sharing.review` of the copy as exported, `PendingImport.prepared`). Update puts the copy's
+files in place of the wish's through the ordinary update path, never `mergeUpdate`, since the copy already has the
+wish's changes; the wish keeps its own credits with the commit moved on, and the copy is deleted. If the wish changed
+since the copy was made (`AppUpdates.isStale`), Update offers to prepare it again instead. Keep Both keeps the copy as an
+app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows its chat, or its
+review once it's ready. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
+from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
+
+A wish whose chain names where it came from is updated as it was opened
 (`AppInfoView.updateFromRepository`; a starter's copy too, "Desk"): the repository fetched again and opened as any is,
 which lands on Update or Keep Both for that wish (`Store.importRepository(updating:)`, carried through a review that
 waits for setup, `Store.copy(of:among:updating:)`: whatever identity the repository's file carries, so a starter's
@@ -310,13 +338,22 @@ On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the 
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
 nothing to connect to: once Lamp has been away a few seconds and macOS says no Lamp is installed (`Link.lampInstalled`,
 from the `LampHost` Lamp wrote into the extension's Info.plist), it shows `RemixPanel` (LampSidebarKit): the app's name
-and line, three things to change and a box; Continue with Lamp opens the wish's Share Link page with the request as
-`ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js), or lamp.dev with a request that names the app
-(`RemixLink`), since without the link Lamp makes its own version. The three things come from `RemixSuggestions`: written by
+and line, three things to change and a box; Continue with Lamp goes where `RemixLink.url` says: lamp.dev with what the
+app is a copy of (`RemixLink.Origin`: a starter's id, or a repository and commit) beside the request as `ask`, when the
+offer names one (a published page does, "Remixing a published page" in the wishes guide, and so does an app whose wish
+is on GitHub, below); else the wish's Share Link
+page with the request as `ask` (the site adds it to the wish's words, `withAsk` in lib/wish.js); else lamp.dev with a
+request that names the app, since without either Lamp makes its own version. The line under the button says which
+(`RemixLink.note`). The three things come from `RemixSuggestions`: written by
 the helper model after a change lands (`Store`, beside the version's title), kept in `.lamp/suggestions.json` with a
 stamp of the name, line and APP.md, and put into the extension's Info.plist as the app is installed (`Sidebar.install`:
 `LampSuggestions`, with `LampAbout` and `LampShareLink`); the panel has three of its own until then
-(`RemixOffer.fallback`). When suggestions arrive after an install, or a Share Link is made or taken down, the installed
+(`RemixOffer.fallback`). A wish that's been Put on GitHub also has its repository and the commit last pushed there
+(`LampRepository`, `LampCommit`), while the repository is public and holds this version (`GitHubRepo.remixOrigin`, by the app's wish for an app in
+a folder of its own; a push refreshes every app of the wish), so
+the panel's request goes with them and Lamp starts from a copy of this exact wish; a
+starter's copy doesn't name the starter, since it may have been changed. When suggestions arrive after an install, a
+Share Link is made or taken down, or Put on GitHub pushes a new commit, the installed
 copy is made again from the build on disk and signed as before (`Store.refreshInstalled`: now if the app isn't open,
 else at its next quit), so a copy taken off this Mac carries them. On a Mac with Lamp, a request that came with a wish's
 link goes with the exact wish through a link of Lamp's own (`lamp://wish?file=…&text=…`, `exactWishLink` in
