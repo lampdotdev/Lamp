@@ -35,7 +35,8 @@ extension Target {
                        marker: ScreenKit.marker,
                        // Its folder holds a TV app's page and script: it's asked whether it's a screen first.
                        refines: .tv,
-                       shareRefusal: "Lamp doesn't share screens yet."),
+                       // Its page and the Swift beside it travel in a shared file (`ScreenFiles`); the copy is a screen too.
+                       shareRefusal: nil),
         part: Part(folder: "Screen", family: "screen", word: "screen", menu: ("Screen", "tv.inset.filled"), rules: { Agent.screenPrompt(part: $0, alone: $1) },
                    // How its places are given beside the wish's other apps, and how it reaches them.
                    wishRule: Agent.Rules.screenAmongApps) { dir, wish in

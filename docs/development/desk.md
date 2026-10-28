@@ -98,7 +98,7 @@ change. Every starter's copy starts its wish's chain with the starter itself (`S
 guide).
 A starter may be a screen: Home HQ is Wes Bos's photo-frame-dashboard (MIT) as a screen, its page in `Web/` as plain
 scripts with no build step, at home on the Mac, and its changes put it where a screen goes (an iPad, a TV, an Android
-photo frame). Its `Sources/Native.swift` reads the person's calendars and photos only once they turn them on in the
+photo frame). It's shared as any starter is, its page and Native.swift as the file's code (`ScreenFiles`, "Wishes"). Its `Sources/Native.swift` reads the person's calendars and photos only once they turn them on in the
 page's settings, so nothing asks for access as the starter opens; elsewhere the page keeps its examples. Its credits.json
 names the upstream repository at its commit and the two fonts it ships, each with its license file. A game's or a
 screen's starter has no App.swift: `StartersTests` looks for its `Web/index.html`, and check-starters.sh type-checks its

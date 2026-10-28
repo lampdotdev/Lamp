@@ -64,6 +64,7 @@ runs that TV's setup first) packages and installs; the preview needs nothing set
 network description; the first scan brings macOS's firewall and local network questions. A TV app is shared as a
 `.lampapp` like any other (format 10): its Web/ and Phone/ travel (`TVFiles`: pages and scripts as code, which the review
 reads, pictures and sounds as data), never Lamp's lamp.js or three.js, which the Mac that opens it writes back as it installs them.
+A web app or a screen, whose page is the TV app's with Lamp's app around it, travels its own way (`ScreenFiles`, "Wishes").
 
 A TV app may have a page for a phone (a controller, a buzzer, a second screen) in `Phone/` (`TVTemplate.phoneFolder`,
 `Rules.tvPhone`, a short pointer: how to build the page, controllers, tilt and second screens are the `phone-pages`

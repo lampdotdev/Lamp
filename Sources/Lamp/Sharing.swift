@@ -22,8 +22,10 @@ enum Sharing {
     /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/. 8: its
     /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes. 9: it's an Android app, its
     /// Kotlin, manifest, resources and build file in app/. 10: it may be a wish of several apps, each other app in its
-    /// folder (`parts` in the manifest, `Parts`), or a TV app, its web files in Web/ and Phone/ (`TVFiles`).
-    static let formatVersion = 11
+    /// folder (`parts` in the manifest, `Parts`), or a TV app, its web files in Web/ and Phone/ (`TVFiles`). 11: it may be
+    /// a web game, its page in Web/ and the Swift beside it (`GameFiles`). 12: it may be a web app or a screen, its page
+    /// and the Swift beside it the same way (`ScreenFiles`).
+    static let formatVersion = 12
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
@@ -31,9 +33,10 @@ enum Sharing {
     /// Lamp, and a Lamp that would build the app without one of them says to update instead. An Android app is a 9
     /// whatever it has: a Lamp from before would look for Swift and find none. A wish of several apps, and a TV app,
     /// are a 10 the same way: a Lamp from before would open the app at the root alone, or find no code. A game is an 11.
+    /// A web app or a screen is a 12: a Lamp from before would take its page for a TV app's and leave the Swift beside it.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
                        share: Bool = false, scene: Bool = false, parts: Bool = false) -> Int {
-        platform.target.recipe.language == .game ? 11 : parts || platform.target.recipe.language == .web ? 10
+        ScreenKit.isWebApp(platform) ? 12 : platform.target.recipe.language == .game ? 11 : parts || platform.target.recipe.language == .web ? 10
             : platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.reaches(.ios) || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
@@ -261,10 +264,11 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        // A game anywhere in the wish makes it an 11: a Lamp from before would find no code in the game's folder.
+        // A game anywhere in the wish makes it an 11, a web app or a screen a 12: a Lamp from before would find no code
+        // in that app's folder, or take it for a TV app's.
         let number = max(format(withWidget: first.widget, capabilities: first.capabilities, platform: root.platform, watch: first.watch,
                                 share: first.share, scene: first.scene, parts: !parts.isEmpty),
-                         parts.contains { $0.platform == .game } ? format(withWidget: false, platform: .game) : 0)
+                         parts.map { format(withWidget: false, platform: $0.platform) }.max() ?? 0)
         try encoder.encode(Manifest(format: number,
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
@@ -324,8 +328,8 @@ enum Sharing {
     }
 
     /// One app's files into `stage`: its code as its kind travels (a Swift app's Sources/ with its widget's, watch app's
-    /// and share extension's, an Android app's app/, a TV app's Web/ and Phone/), its own files (Assets/), APP.md and
-    /// what it declares. Never Lamp's own files, which the Mac that opens the file writes.
+    /// and share extension's, an Android app's app/, a TV app's Web/ and Phone/, a page's Web/ and the Swift beside it),
+    /// its own files (Assets/), APP.md and what it declares. Never Lamp's own files, which the Mac that opens the file writes.
     private static func stageApp(_ project: LampProject, into stage: URL, attachedBytes: inout Int) throws -> Staged {
         let fm = FileManager.default
         var staged = Staged()
@@ -334,18 +338,11 @@ enum Sharing {
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try fm.copyItem(at: file, to: target)
         }
-        switch project.platform.target.recipe.language {
-        case .kotlin:
-            // An Android app's code is app/ as Lamp would open it (`AndroidFiles`): never Lamp's Gradle files beside it.
-            let files = AndroidFiles.list(in: project.dir)
+        // An Android app's code is app/ as Lamp would open it (`AndroidFiles`), never Lamp's Gradle files beside it; a
+        // TV app's, a game's and a web app's is its page without Lamp's files around it (`TVFiles`, `GameFiles`, `ScreenFiles`).
+        if let files = kindFiles(of: project.platform, in: project.dir) {
             for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
-        case .web:
-            let files = TVFiles.list(in: project.dir)
-            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
-        case .game:
-            let files = GameFiles.list(in: project.dir)
-            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
-        default:
+        } else {
             for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
             where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
                 try copy(file, as: relativePath(of: file, in: project.dir))
@@ -508,8 +505,8 @@ enum Sharing {
             return inAssets != file.lastPathComponent || file.path.contains("/\(Sharing.Assets.folder)/") ? inAssets : Sharing.relativePath(of: file, in: legacy)
         }
         let fileCount: Int
-        /// A TV app's pictures, sounds and fonts under Web/ and Phone/: data the TV shows, never code. Its pages and
-        /// scripts are in `sources`.
+        /// A page's pictures, sounds and fonts under Web/ (and a TV app's Phone/): data the page shows, never code. Its
+        /// pages and scripts are in `sources`.
         var webData: [URL] = []
         /// The wish's other apps (`Part`), each read from its folder as the app at the root is, for the review and the
         /// install alike: a part's code reaches an app's folder only from here.
@@ -595,13 +592,33 @@ enum Sharing {
         return package
     }
 
+    /// Whether a kind is an app around a page: a web app or a screen (`ScreenKit`), or a web game. Its page travels as
+    /// its code, with the Swift beside it, and the review reads it as a page.
+    static func isPage(_ platform: Platform) -> Bool {
+        ScreenKit.isWebApp(platform) || platform.target.recipe.language == .game
+    }
+
+    /// A kind's files in `folder` as they travel, for a kind whose code isn't Swift in Sources/ with Lamp's left out: an
+    /// Android app's app/ (`AndroidFiles`), a web app's or a screen's page and the Swift beside it (`ScreenFiles`, asked
+    /// first: its folder holds a TV app's page too), a TV app's Web/ and Phone/ (`TVFiles`), a web game's page (`GameFiles`).
+    /// Nil for a Swift app, whose files are read where this is called.
+    static func kindFiles(of platform: Platform, in folder: URL) -> (code: [URL], data: [URL])? {
+        if ScreenKit.isWebApp(platform) { return ScreenFiles.list(in: folder) }
+        switch platform.target.recipe.language {
+        case .kotlin: return AndroidFiles.list(in: folder)
+        case .web: return TVFiles.list(in: folder)
+        case .game: return GameFiles.list(in: folder)
+        default: return nil
+        }
+    }
+
     /// One app's files as unpacked (the wish's root, or one of its other apps in its folder), read as its kind travels:
     /// its code, the only code there is (reviewed, then installed from this one list), and its data.
     private static func read(app folder: URL, platform: Platform, family: DeviceFamily, name: String, identity: String?,
                              description: String?, fileCount: Int) throws -> Package {
         let language = platform.target.recipe.language
         let android = language == .kotlin ? AndroidFiles.list(in: folder) : nil
-        let web = language == .web ? TVFiles.list(in: folder) : language == .game ? GameFiles.list(in: folder) : nil
+        let web = android == nil ? kindFiles(of: platform, in: folder) : nil
         // Lamp's own files in Sources/ are never read from a file (a repository holds them so the code builds alone):
         // this Mac writes its own, and the review reads only the sender's code.
         let appCode = android?.code ?? web?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
@@ -757,6 +774,8 @@ enum Sharing {
         // (Lamp's own file there is written again before the build).
         if package.platform.target.recipe.language == .kotlin {
             try AndroidFiles.install(package, into: project)
+        } else if ScreenKit.isWebApp(package.platform) {
+            try ScreenFiles.install(package, into: project)
         } else if package.platform.target.recipe.language == .web {
             try TVFiles.install(package, into: project)
         } else if package.platform.target.recipe.language == .game {
@@ -1124,7 +1143,8 @@ extension Sharing {
         """
 
     static func reviewRequest(name: String, description: String?, notes: String?, files: [(name: String, text: String)],
-                              boundary: String? = nil, android: Bool = false, web: Bool = false, parts: [String] = []) -> ReviewRequest {
+                              boundary: String? = nil, android: Bool = false, web: Bool = false, page: Bool = false,
+                              parts: [String] = []) -> ReviewRequest {
         let material = ([description ?? "", notes ?? ""] + files.map(\.text)).joined()
         var code = boundary ?? randomBoundary()
         // Sixteen random bytes won't be in the file by chance; this is for the test that passes one in.
@@ -1193,7 +1213,7 @@ extension Sharing {
         phone if they choose it, where it reaches what the phone has (location, Health, photos, contacts) with \
         the phone's permission. Judge both halves. Code under Watch/ is an Apple Watch app that goes with it, \
         installed on the reader's watch with the iPhone app, and judged the same way.
-        \(android ? Self.androidReview : "")\(web ? Self.webReview : "")\(Self.partsReview(parts))
+        \(android ? Self.androidReview : "")\(web ? Self.webReview : "")\(page ? Self.pageReview : "")\(Self.partsReview(parts))
         Reply as one JSON object with exactly these four keys and nothing else: \
         {"summary": "<1-2 plain sentences: what the app does for the user>", \
         "capabilities": ["<one thing it reaches or does on the Mac or online>"], \
@@ -1331,26 +1351,28 @@ extension Sharing {
             if let browser = app.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
                 found.files.append((prefix + BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
             }
-            switch app.platform.target.recipe.language {
-            case .kotlin:
-                // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
-                // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
-                add(AndroidFiles.detected(in: app))
-            case .web:
-                add(TVFiles.detected(in: app.sources))
-            case .game:
-                // The page's reach as a TV app's page is read, and the Swift beside it (Native.swift) as any app's, without
-                // its comments: Lamp's scaffold names its blocks there as examples.
+            if isPage(app.platform) {
+                // A web app's, a screen's or a game's page is read for its reach as a TV app's page is, and the Swift beside
+                // it (Native.swift) as any app's, without its comments: Lamp's scaffold names its blocks there as examples.
                 let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                     .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
                     .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
                 add(TVFiles.detected(in: app.sources) + checklist.filter { item in
                     item.patterns.contains { swift.contains($0) }
                 })
-            default:
-                add(checklist.filter { item in
-                    item.patterns.contains { everything.contains($0) }
-                })
+            } else {
+                switch app.platform.target.recipe.language {
+                case .kotlin:
+                    // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
+                    // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
+                    add(AndroidFiles.detected(in: app))
+                case .web:
+                    add(TVFiles.detected(in: app.sources))
+                default:
+                    add(checklist.filter { item in
+                        item.patterns.contains { everything.contains($0) }
+                    })
+                }
             }
             if app.capabilities.background == true { add([startsAtLogin]) }
         }
@@ -1377,7 +1399,8 @@ extension Sharing {
         let apps = [package] + package.parts.map(\.package)
         let request = reviewRequest(name: package.name, description: package.description, notes: found.about, files: found.files,
                                     android: apps.contains { $0.platform.target.recipe.language == .kotlin },
-                                    web: apps.contains { $0.platform.target.recipe.language == .web },
+                                    web: apps.contains { $0.platform.target.recipe.language == .web && !ScreenKit.isWebApp($0.platform) },
+                                    page: apps.contains { isPage($0.platform) },
                                     parts: package.parts.map { "\(Parts.name(of: $0.package.platform)) in \($0.folder)/" })
         do {
             let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
