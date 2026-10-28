@@ -25,7 +25,7 @@ import picture from "@phosphor-icons/core/assets/duotone/image-duotone.svg?raw";
 // the house. It's dressed as home video: tape labels, the stripes on their sleeves, cream paper. Apps and games get
 // the same weight, so it never reads as a site for games only. Every example is a real starter
 // (Resources/Starters), with its own pictures and the changes it suggests.
-const pitch = "Start from an app or a game someone made. Say what to change and watch it change while it runs. Then put it on your TV.";
+const pitch = "Start from scratch or an app/game someone made. Change it live. Run it wherever you want.";
 const description = `Remixable software. ${pitch} No code.`;
 
 // The screenshots the 3D tapes print on their labels (lib/tapes.ts), one for each starter.
@@ -130,9 +130,9 @@ const devices = [
     <!-- Change it live: the app changing as it's asked, on an old television set, with its chat beside it. -->
     <section id="live" class="bg-tape text-paper">
       <div class="mx-auto flex max-w-[80rem] flex-col gap-12 px-4 py-28 sm:px-6">
-        <div class="flex flex-wrap items-end justify-between gap-x-16 gap-y-5">
+        <div class="flex flex-col gap-5">
           <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Change it live.</h2>
-          <p class="max-w-[36ch] text-xl leading-normal text-[#e6dfca]">{together("Ask for a change in the chat beside the app, and it changes in front of you. No rebuild, no restart.")}</p>
+          <p class="max-w-[44ch] text-xl leading-normal text-[#e6dfca]">{together("Small tweak, visual overhaul, major change – ask it and see it change in front of you. No rebuild, no restart, no server to manage.")}</p>
         </div>
         <ChangeStory />
       </div>
@@ -158,7 +158,7 @@ const devices = [
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
         <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
-        <p class="max-w-[36ch] text-xl leading-normal">{together("Start from something someone made, or something a friend shared. Your version goes on the shelf right beside the original.")}</p>
+        <p class="max-w-[36ch] text-xl leading-normal">{together("Start from scratch, from what someone made, or what a friend shared. Keep your changes and pull their improvements in when you want.")}</p>
       </div>
     </section>
 
@@ -175,7 +175,7 @@ const devices = [
           ))
         }
       </ul>
-      <p class="max-w-[52ch] text-xl leading-normal">{together("Developer mode on the TV, the maker's sign-in and certificates, finding the box on your Wi‑Fi: Lamp walks you through the part where people usually give up.")}</p>
+      <p class="max-w-[52ch] text-xl leading-normal">{together("Lamp makes things not only look good in tons of devices, but makes it easy for you to set it up.")}</p>
     </section>
 
     <!-- The lamp's light falls across the last section, in the sleeve's stripes, and on through the footer. -->
