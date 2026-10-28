@@ -77,7 +77,34 @@ each; `Destination.emulator` says which one an app opens in, and Stop closes it 
 game or a screen given Android TV opens there too, in Lamp's Android app around its page ("Pages and their hosts" in
 the devices guide), and Try On lists the TV emulator and the person's TVs apart from the phone and the phones. `use_app` presses the
 remote's keys (select, menu and play beside the arrows, back and home). A TV has no cable to the Mac, so Try On's
-Connect Over Wi‑Fi… (`AndroidWiFi`) pairs and connects adb over the network: Android 11 and later's wireless debugging,
-found by adb's own search (`Adb.networkServices`, `adb mdns services`), pairs with the code the TV shows (`Adb.pair`,
-the code on adb's input) and connects on the port it offers; a Fire TV or an older device connects on 5555 and asks on
-its screen to allow this Mac. Phones can connect the same way. Android TV apps can't be shared as a file yet.
+Connect Over Wi‑Fi… (`AndroidWiFi`) pairs and connects adb over the network. It goes by what each device shows now
+(`AndroidWiFi.standing`), not by a fixed order: one this Mac is allowed on is ready; one with its pairing screen open
+(Wireless debugging, found by adb's own search: `Adb.networkServices`, `adb mdns services`) needs only its code, sent
+once six digits are in and once per code and endpoint (`Adb.pair`, the code on adb's input); a Fire TV's old port (5555)
+is connected to, and the TV asks on its screen to allow this Mac; one that shows nothing gets the steps on its remote.
+After pairing, Lamp waits for adb to connect by itself, as it does to every device it has paired with whenever its
+search sees it, then connects to the port the search shows, or asks for the one the TV's Wireless debugging screen
+shows: never 5555, since a device paired this way is reached the way it was paired. Typed by hand (another subnet, or
+mDNS blocked), the pairing address and the connection address are two fields, as they're two ports. Each way in is
+its own port in `AndroidWiFi.Found` (`pairPort`, `connectPort`, `legacyPort`); a TV offers Wireless debugging's and the
+old one at once. Google TVs and Android TVs with no debugging on yet are found by the look on the network: a host
+offering the TV's remote service and Cast at one address (`AndroidTVs.found`, named by Cast's `fn`), offered as Set Up
+under Try On and listed in the window; found isn't the person's, so nothing connects to it. Phones can connect the
+same way.
+
+**A TV's identity** (`AndroidTVs`). adb names a device on the network by a selector that doesn't last (an address and
+port that change each time Wireless debugging is turned on, or the name adb's search gives its service) and can list
+one TV under both. So a TV this Mac's adb is allowed on is kept as a record of Lamp's (`android-tv:<uuid>`, in the
+support folder's Android/tvs.json) with the serial it reads (`ro.serialno`), the selectors it was listed under, its
+last address (only where to try connecting, never proof of identity) and how it was let in (Wireless debugging, or a
+Fire TV's old port). `Adb.devices()` folds adb's listing into those records (`AndroidTVs.merge`): two selectors are one
+TV only when they read the same serial and reach the same address, a placeholder serial makes no record, ambiguous
+rows stay as adb listed them, and a kept TV adb can't see is still listed, away, with what to turn back on. Try On's
+choice (`project.device`) is the record's id; every command goes to the selector adb reaches the TV by now
+(`Device.adb`): Play, Stop, the checks, `use_app`, the launch queue and the screen's lease (by `AndroidRun.device`), so
+one TV reached two ways is one queue. adb reconnects paired devices itself; Lamp connects a kept TV only when it's
+still missing a few seconds after it was first missed, to the port its service offers now, or a Fire TV at its last
+address's 5555, once a minute at most (`AndroidTVs.reconnect`). A choice made before TVs were kept names a selector:
+one that's adb's search name, carrying the serial the TV reads, becomes its record's (`AndroidTVs.adopts`); an address
+and port proves nothing (ports come round again, and 5555 is every Fire TV's), so Play asks the person to choose the TV
+again under Try On. Each Lamp has its own adb key: pairing one doesn't let the other in. Android TV apps can't be shared as a file yet.

@@ -996,13 +996,16 @@ struct DevicesSection: View {
     /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
     /// Mac's, and an Android device's is the device's own.
     private func keptByLamp(_ device: Device) -> Bool {
-        device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
+        if AndroidTVs.isRecord(device.id) { return true }
+        return device.kind.isTV ? TVs.kept().contains { $0.id == device.id } : device.kind == .other && Integrations.kept(device.id) != nil
     }
 
     /// Reconnect: a TV's setup window, checked again from where it stands; another device's setup from the start, its
     /// certificate let go, so a reset device or one whose developer mode was turned on again is trusted afresh.
     private func reconnect(_ device: Device) {
-        if device.kind.isTV {
+        if AndroidTVs.isRecord(device.id) {
+            AndroidWiFi.shared.show(host: device.address)
+        } else if device.kind.isTV {
             TVs.reconnect(device.id)
             store.refreshDevices()
             TVSetup.shared.show(device.udid)
@@ -1013,7 +1016,9 @@ struct DevicesSection: View {
     }
 
     private func forget(_ device: Device) {
-        if device.kind.isTV {
+        if AndroidTVs.isRecord(device.id) {
+            AndroidTVs.forget(device.id)
+        } else if device.kind.isTV {
             TVs.forget(device.id)
         } else {
             DeviceSetupModel.discard(device.id)

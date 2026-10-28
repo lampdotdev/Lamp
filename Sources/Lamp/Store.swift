@@ -167,7 +167,7 @@ struct LampProject: Identifiable, Hashable {
     /// On iOS now: the simulator, or the person's phone. The rest of Lamp's phone work follows this, and an
     /// app for both goes through it only while that's where it opens.
     var onIOS: Bool { destination == .ios }
-    /// An Android app: the emulator, or the person's own Android device (`device`, its adb serial).
+    /// An Android app: the emulator, or the person's own Android device (`device`: its adb serial, or a TV's record).
     var onAndroid: Bool { destination.isAndroid }
     /// A TV app: the TV preview on this Mac, or one of the person's TVs (`device`, its id in `TVs`).
     var onTV: Bool { destination == .tv }
@@ -2237,6 +2237,24 @@ final class Store: ObservableObject {
             log(changed, .status, said)
             finish(changed)
         }
+    }
+
+    enum AndroidChoice { case device(Device), confirm(Device) }
+
+    /// The device a choice under Try On names. A TV is chosen by its record's id (`AndroidTVs`); a choice made before
+    /// Lamp kept TVs names the selector adb had for it then. One that's the name adb's search gives a TV carries its
+    /// serial, and when that's the serial the TV answering under it reads, it's the same TV: the choice becomes its
+    /// record's. One that's an address and port proves nothing (ports come round again, and 5555 is every Fire TV's),
+    /// so the TV answering there is the person's to confirm, by choosing it again.
+    func androidChoice(_ chosen: String, of project: LampProject) -> AndroidChoice? {
+        if let device = devices.first(where: { $0.udid == chosen }) { return .device(device) }
+        guard let device = devices.first(where: { AndroidTVs.isRecord($0.id) && $0.aliases.contains(chosen) }) else { return nil }
+        guard AndroidTVs.adopts(chosen, as: device) else { return .confirm(device) }
+        var changed = project
+        changed.device = device.id
+        try? Template.saveMeta(changed)
+        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index].device = device.id }
+        return .device(device)
     }
 
     /// Which TV a TV app goes on when the person presses Play, by its id in `TVs`, or nil for the preview alone. A TV
@@ -7097,7 +7115,7 @@ final class Store: ObservableObject {
         if let kind = Emulator.kind(of: open.serial) {
             tv = kind == .tv
         } else {
-            guard let device = devices.first(where: { $0.udid == open.serial }) else { return nil }
+            guard let device = devices.first(where: { $0.udid == open.device }) else { return nil }
             tv = device.features.contains("tv")
         }
         return tv == (place == .androidTV) ? open : nil
@@ -7108,7 +7126,7 @@ final class Store: ObservableObject {
     private func quietlyOnAndroid(_ project: LampProject, owner: Turn) async -> String? {
         if let open = await openAndroidCopy(project, on: project.destination) {
             var there = project
-            there.device = Emulator.kind(of: open.serial) == nil ? open.serial : nil
+            there.device = Emulator.kind(of: open.serial) == nil ? open.device : nil
             return await installOnAndroid(there, owner: owner, inFront: false)
         }
         guard let serial = await Emulator.running(project.destination.emulator) else { return "The emulator isn't on." }
@@ -8742,16 +8760,18 @@ final class Store: ObservableObject {
         return (200, ["text": text, "screenshots": Self.agentPictures(pictures, in: project)])
     }
 
-    /// One Android app as opened: where it runs (the emulator's or the device's serial), its process on the device,
-    /// and the log Lamp reads from it. `alive` is kept by a watch that asks the device for the process every couple
-    /// of seconds, since the log reader doesn't end when the app does.
+    /// One Android app as opened: which device it's on (`device`: the id Try On chooses it by, the emulator's serial
+    /// for an emulator), the selector adb reached it by (`serial`), its process on the device, and the log Lamp reads
+    /// from it. `alive` is kept by a watch that asks the device for the process every couple of seconds, since the
+    /// log reader doesn't end when the app does.
     @MainActor final class AndroidRun {
+        let device: String
         let serial: String
         let pid: Int32
         var log: Process?
         var alive = true
         var watch: Task<Void, Never>?
-        init(serial: String, pid: Int32, log: Process?) { self.serial = serial; self.pid = pid; self.log = log }
+        init(device: String, serial: String, pid: Int32, log: Process?) { self.device = device; self.serial = serial; self.pid = pid; self.log = log }
         func end() {
             alive = false
             watch?.cancel()
@@ -8764,9 +8784,9 @@ final class Store: ObservableObject {
     /// Which of Lamp's emulators the app is open in, or nil when it's on the person's own Android device or not open,
     /// for its chat to go beside it.
     func emulatorKind(of project: LampProject) -> Emulator.Kind? { androidApps[project.id].flatMap { Emulator.kind(of: $0.serial) } }
-    /// Which project each Android device's screen belongs to: the last launched there. A look or `use_app` by
-    /// another project whose app is still alive in the background is refused the screen, as the simulator's
-    /// leases do it.
+    /// Which project each Android device's screen belongs to (by `AndroidRun.device`): the last launched there. A
+    /// look or `use_app` by another project whose app is still alive in the background is refused the screen, as the
+    /// simulator's leases do it.
     private var androidLeases: [String: String] = [:]
     /// The screen density of the device each Android app is open on, for its pictures (`Adb.screenshot`).
     private var androidDensities: [String: Int] = [:]
@@ -8774,25 +8794,37 @@ final class Store: ObservableObject {
     private var androidFresh: Set<String> = []
 
     /// The launch in progress on each Android device, for the next one to wait for: as on a simulator, launches
-    /// on one device go one after another, so two apps can't be racing onto the same screen.
+    /// on one device go one after another, so two apps can't be racing onto the same screen. By the device's id, not
+    /// adb's selector: one TV adb reaches two ways is still one queue.
     private var androidWork: [String: Task<Void, Never>] = [:]
 
     /// Puts an Android app on the device Try On points at (the person's own, or the emulator, started when it
     /// isn't running) and opens it, with its log read into the app's log. Nil when it's open; else what went wrong.
     private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
-        let serial: String
+        let serial: String, key: String
         let kind = project.destination.emulator
         if let chosen = project.device {
             await refreshAndroidDevices()
-            let found = devices.first { $0.udid == chosen }
+            let found: Device?
+            switch androidChoice(chosen, of: project) {
+            case .device(let device):
+                found = device
+            case .confirm(let device):
+                let problem = "\(device.name) answers where the TV chosen under Try On was. To be sure it's the same TV, choose \(device.name) under Try On, then press Play."
+                log(project, .error, problem)
+                return problem
+            case nil:
+                found = nil
+            }
             guard let found, found.adbState == "device" else {
-                let problem = found.map { Adb.advice(for: $0.name, state: $0.adbState) }
+                let problem = found.map { Adb.advice(for: $0) }
                     ?? "Lamp can't see the Android device chosen under Try On. Plug it in and unlock it, or choose the emulator."
                 log(project, .error, problem)
                 return problem
             }
-            serial = chosen
+            serial = found.adb
+            key = found.id
             androidDensities[project.id] = found.density
         } else {
             // The TV emulator's first download can take many minutes: done before the queue, so it holds up no other
@@ -8804,9 +8836,10 @@ final class Store: ObservableObject {
                 }
             }
             serial = kind.serial
+            key = kind.serial
         }
         guard stillOwns() else { return "The app was deleted or stopped before it opened." }
-        let previous = androidWork[serial]
+        let previous = androidWork[key]
         let mine = Task<String?, Never> { [self] in
             await previous?.value
             guard stillOwns() else { return "The app was deleted or stopped before it opened." }
@@ -8824,25 +8857,25 @@ final class Store: ObservableObject {
                 }
                 guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             }
-            return await launchOnAndroid(project, owner: owner, serial: serial, inFront: inFront)
+            return await launchOnAndroid(project, owner: owner, device: key, serial: serial, inFront: inFront)
         }
-        androidWork[serial] = Task { _ = await mine.value }
+        androidWork[key] = Task { _ = await mine.value }
         return await mine.value
     }
 
     /// The launch itself, once the device is this project's turn: the device's screen is leased to it from here, and
     /// every wait asks again whether it still is.
-    private func launchOnAndroid(_ project: LampProject, owner: Turn, serial: String, inFront: Bool) async -> String? {
+    private func launchOnAndroid(_ project: LampProject, owner: Turn, device key: String, serial: String, inFront: Bool) async -> String? {
         let package = Template.androidPackage(for: project)
         func stillOwns() -> Bool {
-            exists(project) && turns[project.id] === owner && !owner.stopped && androidLeases[serial] == project.id
+            exists(project) && turns[project.id] === owner && !owner.stopped && androidLeases[key] == project.id
         }
         do {
             note("Opening \(project.name) on \(project.device == nil ? "the emulator" : "your device")…", for: project)
             retireLaunches(of: project)
             androidApps[project.id]?.end()
             // One Lamp app per device: another project's app there is closed first, so the screen is this app's.
-            for (other, run) in androidApps where other != project.id && run.serial == serial {
+            for (other, run) in androidApps where other != project.id && run.device == key {
                 if let theirs = projects.first(where: { $0.id == other }) {
                     retireLaunches(of: theirs)
                     await Adb.stop(Template.androidPackage(for: theirs), on: serial)
@@ -8850,7 +8883,7 @@ final class Store: ObservableObject {
                 run.end()
                 androidApps[other] = nil
             }
-            androidLeases[serial] = project.id
+            androidLeases[key] = project.id
             // Where the person was goes with the change: the running copy saves its state, and the new one opens from it.
             let fresh = androidFresh.remove(project.id) != nil
             var kept = false
@@ -8875,7 +8908,7 @@ final class Store: ObservableObject {
                 pid = try await Adb.launch(package, on: serial)
             }
             let logcat = (try? AppFolder.appendHandle(Runtime.logURL(project), in: project.dir)).flatMap { try? Adb.logcat(pid: pid, on: serial, log: $0) }
-            let run = AndroidRun(serial: serial, pid: pid, log: logcat)
+            let run = AndroidRun(device: key, serial: serial, pid: pid, log: logcat)
             androidApps[project.id] = run
             // Often in the first seconds, when a crash on launch would show and the launch watch is judging it.
             run.watch = Task { [weak self] in
@@ -8945,7 +8978,7 @@ final class Store: ObservableObject {
 
     /// Open, still this project's screen (no other app of Lamp's launched on that device since), and alive on the device.
     private func isAndroidRunning(_ project: LampProject) async -> Bool {
-        guard let open = androidApps[project.id], open.alive, androidLeases[open.serial] == project.id else { return false }
+        guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id else { return false }
         return await Adb.pid(of: Template.androidPackage(for: project), on: open.serial) == open.pid
     }
 
@@ -10688,11 +10721,11 @@ final class Store: ObservableObject {
             if let running = androidApps[project.id] {
                 await Adb.stop(package, on: running.serial)
                 running.end()
-                if androidLeases[running.serial] == project.id { androidLeases[running.serial] = nil }
+                if androidLeases[running.device] == project.id { androidLeases[running.device] = nil }
             } else {
                 // Open there without Lamp watching it (opened on the device, or by a Lamp that has since restarted):
                 // Stop still closes it where Try On points.
-                let serial = project.device ?? project.destination.emulator.serial
+                let serial = project.device.map { id in devices.first { $0.udid == id }?.adb ?? id } ?? project.destination.emulator.serial
                 if await Adb.pid(of: package, on: serial) != nil { await Adb.stop(package, on: serial) }
             }
             androidApps[project.id] = nil

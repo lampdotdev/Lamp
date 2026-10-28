@@ -68,12 +68,13 @@ certificate go and starts its setup over from the first step (`reconnect`, `Inte
 only to the device whose new certificate the first request keeps; an app waiting on it goes on once that setup is done.
 Only the person's click trusts a new certificate. Settings → Your Devices has Reconnect… and Forget… for every device
 Lamp set up itself (an integration's, a TV; not a phone, whose pairing is the Mac's), Forget taking its record, its
-certificates and keys, what was typed for it and its approvals (`Integrations.forget`, `TVs.forget`).
+certificates and keys, what was typed for it and its approvals (`Integrations.forget`, `TVs.forget`, `AndroidTVs.forget`).
 
 **Set up or possible** (`Device.isSetUp`). A device set up with Lamp is the person's; one Lamp only found on the network
 is a possible device, which may be a neighbor's on a shared network. Set up isn't ready: a device part-way through
 its setup, away from the network, or needing new credentials is still set up. This Mac, every Android device adb lists
-(plugged in or connected over Wi‑Fi from this Mac) and the emulator are; an iPhone or iPad once it's paired with this
+(plugged in or connected over Wi‑Fi from this Mac), an Android TV Lamp keeps (`AndroidTVs`, while adb can't see it
+too) and the emulator are; an iPhone or iPad once it's paired with this
 Mac or plugged in, before Developer Mode; a watch once Xcode lists it paired; a TV or an integration's device once it's
 kept (`Device.kept`, read from `TVs.kept` and `Integrations.kept` each time the devices are read, so setup, Forget and
 finding it again move it). Nothing is migrated: the kept records already say it. A possible device is never called the

@@ -86,8 +86,8 @@ struct Device: Identifiable, Hashable {
         }
     }
 
-    /// The udid for a device of Xcode's; this Mac is `Device.macID`.
-    let id: String
+    /// The udid for a device of Xcode's; this Mac is `Device.macID`; an Android TV's record (`AndroidTVs`).
+    var id: String
     let kind: Kind
     let maker: String
     /// "iPhone 16 Pro Max", "MacBook Pro".
@@ -117,6 +117,15 @@ struct Device: Identifiable, Hashable {
     /// An Android device's state as adb lists it: "device" (usable), "unauthorized" (debugging not yet allowed to
     /// this Mac), "offline".
     var adbState = "device"
+    /// The selector adb reaches an Android device by now (`-s`), when that isn't its id: a TV Lamp keeps
+    /// (`AndroidTVs`) has an id of Lamp's own, while adb names it by an address and port that change, or by its
+    /// mDNS name.
+    var adbSerial: String?
+    var adb: String { adbSerial ?? id }
+    /// An Android TV's: every selector adb lists it under now, the serial it says it has, and how this Mac is let in.
+    var aliases: [String] = []
+    var serialNumber: String?
+    var transport: AndroidTVs.Transport?
     /// An Android device's pixels per inch, for turning its pictures' pixels into points.
     var density: Int?
     /// A TV's address on the network, and a Samsung TV's device id, which its certificate names.
@@ -160,7 +169,7 @@ struct Device: Identifiable, Hashable {
     /// A TV or other device Lamp reaches over the network that didn't answer the last look: off, or on another network
     /// (a home elsewhere). Its setup is kept as it was, but nothing can be put on it, or set up, until it's found
     /// again. Not a phone: Xcode opens a phone's connection only when it's needed, so its `connected` says little.
-    var isAway: Bool { (kind.isTV || kind == .other) && reach == .network && !connected }
+    var isAway: Bool { ((kind.isTV || kind == .other) && reach == .network && !connected) || (kind == .android && adbState == "away") }
     /// Set up with Lamp: the person has made it theirs here, so it's one of their devices. Otherwise it's a possible
     /// device, only found on the network, which may be a neighbor's on a shared Wi‑Fi or a building's.
     ///
@@ -179,7 +188,8 @@ struct Device: Identifiable, Hashable {
     }
 
     /// Where it stands for a list: "Not on this network" while it's away, else its setup's words.
-    var status: String { isAway ? "Not on this network" : setup().words }
+    /// An Android TV that's away is usually on the network with its debugging off, so its step says what to turn on.
+    var status: String { isAway && kind != .android ? "Not on this network" : setup().words }
     var family: DeviceFamily? { kind == .ipad ? .ipad : kind == .iphone ? .iphone : nil }
     var osMajor: String { String(osVersion.split(separator: ".").first ?? Substring(osVersion)) }
 
@@ -200,11 +210,13 @@ struct Device: Identifiable, Hashable {
         case .androidEmulator:
             return adbState == "device" ? .ready : .needs("Start it again")
         case .android:
+            let tv = features.contains("tv") && reach == .network
             switch adbState {
             case "device": return .ready
-            case "unauthorized": return .needs("Allow USB debugging on it")
-            case "offline": return .needs("Reconnect it")
-            default: return .needs("Turn on USB debugging on it")
+            case "away": return .needs(transport == .legacy ? "Turn on ADB debugging on it" : "Turn on Wireless debugging on it")
+            case "unauthorized": return .needs(tv ? "Allow this Mac on it" : "Allow USB debugging on it")
+            case "offline": return .needs(tv ? "Turn it on" : "Reconnect it")
+            default: return .needs(tv ? "Turn on debugging on it" : "Turn on USB debugging on it")
             }
         case .samsungTV:
             // `paired` is kept (a setup step worked); `developerMode`, pointed at this Mac.
@@ -334,8 +346,10 @@ struct Device: Identifiable, Hashable {
                             model: emulator ? "Android emulator" : (model ?? "Android device"),
                             modelID: properties["ro.product.device"] ?? "", name: name, os: "Android",
                             osVersion: properties["ro.build.version.release"] ?? "",
-                            input: [tv ? "remote" : "touch"], features: tv ? ["tv"] : [], reach: emulator ? .thisMac : serial.contains(":") ? .network : .cable)
+                            input: [tv ? "remote" : "touch"], features: tv ? ["tv"] : [], reach: emulator ? .thisMac : serial.contains(":") || AndroidTVs.isMDNS(serial) ? .network : .cable)
         device.adbState = state
+        device.serialNumber = properties["ro.serialno"].flatMap { $0.isEmpty ? nil : $0 }
+        if device.reach == .network { device.address = AndroidTVs.address(of: serial, services: []) }
         device.density = properties["density"].flatMap { Int($0) }
         if let size = properties["size"], let density = device.density {
             let parts = size.split(separator: "x").compactMap { Int($0) }
