@@ -85,9 +85,16 @@ enum Upstream {
                 baseMark = mark
             }
         }
+        // The version the file was made from, unless the last update brought in was made from that same version (a
+        // file that comes back again names the version it was first given): what it brought is the base then, so a
+        // change it took back isn't kept by mistake.
         if baseMark == nil, let own = await ownVersion(named: package.credits, in: project) {
-            baseMark = try await ownMark(own, in: project, indexes: indexes)
-            base = .own(own)
+            var repeated = false
+            if let lastBrought { repeated = await ownBase(of: lastBrought, in: project) == own }
+            if !repeated {
+                baseMark = try await ownMark(own, in: project, indexes: indexes)
+                base = .own(own)
+            }
         }
         if baseMark == nil, let lastBrought {
             base = .lastBrought
@@ -105,15 +112,27 @@ enum Upstream {
         }
         guard let baseMark else { throw Failure(message: "Lamp couldn't prepare the merge.") }
 
-        // The reviewed package, staged as the import installs it: never the raw tree. A part not here yet is left to
-        // be made as an update makes one.
+        // The reviewed package, staged as the import installs it: never the raw tree. A part not here yet is made as
+        // an update makes one, and left out of what's merged; it's in the tree kept as the next base all the same, so
+        // a change to it here later isn't new on both sides.
         let (_, localParts) = Sharing.layout(of: project)
         let newParts = package.parts.filter { part in !localParts.contains { $0.dir.lastPathComponent == part.folder } }
         let staged = work.appendingPathComponent("theirs")
-        try stage(package, for: project, into: staged)
+        try stage(package, for: project, into: staged, newParts: false)
         let theirsTree = try await tree(of: staged, in: project, indexes: indexes)
-        let madeTheirs = await run("\(signed) commit-tree \(theirsTree) -p \(baseMark) -m 'The latest upstream as Lamp read it'", in: project)
+        // The commit says which version of this wish it was measured against, when it was one, for the next merge.
+        var note = "The latest upstream as Lamp read it"
+        if case .own(let own) = base { note += "\n\nLamp-Own-Base: \(own)" }
+        let madeTheirs = await run("\(signed) commit-tree \(theirsTree) -p \(baseMark) -m \(Sandbox.quoted(note))", in: project)
         guard madeTheirs.status == 0, let theirsMark = Credits.validCommit(madeTheirs.output) else { throw Failure(message: "Lamp couldn't prepare the merge.") }
+        var keptMark = theirsMark
+        if !newParts.isEmpty {
+            let whole = work.appendingPathComponent("whole")
+            try stage(package, for: project, into: whole, newParts: true)
+            let wholeTree = try await tree(of: whole, in: project, indexes: indexes)
+            let madeWhole = await run("\(signed) commit-tree \(wholeTree) -p \(baseMark) -m \(Sandbox.quoted(note))", in: project)
+            if madeWhole.status == 0, let mark = Credits.validCommit(madeWhole.output) { keptMark = mark }
+        }
         // The ref names the merge's other side for its markers; a merge that fails gives it back what it had.
         guard await run("git update-ref \(ref) \(theirsMark)", in: project).status == 0 else { throw Failure(message: "Lamp couldn't prepare the merge.") }
         func putBackRef() async {
@@ -145,6 +164,7 @@ enum Upstream {
             await putBackRef()
             throw Failure(message: "Lamp couldn't put the merged files in place.")
         }
+        if keptMark != theirsMark { _ = await run("git update-ref \(ref) \(keptMark)", in: project) }
         // The icon's pictures live outside the versions: the package's go in when its icon changed upstream, for the
         // design as git merged it (icon.json is in the files), never in place of a design changed here. The
         // description the same way, from the shared file's manifest.
@@ -189,6 +209,12 @@ enum Upstream {
         let mine = Credits.Remix(name: project.name, wish: identity)
         guard let commit = credits.remixOf.last(where: { $0.sameWish(as: mine) })?.commit else { return nil }
         return await ownVersion(commit, in: project)
+    }
+
+    /// The version of this wish's own history a kept upstream was measured against, when it was one.
+    private static func ownBase(of commit: String, in project: LampProject) async -> String? {
+        let said = await run("git log -1 --format=%(trailers:key=Lamp-Own-Base,valueonly) \(commit)", in: project)
+        return said.status == 0 ? Credits.validCommit(said.output.trimmed) : nil
     }
 
     /// `commit` when it's a version of this wish's own history.
@@ -278,9 +304,10 @@ enum Upstream {
     /// wish is, and nothing else from the tree. Each app's code from the one list the review read (`Package.sources`),
     /// an Android app's moved into this Mac's package as the install moves it (`AndroidFiles`), its own files, its
     /// notes, what it declares as Lamp writes it and the licenses the credits name; the wish's other apps the same way
-    /// in their folders, those here already. Lamp's own files are never among them, nor the icon's pictures, which
-    /// live outside the versions (`Sharing.installArtwork`), nor credits.json, which Lamp merges itself.
-    static func stage(_ package: Sharing.Package, for project: LampProject, into folder: URL) throws {
+    /// in their folders: those here already, and with `newParts` the others too (as the apps they'll be, by their
+    /// folders), for the tree kept as the next base. Lamp's own files are never among them, nor the icon's pictures,
+    /// which live outside the versions (`Sharing.installArtwork`), nor credits.json, which Lamp merges itself.
+    static func stage(_ package: Sharing.Package, for project: LampProject, into folder: URL, newParts: Bool = false) throws {
         let fm = FileManager.default
         let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
         // A file may be listed twice (a license the credits name inside a part is in the wish's list and the part's; one
@@ -331,8 +358,12 @@ enum Upstream {
         let (root, parts) = Sharing.layout(of: project)
         try stage(package, for: root, into: folder)
         for part in package.parts {
-            guard let local = parts.first(where: { $0.dir.lastPathComponent == part.folder }) else { continue }
-            try stage(part.package, for: local, into: folder.appendingPathComponent(part.folder))
+            if let local = parts.first(where: { $0.dir.lastPathComponent == part.folder }) {
+                try stage(part.package, for: local, into: folder.appendingPathComponent(part.folder))
+            } else if newParts {
+                let coming = LampProject(id: part.folder.lowercased(), name: project.name, exe: project.exe, dir: project.dir.appendingPathComponent(part.folder))
+                try stage(part.package, for: coming, into: folder.appendingPathComponent(part.folder))
+            }
         }
     }
 

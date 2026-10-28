@@ -3383,7 +3383,7 @@ final class Store: ObservableObject {
         if !merged.newParts.isEmpty {
             var arriving = package
             arriving.parts = merged.newParts
-            let notIn = await installParts(of: arriving, into: project)
+            let notIn = await installParts(of: arriving, into: project, onlyNew: true)
             if !notIn.isEmpty { log(project, .error, "\(notIn.joined(separator: ", ")) couldn't be put in place.") }
         }
         guard merged.conflicts.isEmpty else {
@@ -3466,7 +3466,9 @@ final class Store: ObservableObject {
     /// this Mac can't make yet keeps its files with the wish (`Sharing.keep`) and goes in once it can. A part the wish
     /// has and the file doesn't is left as it is. Returns the apps whose files couldn't be put in place, or kept, so an
     /// update can put the whole wish back and a fresh import can say so.
-    private func installParts(of package: Sharing.Package, into wish: LampProject) async -> [String] {
+    /// `onlyNew` makes only the parts the wish has no folder for, as a merge asks (`Upstream.Merged.newParts`): an
+    /// app of the same family already here is never taken for one of them, since its files were merged in place.
+    private func installParts(of package: Sharing.Package, into wish: LampProject, onlyNew: Bool = false) async -> [String] {
         var notIn: [String] = []
         func failed(_ kind: Platform) {
             let name = Parts.name(of: kind)
@@ -3479,7 +3481,8 @@ final class Store: ObservableObject {
             // one of its family while the wish and the file have one each.
             let family = { (kind: Platform) in Parts.group(kind) == Parts.group(part.package.platform) }
             var had = parts(of: wish).first { part.folder.lowercased() == $0.dir.lastPathComponent.lowercased() }
-            if had == nil, package.parts.filter({ family($0.package.platform) }).count == 1, parts(of: wish).filter({ family($0.platform) }).count == 1 {
+            if onlyNew, had != nil { continue }
+            if had == nil, !onlyNew, package.parts.filter({ family($0.package.platform) }).count == 1, parts(of: wish).filter({ family($0.platform) }).count == 1 {
                 had = parts(of: wish).first { family($0.platform) }
             }
             if let have = had, have.platform != kind {
