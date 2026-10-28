@@ -266,8 +266,41 @@ there is one, with a row that says "An update is available" or "Your app is up t
 GitHub for the default branch's latest commit (`git ls-remote`, confined, no sign-in, no clone, no model), at most daily
 by itself and coalesced across wishes following the same repository, and compares it with the commit the wish has.
 Which repository a wish follows (`AppUpdates.route`): a wish from another wish follows that wish (below); a wish the agent
-made from someone's own project follows the work it's based on, the first `upstream` source, when that's on GitHub with
-the commit it was taken at. A source with no commit is offered nothing.
+made from someone's own project follows the work it's based on (`Credits.basis`: the source marked `adapted`, else the
+first, as credits from before the mark have it), when that's on GitHub with the commit it was taken at. A source with
+no commit is offered nothing. A wish made from a tag or a branch other than the default is credited at that exact
+commit, and its updates follow the default branch from there.
+
+### Someone's project on GitHub, brought in by the agent
+
+A wish never guesses from a link what the person wants: a request naming a project on GitHub goes to the agent as
+typed, and the agent does what it asks with the github-projects skill and `github_project` (`GitHubProjects`). The
+tool's work is all Lamp's, so it asks for no approval, and it never runs what the project holds; the agent's own
+commands are approved as ever.
+
+- **fetch** gets the project only when called, one commit deep, with Lamp's confined git (`RepoImport.clone`), and with
+  the person's sign-in through `gh` for a project only they can read (`GitHubProjects.fetchAnyway`, as Put on GitHub…
+  signs in). It goes to `.lamp/reference/<owner>/<name>@<commit>` and the answer gives that as a handle, so two owners'
+  projects of one name, or two commits of one project, are never taken for each other. Fetching credits nothing.
+- **build_from** credits exactly the snapshot a handle names (`GitHubProjects.snapshot` checks the folder is still at
+  that commit and from that repository): its entry in credits.json through `Credits.add`, its own record included,
+  and every license and notice file copied as it came into `Licenses/<owner>-<name>/` (`RepoLicenses`; the license in
+  `licenseFile`, the rest in `noticeFiles`). The license's SPDX id is recorded only when Lamp can tell it for certain
+  from a single license file; otherwise the credit says `LicenseRef-<owner>-<name>`, terms of its own, with the texts
+  as the authority, never a guessed id (GPL texts don't say "only" or "or later"). `adapted` marks the project the wish
+  is made from, which its updates follow; a wish has one, and a library or assets it uses are credited unmarked.
+  Every file a credit names goes with the shared file and comes back on import (`Credits.Source.termsFiles`,
+  `Sharing.export`, `Sharing.open`), and sharing is refused while one is missing (`ShareCheck`).
+- **open_wish** hands a Lamp wish someone put on GitHub to the import review, with the person's request kept beside
+  it for the new wish's box, as a link's request is.
+- **check** makes the wish as Put on GitHub… would put it up (`GitHubRepo.stage` with no repository: lamp-app.json from
+  the shared file's manifest, credits.json, the icon, the license files, Lamp's own files, README) and opens it again
+  as Open from GitHub… does (`RepoImport.open`), reporting the manifest, what it's based on, which repository its
+  updates follow, and any license or notice file the importer wouldn't find. The tree is kept in `.lamp/repository` for
+  a look; nothing goes anywhere until the person chooses Put on GitHub….
+
+That the agent credits a project before copying from it is the skill's instruction and the tool's answer; nothing
+checks what was copied, so a project read with fetch and copied without build_from goes uncredited.
 
 An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version
 and makes a separate copy of it, unsaved changes included (`Sharing.export`, then a wish of its own with Lamp's files

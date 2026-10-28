@@ -72,7 +72,7 @@ enum Agent {
 
     /// Rules for the tools every engine has: pi through Resources/lamp-tools.ts, Claude Code and
     /// Codex through Lamp's MCP endpoint (Store.mcp). Keep the two in step.
-    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + deviceRules + (Memory.isOn ? memoryRules : "") }
+    static var tryRules: String { talkRules + findRules + lookRules + planRules + artRules + setupRules + connectorRules + githubRules + deviceRules + (Memory.isOn ? memoryRules : "") }
 
     /// For the engines whose shell commands run confined (Sandbox): what the shell can and can't reach.
     static let sandboxNote = """
@@ -298,6 +298,13 @@ enum Agent {
 
     /// Which services there are and how to build on each is the tool's answer (Connectors), so this stays one
     /// rule however many there are.
+    private static let githubRules = """
+
+    - When a request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request \
+    asks: fetch the project with `github_project` only when you need its contents, never with git, gh or a download of \
+    your own, and credit it with build_from before using any of it.
+    """
+
     private static let connectorRules = """
 
     - When a wish needs a service the person uses (their Notion, Airtable, GitHub, Home Assistant…) that the \
@@ -614,9 +621,7 @@ enum Agent {
         run it yourself, and build it only where a rule here says to check that it compiles. When you finish, Lamp \
         {{RELAUNCH}}, and if the build fails your next message will contain the compiler errors to fix. If \
         something you need is denied or unavailable, say plainly what you need (for \
-        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. When a \
-        request names a project on GitHub, open the github-projects skill with `read_skill` and do what the request asks: \
-        fetch the project with `github_project` only when you need its contents, never with git or gh yourself. \
+        example "attach the files"); a refused command is final, so never say the user will be asked to approve it. \
         Never tell the user to approve prompts or change \
         permission settings anywhere else: Lamp is the only place they can approve anything.
         """
