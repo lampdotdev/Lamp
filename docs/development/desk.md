@@ -142,7 +142,7 @@ panel open.
 makes of it, and a change made there is overwritten by the next publish. A change is best made in Lamp Dev, where it's
 played as it's made: open the starter with File → Open from GitHub… (github.com/lampdotdev/<folder>, the starter as it
 is now), ask for the change, then bring it back with `scripts/pull-starter.sh <folder> <the wish's folder>` (after
-`./build.sh`; an address or a folder holding a repository's tree works too). It reads the wish as the import does
+`./build.sh`; a folder holding a repository's tree works too, and an address, which the script clones first). It reads the wish as the import does
 (`StarterRepos.pull`) and writes the starter's code and files, APP.md, what it declares, its about.json line and
 credits.json, each only when it differs, leaving starter.md, preview.png and the icon's pictures as they are; it says
 so when the icon's design changed (draw it again, step 5 below) and when the wish began from an older version of the

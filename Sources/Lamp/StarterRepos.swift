@@ -68,53 +68,39 @@ enum StarterRepos {
 
     /// `Lamp --pull-starter <starter> <source>`, with `STAGE_STARTERS=1`: the starter's files in
     /// `Resources/Starters/<starter>` (under the current folder) taken from a wish changed in Lamp (`source`: the wish's
-    /// folder, a folder holding a repository's tree, or a repository's address), then quits. What changed is for git to
-    /// say; a change to its icon's design is said here, since the icon's pictures are drawn separately.
+    /// folder, or a folder holding a repository's tree, which `scripts/pull-starter.sh` clones for an address), then
+    /// quits. What changed is for git to say; what else needs saying is printed.
     static func pullFromCommandLine() -> Never {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: pullFlag), index + 2 < arguments.count else {
-            FileHandle.standardError.write(Data("Usage: Lamp \(pullFlag) <starter folder name> <wish folder, repository folder or address>\n".utf8))
+            FileHandle.standardError.write(Data("Usage: Lamp \(pullFlag) <starter folder name> <wish folder or repository folder>\n".utf8))
             exit(2)
         }
         let name = arguments[index + 1], source = arguments[index + 2]
         let starter = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/Starters/\(name)")
         Sharing.knownSecrets = { _ in [] }
-        let done = DispatchSemaphore(value: 0)
-        var status: Int32 = 0
-        Task.detached {
-            do {
-                let package = try await read(source)
-                defer { try? FileManager.default.removeItem(at: package.folder) }
-                let notes = try pull(package, into: starter)
-                for note in notes { print(note) }
-            } catch {
-                FileHandle.standardError.write(Data("Couldn't bring \(name) back: \(error.localizedDescription) \((error as? LocalizedError)?.recoverySuggestion ?? "")\n".utf8))
-                status = 1
-            }
-            done.signal()
+        do {
+            let package = try read(source)
+            defer { try? FileManager.default.removeItem(at: package.folder) }
+            for note in try pull(package, into: starter) { print(note) }
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("Couldn't bring \(name) back: \(error.localizedDescription) \((error as? LocalizedError)?.recoverySuggestion ?? "")\n".utf8))
+            exit(1)
         }
-        done.wait()
-        exit(status)
     }
 
-    /// The wish as the import reads it, so only what the review reads comes in: a repository by its address (fetched
-    /// as Open from GitHub… fetches one), a folder holding a repository's tree, or a wish's own folder (exported as a
-    /// shared file is, then opened).
-    static func read(_ source: String) async throws -> Sharing.Package {
-        let fm = FileManager.default
-        if let address = RepoImport.source(from: source), !fm.fileExists(atPath: source) {
-            let folder = RepoImport.cloneFolder()
-            defer { try? fm.removeItem(at: folder) }
-            let tree = try await RepoImport.clone(address, into: folder)
-            return try RepoImport.open(folder: tree)
-        }
+    /// The wish as the import reads it, so only what the review reads comes in: a folder holding a repository's tree
+    /// (`RepoImport.open`, which names the commit a clone is at), or a wish's own folder (exported as a shared file
+    /// is, then opened).
+    static func read(_ source: String) throws -> Sharing.Package {
         let folder = URL(fileURLWithPath: (source as NSString).expandingTildeInPath, isDirectory: true)
-        if fm.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return try RepoImport.open(folder: folder) }
+        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return try RepoImport.open(folder: folder) }
         guard let wish = Store.readWish(at: folder) else {
-            throw Sharing.ImportError("\(folder.path) isn't a wish, a repository's tree or an address Lamp can read.")
+            throw Sharing.ImportError("\(folder.path) isn't a wish or a repository's tree Lamp can read.")
         }
         let file = try Sharing.export(wish)
-        defer { try? fm.removeItem(at: file.deletingLastPathComponent()) }
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         return try Sharing.open(file)
     }
 
