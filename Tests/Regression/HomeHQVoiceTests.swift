@@ -387,4 +387,29 @@ final class HomeHQVoiceTests: XCTestCase {
         XCTAssertEqual(log(c).filter { $0.hasPrefix("listen") }, [])
         XCTAssertTrue(c.evaluateScript("panel() === null")?.toBool() == true)
     }
+
+    /// After an answer, focus goes to what comes next: Undo when something changed, Talk otherwise, never left on the
+    /// Close that stood alone while it was thinking.
+    func testAfterAnAnswerFocusIsOnUndoOrTalk() throws {
+        let c = try page()
+        c.evaluateScript("App.openAsk();")
+        settle(c)
+        c.evaluateScript("listenDone({ ended: 'quiet', audio: 'UklGRg==' });")
+        settle(c)
+        c.evaluateScript("hearDone({ text: 'Add milk', nothing: false });")
+        settle(c)
+        XCTAssertEqual(str(c, "focusedKey()"), "close")
+        c.evaluateScript("answer({ reply: 'Added.', done: [{ name: 'addGrocery', args: { name: 'Milk' }, result: { item: { name: 'Milk' } } }], turn: { changes: [1] } });")
+        settle(c)
+        XCTAssertEqual(str(c, "focusedKey()"), "undo")
+        c.evaluateScript("clock += 1000; press('mic');")
+        settle(c)
+        c.evaluateScript("listenDone({ ended: 'quiet', audio: 'UklGRg==' });")
+        settle(c)
+        c.evaluateScript("hearDone({ text: 'What is on today', nothing: false });")
+        settle(c)
+        c.evaluateScript("answer({ reply: 'Soccer at 4.' });")
+        settle(c)
+        XCTAssertEqual(str(c, "focusedKey()"), "mic")
+    }
 }

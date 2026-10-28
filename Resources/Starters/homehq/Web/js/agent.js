@@ -191,6 +191,8 @@
     return list;
   }
   function settle(undoable) { acts(S.q && S.q.open ? questionActs() : idleActs(undoable)); }
+  // After an answer, focus goes to what comes next: Undo when something changed, then Talk, then Close.
+  function afterAnswer(undoable) { acts(idleActs(undoable), undoable ? 'undo' : canHear() ? 'mic' : 'close'); }
 
   function press(key) {
     stayOpen();
@@ -274,7 +276,7 @@
       show(spoken, partly ? 'is-partly' : '');
       if (r.ask) {
         var q = S.q = { id: ++S.qs, open: true, choices: (r.choices || []).slice(0, 4) };
-        acts(questionActs(), q.choices.length ? 'choice:0' : (canHear() ? 'mic' : 'type'));
+        acts(questionActs(), q.choices.length ? 'choice:0' : canHear() ? 'mic' : 'type');
         // Read out, then listen for the answer by itself, while this same question is still waiting.
         speak(spoken).then(function (done) {
           if (!done || !canHear() || !live(session) || S.q !== q || !q.open) return;
@@ -282,7 +284,7 @@
         });
         return;
       }
-      settle(undoable);
+      afterAnswer(undoable);
       speak(spoken).then(function () { if (live(session) && !S.turn && !S.listening && !partly && !S.q) closeLater(undoable); });
     });
   }
@@ -298,7 +300,7 @@
     var text = ((back.length ? 'Undid ' + back.join(', ') + '.' : '') + (kept.length ? ' Left ' + kept.join(', ') + ': changed since.' : '')).trim();
     youSaid('');
     show(text, kept.length ? 'is-partly' : '');
-    settle(false);
+    afterAnswer(false);
     var session = S.session;
     speak(text).then(function () { if (live(session) && !S.turn && !S.listening && !S.q && !kept.length) closeLater(false); });
   }
@@ -382,7 +384,7 @@
     if (S.voice && S.voice.listen && !S.hear) note('Talking needs OpenRouter set up in Lamp on the Mac. You can type.');
     if (voice && S.voice.permission !== 'denied') return listen();
     show('');
-    acts(idleActs(false), voice ? 'mic' : 'type');
+    acts(idleActs(false), voice ? 'mic' : '');
     if (!voice) el('[data-ask-input]').focus();
   }
 
@@ -438,7 +440,7 @@
     // Opened just after the page loaded, before the app around it has said whether it can hear: typed at once, and it
     // turns to listening when the answer comes, only while this same panel is still open and untouched.
     el('[data-ask-form]').hidden = false;
-    acts(idleActs(false), 'type');
+    acts([{ key: 'close', label: 'Close' }]);
     input.focus();
     S.ready.then(function () {
       if (!live(session) || S.turn || S.listening || input.value || S.lines) return;
