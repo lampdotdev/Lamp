@@ -265,26 +265,29 @@ function sleeveSpine(sleeve: Sleeve) {
 }
 
 // A tape's spine, at 1480 by 200, and the top of the cassette with its label, at 1480 by 826.
-function tapeSpine(tape: Tape) {
+// An original shows its screenshot at the spine's left end and the sleeve's stripes, upright, at its right.
+function tapeSpine(tape: Tape, img?: HTMLImageElement) {
   const { canvas, ctx } = sheet(1480, 200);
   const printed = tape.look === "original" && tape.stripes !== "cool";
   ctx.fillStyle = printed ? LABEL : PLASTIC;
   ctx.fillRect(0, 0, 1480, 200);
   if (printed) {
-    bands(ctx, WARM, 0, 0, 440, 200, true);
+    shot(ctx, img, 0, 0, 440, 200, undefined, 0.06);
+    bands(ctx, WARM, 1300, 0, 180, 200, true);
     ctx.fillStyle = INK;
-    font(ctx, "900", 92, SANS, tape.title, 900);
+    font(ctx, "900", 92, SANS, tape.title, 780);
     ctx.fillText(tape.title, 490, 112);
-    font(ctx, "700", 28, SANS, tape.caption, 900);
+    font(ctx, "700", 28, SANS, tape.caption, 780);
     ctx.fillText(tape.caption, 494, 160);
   } else if (tape.look === "original") {
-    bands(ctx, COOL, 60, 40, 260, 120);
+    shot(ctx, img, 50, 26, 280, 148, undefined, 0.06);
+    bands(ctx, COOL, 1330, 26, 120, 148, true);
     ctx.fillStyle = PAPER;
-    font(ctx, "900", 78, SANS, tape.title.toUpperCase(), 900);
-    ctx.fillText(tape.title.toUpperCase(), 360, 112);
+    font(ctx, "900", 78, SANS, tape.title.toUpperCase(), 760);
+    ctx.fillText(tape.title.toUpperCase(), 370, 112);
     ctx.fillStyle = "#cfc8b2";
-    font(ctx, "700", 26, SANS, tape.caption, 900);
-    ctx.fillText(tape.caption, 362, 156);
+    font(ctx, "700", 26, SANS, tape.caption, 760);
+    ctx.fillText(tape.caption, 372, 156);
   } else {
     ctx.save();
     ctx.translate(58, 150);
@@ -322,8 +325,8 @@ function tapeSpine(tape: Tape) {
     ctx.fillStyle = PAPER;
     font(ctx, "900", 34, SANS);
     ctx.fillText("● REC", 1326, 112);
-  } else if (tape.side) {
-    tag(ctx, tape.side, 1450, 100);
+  } else if (tape.side && !printed) {
+    tag(ctx, tape.side, tape.look === "original" ? 1300 : 1450, 100);
   }
   return canvas;
 }
@@ -583,54 +586,40 @@ export async function mountSleeve(host: HTMLElement) {
 
 // MARK: The shelf
 
-const STACK_BLEED = { x: 0.06, y: 0.12 };
+const STACK_BLEED = { x: 0.12, y: 0.3 };
 
-/** A number from 0 to 1 that's always the same for the same tape, so the piles are untidy the same way each time. */
-const wobble = (i: number, salt: number) => {
-  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
-  return x - Math.floor(x);
-};
-
-// The shelf: every starter's tape with its remix on top of it, and a few blank ones, in piles side by side, as many
-// piles as the shelf's shape takes (more on a wide screen, two on a phone). Only their spines are drawn up front; a
-// tape's top, with its screenshot, is drawn the first time it's chosen.
+// The shelf: a stack of a few starters' tapes, each original with its remix under it, a little untidy, as a real
+// stack is. The originals' spines carry their screenshots, so those are loaded up front; a tape's top, with the
+// screenshot on its label, is drawn the first time it's chosen.
 export async function mountStack(host: HTMLElement) {
   const tapes = JSON.parse(host.dataset.tapes!) as Tape[];
-  const [THREE] = await Promise.all([three(), fontsReady()]);
-  const s = stage(THREE, host, { wall: -1.6, reach: 10, bleed: STACK_BLEED });
+  const [THREE, spineShots] = await Promise.all([
+    three(),
+    Promise.all(tapes.map((tape) => (tape.look === "original" && tape.shot ? image(tape.shot) : Promise.resolve(undefined)))),
+    fontsReady(),
+  ]);
+  const s = stage(THREE, host, { wall: -1.6, reach: 7, bleed: STACK_BLEED });
   if (!s) return;
-  const [W, H, D, GAP, AISLE] = [3.4, 0.46, 1.9, 0.06, 0.55];
+  const [W, H, D, GAP] = [3.4, 0.46, 1.9, 0.06];
   const side = s.flat("#1f1d19");
   const back = s.flat("#2c2a25");
   const stack = new THREE.Group();
   s.scene.add(stack);
 
+  const jitter = [0.1, -0.08, 0.14, -0.05, 0.06, -0.12, 0.03];
+  const height = tapes.length * (H + GAP);
   const meshes = tapes.map((tape, i) => {
     const mesh = s.solid(new THREE.Mesh(new THREE.RoundedBoxGeometry(W, H, D, 3, 0.035), [
-      side, side, back, back, s.texture(tapeSpine(tape)), back,
+      side, side, back, back, s.texture(tapeSpine(tape, spineShots[i])), back,
     ]));
+    const home = { x: jitter[i % jitter.length], y: height / 2 - H / 2 - i * (H + GAP), z: 0, rx: 0, ry: jitter[(i + 2) % jitter.length] * 0.3, rz: 0 };
     stack.add(mesh);
     // Turned about the upright first, so a tape tipped up to show its top still spins like a record, and turning it
     // back by the stack's own lean holds it square to the viewer.
     mesh.rotation.order = "YXZ";
-    const home = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 };
+    mesh.position.set(home.x, home.y, home.z);
     return { tape, mesh, home, now: { ...home }, spins: 0, drawn: false };
   });
-
-  // Lays the tapes out in `piles` piles, filled one after another from the bottom up, each tape a little off true.
-  let size = { width: 0, height: 0 };
-  const layout = (piles: number) => {
-    const tall = Math.ceil(meshes.length / piles);
-    size = { width: piles * W + (piles - 1) * AISLE, height: tall * (H + GAP) };
-    meshes.forEach((tape, i) => {
-      const [pile, level] = [Math.floor(i / tall), i % tall];
-      Object.assign(tape.home, {
-        x: (pile - (piles - 1) / 2) * (W + AISLE) + (wobble(i, 1) - 0.5) * 0.3,
-        y: -size.height / 2 + H / 2 + level * (H + GAP),
-        ry: (wobble(i, 2) - 0.5) * 0.12,
-      });
-    });
-  };
 
   let chosen = -1;
   let hovered = -1;
@@ -665,26 +654,27 @@ export async function mountStack(host: HTMLElement) {
   });
 
   let tilt = { x: 0, y: 0 };
-  // How far in front of the piles a chosen tape is held: near enough to fill about two thirds of the shelf.
-  let held = 2;
+  // How far in front of the stack a chosen tape is held.
+  let held = 2.2;
   s.run(
     (aspect, tan) => {
-      layout(aspect > 2.3 ? 5 : aspect > 1.6 ? 4 : aspect > 1 ? 3 : 2);
-      const distance = Math.max((size.height * 1.08) / (2 * tan), (size.width * 1.06) / (2 * tan * aspect));
-      const near = Math.max(2.3 / (2 * tan * 0.68), 4 / (2 * tan * aspect * 0.62));
+      // The whole stack fits the host, and so does a chosen tape held up close in front of it, which may only rise
+      // into the bleed above and below.
+      const distance = Math.max((height + 0.4) / (2 * tan), 4.6 / (2 * tan * aspect));
+      const near = Math.max(2.4 / (2 * tan * (1 + STACK_BLEED.y)), 4 / (2 * tan * aspect));
       held = Math.max(0, distance - near);
       s.camera.position.set(0, 0, distance);
     },
     (dt, time) => {
       const p = reduced ? { x: 0, y: 0 } : s.pointer;
-      tilt = { x: ease(tilt.x, 0.08 + p.y * 0.1, dt, 4), y: ease(tilt.y, p.x * 0.16, dt, 4) };
+      tilt = { x: ease(tilt.x, 0.14 + p.y * 0.18, dt, 4), y: ease(tilt.y, p.x * 0.32, dt, 4) };
       stack.rotation.set(tilt.x, tilt.y, 0);
       meshes.forEach((tape, i) => {
         const up = chosen === i;
         const near = hovered === i && !up;
         // Chosen, it flies out, spins once and shows its top; the rest sit back a little.
         const target = up
-          ? { x: 0, y: (reduced ? 0 : Math.sin(time * 1.6) * 0.03), z: held, rx: Math.PI / 2 - 0.22 - tilt.x, ry: tape.spins * Math.PI * 2 - tilt.y, rz: -0.05 }
+          ? { x: 0, y: 0.05 + (reduced ? 0 : Math.sin(time * 1.6) * 0.03), z: held, rx: Math.PI / 2 - 0.22 - tilt.x, ry: tape.spins * Math.PI * 2 - tilt.y, rz: -0.05 }
           : { ...tape.home, z: chosen >= 0 ? -0.3 : near ? 0.35 : 0, rx: near ? -0.12 : 0, ry: tape.home.ry + tape.spins * Math.PI * 2 };
         const speed = up ? 4.5 : 6;
         for (const key of ["x", "y", "z", "rx", "ry", "rz"] as const) tape.now[key] = ease(tape.now[key], target[key], dt, reduced ? 14 : speed);

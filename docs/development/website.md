@@ -10,8 +10,9 @@ reds under its words). They're the hero's whole field, on the slant, with plain 
 read on; elsewhere they sit beside headings (a tab above each), never on a heading's letters. "Change it live" shows
 the making, not the app in use: a plain Mac window changing as it's asked from Lamp's chat beside it
 (`ChangeStory.astro`). New York's sleeve in the hero (its screenshot, where it plays and a "Remix me" button that
-goes to its repository on the front, the changes it suggests on the back) and the piles of tapes in "From the shelf"
-(every starter in `src/lib/starters.ts`, each with a remix of it on top) are three.js (`src/lib/tapes.ts`), drawn
+goes to its repository on the front, the changes it suggests on the back) and the stack of tapes in "From the shelf"
+(a few of the starters in `src/lib/starters.ts`, each original with its screenshot on its spine and a remix of it
+under it) are three.js (`src/lib/tapes.ts`), drawn
 from canvases in the page's fonts: they're lit with soft shadows, lean toward the pointer and turn over or fly out
 to show a screenshot when clicked, on a canvas that runs past its box (so nothing is cropped) and lets the pointer through, over a flat HTML
 version kept for screen readers and browsers without WebGL. The device icons are Phosphor's duotone set, with the

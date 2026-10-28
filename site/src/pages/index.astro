@@ -31,7 +31,7 @@ const description = `Remixable software. ${pitch} No code.`;
 // The screenshots the 3D tapes print on their labels (lib/tapes.ts), one for each starter.
 const pictures = import.meta.glob<ImageMetadata>("../assets/starters/*.png", { eager: true, import: "default" });
 const shot = async (id: string) => (await getImage({ src: pictures[`../assets/starters/${id}.png`], width: 1000, format: "webp" })).src;
-const shots = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => [starter.id, await shot(starter.id)])));
+const shots: Record<string, string> = Object.fromEntries(await Promise.all(STARTERS.map(async (starter) => [starter.id, await shot(starter.id)])));
 
 /** The `d` of each path in one of Phosphor's icons, joined, to draw on a canvas. */
 const iconPath = (svg: string) => [...svg.matchAll(/ d="([^"]+)"/g)].map((match) => match[1]).join(" ");
@@ -49,14 +49,21 @@ const sleeve: Sleeve = {
   remix: "https://github.com/lampdotdev/newyork",
 };
 
-// The shelf: every starter, the original with a remix of it on top, and a blank tape every few pairs. Originals
-// alternate their sleeves' two printings; remixes are written on in the marker colors, in turn.
+// The shelf: one stack of a few starters, each original with a remix of it under it, and a blank tape at the
+// bottom. Originals alternate their sleeves' two printings, with their screenshot on the spine; remixes are written
+// on in the marker colors, in turn.
+const SHELF = ["homehq", "newyork", "fireside", "localcrossings"];
 const inks = ["#b8264f", "#1f7a42", "#a8361f"];
-const tapes: Tape[] = STARTERS.flatMap((starter, i): Tape[] => [
-  { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[starter.id] },
-  { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[starter.id], treat: starter.treat },
-  ...(i % 5 === 4 ? [{ look: "blank", title: "your idea here…", caption: "" } as Tape] : []),
-]);
+const tapes: Tape[] = [
+  ...SHELF.flatMap((id, i): Tape[] => {
+    const starter = STARTERS.find((starter) => starter.id === id)!;
+    return [
+      { look: "original", stripes: i % 2 ? "cool" : "warm", title: starter.name, caption: `THE ORIGINAL · BY ${starter.by.toUpperCase()}`, side: `A${i + 1}`, shot: shots[id] },
+      { look: "marker", title: starter.remix, caption: `REMIX OF ${starter.name.toUpperCase()}`, side: `B${i + 1}`, ink: inks[i % inks.length], shot: shots[id], treat: starter.treat },
+    ];
+  }),
+  { look: "blank", title: "your idea here…", caption: "" },
+];
 
 // What Lamp can put something on today, as people name their things, from what a visitor most likely has to what
 // they least likely have. Only what a kind of app or a shipped device integration really reaches
@@ -131,16 +138,12 @@ const devices = [
       </div>
     </section>
 
-    <!-- From the shelf: piles of tapes, in 3D once lib/tapes.ts has drawn them, every starter's original with a remix
-         of it on top. A tape that's clicked flies out and shows the screenshot on its label. Without WebGL, and for
-         screen readers, the same tapes as a list. -->
-    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-col gap-6 px-4 pt-24 pb-16 sm:px-6">
-      <div class="flex flex-wrap items-end justify-between gap-x-16 gap-y-5">
-        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
-        <p class="max-w-[38ch] text-xl leading-normal">{together("Start from something someone made, or something a friend shared. Your version goes on the shelf right beside the original.")}</p>
-      </div>
-      <div class="tape-host h-[44rem] sm:h-[38rem]" data-tape-stack data-tapes={JSON.stringify(tapes)}>
-        <ul class="tape-fallback grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] content-start gap-2 py-6">
+    <!-- From the shelf: a stack of tapes, in 3D once lib/tapes.ts has drawn it, each original with its screenshot on
+         its spine and a remix of it under it. A tape that's clicked flies out and shows the screenshot on its label.
+         Without WebGL, and for screen readers, the same tapes as a list. -->
+    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
+      <div class="tape-host order-last h-[34rem] min-w-0 flex-[1_1_37.5rem] sm:h-[40rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
+        <ul class="tape-fallback flex h-full flex-col justify-center gap-2">
           {
             tapes.map((tape) => (
               <li class:list={["flex min-h-14 flex-col justify-center px-4 py-2", tape.look === "marker" ? "bg-[#f7f2e3] ring-1 ring-tape/20" : "bg-[#26241f] text-paper"]}>
@@ -150,6 +153,10 @@ const devices = [
             ))
           }
         </ul>
+      </div>
+      <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
+        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
+        <p class="max-w-[36ch] text-xl leading-normal">{together("Start from something someone made, or something a friend shared. Your version goes on the shelf right beside the original.")}</p>
       </div>
     </section>
 

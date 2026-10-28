@@ -1,117 +1,133 @@
 ---
-// The homepage's "Change it live": an app being made on the Mac, changed three times from Lamp's chat beside it, as
-// a story that loops. It's the making that's shown, not the app in use: a plain window on the Mac, its chat beside
-// it. A scoreboard for game night gains a round timer (something it does), turns into an arcade (a whole new look),
-// and shows who's winning (a tweak). Each change goes in the way it does in Lamp: colored light rises from the
-// bottom of the window while it's made, then a band of white sweeps up with the new version behind it. Last, Lamp
-// uses the app rather than changing it: its pointer gives a player a point and starts the round, with the window lit
-// and nothing rebuilt. It isn't a recording: the steps come quicker than they would, and the chat shows only what
-// was asked and what came of it.
+// The homepage's "Change it live": an app being made on the Mac, changed again and again from Lamp's chat beside it,
+// as a story that loops. It's the making that's shown, not the app in use: a plain window on the Mac with its chat
+// overlapping its edge. A scoreboard for game night gains a round timer (something it does), turns into an arcade
+// (a whole new look), shows who's winning (a tweak), learns to listen (a new way in: said aloud, "start the round"
+// starts the clock and "point for Maya" scores), and loses two players who dropped out (a change to what's in it).
+// Each change goes in the way it does in Lamp: colored light rises from the bottom of the window while it's made,
+// then a band of white sweeps up with the new version behind it. It isn't a recording: the steps come quicker than
+// they would, and the chat shows only what was asked and what came of it.
 // The window is drawn in its own width (cqw), so it's the same picture at every size. Without motion, the finished
 // app sits beside the whole chat.
 
-type Player = { name: string; score: number; color: string; move?: string; then?: number };
+type Player = { name: string; score: number; color: string };
 const players: Player[] = [
   { name: "Maya", score: 12, color: "#d23778" },
   { name: "Priya", score: 10, color: "#f08a1c" },
-  { name: "Leo", score: 9, color: "#1f8a4a", move: "leo", then: 10 },
+  { name: "Leo", score: 9, color: "#1f8a4a" },
   { name: "Sam", score: 7, color: "#e2402a" },
 ];
-const top = Math.max(...players.map((player) => player.score));
 
-// What's asked and what Lamp says once it's done, one pair for each change; the last is Lamp using the app.
+// What's asked and what Lamp says once it's done, one pair for each change.
 const chat = [
   { ask: "Add a round timer.", done: "Added: two minutes a round, with a buzzer at the end." },
   { ask: "Make it look like an arcade.", done: "Done: neon on black, in arcade type." },
   { ask: "Show who's winning.", done: "The leader gets a star, and everyone a bar." },
-  { ask: "Give Leo a point and start the round.", done: "Done: Leo's on 10, and the clock's running." },
+  { ask: "Add voice control.", done: "Done: say “start the round”, or “point for” someone." },
+  { ask: "Leo and Sam dropped out.", done: "Done: it's down to Maya and Priya." },
 ];
 
-// The four versions of the app. `timer` adds the round timer, `arcade` the new look, `lead` the star and the bars.
+// The six versions of the app. `timer` adds the round timer, `arcade` the new look, `lead` the star and the bars,
+// `voice` the listening, and `out` who's left the game. Once it listens, what's said aloud has started the round and
+// given Maya a point (`heard`), which the version after it keeps.
 const states = [
-  { timer: false, arcade: false, lead: false },
-  { timer: true, arcade: false, lead: false },
-  { timer: true, arcade: true, lead: false },
-  { timer: true, arcade: true, lead: true },
+  { timer: false, arcade: false, lead: false, voice: false, out: [] as string[] },
+  { timer: true, arcade: false, lead: false, voice: false, out: [] },
+  { timer: true, arcade: true, lead: false, voice: false, out: [] },
+  { timer: true, arcade: true, lead: true, voice: false, out: [] },
+  { timer: true, arcade: true, lead: true, voice: true, out: [] },
+  { timer: true, arcade: true, lead: true, voice: true, out: ["Leo", "Sam"] },
 ];
-const last = states.length - 1;
+const listening = 4;
+const heard = (index: number) => index > listening;
+const scoreOf = (player: Player, index: number) => player.score + (player.name === "Maya" && heard(index) ? 1 : 0);
 ---
 
 <div data-story class="relative">
   <p class="sr-only">
     An app being made on the Mac, with Lamp's chat beside it. A scoreboard for game night gains a round timer, turns
-    into an arcade and shows who's winning, one request at a time. Then Lamp uses the app itself, giving a player a
-    point and starting the round.
+    into an arcade, shows who's winning, learns to start the round and count points when it's spoken to, and drops
+    two players who left, one request at a time.
   </p>
 
-  <div data-window aria-hidden="true" class="@container relative aspect-[16/10] overflow-hidden rounded-[1.4cqw] bg-white shadow-[0_30px_70px_-20px_rgba(0,0,0,0.7)] ring-1 ring-white/10 select-none sm:w-[69%] lg:w-[72%]">
+  <div data-window aria-hidden="true" class="@container relative aspect-[16/10] overflow-hidden rounded-[1.4cqw] bg-white shadow-[0_30px_70px_-20px_rgba(0,0,0,0.7)] ring-1 ring-white/15 select-none sm:w-[75%] lg:w-[77%]">
     {
-      states.map((state, index) => (
-        <div data-state={index} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.arcade ? "bg-[#121110] text-white" : "bg-white text-ink"]}>
-          <div class:list={["flex h-[5cqw] shrink-0 items-center gap-[0.9cqw] px-[1.8cqw]", state.arcade ? "bg-[#1d1b18]" : "bg-[#f3f3f5]"]}>
-            <span class="size-[1.15cqw] rounded-full bg-[#ff5f57]" />
-            <span class="size-[1.15cqw] rounded-full bg-[#febc2e]" />
-            <span class="size-[1.15cqw] rounded-full bg-[#28c840]" />
-            <span class:list={["ml-[1cqw] text-[1.45cqw] font-semibold", state.arcade ? "text-white/60" : "text-black/60"]}>Game Night</span>
-          </div>
-
-          <div class="flex min-h-0 flex-1 gap-[3cqw] px-[3.5cqw] pt-[2.8cqw] pb-[3cqw]">
-            <div class="flex min-w-0 flex-1 flex-col">
-              <p class:list={state.arcade ? "font-mono text-[3cqw] font-bold tracking-[0.08em] text-[#f6b81c] uppercase [text-shadow:0_0_1.2cqw_rgba(246,184,28,0.7)]" : "text-[3cqw] font-bold tracking-tight"}>Game Night</p>
-              <p class:list={["text-[1.4cqw]", state.arcade ? "font-mono text-[#7cbf3a] uppercase" : "text-black/45"]}>Round 3</p>
-              <ul class="mt-[2.8cqw] flex flex-col gap-[1.8cqw]">
-                {players.map((player, rank) => (
-                  <li class:list={["relative flex items-center gap-[1.6cqw] overflow-hidden px-[1.4cqw] py-[1.7cqw]", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-[#d23778]/70" : "rounded-[1.2cqw] bg-black/[0.03]"]}>
-                    {state.lead && <span class="absolute inset-y-0 left-0 opacity-25" style={`width: ${(player.score / top) * 100}%; background: ${player.color}`} />}
-                    <span class:list={["relative flex size-[4cqw] shrink-0 items-center justify-center text-[1.8cqw] font-bold text-white", state.arcade ? "rounded-[0.4cqw] font-mono" : "rounded-full"]} style={`background: ${player.color}`}>{player.name[0]}</span>
-                    <span class:list={["relative flex-1 text-[1.9cqw] font-semibold", state.arcade && "font-mono text-[#7cbf3a] uppercase"]}>
-                      {player.name}
-                      {state.lead && rank === 0 && <span class="ml-[1cqw] rounded-[0.3cqw] bg-[#f6b81c] px-[0.6cqw] py-[0.15cqw] text-[1.2cqw] font-bold text-[#121110]">★ 1ST</span>}
-                    </span>
-                    <span class:list={["relative w-[5cqw] text-right text-[3cqw] font-bold tabular-nums", state.arcade && "font-mono text-[#f6b81c] [text-shadow:0_0_1cqw_rgba(246,184,28,0.6)]"]}>
-                      {player.move && index === last ? <><span data-use-out={player.move}>{player.score}</span><span data-use-in={player.move}>{player.then}</span></> : player.score}
-                    </span>
-                    <span class="relative flex gap-[0.8cqw]">
-                      <span class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-white/40" : "rounded-full ring-[0.15cqw] ring-black/20"]}>−</span>
-                      <span data-card={index === last ? player.move : undefined} data-label={player.move && `Giving ${player.name} a point`} class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] bg-[#7cbf3a] text-[#121110]" : "rounded-full bg-ink text-white"]}>+</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            {state.timer && (
-              <div class:list={["flex w-[24cqw] shrink-0 flex-col items-center self-start px-[2cqw] py-[2.4cqw]", state.arcade ? "rounded-[0.4cqw] bg-black ring-[0.2cqw] ring-[#e2402a]/70" : "rounded-[1.4cqw] bg-[#f5f5f7]"]}>
-                <p class:list={["text-[1.4cqw] font-semibold", state.arcade ? "font-mono text-[#e2402a] uppercase" : "text-black/50"]}>Round timer</p>
-                <p class:list={["mt-[0.6cqw] text-[6cqw] leading-none font-bold tabular-nums", state.arcade ? "font-mono text-[#ff6a4d] [text-shadow:0_0_1.6cqw_rgba(226,64,42,0.8)]" : ""]}>
-                  {index === last ? <><span data-use-out="timer">2:00</span><span data-use-in="timer">1:58</span></> : "2:00"}
-                </p>
-                <span data-card={index === last ? "timer" : undefined} data-label="Starting the round" class:list={["mt-[1.6cqw] px-[2.4cqw] py-[0.8cqw] text-[1.5cqw] font-semibold", state.arcade ? "rounded-[0.4cqw] bg-[#e2402a] font-mono text-white uppercase" : "rounded-full bg-ink text-white"]}>
-                  {index === last ? <><span data-use-out="timer">Start</span><span data-use-in="timer">Pause</span></> : "Start"}
-                </span>
-              </div>
+      states.map((state, index) => {
+        const top = Math.max(...players.map((player) => scoreOf(player, index)));
+        return (
+          <div data-state={index} class:list={["absolute inset-0 flex flex-col", index > 0 && "invisible", state.arcade ? "bg-[#121110] text-white" : "bg-white text-ink"]}>
+            {state.arcade && (
+              /* The arcade's floor: a grid in perspective running to a glowing horizon, faint behind the scores. */
+              <div class="arcade-floor pointer-events-none absolute inset-x-0 bottom-0 h-[62%] overflow-hidden"><div class="arcade-grid" /></div>
             )}
+            <div class:list={["relative flex h-[5cqw] shrink-0 items-center gap-[0.9cqw] px-[1.8cqw]", state.arcade ? "bg-[#1d1b18]" : "bg-[#f3f3f5]"]}>
+              <span class="size-[1.15cqw] rounded-full bg-[#ff5f57]" />
+              <span class="size-[1.15cqw] rounded-full bg-[#febc2e]" />
+              <span class="size-[1.15cqw] rounded-full bg-[#28c840]" />
+              <span class:list={["ml-[1cqw] flex-1 text-[1.45cqw] font-semibold", state.arcade ? "text-white/60" : "text-black/60"]}>Game Night</span>
+              {state.voice && (
+                <span class="flex items-center gap-[0.6cqw] font-mono text-[1.2cqw] font-bold text-[#7cbf3a] uppercase">
+                  <span class="voice-bars flex h-[1.6cqw] items-end gap-[0.25cqw]"><span /><span /><span /><span /></span>
+                  Listening
+                </span>
+              )}
+            </div>
+
+            <div class="relative flex min-h-0 flex-1 gap-[3cqw] px-[3.5cqw] pt-[2.8cqw] pb-[3cqw]">
+              <div class="flex min-w-0 flex-1 flex-col">
+                <p class:list={state.arcade ? "font-mono text-[3cqw] font-bold tracking-[0.08em] text-[#f6b81c] uppercase [text-shadow:0_0_1.2cqw_rgba(246,184,28,0.7)]" : "text-[3cqw] font-bold tracking-tight"}>Game Night</p>
+                <p class:list={["text-[1.4cqw]", state.arcade ? "font-mono text-[#7cbf3a] uppercase" : "text-black/45"]}>Round 3</p>
+                <ul class="mt-[2.8cqw] flex flex-col gap-[1.8cqw]">
+                  {players.filter((player) => !state.out.includes(player.name)).map((player, rank) => (
+                    <li class:list={["relative flex items-center gap-[1.6cqw] overflow-hidden px-[1.4cqw] py-[1.7cqw]", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-[#d23778]/70" : "rounded-[1.2cqw] bg-black/[0.03]"]}>
+                      {state.lead && <span class="absolute inset-y-0 left-0 opacity-25" style={`width: ${(scoreOf(player, index) / top) * 100}%; background: ${player.color}`} />}
+                      <span class:list={["relative flex size-[4cqw] shrink-0 items-center justify-center text-[1.8cqw] font-bold text-white", state.arcade ? "rounded-[0.4cqw] font-mono" : "rounded-full"]} style={`background: ${player.color}`}>{player.name[0]}</span>
+                      <span class:list={["relative flex-1 text-[1.9cqw] font-semibold", state.arcade && "font-mono text-[#7cbf3a] uppercase"]}>
+                        {player.name}
+                        {state.lead && rank === 0 && <span class="ml-[1cqw] rounded-[0.3cqw] bg-[#f6b81c] px-[0.6cqw] py-[0.15cqw] text-[1.2cqw] font-bold text-[#121110]">★ 1ST</span>}
+                      </span>
+                      <span class:list={["relative w-[5cqw] text-right text-[3cqw] font-bold tabular-nums", state.arcade && "font-mono text-[#f6b81c] [text-shadow:0_0_1cqw_rgba(246,184,28,0.6)]"]}>
+                        {index === listening && player.name === "Maya" ? <><span data-use-out="point">{player.score}</span><span data-use-in="point">{player.score + 1}</span></> : scoreOf(player, index)}
+                      </span>
+                      <span class="relative flex gap-[0.8cqw]">
+                        <span class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] ring-[0.2cqw] ring-white/40" : "rounded-full ring-[0.15cqw] ring-black/20"]}>−</span>
+                        <span class:list={["flex size-[3.4cqw] items-center justify-center text-[2cqw] leading-none", state.arcade ? "rounded-[0.4cqw] bg-[#7cbf3a] text-[#121110]" : "rounded-full bg-ink text-white"]}>+</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {state.timer && (
+                <div class:list={["flex w-[24cqw] shrink-0 flex-col items-center self-start px-[2cqw] py-[2.4cqw]", state.arcade ? "rounded-[0.4cqw] bg-black ring-[0.2cqw] ring-[#e2402a]/70" : "rounded-[1.4cqw] bg-[#f5f5f7]"]}>
+                  <p class:list={["text-[1.4cqw] font-semibold", state.arcade ? "font-mono text-[#e2402a] uppercase" : "text-black/50"]}>Round timer</p>
+                  <p class:list={["mt-[0.6cqw] text-[6cqw] leading-none font-bold tabular-nums", state.arcade ? "font-mono text-[#ff6a4d] [text-shadow:0_0_1.6cqw_rgba(226,64,42,0.8)]" : ""]}>
+                    {index === listening ? <><span data-use-out="start">2:00</span><span data-use-in="start">1:58</span></> : heard(index) ? "1:58" : "2:00"}
+                  </p>
+                  <span class:list={["mt-[1.6cqw] px-[2.4cqw] py-[0.8cqw] text-[1.5cqw] font-semibold", state.arcade ? "rounded-[0.4cqw] bg-[#e2402a] font-mono text-white uppercase" : "rounded-full bg-ink text-white"]}>
+                    {index === listening ? <><span data-use-out="start">Start</span><span data-use-in="start">Pause</span></> : heard(index) ? "Pause" : "Start"}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      ))
+        );
+      })
     }
+    <!-- What's said aloud to the app once it listens, as it hears it. -->
+    <p data-voice class="pointer-events-none absolute bottom-[4cqw] left-1/2 z-10 flex -translate-x-1/2 items-center gap-[1cqw] rounded-full bg-white px-[2cqw] py-[1cqw] text-[1.8cqw] font-semibold whitespace-nowrap text-[#121110] opacity-0 shadow-[0_0_3cqw_rgba(124,191,58,0.6)] transition-opacity duration-300">
+      <svg viewBox="0 0 24 24" class="size-[2cqw] shrink-0 fill-none stroke-[#1f8a4a] stroke-[2.2] [stroke-linecap:round]"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" /></svg>
+      <span data-voice-words></span>
+    </p>
     <!-- While a change is made: light in the stripes' colors rising from the bottom edge. -->
     <div data-glow class="pointer-events-none absolute inset-x-0 bottom-0 h-[40%] opacity-0 transition-opacity duration-700 [background:radial-gradient(60%_90%_at_20%_100%,rgba(31,138,74,0.55),transparent_70%),radial-gradient(50%_80%_at_50%_100%,rgba(210,55,120,0.5),transparent_70%),radial-gradient(60%_90%_at_80%_100%,rgba(240,138,28,0.55),transparent_70%)] blur-[3cqw]"></div>
-    <!-- While Lamp uses the app: the window lit, a pill saying so, and Lamp's pointer with what it's doing. -->
-    <div data-handover class="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 shadow-[inset_0_0_0_0.35cqw_rgba(240,138,28,0.9),inset_0_0_3cqw_rgba(240,138,28,0.45)] transition-opacity duration-500">
-      <p class="absolute top-[6.5cqw] left-1/2 -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-[1.8cqw] py-[0.7cqw] text-[1.3cqw] font-semibold whitespace-nowrap text-white backdrop-blur">Lamp is trying Game Night</p>
-    </div>
-    <div data-pointer class="pointer-events-none absolute top-[60%] left-[55%] z-10 opacity-0 transition-[top,left,opacity] duration-[900ms] ease-[cubic-bezier(0.45,0,0.2,1)]">
-      <svg viewBox="0 0 24 24" class="size-[3cqw] -translate-x-[15%] -translate-y-[5%] drop-shadow-[0_0.3cqw_0.6cqw_rgba(0,0,0,0.35)]"><path d="M5 3 L19 12 L12.5 13.5 L9.5 20 Z" fill="#1d1d1f" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" /></svg>
-      <span data-pointer-label class="absolute top-[2.6cqw] left-[2cqw] rounded-full bg-[#c23a20] px-[1.2cqw] py-[0.5cqw] text-[1.2cqw] font-semibold whitespace-nowrap text-white shadow-[0_0.3cqw_0.8cqw_rgba(0,0,0,0.25)]"></span>
-      <span data-tap class="absolute -top-[1.5cqw] -left-[1.5cqw] size-[3cqw] rounded-full bg-[#f08a1c]/50 opacity-0"></span>
-    </div>
     <!-- As it goes in: a band of white sweeping up, a soft shadow just ahead of it. -->
     <div data-band class="pointer-events-none absolute inset-x-0 top-full h-[24%] opacity-0 [background:linear-gradient(to_bottom,rgba(0,0,0,0),rgba(0,0,0,0.06)_25%,rgba(255,255,255,0.95)_45%,#fff_55%,rgba(255,255,255,0))]"></div>
   </div>
 
-  <!-- Lamp's chat beside the app, as in Lamp: what's asked on the right in red, what Lamp says on the left. It stands
-       beside the window (under it on a phone), and keeps its size, scrolling to what was said last. -->
-  <div aria-hidden="true" class="relative z-20 mx-4 -mt-8 flex h-72 flex-col rounded-[22px] bg-[#f7f2e3] p-4 text-[15px] leading-snug text-tape shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] select-none sm:absolute sm:top-[4%] sm:right-0 sm:bottom-[4%] sm:mx-0 sm:mt-0 sm:h-auto sm:w-[28%] lg:w-[25%]">
+  <!-- Lamp's chat beside the app, as in Lamp: what's asked on the right in red, what Lamp says on the left. It
+       overlaps the window's right edge a little (and its foot on a phone), and keeps its size, scrolling to what was
+       said last. -->
+  <div aria-hidden="true" class="relative z-20 mx-4 -mt-8 flex h-72 flex-col rounded-[22px] bg-[#f7f2e3] p-4 text-[15px] leading-snug text-tape shadow-[0_20px_50px_-12px_rgba(0,0,0,0.6)] select-none sm:absolute sm:top-[6%] sm:right-0 sm:bottom-[6%] sm:mx-0 sm:mt-0 sm:h-auto sm:w-[28%] lg:w-[25%]">
     <p class="flex items-center gap-2 border-b border-tape/10 pb-3 text-[13px] font-bold"><span class="lamp-dot size-2.5 rounded-full"></span>Lamp · Game Night</p>
     <div data-messages class="flex min-h-0 flex-1 flex-col overflow-y-auto pt-3 [scrollbar-width:none]">
       <div class="mt-auto flex flex-col gap-3">
@@ -122,7 +138,6 @@ const last = states.length - 1;
         ])
       }
       <p data-changing class="story-message flex items-center gap-2 text-tape/60"><span class="size-2 animate-pulse rounded-full bg-[#f08a1c]"></span>Changing it…</p>
-      <p data-using class="story-message flex items-center gap-2 text-tape/60"><span class="size-2 animate-pulse rounded-full bg-[#f08a1c]"></span>Trying the app…</p>
       </div>
     </div>
     <!-- The message box, with the talk button the app has beside it; here neither does anything. -->
@@ -137,18 +152,42 @@ const last = states.length - 1;
   /* Lamp's own mark in the chat's header: a dot in the stripes. */
   .lamp-dot { background: conic-gradient(#1f8a4a, #f6b81c, #f08a1c, #e2402a, #d23778, #1f8a4a); }
 
+  /* The arcade's floor: magenta lines in perspective, brightest at the horizon, where an orange glow sits. */
+  .arcade-floor {
+    background: radial-gradient(70% 35% at 50% 0%, rgb(240 138 28 / 0.35), transparent 70%);
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 22%);
+  }
+  .arcade-grid {
+    position: absolute; left: -50%; right: -50%; top: 0; height: 200%;
+    background-image:
+      linear-gradient(to right, rgb(210 55 120 / 0.55) 0.12cqw, transparent 0.12cqw),
+      linear-gradient(to bottom, rgb(210 55 120 / 0.55) 0.12cqw, transparent 0.12cqw);
+    background-size: 5cqw 5cqw;
+    transform: perspective(30cqw) rotateX(62deg);
+    transform-origin: 50% 0;
+    opacity: 0.55;
+  }
+
+  /* The app listening: four bars rising and falling, out of step. */
+  .voice-bars > span { width: 0.3cqw; background: #7cbf3a; animation: voice-bar 0.9s ease-in-out infinite alternate; }
+  .voice-bars > span:nth-child(2) { animation-delay: -0.3s; }
+  .voice-bars > span:nth-child(3) { animation-delay: -0.6s; }
+  .voice-bars > span:nth-child(4) { animation-delay: -0.15s; }
+  @keyframes voice-bar { from { height: 25%; } to { height: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .voice-bars > span { animation: none; height: 60%; } }
+
   /* A message takes no room until it's said, then comes up into place. */
   .story-message { display: none; }
   .story-message[data-shown] { display: flex; animation: story-say 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-  p.story-message[data-shown]:not([data-changing]):not([data-using]) { display: block; }
+  p.story-message[data-shown]:not([data-changing]) { display: block; }
   @keyframes story-say { from { opacity: 0; transform: translateY(8px); } }
   @media (prefers-reduced-motion: reduce) { .story-message[data-shown] { animation: none; } }
 
-  /* What Lamp's use of the app changes, shown once it has made each move. */
+  /* What the app does when it's spoken to, shown once it's heard each thing. */
   [data-use-in] { display: none; }
-  [data-story][data-move-leo] [data-use-out="leo"], [data-story][data-move-timer] [data-use-out="timer"] { display: none; }
-  [data-story][data-move-leo] [data-use-in="leo"], [data-story][data-move-timer] [data-use-in="timer"] { display: inline; }
-  [data-story][data-handing] [data-handover] { opacity: 1; }
+  [data-story][data-heard-start] [data-use-out="start"], [data-story][data-heard-point] [data-use-out="point"] { display: none; }
+  [data-story][data-heard-start] [data-use-in="start"], [data-story][data-heard-point] [data-use-in="point"] { display: inline; }
+  [data-story][data-hearing] [data-voice] { opacity: 1; }
 </style>
 
 <script>
@@ -159,25 +198,21 @@ const last = states.length - 1;
     const glow = story.querySelector<HTMLElement>("[data-glow]")!;
     const band = story.querySelector<HTMLElement>("[data-band]")!;
     const changing = story.querySelector<HTMLElement>("[data-changing]")!;
-    const using = story.querySelector<HTMLElement>("[data-using]")!;
     const messages = story.querySelector<HTMLElement>("[data-messages]")!;
-    const view = story.querySelector<HTMLElement>("[data-window]")!;
-    const pointer = story.querySelector<HTMLElement>("[data-pointer]")!;
-    const label = story.querySelector<HTMLElement>("[data-pointer-label]")!;
-    const tap = story.querySelector<HTMLElement>("[data-tap]")!;
-    // Lamp's moves on the finished app, in the order they're made: each a control marked data-card.
-    const moves = [...states[states.length - 1].querySelectorAll<HTMLElement>("[data-card]")].filter((card) => card.dataset.card);
+    const words = story.querySelector<HTMLElement>("[data-voice-words]")!;
+    // The step whose change teaches the app to listen, and what's then said to it, each with what it does.
+    const LISTENS = 3;
+    const spoken = [{ words: "Start the round", does: "start" }, { words: "Point for Maya", does: "point" }];
     const said = (step: number, role: string) => story.querySelector<HTMLElement>(`[data-step="${step}"][data-role="${role}"]`)!;
     const show = (element: HTMLElement, shown: boolean) => {
       element.toggleAttribute("data-shown", shown);
       if (shown) messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
     };
-    const done = (move: string, made: boolean) => story.toggleAttribute(`data-move-${move}`, made);
     const only = (index: number) => states.forEach((state, i) => { state.style.visibility = i === index ? "visible" : "hidden"; state.style.clipPath = ""; state.style.opacity = ""; });
+    const steps = states.length - 1;
 
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      only(states.length - 1);
-      moves.forEach((card) => done(card.dataset.card!, true));
+      only(steps);
       story.querySelectorAll<HTMLElement>("[data-step]").forEach((message) => show(message, true));
       continue;
     }
@@ -203,54 +238,38 @@ const last = states.length - 1;
       only(index);
     };
 
-    // Lamp's pointer goes to the middle of a control in the window, says what it's doing there, and taps.
-    const tapOn = async (card: HTMLElement) => {
-      const spot = card.getBoundingClientRect();
-      const box = view.getBoundingClientRect();
-      label.textContent = card.dataset.label ?? "";
-      pointer.style.left = `${spot.left - box.left + spot.width / 2}px`;
-      pointer.style.top = `${spot.top - box.top + spot.height / 2}px`;
-      await pause(1100);
-      tap.animate([{ opacity: 0.9, transform: "scale(0.4)" }, { opacity: 0, transform: "scale(1.6)" }], { duration: 500, easing: "ease-out" });
-      done(card.dataset.card!, true);
-      await pause(1100);
-    };
-
-    const useTheApp = async (step: number) => {
-      show(said(step, "ask"), true);
-      await pause(800);
-      show(using, true);
-      story.toggleAttribute("data-handing", true);
-      pointer.style.left = "55%";
-      pointer.style.top = "60%";
-      pointer.style.opacity = "1";
-      await pause(500);
-      for (const card of moves) await tapOn(card);
-      pointer.style.opacity = "0";
-      story.toggleAttribute("data-handing", false);
-      show(using, false);
-      show(said(step, "done"), true);
+    // Once it listens, someone at the table talks to it: each thing said shows as it's heard, then happens.
+    const listen = async () => {
+      for (const line of spoken) {
+        words.textContent = `“${line.words}”`;
+        story.toggleAttribute("data-hearing", true);
+        await pause(1100);
+        story.toggleAttribute(`data-heard-${line.does}`, true);
+        await pause(1200);
+        story.toggleAttribute("data-hearing", false);
+        await pause(500);
+      }
     };
 
     const play = async () => {
       for (;;) {
         only(0);
-        moves.forEach((card) => done(card.dataset.card!, false));
+        spoken.forEach((line) => story.toggleAttribute(`data-heard-${line.does}`, false));
         story.querySelectorAll<HTMLElement>(".story-message").forEach((message) => show(message, false));
         messages.scrollTop = 0;
-        await pause(1800);
-        for (let step = 0; step < states.length - 1; step++) {
+        await pause(1200);
+        for (let step = 0; step < steps; step++) {
           show(said(step, "ask"), true);
-          await pause(800);
+          await pause(700);
           show(changing, true);
           glow.style.opacity = "1";
-          await pause(1500);
+          await pause(1300);
           await wipe(step + 1);
           show(changing, false);
           show(said(step, "done"), true);
-          await pause(2200);
+          await pause(step === LISTENS ? 900 : 2000);
+          if (step === LISTENS) await listen();
         }
-        await useTheApp(states.length - 1);
         await pause(3200);
         // Back to the start: the window fades to where the story began while the chat clears.
         const first = states[0];
