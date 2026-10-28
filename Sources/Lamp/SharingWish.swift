@@ -91,6 +91,23 @@ extension Sharing {
 
         """
 
+    /// The wording the review gets for an app around a page: a web app, a screen made before, or a web game.
+    static let pageReview = """
+
+        This app is a page: HTML, CSS and JavaScript under Web/, shown by an app Lamp writes around it on the Mac, an \
+        iPhone or an iPad (and on an Android device, a Samsung or LG TV or an Xbox once the reader puts it there), or a \
+        game drawn there with three.js or Phaser. Lamp's own files around the page aren't in the file: lamp.js, whose \
+        LampAI, LampQuestion, LampStore and LampAssets objects are Lamp's blocks for the web, like the ones above, and \
+        the app that shows the page, through which the page reaches Lamp's AI on this Mac and nothing else of Lamp's. \
+        Sources/Native.swift is the sender's Swift beside the page: the calls the page makes of the device \
+        (LampNative.call from the page, LampNative.on in the Swift), answered with Lamp's building blocks (the reader's \
+        calendars, reminders, contacts, mail, photos, location or home, each asked of them by the system), which is \
+        how a page reaches what only the device has. Judge the page by what its scripts fetch and where they send \
+        data, and the Swift by what it reads and hands back to the page; a script loaded from the internet, or text \
+        run as code, can hide what it does.
+
+        """
+
     static func partsReview(_ parts: [String]) -> String {
         guard !parts.isEmpty else { return "" }
         return """
@@ -154,5 +171,73 @@ enum GameFiles {
             try fm.copyItem(at: file, to: target)
         }
         try GameKit.write(for: project)
+    }
+}
+
+/// A web app's or a screen's files in a shared file (`Sharing`): its page in Web/, the agent's HTML, CSS and JavaScript as
+/// code and its pictures, sounds and fonts as data, and the Swift beside the page that answers its calls of the device
+/// (Sources/Native.swift, as a game's) as code too. Never Lamp's own files around the page (Web/lamp.js, the app that shows
+/// the page, LampPage.swift and LampSupport.swift in Sources/, the Android app), which the Mac that opens the file writes
+/// itself (`ScreenKit.write`), never a hidden file or a link. Both kinds travel the same way; the file's `platform` says
+/// which the copy is, so a screen stays a screen with its address and saves (`ScreenKit`).
+enum ScreenFiles {
+    /// Lamp's own files in a web app's Web/ and Sources/, by their path in the app, whichever of the two kinds it is: a
+    /// file's code is read before the kind's project exists.
+    static func isLamps(_ relative: String) -> Bool {
+        relative == TVTemplate.supportFile || relative == ScreenKit.screenPage.swift || relative == ScreenKit.webAppPage.swift
+            || relative == "Sources/LampPage.swift" || relative == "Sources/LampSupport.swift"
+    }
+
+    /// The Swift beside the page first: it's what reaches the device, and the review sends the code in this order up to a
+    /// cap, which a large page would push it past.
+    static func list(in root: URL) -> (code: [URL], data: [URL]) {
+        let fm = FileManager.default
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
+        var code: [URL] = [], data: [URL] = []
+        for folder in ["Sources", TVTemplate.webFolder] {
+            guard let items = fm.enumerator(at: root.appendingPathComponent(folder), includingPropertiesForKeys: Array(keys)) else { continue }
+            for case let url as URL in items {
+                if url.lastPathComponent.hasPrefix(".") { items.skipDescendants(); continue }
+                let values = try? url.resourceValues(forKeys: keys)
+                let relative = Sharing.relativePath(of: url, in: root)
+                guard values?.isRegularFile == true, values?.isSymbolicLink != true, !isLamps(relative) else { continue }
+                if folder == "Sources" {
+                    // The Swift beside the page is the agent's; anything else in Sources/ is neither code nor the page's.
+                    if url.pathExtension == "swift" { code.append(url) }
+                } else if TVFiles.codeExtensions.contains(url.pathExtension.lowercased()) {
+                    code.append(url)
+                } else {
+                    data.append(url)
+                }
+            }
+        }
+        return (code, data)
+    }
+
+    /// Lamp's own files around the page, written once the file's are in place (`ScreenKit.write`). Tests stand in
+    /// their own, since a test run has none of Lamp's resources.
+    nonisolated(unsafe) static var writeLamps: (LampProject) throws -> Void = ScreenKit.write(for:)
+
+    /// Puts a shared web app's page in place of the app's, and its Swift beside the page, then Lamp's own files around
+    /// them, which make the folder the kind it is. A file without a Native.swift leaves the app with Lamp's own, written
+    /// again, not the one it had.
+    static func install(_ package: Sharing.Package, into project: LampProject) throws {
+        let fm = FileManager.default
+        try? fm.removeItem(at: project.dir.appendingPathComponent(TVTemplate.webFolder))
+        let sources = project.dir.appendingPathComponent("Sources")
+        for case let item as URL in fm.enumerator(at: sources, includingPropertiesForKeys: nil)?.allObjects ?? []
+        where item.pathExtension == "swift" && !isLamps(Sharing.relativePath(of: item, in: project.dir)) {
+            try fm.removeItem(at: item)
+        }
+        for file in package.sources + package.webData {
+            let relative = package.path(of: file)
+            guard !relative.contains(".."), !isLamps(relative),
+                  relative.hasPrefix(TVTemplate.webFolder + "/") || (relative.hasPrefix("Sources/") && relative.hasSuffix(".swift")) else { continue }
+            let target = project.dir.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
+        try writeLamps(project)
     }
 }

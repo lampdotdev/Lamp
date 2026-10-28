@@ -124,11 +124,35 @@ struct Device: Identifiable, Hashable {
     var duid: String?
     /// The integration that found it; nil for a device on the network Lamp doesn't know yet.
     var integration: String?
+    /// What its integration says it is, in a word or two ("game console"), for its picture (`symbol`).
+    var what: String?
     /// For a device Lamp doesn't know: what it said when it was found, for whoever writes its integration.
     var discovery: String?
     /// A TV or another device on the network that Lamp keeps (`TVs.kept`, `Integrations.kept`): one of its setup steps
     /// has worked. One only found isn't kept, however well Lamp knows its kind.
     var kept = false
+
+    /// Its picture: its kind's, and for an Android TV or a device Lamp has no kit of its own for, what it is, by what
+    /// its integration says and its model and maker (a game console, a TV, a speaker an app controls).
+    var symbol: String {
+        if kind == .android, features.contains("tv") { return "tv" }
+        guard kind == .other else { return kind.symbol }
+        let words = Set([what, model, maker].compactMap { $0 }.joined(separator: " ").lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted))
+        return Self.pictures.first { !words.isDisjoint(with: $0.words) }?.symbol ?? kind.symbol
+    }
+
+    /// The words that say what a device is, and its picture: the first that matches wins.
+    static let pictures: [(words: Set<String>, symbol: String)] = [
+        (["console", "xbox", "playstation", "nintendo"], "gamecontroller"),
+        (["tv", "television", "streaming", "roku", "chromecast"], "tv"),
+        (["speaker", "soundbar", "sonos", "symfonisk", "homepod"], "hifispeaker"),
+        (["frame"], "photo.on.rectangle"),
+        (["camera", "doorbell"], "web.camera"),
+        (["light", "bulb", "hue"], "lightbulb"),
+        (["thermostat"], "thermometer.medium"),
+        (["printer"], "printer"),
+    ]
 
     static let macID = "this-mac"
 

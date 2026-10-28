@@ -1031,7 +1031,8 @@ final class Store: ObservableObject {
         watchOpenApps()
         // Lamp opens with what it knows of the person's devices and runs no tool to look for more: devicectl, adb and a
         // search of the network can each have macOS ask about the local network, which comes only once the person does
-        // something with a device (Settings, Try On, Play on one). This Mac's record is read off the main thread, so the
+        // something with a device (Settings, Try On, Play on one, the desk's Find My Devices; the desk looks again once
+        // it has). This Mac's record is read off the main thread, so the
         // first request's note has it.
         showKnownDevices()
         Task { thisMac = await Device.readThisMac() }
@@ -2490,8 +2491,9 @@ final class Store: ObservableObject {
     /// the local network for the TVs and the integrations' devices. Any of them can have macOS ask whether Lamp may use
     /// the local network (devicectl finds phones over Wi‑Fi too, and macOS counts the tools Lamp runs as Lamp), so a
     /// look is made only when the person is doing something with a device (Settings, Try On, a device's setup, pairing,
-    /// Play on one) or a wish has just been named for one (`lookForWish`): never as Lamp opens or a wish starts, which
-    /// show what Lamp already knows (`showKnownDevices`).
+    /// Play on one), a wish has just been named for one (`lookForWish`), or the desk is shown once Lamp has looked
+    /// before (`DeskDevices`): never as a wish starts, or as Lamp opens before its first look, which show what Lamp
+    /// already knows (`showKnownDevices`).
     ///
     /// `everything` is for where the person is looking at what's on the network (Your Devices, Add a New Device,
     /// `network_devices`): it also sweeps this Mac's subnet, reads the neighbor table and browses every Bonjour service

@@ -60,6 +60,10 @@ jobs:
           path: .build
           key: mac-test-${{ hashFiles('.github/xcode-version', 'Package.resolved') }}
 
+      - name: Bug report checks
+        # These standalone checks live outside the Swift package's regression test target.
+        run: scripts/test-bug-report.sh
+
       - name: Regression tests
         # Each test in a process of its own, several at once: most of the suite waits on compilers, sockets and apps it
         # starts rather than on the processor, so it takes a few minutes instead of twenty. The suites that need a key,

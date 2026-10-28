@@ -33,6 +33,10 @@ struct WishDesk: View {
     /// The wishes Lamp came with that aren't on the desk, offered at its end (`MoreFromLamp`).
     @State private var missingStarters: [Starters.Starter] = []
     @ObservedObject private var arrangement = DeskArrangement.shared
+    /// Lamp has looked on the network before, so macOS has asked about it: from then on the desk looks for devices
+    /// each time it's shown (`lookForDevices`).
+    @AppStorage(Store.localNetworkAskedKey) private var lookedBefore = false
+    @State private var lastLook: Date?
     private static let stageHeight: CGFloat = 160
 
     private struct Staged: Equatable {
@@ -68,6 +72,13 @@ struct WishDesk: View {
                                         .modifier(receding ? Recede.behind : Recede.present)
                                         .animation(.easeOut(duration: 0.3), value: receding)
                                 }
+                                // The devices, between the wishes and the bar: what a new wish can be for.
+                                DeskDevices(wishFor: wishFor)
+                                    .frame(maxWidth: 880)
+                                    .padding(.horizontal, 32)
+                                    .padding(.top, 28)
+                                    .modifier(receding ? Recede.behind : Recede.present)
+                                    .animation(.easeOut(duration: 0.3), value: receding)
                             }
                             .padding(.bottom, wishes.isEmpty ? 18 : 32)
                             .transition(.modifier(active: Recede.gone, identity: Recede.present))
@@ -124,7 +135,9 @@ struct WishDesk: View {
             if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
             if wishes.isEmpty { showingIdeas = true }
             focusQuietly()
+            lookForDevices()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in lookForDevices() }
         .onChange(of: barFocused) {
             barEngaged = barFocused && !lampFocusing
             lampFocusing = false
@@ -197,7 +210,7 @@ struct WishDesk: View {
 
     private var headline: some View {
         Text(wishes.isEmpty ? "What do you wish for?" : "Use one, change one, or wish for something new.")
-            .font(.system(size: 30, weight: .semibold, design: .rounded))
+            .font(.system(size: 26, weight: .semibold, design: .rounded))
             .multilineTextAlignment(.center)
             .padding(.horizontal, 32)
     }
@@ -384,6 +397,23 @@ struct WishDesk: View {
 
     static func scrollerWidth() -> CGFloat {
         NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+    }
+
+    /// Looks for the person's devices for the shelf as the desk is shown and Lamp comes to the front, once Lamp has
+    /// looked before: the first look is the person's Find My Devices, since it's the one macOS asks about. Not more than
+    /// once a minute, as switching back to Lamp is often a moment's.
+    private func lookForDevices() {
+        guard lookedBefore, lastLook.map({ Date().timeIntervalSince($0) > 60 }) ?? true else { return }
+        lastLook = Date()
+        store.refreshDevices()
+    }
+
+    /// A ready device on the shelf goes in the bar: a wish begun for it, or the one being typed made for it.
+    private func wishFor(_ device: String) {
+        let typed = store.deskDraft.trimmed
+        store.deskDraft = typed.isEmpty ? "Something for my \(device) that " : "\(typed) for my \(device)"
+        barFocused = true
+        barEngaged = true
     }
 
     /// An idea goes in the bar to be made the person's own, and the ideas step aside for it.
