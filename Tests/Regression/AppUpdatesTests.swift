@@ -80,6 +80,12 @@ final class AppUpdatesTests: XCTestCase {
         XCTAssertEqual(wish.rows.first { $0.label == "Updates" }?.value, "Your app is up to date")
         XCTAssertEqual(wish.buttons.last?.title, "Check for Updates…")
 
+        // An update being prepared, or ready, is reviewed from the same button, never checked for again.
+        for state in [AppUpdates.Availability.preparing, .ready] {
+            let section = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil, update: state))
+            XCTAssertEqual(section.buttons.last?.title, "Review Update…")
+        }
+
         let unchecked = try XCTUnwrap(AppInfoView.creditsSection(Credits(upstream: [slop]), own: nil))
         XCTAssertNil(unchecked.rows.first { $0.label == "Updates" })
         XCTAssertEqual(unchecked.buttons.last?.title, "Check for Updates…")

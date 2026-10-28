@@ -318,7 +318,7 @@ enum AppInfoView {
         case updateFromRepository:
             // Check for Updates… asks; Review Update…, once there is one, brings it in (`AppUpdates`): a wish in a
             // repository through the same review as the first time, a wish made from someone's project by the agent.
-            if Store.shared.updateAvailability(of: project) == .available {
+            if Store.shared.updateAvailability(of: project)?.reviews == true {
                 Store.shared.reviewUpdate(project)
             } else {
                 Store.shared.checkForUpdates(project)
@@ -432,7 +432,7 @@ enum AppInfoView {
         }
         // The same button whichever way the wish came: it checks, and once there's an update, it brings it in.
         if route != nil {
-            buttons.append(SidebarInfoButton(title: update == .available ? "Review Update…" : "Check for Updates…", action: updateFromRepository))
+            buttons.append(SidebarInfoButton(title: update?.reviews == true ? "Review Update…" : "Check for Updates…", action: updateFromRepository))
         }
         return SidebarInfoSection(title: "Credits", rows: rows, buttons: buttons)
     }
@@ -518,7 +518,7 @@ struct ImportReviewView: View {
         ImportReviewCard(name: pending.package.name, description: pending.package.description, icon: icon,
                          review: pending.review, existing: pending.existing?.name, changedHere: pending.changedHere, room: room,
                          cancel: store.cancelImport, open: store.confirmImport, update: store.confirmUpdate,
-                         android: pending.package.platform.target.recipe.language == .kotlin)
+                         android: pending.package.platform.target.recipe.language == .kotlin, prepared: pending.prepared != nil)
             .task { icon = await Sharing.icon(of: pending.package) }
             .background(WindowFinder { sheet = $0; fit() })
             // The window can be moved with the sheet down, and the Dock can come and go.
@@ -557,6 +557,8 @@ struct ImportReviewCard: View {
     let update: () -> Void
     /// An Android app's reach is the phone's, not the Mac's.
     var android = false
+    /// An update Lamp prepared in a copy of `existing` (`AppUpdates`): nobody shared it, and Update puts that copy in place.
+    var prepared = false
 
     /// The heights of what stays put, measured as laid out: the app's name and description at the top, the
     /// review's summary, the line about the copy already here when there is one, and the buttons.
@@ -592,10 +594,10 @@ struct ImportReviewCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     // The name is the sender's: shown as written, never as formatting, and on one line whose
                     // end (the closing quote and the question mark) stays in view however long it is.
-                    Text(verbatim: "Open “\(name)”?").font(.title2.bold())
+                    Text(verbatim: prepared ? "Your update is ready" : "Open “\(name)”?").font(.title2.bold())
                         .lineLimit(1).truncationMode(.middle)
                     // The sender's words, said to be theirs.
-                    if let description {
+                    if let description, !prepared {
                         Text(verbatim: "Described by the person who shared it with you as: \(description)")
                             .font(.callout).foregroundStyle(.secondary).lineLimit(5)
                             .fixedSize(horizontal: false, vertical: true)
@@ -646,7 +648,9 @@ struct ImportReviewCard: View {
             if let existing {
                 // The buttons say what each does; this is what someone would worry about before choosing Update.
                 Label {
-                    Text(verbatim: "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
+                    Text(verbatim: prepared
+                         ? "Update puts it in place of “\(existing)” and keeps your data, and you can go back if you change your mind. Keep Both keeps it as a separate app."
+                         : "You already have this wish\(existing == name ? "" : ", as “\(existing)”")"
                          + (changedHere ? ", and you've changed it since. Updating brings in what's new and keeps your changes; Lamp asks you about anything it can't settle itself"
                                         : ". Updating keeps your data")
                          + ", and you can go back if you change your mind.")

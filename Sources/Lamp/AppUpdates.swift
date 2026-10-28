@@ -73,6 +73,9 @@ enum AppUpdates {
     enum Availability: Equatable {
         case checking, upToDate, available, failed, preparing, ready
 
+        /// There's an update to look at: one to prepare, one being prepared, or one ready for review.
+        var reviews: Bool { [.available, .preparing, .ready].contains(self) }
+
         var line: String {
             switch self {
             case .checking: "Checking for updates…"

@@ -265,13 +265,20 @@ Which repository a wish follows (`AppUpdates.route`): a wish from another wish f
 made from someone's own project follows the work it's based on, the first `upstream` source, when that's on GitHub with
 the commit it was taken at. A source with no commit is offered nothing.
 
-An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version,
-fetches the project into the wish's `.lamp/update/` (blobless, pinned to the commit the check saw: `latest/`, `files.txt`,
-`log.txt`, `changes.diff`, and the fetched `repo` for files as they were), and sends the agent a request with a note
-saying where it all is and how to port it (`AppUpdates.note`). The pinned job is kept in `.lamp/update/job.json`; after
-the turn (`Store.settleUpdate`) a turn that finished with no error moves the credited commit on, in `credits.json` and
-in what Lamp keeps; one that asked the person a question keeps the job for the answer; anything else lets it go with
-the commit where it was. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
+An adapted wish's Review Update… says what preparing it costs, then (`Store.prepareUpdate`) saves the wish as a version
+and makes a separate copy of it, unsaved changes included (`Sharing.export`, then a wish of its own with Lamp's files
+written afresh, "<Name> Update"): its own app, bundle id, data and agent session, so nothing the agent does or runs
+reaches the wish. The update is fetched into the copy's `.lamp/update/` (blobless, pinned to the commit the check saw:
+`latest/`, `files.txt`, `log.txt`, `changes.diff`, and the fetched `repo` for files as they were) and the request goes to
+the copy, with a note saying where it all is and how to port it (`AppUpdates.note`). The job, in the copy's
+`.lamp/update/job.json`, names the wish and the wish's version when the copy was made. After a turn in the copy that
+finished with no error (`Store.settleUpdate`) the copy takes the update's commit in its credits and the review opens
+(`Store.openPreparedReview`: `Sharing.review` of the copy as exported, `PendingImport.prepared`). Update puts the copy's
+files in place of the wish's through the ordinary update path, never `mergeUpdate`, since the copy already has the
+wish's changes; the wish keeps its own credits with the commit moved on, and the copy is deleted. If the wish changed
+since the copy was made (`AppUpdates.isStale`), Update offers to prepare it again instead. Keep Both keeps the copy as an
+app of its own, renamed after the wish; Cancel deletes it. Review Update… while a copy exists shows its chat, or its
+review once it's ready. A base that's no longer on GitHub fails the fetch rather than making up a change. File → Open
 from GitHub… on a project that isn't a wish offers Make App, a new wish whose first request is to make it into one.
 
 A wish whose chain names where it came from is updated as it was opened
