@@ -96,7 +96,7 @@ enum GamePage {
     }
 
     /// What build.sh is handed to write into the copy of the page it builds (`LAMP_PAGE_DEVICE`): the device the
-    /// project is built for now. Only a three.js game's page has the runtime.
+    /// project is built for now. Only a web game on Lamp's game runtime gets this device descriptor.
     static func buildEnvironment(for project: LampProject) throws -> [String: String] {
         guard GameKit.isGame(project), GameKit.engine(project) == .web else { return [:] }
         return ["LAMP_PAGE_DEVICE": try descriptor(for: place(for: project))]

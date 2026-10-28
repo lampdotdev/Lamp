@@ -12,6 +12,8 @@ a secure timestamp. Nested code is signed first:
 - llama.cpp's server and libraries (`Resources/llama/`)
 - pi's native module and the pi executable, with `Resources/pi.entitlements`: pi is Bun-compiled, and Bun's
   JIT needs `allow-jit` and friends under hardened runtime
+- Lamp's player (`Resources/LampPlayer.bundle`), the Mac app every game and screen is a copy of: `build.sh` compiles
+  it afresh for a release, before the starters, and each copy is signed again as its own app when Lamp makes it
 - the starters Lamp ships, already built: `build.sh` has the new Lamp build each one as a person's Mac would
   (`PrebuiltStarters.swift`), signs it and zips it beside the starter's files, so a new person's starters open at
   once, before Apple's build tools are installed. This adds about five minutes to a release and about 30 MB to Lamp.

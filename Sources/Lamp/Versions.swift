@@ -52,14 +52,16 @@ enum Versions {
     /// what the agent's own commands are: it runs under the same sandbox (`Sandbox`), confined to the app's
     /// folder. Nothing in the history has to be trusted, checked or cleaned, and nothing the agent does with
     /// git has to be refused.
-    static func git(_ command: String, cwd: URL, env: [String: String] = [:],
+    static func git(_ command: String, cwd: URL, env: [String: String] = [:], started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void = { _ in }) async -> Int32 {
+        guard hasGit else { return noGit }
         guard let confined = confined(command, in: cwd) else { return unconfined }
-        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, onLine: onLine)
+        return await Shell.run(confined, cwd: cwd, env: env.merging(environment) { $1 }, login: false, started: started, onLine: onLine)
     }
 
     /// The same, for the one caller that can't await (the migration, at launch).
     static func gitBlocking(_ command: String, cwd: URL) -> Subprocess.Result {
+        guard hasGit else { return Subprocess.Result(status: noGit, output: "", errors: "", timedOut: false) }
         guard let confined = confined(command, in: cwd) else {
             return Subprocess.Result(status: unconfined, output: "", errors: "", timedOut: false)
         }
@@ -68,6 +70,24 @@ enum Versions {
 
     /// What a git command returns when the sandbox couldn't be set up: it isn't run loose instead.
     static let unconfined: Int32 = 126
+
+    /// What it returns on a Mac with no git: a game or a screen is made before Apple's tools are there, and git is one of
+    /// them, so its versions wait for them. Never run then: /usr/bin/git without the tools opens Apple's installer.
+    static let noGit: Int32 = 127
+
+    /// Whether a real git is on this Mac (the Command Line Tools', Xcode's or Homebrew's), looked for without running
+    /// the shim, and not looked for again once found.
+    nonisolated(unsafe) private static var gitFound = false
+    static var hasGit: Bool {
+        if Pretend.isMissing("git") { return false }
+        if gitFound { return true }
+        let fm = FileManager.default
+        var places = ["/Library/Developer/CommandLineTools/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+        let select = Subprocess.runBlocking("/usr/bin/xcode-select", ["-p"], mergeErrors: false, timeout: 10)
+        if select.ok, !select.output.trimmed.isEmpty { places.append(select.output.trimmed + "/usr/bin/git") }
+        gitFound = places.contains { fm.isExecutableFile(atPath: $0) }
+        return gitFound
+    }
 
     /// The command as it is run: under the profile the agent's commands get for this folder, with the
     /// person's own git files that live elsewhere in the home folder opened for reading.

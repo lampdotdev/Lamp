@@ -16,6 +16,8 @@ struct LampApp: App {
             if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
             if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
         }
+        // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
+        if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
     }
 
     var body: some Scene {
@@ -51,6 +53,8 @@ struct LampCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Import Shared Wish…") { store.chooseImport() }
                 .keyboardShortcut("o")
+            Button("Open from GitHub…") { store.chooseRepository() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
                 .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
         }

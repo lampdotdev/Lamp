@@ -294,10 +294,11 @@ answer says where the person turns it on rather than that nothing answered. A ru
 
 ## Pages and their hosts
 
-A three.js game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
+A web game and a screen are both pages, and a page goes wherever Lamp has a host for a web engine (`PageHost`, in
 `Places`): WebKit in an app of Lamp's on the Mac, iPhone and iPad (Lamp's common host for a page, `LampPage.swift`:
 `LampPageFiles` serves `Web/` at the app's own address and `LampPageView` shows it, at the window's size or zoomed from a
-fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
+fixed canvas of its own; `LampWebGame.swift` is a game's app around it, `LampWebApp.swift` any other page's; on the Mac
+both are one prebuilt app, Lamp's player, copied for each: "Lamp's player", under Games); Android's WebView in one app of Lamp's for phones, tablets, photo frames and Google TV, Android TV
 and Fire TV (`GameAndroid`, in the page's `Lamp/Android`); the TV's own browser on a Samsung or LG (`TVs`); and the
 integration's own host on the Xbox (WebView2, `WebHost`). A row of the table of devices names its host in its `web`;
 the kinds' places are `Places.pagePlaces`, the destinations of every row with one, named by the rows' own words, so a
@@ -350,8 +351,10 @@ and an app kind that takes places one at a time (an Apple TV or a TV beside a Sw
 
 A game is drawn with three.js, or with Phaser when it's 2D (`GameKit.Engine.web`, written in its `.lamp-game` mark): the
 model writes both best and every place has a web view, and on the Xbox a game installed as a game gets enough of the
-console. Which of the two is the agent's choice as it writes the game, from what the person asked for (`Rules.gameWebKit`,
-the `2d-game` skill): the kind and the scaffold are the same, and the placeholder card is three.js's either way. A three.js game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
+console. Which of the two is the agent's choice as it writes the game, from what the person asked for: `Rules.gameWebKit`
+has it choose 2D or 3D and read the `game` skill with the `2d-game` or `3d-game` skill, which are the only guidance that
+names the library and its recipe (entry point, renderer, frame callback, where setup goes). The kind and the scaffold are
+the same, and the placeholder card is three.js's either way. A web game is a page in `Web/`, as an Xbox web app's is: `index.html` and the agent's modules,
 with Lamp's `Web/lamp-game.js` (the game runtime: `game({ renderer, init, frame, touch })`, the same pads, buttons,
 seeded `random()`, `save`/`load`, `log`, `rumble` and `sound` the kit has, the canvas fitted at 1920x1080, touch
 controls on a touch screen, and the frame rate measured wherever it's played: logged every ten seconds, and the canvas
@@ -415,12 +418,13 @@ and stays the Xbox's, as does a wish whose Xbox app is one of several. Its page 
 so until it's moved onto `game()` (`GameKit.ownsLoop`: none of its own files load lamp-game.js) it's looked at and used in
 the page preview it had as the Xbox's web app, as a screen is, and its rules say so (`Rules.gameOwnLoop`, `gameOwnLoopTry`).
 
-On the Mac and on iOS a three.js game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
+On the Mac and on iOS a web game is an app like any other Lamp makes, of Lamp's own (`GameKit.webPackageSwift`,
 `GameKit.webBuildSh`, `Sources/LampGame.swift`, `LampPage.swift` and LampSupport.swift, none the agent's), so its Mac copy
 is installed, opened, quit and shown on the desk as a Mac app is, with the wand floating over its full-bleed window and
 the chat beside it. A three.js or Phaser game isn't built live as a Mac app is (`LiveReload.eligible`, `Target.hostedByLamp`):
 a change of its page goes into the open game instead (`PageLive`, below), and any other change (its Swift, Package.swift,
-capabilities.json) reopens it, held for Reload while the person has it open.
+capabilities.json) reopens it, held for Reload while the person has it open. On the Mac it's made
+from Lamp's player (below) unless it has Swift of its own.
 
 A change to a game while it's played. The app around the page on the Mac and in the simulator (`LampPageLive` in
 `LampPage.swift`) asks Lamp what has changed (`/app/page/live`, held up to 25 s, asked again at once; never on a phone,
@@ -442,6 +446,52 @@ page names its build (`lamp-build.js`, beside `lamp-device.js`: build.sh's `stag
 runtime keeps the latest snapshot every five seconds and as the page hides; a newer build opened within a quarter of an
 hour restores it once. That's how a change reaches the game on a phone, Android, a TV and the Xbox: when Lamp installs it
 there and opens it, the player is back where they were.
+
+### Lamp's player
+
+Every game and screen on the Mac is its own Mac app (its own name, bundle id, icon, Dock and ⌘-Tab entry, opening
+without Lamp), but none is compiled for itself: each is a copy of **Lamp's player**, one Mac app around a page compiled
+when Lamp is built and shipped in its bundle as `Contents/Resources/LampPlayer.bundle` (not an .app, so the system never
+lists it as an app of its own). build.sh writes its Swift with `Lamp --player-sources` (`GameKit.playerSources`: the
+same `LampWebGame.swift`, `LampWebApp.swift`, `LampPage.swift`, the default `Native.swift` and LampSupport.swift a
+compiled page app has, with `apple/LampPlayer.swift` as its main.swift), compiles it with the same `__RESTRICT` segment
+every app Lamp builds has, and keeps it in `.build/player` under a key of its sources and the compiler (a release builds
+it afresh); it's signed with the rest of Lamp. Its version is a hash of those sources (`LampPlayerVersion` in its
+Info.plist, `GameKit.playerVersion`).
+
+Nothing of one game is compiled in. What `Template.write` fills in for a compiled app is read by the copy from its own
+bundle: its name (`CFBundleDisplayName`), what kind of page it is, where the page is served and the fixed canvas a screen
+made at 1920x1080 has (`LampPlayer` in Info.plist, `GameKit.playerPlist`, read by `LampPlayer` in main.swift, which opens
+`LampGameApp` or `LampWebApp`); what it's told about itself and Lamp (`LampInstall`), its permission reasons, its
+capabilities.json, its icon and the chat beside it are what `stageSigned` gives every Mac app. It always carries
+`LampWish` and `LampPageWish`, as every app on its own does (`Template.carriesWish`), and looks for its other copies only
+once Lamp's room shows one, so it asks for nothing it doesn't use.
+
+To make one, the game's own build.sh copies the player in place of `swift build` (`LAMP_PLAYER`, handed over by
+`GameKit.playerEnvironment` only for the Mac): it renames the binary to the game's program name, writes the game's
+Info.plist as before, puts `Web/` in Contents/Resources/Web and signs it ad hoc; it runs in the app's sandbox as every
+build does, with the player opened for reading. Lamp then installs and signs it as any Mac app (`stageSigned`: the
+identity and entitlements Mac apps get). That takes about a second, and needs neither the Command Line Tools nor Xcode
+(`Pretend.buildEnvironment` runs builds with no developer folder while `LAMP_PRETEND_MISSING` has `tools`, so a build
+that would compile fails as on a bare Mac). The copy is stamped with the player's version (`BuildStamp.player`): one
+made by another player, compiled where the player would do, or copied where it's compiled now reads as out of date and
+is made again when it's opened from Lamp (`BuildStamp.playerOutdated`), and the version is in the build's inputs
+(`GameKit.playerInput`), so a new player also makes it again at the next look.
+
+**When it's still compiled.** A page with Swift of its own in `Sources/` (`GameKit.hasOwnSwift`: a `Native.swift` that's
+no longer Lamp's, which is how a page reads the person's things, or any other file; Home HQ's reads calendars and photos)
+is compiled as before. The rule is decided at every build (`GameKit.usesPlayer`), so adding or taking away Swift moves it
+between the two, and `Rules.pageNative` tells the agent that Swift of its own makes builds slow and needs Apple's tools.
+iPhone, iPad and Android copies are always built as before. Since bundle ids stay per game, camera, microphone and
+photos permissions stay per game too; macOS's **Local Network** answer goes by the executable's build ID (see "Two
+Lamps on one Mac"), and every copy of one player has the same executable, so it's asked once and that answer is shared
+by every game and screen made from that player, until a new player comes with a Lamp update.
+
+**Without Apple's tools.** A wish's requests wait for the Command Line Tools only when something in it is compiled
+(`Store.needsAppleTools`, `readyFor`: a wish not yet named goes ahead, and its turn waits once the naming call names
+something compiled). Lamp asks for the tools only then, and the desk's and the chat's banners show only while they
+install or something waits for them. git is one of Apple's tools, so on a Mac without them a game has no versions (and
+no Undo) until they come; Lamp never runs `/usr/bin/git` then (`Versions.hasGit`), which would open Apple's installer.
 
 A C++ game is written against Lamp's game kit (`Resources/GameKit`): `lamp_game.h` (`game_init`, `game_frame` with the
 controller in `LampPad`, `lamp_asset`, `lamp_save`/`lamp_load`, `lamp_log`, `lamp_random`, `lamp_rumble`, and sound: `lamp_sound_load`,
@@ -525,7 +575,7 @@ Lamp's Android app around the page, as a game's is, kept awake and not a game to
 integration's web app. A screen made before screens filled any shape says `width=1920` in its viewport meta
 (`ScreenKit.isFixed`): the app around it is then given a 1920x1080 canvas it zooms whole, and the rule tells the agent
 to change its viewport first when it's to go somewhere tall. On the person's own iPhone or iPad the phone's Xcode
-project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a three.js
+project carries `Web/` as a folder beside Assets (`Template.withWebFolder`, `Devices.stage`), as it does for a web
 game.
 
 Wherever it's shown the agent looks at it in the TV preview on the Mac (`Target.looksInTVPreview`,
@@ -544,13 +594,14 @@ one, game or app, web or native, in its prompt (`Skills.forDevices`) and in `mak
 A kind that takes places has what its places give it, not what its kind could (`LampProject.hasMac`, `hasIOS`, `hasTV`,
 `hasDevice`, read where an app is at hand): a game played on the Mac alone is asked for no Xcode or team. A game's or a screen's Mac copy is installed in Games/ or Screens/ of the apps folder (`Target.installFolder`), apart from a Mac app of its wish, which has the wish's name.
 
-**What a page can reach.** A three.js game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
+**What a page can reach.** A web game's page and a screen's have Lamp's web building blocks in `Web/lamp.js`
 (`DeviceSupport.webJS`, written for a game on the Mac too, not only on the Xbox), and on the Mac, iPhone and iPad the
 app around the page answers for them (`Sources/LampPage.swift`, `LampPage.attach`, Lamp's common host, shared by
 `LampWebGame.swift` and `LampWebApp.swift`): LampAI's calls go through the app to Lamp with the app's own token (`lampGateway`, only the AI
 routes, only from the app's own page), and `LampNative.call(name, args)` reaches Swift the agent writes in
 `Sources/Native.swift` (`Native.register()`, each call `LampNative.on(name) { args in … }` returning anything Encodable),
 which has every building block in LampSupport.swift: the person's mail, calendar, reminders, contacts, photos, location.
+Registering a call makes the Mac copy compiled rather than copied from Lamp's player.
 So a game made of the person's unanswered emails, or a family calendar on the kitchen iPad, is a game or a screen and not
 a Mac app. `Native.swift` is the app's own: Lamp writes it only when it isn't there and takes it away with the kind only
 while it's still Lamp's scaffold, and the two Package.swift files compile all of `Sources/`. Everywhere else (a TV, the

@@ -73,4 +73,15 @@ for starter in $starters; do
     fi
   fi
 done
+# The same file as an iPhone app compiles it, where the `#if os(iOS)` code counts: against the simulator's SDK, when
+# this Xcode has it (the Command Line Tools alone don't).
+if sdk_ios="$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null)"; then
+  if xcrun swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-ios17.0-simulator -sdk "$sdk_ios" "$work/LampSupport.swift" 2>"$work/ios.log"; then
+    print "✓ LampSupport.swift for the iPhone"
+  else
+    print "✗ LampSupport.swift for the iPhone"; cat "$work/ios.log"; failed=1
+  fi
+else
+  print "○ LampSupport.swift for the iPhone: no simulator SDK here"
+fi
 exit $failed

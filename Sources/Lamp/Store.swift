@@ -508,6 +508,15 @@ final class Store: ObservableObject {
     }
     /// The wish a part belongs to, or the app itself when it's a wish.
     func wish(of project: LampProject) -> LampProject { project.partOf.flatMap { id in projects.first { $0.id == id } } ?? project }
+    /// The app whose window a wish's chat goes beside: the app in the wish's own folder while it holds one, else its one
+    /// Mac app in a folder of its own that takes the chat (a game in Game/, say). The wish itself when it has neither, or
+    /// several, which no one window stands for.
+    func chatApp(of project: LampProject) -> LampProject {
+        let wish = wish(of: project)
+        if wish.holdsApp { return wish }
+        let macs = parts(of: wish).filter(Sidebar.applies)
+        return macs.count == 1 ? macs[0] : wish
+    }
     /// Who a line about where an app opens names: the wish, or for one of its several apps that app ("The iPhone app"),
     /// since every app of a wish has the wish's name.
     func placeName(_ project: LampProject) -> String {
@@ -1055,10 +1064,44 @@ final class Store: ObservableObject {
             openWaitingImport()
         }
         // During the welcome, Apple's installer waits for the step that explains it.
-        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone { requestBuildTools() }
+        // Only for a request that waits for them: a Mac that makes only games and screens never needs them.
+        if !setup.hasBuildTools && !setup.installRequested && Onboarding.isDone && waitsForAppleTools { requestBuildTools() }
         if !setup.hasBuildTools { pollSetup() }
-        prepareStarters()   // the prebuilt ones need no build tools
+        prepareStarters()   // the prebuilt ones need no build tools, nor do games and screens
         if setup.ready && !wasReady { await becameReady() }
+        // A request that needs no tools starts as soon as what builds is set up.
+        for project in projects where !(queued[project.id] ?? []).isEmpty && readyFor(project) { startQueued(project) }
+    }
+
+    /// Whether a wish's requests wait for Apple's Command Line Tools: anything Lamp compiles on this Mac does. A game or
+    /// a screen made from Lamp's player doesn't (`GameKit.usesPlayer`), nor does a wish whose kind the agent is still to
+    /// choose: its turn goes ahead, and a build of something compiled waits for them (`waitForAppleTools`).
+    func needsAppleTools(_ project: LampProject) -> Bool {
+        let wish = wish(of: project)
+        guard !wish.untitled, !wish.makesNoApp, wish.undecided == nil else { return false }
+        return apps(of: wish).contains { !GameKit.usesPlayer($0) }
+    }
+
+    /// Whether a request to the wish can start now: what builds is set up, and Apple's tools are there or not needed.
+    func readyFor(_ project: LampProject) -> Bool {
+        setup.ready || (setup.hasBuilder && setup.hasAgent && !needsAppleTools(project))
+    }
+
+    /// Some request waits for Apple's tools to arrive.
+    var waitsForAppleTools: Bool {
+        !setup.hasBuildTools && projects.contains { !(queued[$0.id] ?? []).isEmpty && needsAppleTools($0) }
+    }
+
+    /// Waits for Apple's tools, asking for them if nobody has yet, while the turn that builds goes on; false once it
+    /// was stopped or the app went away meanwhile.
+    private func waitForAppleTools(_ project: LampProject, in turn: Turn?) async -> Bool {
+        if !setup.installRequested { requestBuildTools() }
+        log(project, .status, "Waiting for Apple's app-building tools…")
+        while !setup.hasBuildTools {
+            if turn?.stopped == true || !exists(project) { return false }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        return true
     }
 
     func requestBuildTools() {
@@ -1577,7 +1620,9 @@ final class Store: ObservableObject {
     }
 
     func handle(url: URL) {
-        if url.isFileURL && url.pathExtension == "lampapp" {
+        // A shared file, or a folder holding a wish as Put on GitHub lays one out.
+        var folder: ObjCBool = false
+        if url.isFileURL, url.pathExtension == "lampapp" || (FileManager.default.fileExists(atPath: url.path, isDirectory: &folder) && folder.boolValue) {
             importApp(from: url)
             return
         }
@@ -1599,7 +1644,7 @@ final class Store: ObservableObject {
     /// Where a shared file a link named is kept once fetched, with the request that came with it beside it
     /// (`fetchedRequest`), so the request stays with that file through the review, a wait for setup (`WaitingImport`
     /// copies it with the file), or a restart.
-    private static let fetchedPrefix = "lamp-fetched-"
+    static let fetchedPrefix = "lamp-fetched-"
     private static let requestFile = WaitingImport.requestFile
 
     /// The request kept beside a fetched file, for the wish made from it: only in a folder Lamp made for the file
@@ -1614,6 +1659,8 @@ final class Store: ObservableObject {
     /// by its declared length, and cut off as it comes), then goes the way a file opened by hand does, review
     /// included, with the request the link brought beside it for its box.
     func take(exact: Wish.Exact) {
+        // A link that names where a wish lives on GitHub: fetched as a repository, not as a file.
+        if let source = RepoImport.source(from: exact.file) { return importRepository(source, request: exact.text) }
         NSApp.activate()
         Task {
             let folder = Sharing.workFolder.appendingPathComponent(Self.fetchedPrefix + UUID().uuidString)
@@ -1712,10 +1759,12 @@ final class Store: ObservableObject {
     /// else in Lamp's panel beside whatever shows the wish, or on its own (`ChatPanel`). Lamp's window is the desk only.
     func showChat(_ id: String) {
         reload()
+        // Asked by an app of a wish's in a folder of its own: its chat is the wish's.
+        if let part = projects.first(where: { $0.id == id && $0.isPart }) { return showChat(wish(of: part).id) }
         offerStarterChanges(id, after: 0.5)
         selection = id
         if SidebarServer.shared.isConnected(id), let project = projects.first(where: { $0.id == id }),
-           !macCopies(of: project).isEmpty, MagicPanel.runningCopiesTakeTheChat(project) {
+           !macCopies(of: chatApp(of: project)).isEmpty, MagicPanel.runningCopiesTakeTheChat(project) {
             return MagicPanel.shared.openChat(in: project)
         }
         ChatPanel.show(id)
@@ -2109,6 +2158,8 @@ final class Store: ObservableObject {
     /// A wish's first version, saved as every other is (`Versions.commitAll`), so it carries the wish's list of apps:
     /// Undo back to it gives back an app the wish waits for (a shared file's part this Mac can't build yet, say).
     func initRepo(_ project: LampProject, message: String) async -> Bool {
+        // A game or a screen is made before Apple's tools, git among them, are on the Mac: it has no versions until then.
+        guard Versions.hasGit else { return true }
         guard await Versions.git("git init -q", cwd: project.dir) == 0 else { return false }
         return await Versions.commitAll("-qm \"$LAMP_MESSAGE\"", in: project.dir, env: ["LAMP_MESSAGE": message]) == .saved
     }
@@ -2311,7 +2362,7 @@ final class Store: ObservableObject {
         let target = current.platform.target
         // A game in C++, made before three.js games, is played on the Xbox alone.
         if GameKit.isGame(current), GameKit.engine(current) == .native, wanted.filter({ $0 != .mac }) != [.device] {
-            return "This game is written in C++ for the Xbox, and is played there alone. A three.js game, a new wish, plays everywhere."
+            return "This game is written in C++ for the Xbox, and is played there alone. A new web game can run on other devices Lamp supports."
         }
         // A game's and a screen's home is the Mac, kept whatever's asked (a C++ game's is the Xbox alone, above).
         let native = GameKit.isGame(current) && GameKit.engine(current) == .native
@@ -2919,10 +2970,50 @@ final class Store: ObservableObject {
 
     func chooseImport() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.lampApp]
-        panel.message = "Choose a Lamp app someone shared with you"
+        panel.allowedContentTypes = [.lampApp, .folder]
+        panel.canChooseDirectories = true
+        panel.message = "Choose a shared wish file, or a folder cloned from GitHub"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importApp(from: url)
+    }
+
+    /// Open from GitHub…: the address of a wish's repository, which Lamp fetches and opens as it would the shared file.
+    func chooseRepository() {
+        let alert = NSAlert()
+        alert.messageText = "Open a wish from GitHub"
+        alert.informativeText = "Paste the address of a repository Lamp put on GitHub."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "https://github.com/someone/wish"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let source = RepoImport.source(from: field.stringValue) else {
+            let refusal = NSAlert()
+            refusal.messageText = "That isn't a repository on GitHub"
+            refusal.informativeText = "An address looks like https://github.com/someone/wish, with a branch or commit after it if you like."
+            refusal.runModal()
+            return
+        }
+        importRepository(source, request: nil)
+    }
+
+    /// Fetches a wish's repository and opens it as a shared file is opened (`importApp`), with a request that came with
+    /// its link kept beside it for the wish's box, as beside a fetched file.
+    func importRepository(_ source: RepoImport.Source, request: String?) {
+        NSApp.activate()
+        Task {
+            let folder = RepoImport.cloneFolder()
+            do {
+                let tree = try await RepoImport.clone(source, into: folder)
+                if let request { try request.write(to: folder.appendingPathComponent(Self.requestFile), atomically: true, encoding: .utf8) }
+                importApp(from: tree)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                NSAlert(error: error).runModal()
+            }
+        }
     }
 
     /// Puts the app's .lampapp file on the clipboard with its picture, ready to paste into a message: a chat
@@ -3348,7 +3439,9 @@ final class Store: ObservableObject {
         // Anything but a click on a card is the person going on: what they allowed once is spent.
         if card == nil { DevicePermissions.endOnce(for: wish(of: project)) }
         var message = QueuedMessage(text: prompt, attachments: attachments, pointed: pointed)
-        if !setup.ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
+        let ready = readyFor(project)
+        if !ready || queueWaitsForReload(in: project) { message = keptForLater(message) }
+        if !ready, needsAppleTools(project), !setup.hasBuildTools, !setup.installRequested { requestBuildTools() }
         let files = message.attachments, pointed = message.pointed
         // Typed while a card waits, the message is its answer, even if it has to wait behind the agent's
         // turn: the card folds as it's sent, so it can't be answered a second time by a click meanwhile.
@@ -3396,7 +3489,9 @@ final class Store: ObservableObject {
     }
 
     private func saveWaiting() {
-        let waiting = queued.filter { Self.keptAcrossRelaunch($0.value, setupReady: setup.ready) }.mapValues { messages in
+        let waiting = queued.filter { id, messages in
+            Self.keptAcrossRelaunch(messages, setupReady: projects.first { $0.id == id }.map(readyFor) ?? setup.ready)
+        }.mapValues { messages in
             messages.map(\.saved)
         }
         if waiting.isEmpty {
@@ -3651,7 +3746,7 @@ final class Store: ObservableObject {
             }
             return startQueued(owner)
         }
-        guard setup.ready, let messages = queued[project.id], !messages.isEmpty,
+        guard readyFor(project), let messages = queued[project.id], !messages.isEmpty,
               Self.startsNow(messages, changeHeld: holdsAnyBuild(project)),
               let owner = begin(project) else { return }
         queued[project.id] = nil
@@ -3755,6 +3850,8 @@ final class Store: ObservableObject {
                 project = current(project) ?? project
                 if newApp { showEarly(project, in: owner) }
             }
+            // Made before git was on this Mac (a game or a screen, before Apple's tools): its first version is saved now.
+            await saveFirstVersion(of: project)
             // Where the app is as the turn starts, so the request can be changed and sent again from here.
             if let head = await Versions.head(project) {
                 mark(asked, sentFrom: head, in: project)
@@ -4182,8 +4279,9 @@ final class Store: ObservableObject {
             }
         }
         // The change is in the app either way. Without a version of its own it can't be gone back to by
-        // itself, and the person should know that rather than find it out from Undo.
-        if unsaved { log(project, .error, ErrorMessages.versionNotSaved) }
+        // itself, and the person should know that rather than find it out from Undo. Not on a Mac with no git yet,
+        // where nothing has versions until Apple's tools come (`saveFirstVersion`).
+        if unsaved, Versions.hasGit { log(project, .error, ErrorMessages.versionNotSaved) }
         for app in [project] + parts(of: project) where crashes[app.id] != nil {
             log(project, .error, ErrorMessages.quitsAfterLaunch(app.isPart ? placeName(app) : project.name))
         }
@@ -4286,6 +4384,9 @@ final class Store: ObservableObject {
     /// regenerates LampSupport.swift, designs the icon (icon.json) while the agent works, and saves the
     /// request's attachments before the agent starts.
     private func agentChangedFiles(_ project: LampProject) async -> Bool {
+        // No git yet (a game or a screen made before Apple's tools): whether what its apps are built from has changed since
+        // their last build stands in for git's word.
+        guard Versions.hasGit else { return apps(of: project).contains { Runtime.sourcesChanged($0) } }
         var output = ""
         let ignored = "':!Sources/LampSupport.swift' ':!\(Template.sceneSupportPath)' ':!\(Template.widgetFolder)/\(Template.widgetSupportFile)' ':!\(Template.shareFolder)/\(Template.shareSupportFile)' ':!icon.json' ':!\(Attachments.folder)'"
             + Template.watchSupportPaths.map { " ':!\($0)'" }.joined()
@@ -6617,9 +6718,9 @@ final class Store: ObservableObject {
         Task {
             defer { preparingStarters = false }
             await startersInstall?.value
-            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them gets
-            // its first version when they arrive.
-            if setup.hasBuildTools { await saveStartersFirstVersions() }
+            // Their first versions need git, one of Apple's tools; a prebuilt starter made ready before them, or a game
+            // made before them, gets its first version when they arrive.
+            if setup.hasBuildTools { await saveFirstVersions() }
             // Each once: one that couldn't be made ready without the tools waits for them, not for this loop.
             // Known by instance, not folder: a starter deleted and added back meanwhile takes the same folder
             // name, and is a new one to build.
@@ -6627,22 +6728,28 @@ final class Store: ObservableObject {
             while let next = nextStarterToPrepare(excluding: tried) {
                 tried.insert(next.instance)
                 // Again for each: one put back on the desk meanwhile gets its first version before its build.
-                if setup.hasBuildTools { await saveStartersFirstVersions() }
+                if setup.hasBuildTools { await saveFirstVersions() }
                 await prepare(next)
             }
         }
     }
 
-    /// Each starter's first version, "From Lamp", which Undo and Versions go back to: made once Apple's tools are
-    /// there, since git is one of them, and tried again on a later launch for one where it didn't take.
-    private func saveStartersFirstVersions() async {
-        for project in projects where Starters.isStarter(project)
-            && !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) {
-            if !(await initRepo(project, message: "From Lamp")) {
-                try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
-                NSLog("Lamp couldn't save the first version of \(project.name)")
-            }
+    /// A wish's first version, made once Apple's tools are there, since git is one of them (`initRepo` makes none without
+    /// it): before the wish's next turn, when the tools arrive (`prepareStarters`), and on a later launch for one where it
+    /// didn't take. A starter's is "From Lamp", which Undo and Versions go back to.
+    private func saveFirstVersion(of project: LampProject) async {
+        // A part's files are its wish's, saved in the wish's history: a history of its own there would hide them from it.
+        guard Versions.hasGit, !project.isPart, project.scaffolded,
+              !FileManager.default.fileExists(atPath: project.dir.appendingPathComponent(".git").path) else { return }
+        if !(await initRepo(project, message: Starters.isStarter(project) ? "From Lamp" : "Scaffold")) {
+            try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(".git"))
+            NSLog("Lamp couldn't save the first version of \(project.name)")
         }
+    }
+
+    /// Every wish's first version still to be saved, once Apple's tools (and so git) are there.
+    private func saveFirstVersions() async {
+        for project in projects where !project.isPart { await saveFirstVersion(of: project) }
     }
 
     /// A starter that's never been built and that nothing else is working on.
@@ -6655,8 +6762,8 @@ final class Store: ObservableObject {
     /// ones Lamp came with already built (`PrebuiltStarters`).
     func canPrepare(_ project: LampProject? = nil) -> Bool {
         if setup.hasBuildTools { return true }
-        if let project { return PrebuiltStarters.has(project) }
-        return projects.contains { needsPreparing($0) && PrebuiltStarters.has($0) }
+        if let project { return PrebuiltStarters.has(project) || !needsAppleTools(project) }
+        return projects.contains { needsPreparing($0) && (PrebuiltStarters.has($0) || !needsAppleTools($0)) }
     }
 
     private func nextStarterToPrepare(excluding tried: Set<String> = []) -> LampProject? {
@@ -6674,7 +6781,7 @@ final class Store: ObservableObject {
         // The copy Lamp came with when it's what this build would make, so the starter is ready at once.
         var ready = PrebuiltStarters.install(into: project)
         // Without Apple's tools there's no build: a starter whose prebuilt copy couldn't be used waits for them.
-        let canBuild = setup.hasBuildTools
+        let canBuild = setup.hasBuildTools || !needsAppleTools(project)
         if !ready, canBuild { ready = await build(project) == nil }
         if ready {
             await prepareIcon(project)
@@ -6761,7 +6868,7 @@ final class Store: ObservableObject {
     func updatePlaces(of project: LampProject, retrying: Bool = false) {
         let wish = self.wish(of: project)
         refreshPlacesBehind(wish)
-        guard setup.hasBuildTools, !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
+        guard setup.hasBuildTools || !needsAppleTools(wish), !wish.makesNoApp, !wish.untitled, placesIdle(wish), !updatingPlaces.contains(wish.id),
               apps(of: wish).contains(where: { !placesToUpdate(of: $0).isEmpty }) else { return }
         // Started by a change, not a retry: the places out of reach get their tries afresh.
         if !retrying { placesRetries[wish.id] = nil }
@@ -7327,6 +7434,11 @@ final class Store: ObservableObject {
             if !said { log(project, .error, problem) }
             return problem
         }
+        // Something compiled, on a Mac whose Apple tools are still to come (a wish the agent made a Mac app of before they
+        // arrived): the build waits for them, as a request for it would have. Lamp's player needs none.
+        if !project.onAndroid, !GameKit.usesPlayer(project), !setup.hasBuildTools {
+            guard await waitForAppleTools(project, in: owner) else { return "Stopped." }
+        }
         let game = GameKit.isGame(project)
         // A game's shaders are compiled with a tool Lamp fetches the first time, a small download with nothing to accept.
         if game, GameKit.engine(project) == .native {
@@ -7349,6 +7461,8 @@ final class Store: ObservableObject {
             log(project, .error, error.localizedDescription)
             return error.localizedDescription
         }
+        // A page with no Swift of its own is Lamp's player on this Mac, copied rather than compiled (`GameKit.usesPlayer`).
+        env.merge(GameKit.playerEnvironment(for: project)) { $1 }
         if inPlace, await reloadBeforeBuilding(project, command: command, env: env, fingerprint: fingerprint) { return nil }
         // Said again: a change that couldn't go into the open app left the line on putting it in, through the whole build.
         note("Building…", for: project)
@@ -7412,7 +7526,10 @@ final class Store: ObservableObject {
                          onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
         // Which structs the app reads as bytes, for the live copy's spares: worked out only when its raw-memory code changed.
         if env["LAMP_LIVE"] == "1" { await LiveSlots.noteByteStructs(project) }
-        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env, started: started, onLine: onLine)
+        // Lamp's player, which a page's build copies, is read where Lamp keeps it, and only read.
+        let reading = env["LAMP_PLAYER"].map { [$0] } ?? []
+        return await Sandbox.run(Shell.compatibleSDK + command, for: project, env: env.merging(Pretend.buildEnvironment) { $1 },
+                                 reading: reading, started: started, onLine: onLine)
     }
 
     /// A new app's bar that has already said how its turn ended follows what happens to the app afterwards
@@ -9344,7 +9461,7 @@ final class Store: ObservableObject {
         let report = Runtime.newestCrash(of: crashed)?.date
         if let report, crashesAnswered[project.id] == report { return true }
         // While a turn runs or a request waits, the agent hears of the crash with it.
-        guard setup.ready, !busy.contains(project.id), turns[project.id] == nil,
+        guard readyFor(project), !busy.contains(project.id), turns[project.id] == nil,
               queued[project.id]?.isEmpty ?? true else { return false }
         guard !lastRequestByLamp(project) else { return false }
         if let report { crashesAnswered[project.id] = report }
@@ -10741,7 +10858,7 @@ final class Store: ObservableObject {
             guard let id = agentTokens[token], let project = projects.first(where: { $0.id == id }) else {
                 return (401, ["error": "Lamp isn't working on this app right now."])
             }
-            guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+            guard readyFor(project) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
             guard turns[project.id]?.agent != nil else { return (409, ["error": "Lamp isn't working on this app right now."]) }
             if project.isDeviceSetup, let refusal = Self.deviceSetupRefusal(route: route, request: request) { return refusal }
             return await agentRequest(request, route: route, for: project)
@@ -10780,7 +10897,7 @@ final class Store: ObservableObject {
             default: return PageLive.shared.state(body, for: project)
             }
         }
-        guard setup.ready else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
+        guard readyFor(project) else { return (503, ["error": "Lamp isn't set up yet. Open Lamp to finish setup."]) }
         return await appRequest(request, for: project)
     }
 
@@ -11188,7 +11305,7 @@ final class Store: ObservableObject {
         await EngineSignIn.refresh()
         var reply: [String: Any] = [:]
         for capability in Capability.allCases {
-            reply[capability.rawValue] = setup.ready && AppAI.resolve(capability, for: project).tier != .none
+            reply[capability.rawValue] = readyFor(project) && AppAI.resolve(capability, for: project).tier != .none
         }
         return (200, reply)
     }
@@ -11857,8 +11974,8 @@ final class Store: ObservableObject {
             if project.device == nil { await Emulator.bringForward(project.destination.emulator) }
         } else if project.onIOS {
             if let udid = simulatorApps[project.id]?.udid { await Simulator.show(udid) }
-        } else if !project.isPart {
-            // The chat goes beside the wish's own app; a Mac part has no chat of its own to bring.
+        } else if chatApp(of: project).id == project.id {
+            // The chat goes beside the app that stands for the wish on this Mac: its own, or its one Mac app in a folder.
             Task { await MagicPanel.shared.handOff(project) }
         }
     }

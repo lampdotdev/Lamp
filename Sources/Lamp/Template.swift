@@ -5825,6 +5825,9 @@ enum Template {
                 button.identifier = NSUserInterfaceItemIdentifier("lampReload")
                 button.imagePosition = .imageLeading
                 button.imageHugsTitle = true
+                // The glass style is macOS 26's, and its names exist only in Xcode 26's SDK: a build with an older
+                // Xcode (the compiler says which) gets the push style on every macOS.
+                #if compiler(>=6.2)
                 if #available(macOS 26, *) {
                     button.bezelStyle = .glass
                     button.borderShape = .capsule
@@ -5832,6 +5835,9 @@ enum Template {
                 } else {
                     button.bezelStyle = .push
                 }
+                #else
+                button.bezelStyle = .push
+                #endif
                 button.bezelColor = .controlAccentColor
                 button.toolTip = "Reload the app to see the latest change"
                 button.setAccessibilityLabel("Reload to see the latest change")
@@ -5979,6 +5985,7 @@ enum Template {
             image.accessibilityDescription = name
             let button = NSButton(image: image, target: Opener.shared, action: action)
             button.toolTip = tip
+            #if compiler(>=6.2)
             if #available(macOS 26, *) {
                 button.bezelStyle = .glass
                 button.borderShape = .circle
@@ -5986,6 +5993,10 @@ enum Template {
                 button.bezelStyle = .accessoryBarAction
                 button.isBordered = false
             }
+            #else
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            #endif
             return button
         }
 
@@ -6240,6 +6251,11 @@ enum Template {
                 guard !isOpen(in: window) else { return }
                 show(chat)
                 return
+            }
+            // An app built from its code with its own script has no chat of its own: the extension is Lamp's and goes
+            // into an app only as Lamp installs it. Nothing to wait for, so it goes straight to Lamp, or its site.
+            guard FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent("Contents/Extensions/LampSidebar.appex").path) else {
+                return fallback()
             }
             Task { @MainActor in
                 // Just after Lamp installs a new build, macOS may not have registered its chat yet: the first
@@ -15009,29 +15025,32 @@ enum Template {
                 if let device = directs[id].flatMap({ $0.ready ? $0.device : nil }) ?? relayPresent[id]?.device, !device.isEmpty { devices[id] = device }
             }
             // This app itself is listed only while another copy of it is open.
-            let list = roster.filter { $0.id != me || open.contains { Self.app(of: $0) == me } }.map { app in
-                let copies = open.filter { Self.app(of: $0) == app.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
+            // A loop, not a map: Swift before 6.4 can't type a closure this long that reaches into the roster's entries.
+            var list: [Peer] = []
+            for listed in roster.filter({ $0.id != me || open.contains { Self.app(of: $0) == me } }) {
+                let copies = open.filter { Self.app(of: $0) == listed.id }.map { Copy(id: $0, device: devices[$0] ?? "", since: openSince[$0] ?? now) }
                     .sorted { ($0.since, $0.id) < ($1.since, $1.id) }
                 let isOpen = !copies.isEmpty
                 if isOpen {
                     // Open, so made, whatever a list kept from before said.
-                    waiting.remove(app.id)
-                    appsOpen.insert(app.id)
-                } else if appsOpen.remove(app.id) != nil {
-                    lastSeen[app.id] = now
+                    waiting.remove(listed.id)
+                    appsOpen.insert(listed.id)
+                } else if appsOpen.remove(listed.id) != nil {
+                    lastSeen[listed.id] = now
                     keep()
                 }
-                // Out of date only when no copy speaks what this one does.
+                // Out of date only when no copy speaks what this one does. `spoken`, not `wire`: a local named like the
+                // `wire(of:)` the line before calls reads as a circular reference to Swift before 6.4.
                 let wires = copies.map { wire(of: $0.id) }
-                let wire = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
+                let spoken = wires.contains(Self.wire) ? Self.wire : wires.first ?? Self.wire
                 let since = copies.first?.since
-                let status = isOpen && wire != Self.wire
-                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: app.name, older: wire < Self.wire), lastSeen: since)
+                let status = isOpen && spoken != Self.wire
+                    ? Status(state: .outOfDate, reason: Self.outOfDate(name: listed.name, older: spoken < Self.wire), lastSeen: since)
                     : isOpen ? Status(state: .connected, reason: "", lastSeen: since)
-                    : Status(state: .notOpen, reason: Self.notOpen(name: app.name, kind: app.kind, lastSeen: lastSeen[app.id],
-                                                                   waiting: waiting.contains(app.id), now: now),
-                             lastSeen: lastSeen[app.id])
-                return Peer(id: app.id, copies: copies, kind: app.kind, name: app.name, device: copies.last?.device ?? "", status: status)
+                    : Status(state: .notOpen, reason: Self.notOpen(name: listed.name, kind: listed.kind, lastSeen: lastSeen[listed.id],
+                                                                   waiting: waiting.contains(listed.id), now: now),
+                             lastSeen: lastSeen[listed.id])
+                list.append(Peer(id: listed.id, copies: copies, kind: listed.kind, name: listed.name, device: copies.last?.device ?? "", status: status))
             }
             if !copiesSeen, open.contains(where: { Self.app(of: $0) == me }) {
                 copiesSeen = true
@@ -17706,17 +17725,23 @@ enum Template {
 
         /// The run counts once it's finished: one iOS cut short is still due, and runs again at the next wake.
         /// While it runs nothing starts another (`running`).
-        @discardableResult private func fire() -> Task<Void, Never> {
-            if let running { return running }
-            let task = Task { @MainActor [weak self] in
+        /// Starts a run, unless one is going: `running` is the task either way. Shaped as the Mac's is (the task
+        /// assigned, nothing returned): a function that made a task and returned it read, to Swift before 6.4, as a
+        /// closure of the task's own optional type, and failed.
+        private func fire() {
+            guard running == nil else { return }
+            running = Task { @MainActor [weak self] in
                 guard let self else { return }
-                await work()
-                UserDefaults.standard.set(Date(), forKey: lastRunKey)
-                running = nil
-                arm()
+                await self.run()
             }
-            running = task
-            return task
+        }
+
+        /// One run: the work, the time it finished, and the next one armed.
+        private func run() async {
+            await work()
+            UserDefaults.standard.set(Date(), forKey: lastRunKey)
+            running = nil
+            arm()
         }
 
         /// Coming back to the front catches up; going to the back asks iOS for time when the next one is due.
@@ -17756,7 +17781,8 @@ enum Template {
             askForTime()
             var runs: [Task<Void, Never>] = []
             for schedule in all.values {
-                if let running = schedule.running { runs.append(running) } else if schedule.due <= Date() { runs.append(schedule.fire()) }
+                if schedule.running == nil, schedule.due <= Date() { schedule.fire() }
+                if let running = schedule.running { runs.append(running) }
             }
             for run in runs { await run.value }
             askForTime()

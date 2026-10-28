@@ -3345,15 +3345,12 @@ extension Agent.Rules {
     fine. The app can fetch from https APIs that allow it (no key you don't have); its AI comes from Lamp (below).
     """
 
-    /// three.js in a TV app's page: Lamp writes it there (`TVTemplate.writeOwnedFiles`), which no screen or web app has.
+    /// The 3D library in a TV app's page: Lamp writes it there (`TVTemplate.writeOwnedFiles`), which no screen or web
+    /// app has. How a page loads and draws with it is the 3d-game skill's; this says only what's there and whose it is.
     static let tvThree = """
-    - 3D, a game's included, is three.js, which Lamp writes in Web/three before every build (never edit it, never load \
-    it from the network): in index.html, after lamp.js, put the import map <script type="importmap">{ "imports": { \
-    "three": "./three/three.module.js", "three/addons/": "./three/addons/" } }</script>, then the 3D code in a \
-    <script type="module"> (or a module file of your own beside it), with import * as THREE from 'three' and addons \
-    from 'three/addons/…'. Make the renderer yourself, sized 1920×1080 at a pixel ratio of 1, and drive it with \
-    requestAnimationFrame, moving everything by the time since the last frame. three.js needs WebGL 2, and modules and \
-    import maps a newer TV browser than the oldest. Some platforms might not be powerful enough to run three.js.
+    - Lamp writes three.js in Web/three before every build, which the page reaches at ./three/: never edit it, and \
+    never load a 3D library from the network. This page has no game runtime, no Phaser bridge and no Rapier: it runs \
+    its own frames. For anything 3D, a game's included, read the 3d-game skill with `read_skill` before writing it.
     """
 
     /// What the page's host lays it out at, a fact of the TV app's and a screen's; how to design for a TV is the

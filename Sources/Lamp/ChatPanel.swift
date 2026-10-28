@@ -202,7 +202,7 @@ final class ChatPanel: NSObject, NSWindowDelegate {
             NSApp.changeWindowsItem(window, title: title, filename: false)
         }
         // Its Mac app opened (Play, a reopen for a change, the person opening it): the chat goes beside it, in one place.
-        let open = Store.shared.openOnMac.contains(id)
+        let open = project.map { Store.shared.openOnMac.contains(Store.shared.chatApp(of: $0).id) } ?? false
         if let project, open, openOnMac == false {
             Task {
                 guard await MagicPanel.chatsInApp(project), MagicPanel.runningCopiesTakeTheChat(project) else { return }

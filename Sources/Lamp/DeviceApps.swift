@@ -661,11 +661,9 @@ extension Agent.Rules {
                 }
             case .three:
                 let folder = "./" + DeviceSupport.pagePath(entry.path, page: DeviceApps.previewFolder(for: project)) + "/"
-                rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision), the 3D library, with its addons (controls, loaders, "
-                    + "geometries, postprocessing, utils): put the import map `<script type=\"importmap\">{ \"imports\": { \"three\": "
-                    + "\"\(folder)three.module.js\", \"three/addons/\": \"\(folder)addons/\" } }</script>` in index.html before a "
-                    + "`<script type=\"module\">`, then `import * as THREE from 'three'` and addons from 'three/addons/…'. Use it for "
-                    + "anything 3D, never another engine or one from the network. "
+                rule += "\(entry.path) is three.js r\(DeviceSupport.threeRevision) with its addons (controls, loaders, geometries, "
+                    + "postprocessing, utils), which this page reaches at `\(folder)`; this page has no game runtime, Phaser bridge or Rapier. "
+                    + "For anything 3D, read the 3d-game skill with `read_skill` before writing it, and load the library from that folder. "
             }
         }
         return rule + "Once something is saved, only ever add to it: a new field gets a default where it's read.\n"

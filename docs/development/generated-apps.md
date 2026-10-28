@@ -24,7 +24,10 @@ app (`LampAI`, `LampStore`, `LampScript`, the connectors, `LampDriver` for `use_
 string: after editing it, extract and type-check it (`swiftc -typecheck`), and bump anything that detects
 an outdated app (`Store.open` rebuilds apps built by an older Lamp). The stamp is read where the app runs from: a Mac
 app's installed copy, an iPhone app's own build (what the simulator gets), and never a Mac copy for the iPhone half of
-an app for both.
+an app for both. A game's or a screen's Mac copy made from Lamp's player carries the player's version too
+(`BuildStamp.player`), and is made again, in a second, when it's another player's or the app has come to be compiled
+("Lamp's player" in the devices guide). LampSupport.swift is compiled into the player as well, so a change to it reaches
+games and screens with the next Lamp build, and nothing else needs bumping for them.
 
 A Mac app's reasons for its permissions are one list, `Template.macUsageDescriptions`, written by build.sh, the
 Mac half of an app for both (`universalMacInfoPlist`) and `Store.deploy`: macOS kills an app that asks for
@@ -95,7 +98,11 @@ This is how a new app is changed from its first build on:
 as soon as a new Mac app's scaffold is built and opened at the start of its first turn (`Store.showEarly`, then
 `Store.present`; else at the agent's first look, or at the end of that turn), Lamp's panel, where its chat was until then, closes and the app opens the chat beside its content, so the rest of the turn's passes go
 in while the person watches (`MagicPanel.handOff`, once per app, marked by `.lamp/sidebar-handed-off`; the panel
-closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). Lamp asks the app
+closes only once the sidebar has connected, so Lamp neither quits nor leaves the chat nowhere). A wish whose apps are all
+in folders of their own has its chat beside its one Mac app with windows (a game in Game/), the same way
+(`Store.chatApp`): that app's sidebar connects as the wish (`SidebarServer.accepted`), so it shows the wish's chat,
+the only one there is, and everything keyed by the chat (the panel closing, `isConnected`, pointing) goes by the
+wish while the window and the app's copies go by that app. Lamp asks the app
 with a file in its runtime folder for a copy still starting and a notification for one already running
 (`MagicPanel.openChat`, `LampSidebar.openForLamp`). The first time the person closes the chat, a popover points at
 the wand to say how to get back (`LampSidebar.coach`, once per app). The
@@ -268,7 +275,21 @@ built by Xcode from a project Lamp keeps, so its README says Lamp builds it). On
 what's there (a shallow clone, the tree replaced; unchanged when only the export's own marks differ), never the wish's
 own history, which holds every version and the chat's attachments. The repository is remembered by the wish's instance
 in Lamp's own folder (`GitHub Repositories.json`, with whether it carries the license, which an update keeps to), as a
-published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them.
+published page is. `gh`, the sign-in and the repository name come from `Publish`, which shares them. The file's credits
+name the repository on the chain's last link (`Credits.Remix.url`, `Sharing.export(repository:)`), so a remix opened
+from there links where it came from.
+
+A repository opens in Lamp as a shared file does (`RepoImport`): File → Open from GitHub… takes its address (owner and
+name, with a branch, tag or commit after `/tree/` or `/commit/`; `RepoImport.source`), Import Shared Wish… takes a
+folder it was cloned into, and a wish's link may name it (`lamp://wish?file=https://github.com/…`, `Store.take(exact:)`).
+The tree is fetched one commit deep with Lamp's own git, confined as every git command of Lamp's is (`Versions.git`, in
+a folder of Lamp's with the network open, never asking for a sign-in), then copied into an import folder without the
+repository's records (`.git`, builds) and the shared file beside the code, held to a shared file's limits, and read as
+a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the same checks, Lamp's own files written
+afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
+the install does). A folder holding only a shared file opens that file. The chain's last link takes the repository's
+address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
+The person's folder is only read, never changed or removed.
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
@@ -291,7 +312,8 @@ opened by hand, and the request is in the wish's box once it's here (`PendingImp
 file that's another version of an app already here). The clipboard isn't used: macOS 15.4 asks before a browser's copy is read. A published page gets the same panel under Remix… in its credit bar (`Publish.withCreditBar`).
 Where the wand would otherwise fall back to Lamp's window (`LampSidebar.fallback`, `openFromMenu`), a Mac without Lamp
 goes to lamp.dev: that's all an app built from its repository with `./build.sh` can do, since the extension is Lamp's
-and goes into an app only as Lamp installs it (`Sidebar.install`).
+and goes into an app only as Lamp installs it (`Sidebar.install`). An app with no extension in its bundle goes there at
+once, without the few seconds' wait for a chat that was never put in.
 
 A Mac app's About window credits what the wish is based on: Lamp writes `Contents/Resources/Credits.html` from the
 wish's credits (`Credits.aboutPage`, "Credit" in the wishes guide) as it installs the app, and macOS's standard About

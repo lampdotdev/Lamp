@@ -1,7 +1,7 @@
 import Foundation
 
 extension Platform {
-    /// A game: a page drawn with three.js, or with Phaser for 2D (or, made before those, C++ on Lamp's game kit), one code wherever it's played
+    /// A game: a page on Lamp's game runtime, Phaser for 2D or three.js for 3D (or, made before those, C++ on Lamp's game kit), one code wherever it's played
     /// (`GameKit`). Its home is the Mac; every other place a page goes (`Places.pagePlaces`) is one it's given as well
     /// (`LampProject.places`), never another kind.
     static let game = Platform(kind: "game")
@@ -35,7 +35,7 @@ extension Target {
                        sources: { _ in ["Game", "Assets", GameKit.webFolder, "Sources", "icon.json", "capabilities.json"] },
                        // The kit is part of what's built: a new Lamp with a new kit builds the game again. So is what the
                        // page is told of the device it's built for: a change to that row builds it again too.
-                       inputs: { GameKit.stamp + GameAndroid.stamp + GamePage.buildInput(for: $0) },
+                       inputs: { GameKit.stamp + GameAndroid.stamp + GamePage.buildInput(for: $0) + GameKit.playerInput(for: $0) },
                        builtURL: { project in
                            project.onTV ? TVs.stagingFolder(for: project).appendingPathComponent("web/index.html")
                                : project.onDevice ? DeviceApps.packageURL(for: project) : project.onAndroid ? GameAndroid.apk(project)
@@ -59,6 +59,6 @@ extension Target {
 
 extension Language {
     static let game = Language(name: "game", code: "the game's page in Web/", leftover: "the game's files in Web/") {
-        "Write the app again as a game in Web/ against Lamp's game runtime (the scaffold is there), drawn with three.js, or with Phaser for a 2D game, reading \($0) for what it does, then delete \($1) with delete_file. "
+        "Write the app again as a game in Web/ against Lamp's game runtime (the scaffold is there), drawn as the game skill and the 2d-game or 3d-game skill say (read them first), reading \($0) for what it does, then delete \($1) with delete_file. "
     }
 }

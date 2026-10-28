@@ -32,6 +32,7 @@ enum Transcription {
     /// download of the speech model (nil once it's done).
     static func start(format: AVAudioFormat, into collector: TranscriptCollector,
                       preparing: @escaping @Sendable (String?) -> Void) async throws -> Transcriber {
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *), SpeechTranscriber.isAvailable {
             do {
                 return try await AnalyzerTranscriber.start(format: format, into: collector, preparing: preparing)
@@ -40,6 +41,7 @@ enum Transcription {
                 print("Transcriber: SpeechAnalyzer couldn't start (\(error)); trying SFSpeechRecognizer")
             }
         }
+        #endif
         return try await ClassicTranscriber.start(format: format, into: collector)
     }
 }
