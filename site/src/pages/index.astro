@@ -1,12 +1,12 @@
 ---
 import { Image, getImage } from "astro:assets";
 import Base from "../layouts/Base.astro";
+import ChangeStory from "../components/ChangeStory.astro";
 import { together } from "../lib/text";
 import { DOWNLOAD_URL } from "../lib/download";
 import type { Sleeve, Tape } from "../lib/tapes";
 import newYork from "../assets/starters/newyork.png";
 import homeHQ from "../assets/starters/homehq.png";
-import remote from "../assets/starters/universalremote.png";
 import phone from "@phosphor-icons/core/assets/duotone/device-mobile-duotone.svg?raw";
 import laptop from "@phosphor-icons/core/assets/duotone/laptop-duotone.svg?raw";
 import tv from "@phosphor-icons/core/assets/duotone/television-simple-duotone.svg?raw";
@@ -35,12 +35,12 @@ const sleeve: Sleeve = {
   tweaks: ["make it a snowy winter night", "make it a lot more fun", "move the city to the Moon"],
 };
 
-// The stack beside "Change it live": each original, a remix of it, and a blank tape.
+// The shelf: each original, a remix of it beside it, and a blank tape.
 const tapes: Tape[] = [
   { look: "original", stripes: "warm", title: "Home HQ", caption: "THE ORIGINAL · AN APP FOR THE FAMILY", shot: homeHQShot },
   { look: "marker", title: "On the kitchen frame", caption: "REMIXED BY YOU", side: "B1", ink: "#b8264f", shot: homeHQShot, treat: "frame" },
   { look: "original", stripes: "cool", title: "New York", caption: "THE ORIGINAL · A GAME BY MR.DOOB", side: "A1", shot: newYorkShot },
-  { look: "marker", title: "Snowy winter night", caption: "REMIXED BY YOUR FRIEND", side: "B2", ink: "#2a6fb0", shot: newYorkShot, treat: "snow" },
+  { look: "marker", title: "Snowy winter night", caption: "REMIXED BY YOUR FRIEND", side: "B2", ink: "#1f7a42", shot: newYorkShot, treat: "snow" },
   { look: "blank", title: "your idea here…", caption: "" },
 ];
 
@@ -61,25 +61,6 @@ const devices = [
   { name: "Photo frames", icon: picture },
 ];
 
-// The shelf's stripes, in a box 100 wide and 100 tall that's stretched over the space beside the gallery and out to
-// the window's left edge: each runs straight down to the bend, then sweeps out to the left, the last one on the right
-// staying put and the rest fanning out off the page.
-const floor = ["#f6b81c", "#f08a1c", "#e2402a", "#d23778", "#5a2d8c", "#2c3592", "#1f6fc4", "#1f8a4a"].map((color, i, all) => {
-  const [width, start, bend] = [7, 30, 50];
-  const anchor = start + width * all.length;
-  const flare = (x: number) => anchor + (x - anchor) * 3.5;
-  const [left, right] = [start + width * i, start + width * (i + 1)];
-  const d = `M${left} 0 L${left} ${bend} C${left} ${bend + 26} ${flare(left)} ${bend + 30} ${flare(left)} 100`
-    + ` L${flare(right)} 100 C${flare(right)} ${bend + 30} ${right} ${bend + 26} ${right} ${bend} L${right} 0 Z`;
-  return { color, d };
-});
-
-// The shelf: three starters, one of each kind, each with the change its starter suggests first.
-const shelf = [
-  { image: homeHQ, by: "by Lamp", name: "Home HQ", tweak: "put it on the photo frame", stripe: "stripe-cool", ink: "text-[#8fc2ff]" },
-  { image: newYork, by: "by Mr.doob", name: "New York", tweak: "move it to the Moon", stripe: "stripe-warm", ink: "text-[#ff8fb8]" },
-  { image: remote, by: "by Lamp", name: "Universal Remote", tweak: "add a bedtime button", stripe: "stripe-warm", ink: "text-[#ff8fb8]", tall: true },
-];
 ---
 
 <Base title="Lamp: remixable software" description={description} image="/og.jpg">
@@ -123,10 +104,21 @@ const shelf = [
     </div>
     </section>
 
-    <!-- Change it live: the stack of tapes, in 3D once lib/tapes.ts has drawn it. A tape that's clicked flies out and shows
-         the screenshot on its label. The originals have printed spines; the remixes are written on in marker, and
-         the last is blank. -->
-    <section id="remix" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
+    <!-- Change it live: the app changing as it's asked, on an old television set, with its chat beside it. -->
+    <section id="live" class="bg-tape text-paper">
+      <div class="mx-auto flex max-w-[80rem] flex-col gap-12 px-4 py-28 sm:px-6">
+        <div class="flex flex-wrap items-end justify-between gap-x-16 gap-y-5">
+          <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Change it live.</h2>
+          <p class="max-w-[36ch] text-xl leading-normal text-[#e6dfca]">{together("Ask for a change in the chat beside the app, and it changes in front of you. No rebuild, no restart.")}</p>
+        </div>
+        <ChangeStory />
+      </div>
+    </section>
+
+    <!-- From the shelf: the stack of tapes, in 3D once lib/tapes.ts has drawn it. A tape that's clicked flies out and
+         shows the screenshot on its label. The originals have printed spines, the remixes beside them are written on
+         in marker, and the last is blank. -->
+    <section id="shelf" class="mx-auto flex max-w-[80rem] flex-wrap items-center gap-14 px-4 py-24 sm:px-6">
       <div class="tape-host order-last h-[26rem] min-w-0 flex-[1_1_37.5rem] sm:h-[34rem] lg:order-none" data-tape-stack data-tapes={JSON.stringify(tapes)}>
         <div class="tape-fallback flex h-full flex-col justify-center gap-2">
           <div class="flex min-h-21 items-stretch border-2 border-l-0 border-tape bg-[#f7f2e3]">
@@ -151,7 +143,7 @@ const shelf = [
           </div>
           <div class="spine">
             <span class="spine-label">
-              <span class="font-marker text-[1.375rem] leading-tight text-[#2a6fb0] sm:text-[1.875rem]">Snowy winter night</span>
+              <span class="font-marker text-[1.375rem] leading-tight text-[#1f7a42] sm:text-[1.875rem]">Snowy winter night</span>
               <span class="text-[13px] font-bold tracking-wider">REMIXED BY YOUR FRIEND</span>
             </span>
           </div>
@@ -164,44 +156,8 @@ const shelf = [
         {tapes.map((tape, i) => tape.shot && <button type="button" class="tape-control" data-tape={i}>Show what's on {tape.title}</button>)}
       </div>
       <div class="flex min-w-0 flex-[1_1_22.5rem] flex-col gap-5">
-        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">Change it live.</h2>
-        <p class="max-w-[36ch] text-xl leading-normal">{together("Everything opens running. Ask for a change in the chat beside it, and it changes in front of you. The first version stays on the shelf.")}</p>
-      </div>
-    </section>
-
-    <!-- From the shelf: real starters, each with the change it suggests, on the dark of a tape's box. -->
-    <section id="shelf" class="bg-tape text-paper">
-      <div class="mx-auto flex max-w-[80rem] flex-wrap gap-x-16 gap-y-12 px-4 py-28 sm:px-6">
-        <div class="flex min-w-0 flex-[1_1_22rem] flex-col gap-6">
-          <h2 class="text-[clamp(3.5rem,7vw,6.5rem)] leading-[0.9] font-black tracking-[-0.045em] text-white">From the shelf</h2>
-          <p class="max-w-[30ch] text-xl leading-normal text-[#e6dfca]">{together("Start from one of these, or from anything someone shares with you.")}</p>
-          <!-- The space under the words, beside the gallery, holds the sleeve's stripes: straight down, then sweeping
-               out toward the viewer as they run off the bottom of the section and the window's left edge. -->
-          <svg class="-mb-28 mt-6 min-h-64 w-[calc(100%+var(--edge))] flex-1 [margin-left:calc(-1*var(--edge))] max-lg:hidden" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-            {floor.map((stripe) => <path d={stripe.d} fill={stripe.color} />)}
-          </svg>
-        </div>
-        <ul class="flex min-w-0 flex-[1_1_34rem] flex-col gap-10">
-          {
-            shelf.map((item) => (
-              <li class="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] items-center gap-6 max-sm:grid-cols-1">
-                {item.tall ? (
-                  <div class="flex aspect-[16/10] justify-center overflow-hidden bg-[#2e2b26]">
-                    <Image src={item.image} alt="" widths={[300, 600]} sizes="300px" class="mt-3.5 h-[130%] w-auto" />
-                  </div>
-                ) : (
-                  <Image src={item.image} alt="" widths={[400, 800]} sizes="(min-width: 1024px) 400px, 100vw" class="aspect-[16/10] w-full object-cover" />
-                )}
-                <div class="flex flex-col gap-1.5">
-                  <span class:list={[item.stripe, "mb-2 h-2.5 w-16"]} aria-hidden="true"></span>
-                  <h3 class="text-3xl leading-none font-black tracking-[-0.03em]">{item.name}</h3>
-                  <span class="text-base font-bold text-[#cfc8b2] italic">{item.by}</span>
-                  <span class:list={["font-marker text-xl", item.ink]}>{item.tweak}</span>
-                </div>
-              </li>
-            ))
-          }
-        </ul>
+        <h2 class="chip-heading text-[clamp(3rem,6vw,5.5rem)] leading-[0.92] font-black tracking-[-0.04em]">From the shelf.</h2>
+        <p class="max-w-[36ch] text-xl leading-normal">{together("Start from something someone made, or something a friend shared. Your version goes on the shelf right beside the original.")}</p>
       </div>
     </section>
 
@@ -212,7 +168,7 @@ const shelf = [
         {
           devices.map((device, i) => (
             <li class="flex items-center gap-4 text-[1.375rem] leading-tight font-extrabold">
-              <span class="device-icon size-14 shrink-0" style={`--tone: var(--stripe-${i % 8})`} aria-hidden="true" set:html={device.icon} />
+              <span class="device-icon size-14 shrink-0" style={`--tone: var(--stripe-${i % 6})`} aria-hidden="true" set:html={device.icon} />
               {device.name}
             </li>
           ))
@@ -243,10 +199,11 @@ const shelf = [
 </script>
 
 <style>
-  /* The sleeve's colors, warm to cool, and the bands they're printed in. */
+  /* The sleeve's colors, green to magenta, and the bands they're printed in, always in that order. No blue or
+     purple: the page keeps to the warm half of the spectrum and the green that ends it. */
   .tape-page {
-    --stripe-0: #f6b81c; --stripe-1: #f08a1c; --stripe-2: #e2402a; --stripe-3: #d23778; --stripe-4: #5a2d8c;
-    --stripe-5: #2c3592; --stripe-6: #1f6fc4; --stripe-7: #1f8a4a;
+    --stripe-0: #1f8a4a; --stripe-1: #7cbf3a; --stripe-2: #f6b81c; --stripe-3: #f08a1c; --stripe-4: #e2402a;
+    --stripe-5: #d23778;
     /* How far it is from the content's edge to the window's, so the tapes can run off the page. */
     --edge: calc(max(0px, (100vw - 80rem) / 2) + 1rem);
     background-image: radial-gradient(rgb(60 40 10 / 0.07) 1px, transparent 1.4px), radial-gradient(rgb(60 40 10 / 0.05) 1px, transparent 1.4px);
@@ -256,30 +213,25 @@ const shelf = [
   @media (width >= 40rem) {
     .tape-page { --edge: calc(max(0px, (100vw - 80rem) / 2) + 1.5rem); }
   }
-  .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 20%, var(--stripe-1) 0 40%, var(--stripe-2) 0 60%, var(--stripe-3) 0 80%, var(--stripe-4) 0); }
-  .stripe-warm-across { background: linear-gradient(90deg, var(--stripe-0) 0 20%, var(--stripe-1) 0 40%, var(--stripe-2) 0 60%, var(--stripe-3) 0 80%, var(--stripe-4) 0); }
-  .stripe-cool { background: linear-gradient(180deg, var(--stripe-7) 0 33.3%, var(--stripe-6) 0 66.6%, var(--stripe-2) 0); }
-  .beam { background: linear-gradient(90deg, var(--stripe-6) 0 16.6%, var(--stripe-7) 0 33.3%, var(--stripe-0) 0 50%, var(--stripe-1) 0 66.6%, var(--stripe-2) 0 83.3%, var(--stripe-3) 0); }
+  .stripe-warm { background: linear-gradient(180deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
+  .stripe-warm-across { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
+  .stripe-cool { background: linear-gradient(180deg, var(--stripe-0) 0 33.3%, var(--stripe-2) 0 66.6%, var(--stripe-4) 0); }
+  .beam { background: linear-gradient(90deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%, var(--stripe-4) 0 83.3%, var(--stripe-5) 0); }
 
-  /* The hero's field: the stripes on the slant, from the yellow corner at the top left to the lime at the bottom
-     right. Yellow, orange and lime fail white words, so they stay in the corners (a phone's hero is tall, so its
-     slant reaches the words sooner and the corners are smaller); every band in between holds them at 3:1 or more,
-     the words over them all being large. */
+  /* The hero's field: the stripes on the slant, magenta at the top left through to green at the bottom right. The
+     words sit on the top-left half, so it's widened there into deeper magentas and reds that hold white words at 3:1
+     or more (all of them large); the paler orange, yellow and lime come after the words, under the sleeve. */
   .technicolor {
-    --corner: 5%; --corner-edge: 11%;
     background: linear-gradient(150deg,
-      var(--stripe-0) 0 var(--corner), var(--stripe-1) 0 var(--corner-edge), var(--stripe-2) 0 24%, var(--stripe-3) 0 35%,
-      var(--stripe-4) 0 47%, var(--stripe-5) 0 59%, var(--stripe-6) 0 70%, #1e8fd6 0 80%, var(--stripe-7) 0 91%, #7cbf3a 0);
-  }
-  @media (width < 40rem) {
-    .technicolor { --corner: 2%; --corner-edge: 5%; }
+      #b8235f 0 12%, var(--stripe-5) 0 26%, #dc3d52 0 40%, var(--stripe-4) 0 54%, #e5562a 0 66%, var(--stripe-3) 0 76%,
+      var(--stripe-2) 0 86%, var(--stripe-1) 0 93%, var(--stripe-0) 0);
   }
 
   /* Headings keep plain ink; the stripes sit above them, as a tab cut from the sleeve. */
   .chip-heading::before {
     content: ""; display: block; width: 5.5rem; height: 1.25rem; margin-bottom: 1.5rem;
-    background: linear-gradient(150deg, var(--stripe-0) 0 12%, var(--stripe-1) 0 24%, var(--stripe-2) 0 36%, var(--stripe-3) 0 48%,
-      var(--stripe-4) 0 60%, var(--stripe-5) 0 72%, var(--stripe-6) 0 84%, var(--stripe-7) 0);
+    background: linear-gradient(150deg, var(--stripe-0) 0 16.6%, var(--stripe-1) 0 33.3%, var(--stripe-2) 0 50%, var(--stripe-3) 0 66.6%,
+      var(--stripe-4) 0 83.3%, var(--stripe-5) 0);
   }
 
   /* The 3D tapes run past their host's box, letting the pointer through (lib/tapes.ts). Once they're drawn, the flat version stays only for screen readers,
@@ -295,7 +247,7 @@ const shelf = [
   .tape-control:focus-visible {
     width: auto; height: auto; clip-path: none; left: 1rem; bottom: 1rem; z-index: 1; padding: 0.5rem 0.875rem;
     background: var(--color-paper); color: var(--color-tape); font-weight: 800; border-radius: 6px;
-    outline: 3px solid var(--stripe-6); outline-offset: 2px;
+    outline: 3px solid var(--stripe-0); outline-offset: 2px;
   }
 
   /* An icon's outline in ink, and its fill printed in a color of the sleeve's. */
@@ -308,11 +260,11 @@ const shelf = [
     transition: translate 0.2s ease;
   }
   .tape-button:hover { translate: 0 -2px; }
-  .tape-button:focus-visible { outline: 3px solid var(--stripe-6); outline-offset: 3px; }
+  .tape-button:focus-visible { outline: 3px solid var(--stripe-0); outline-offset: 3px; }
   .tape-button-paper { background: var(--color-paper); color: var(--color-tape); }
   .tape-button-outline-white { background: transparent; color: #fff; box-shadow: inset 0 0 0 2px #fff; }
   /* On the dark last section, in the yellow of the lamp's light. */
-  .tape-button-lit { background: var(--stripe-0); color: var(--color-tape); }
+  .tape-button-lit { background: var(--stripe-2); color: var(--color-tape); }
 
   .spine {
     display: flex; align-items: center; gap: 1rem; min-height: 5.25rem;

@@ -40,9 +40,8 @@ const LABEL = "#f7f2e3";
 const PLASTIC = "#26241f";
 const RED = "#a8361f";
 const MAGENTA = "#b8264f";
-const WARM = ["#f6b81c", "#f08a1c", "#e2402a", "#d23778", "#5a2d8c"];
-const COOL = ["#1f8a4a", "#1f6fc4", "#e2402a"];
-const ALL = ["#f6b81c", "#f08a1c", "#e2402a", "#d23778", "#5a2d8c", "#2c3592", "#1f6fc4", "#1f8a4a"];
+const WARM = ["#1f8a4a", "#7cbf3a", "#f6b81c", "#f08a1c", "#e2402a", "#d23778"];
+const COOL = ["#1f8a4a", "#f6b81c", "#e2402a"];
 
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -163,7 +162,7 @@ function sleeveFront(sleeve: Sleeve) {
   ctx.textAlign = "left";
   font(ctx, "700", 30, MONO);
   ctx.fillText("T‑120 · HI‑FI", 60, 420);
-  ctx.fillStyle = "#2a6fb0";
+  ctx.fillStyle = "#1f7a42";
   ctx.font = `52px ${MARKER}`;
   ctx.save();
   ctx.translate(60, 560);
@@ -203,7 +202,7 @@ function sleeveBack(sleeve: Sleeve, img: HTMLImageElement | undefined) {
   ctx.fillText(sleeve.title, 56, 730);
   font(ctx, "italic 800", 44, SANS);
   ctx.fillText(`by ${sleeve.by.replace(/^Made by /, "")}`, 60, 792);
-  const inks = [MAGENTA, "#2a6fb0", "#1f7a42"];
+  const inks = [MAGENTA, "#1f7a42", RED];
   sleeve.tweaks.forEach((tweak, i) => {
     ctx.fillStyle = inks[i % inks.length];
     ctx.save();
@@ -213,7 +212,7 @@ function sleeveBack(sleeve: Sleeve, img: HTMLImageElement | undefined) {
     ctx.fillText(tweak, 0, 0);
     ctx.restore();
   });
-  bands(ctx, ALL, 0, 1240, 800, 208);
+  bands(ctx, WARM, 0, 1240, 800, 208);
   return canvas;
 }
 
