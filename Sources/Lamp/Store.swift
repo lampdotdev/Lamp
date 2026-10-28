@@ -2225,9 +2225,11 @@ final class Store: ObservableObject {
         let places = project.openPlaces.filter(\.isAndroid)
         guard let chosen = places.contains(place) ? place : places.first,
               project.device != serial || project.destination != chosen else { return }
+        let choice = tryOnChoices[project.id]
         let choose = { [self] in
-            guard let current = current(project), current.device != serial || current.destination != chosen,
-                  begin(current) != nil else { return }
+            // Another choice made while the device was checked, the one already saved included, is the one that stands.
+            guard tryOnChoices[project.id] == choice, let current = current(project),
+                  current.device != serial || current.destination != chosen, begin(current) != nil else { return }
             var changed = current
             changed.device = serial
             changed.chosen = chosen
@@ -2243,8 +2245,16 @@ final class Store: ObservableObject {
                 finish(changed)
             }
         }
-        if let serial { AndroidSetup.shared.perform(device: serial, then: choose) } else { choose() }
+        if let serial { checkAndroidDevice(serial, choose) } else { choose() }
     }
+
+    /// Every app's latest choice under Try On, counted, so a choice that waits on a check (a device's) is dropped when
+    /// another follows it before the check answers, even one of what's already chosen, which changes nothing itself.
+    var tryOnChoices: [String: Int] = [:]
+
+    /// What a device chosen under Try On goes through before it's chosen: Android's setup, which answers at once when
+    /// everything is there. Replaceable so a test can hold the answer back.
+    var checkAndroidDevice: (String, @escaping () -> Void) -> Void = { AndroidSetup.shared.perform(device: $0, then: $1) }
 
     /// Which TV a TV app goes on when the person presses Play, by its id in `TVs`, or nil for the preview alone. A TV
     /// not set up yet is set up first (`TVSetup`), and chosen once it's ready.

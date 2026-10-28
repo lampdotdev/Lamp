@@ -255,6 +255,7 @@ extension Store {
     func tryOn(_ project: LampProject, _ id: String, open: Bool = false) {
         guard let project = current(project) else { return }
         let (what, value) = id.firstIndex(of: ":").map { (String(id[..<$0]), String(id[id.index(after: $0)...])) } ?? (id, "")
+        if Self.choices.contains(what) { tryOnChoices[project.id, default: 0] += 1 }
         switch what {
         case "mac": setMac(project)
         case "family": if let family = DeviceFamily(rawValue: value) { setSimulator(project, family) }
@@ -312,6 +313,9 @@ extension Store {
             self.tryOn(now, id)
         })
     }
+
+    /// What says where the app opens, as against a look, a setup or a window.
+    static let choices: Set<String> = ["mac", "family", "simulator", "phone", "emulator", "android", "androidtv", "preview", "tv", "device", "add"]
 
     /// Exactly where a choice puts the app: its place, its device (nil for a simulator, the emulator, the preview or
     /// the Mac), and for the simulator which one.
