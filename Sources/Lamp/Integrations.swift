@@ -323,6 +323,7 @@ enum Integrations {
                             name: await read(identity.name) ?? "\(integration.maker) \(model)", os: identity.os,
                             osVersion: await read(identity.osVersion) ?? "", reach: .network)
         device.integration = integration.id
+        device.what = integration.kind
         device.address = address
         device.kept = kept(id) != nil
         if var keptOne = kept(id) {
@@ -334,9 +335,11 @@ enum Integrations {
     }
 
     static func device(from kept: Kept, onNetwork: Bool) -> Device {
-        var device = Device(id: kept.id, kind: .other, maker: integration(kept.integration)?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
+        let known = integration(kept.integration)
+        var device = Device(id: kept.id, kind: .other, maker: known?.maker ?? "", model: model(of: kept), modelID: kept.modelID,
                             name: kept.name, os: kept.os, osVersion: kept.osVersion, reach: .network)
         device.integration = kept.integration
+        device.what = known?.kind
         device.address = kept.address
         device.connected = onNetwork
         device.kept = true

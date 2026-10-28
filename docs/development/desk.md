@@ -34,6 +34,20 @@ from its files). While the pointer is on a wish, its picture and what it is take
 forward (the menu bar, a widget, the background, the person's own phone) the desk says so in `WishHUD`, a
 large translucent square like macOS's old volume display. Lamp's mark at the start of its chat's bar brings the desk back in front (⌘[).
 
+Between the wishes and the bar is the shelf of the person's devices (`DeskDevices`), since a wish for the TV or
+the phone is what Lamp is for and Settings is no place to find that out. Until Lamp has looked on the network
+(`localNetworkAsked`) it's one capsule inviting the person to, whose Find My Devices is the look macOS asks about; from
+then on the desk looks each time it's shown or Lamp comes to the front, at most once a minute (`lookForDevices`), and
+the shelf is the devices as capsules: this Mac, then the person's own, then what was only found that Lamp makes apps
+for or controls, each kind in the order people make most for (`DeskDevices.ranked`), as many as two lines hold
+(`DeskDevices.fitting`), then "N More" (which opens Settings → Your Devices, where the whole network is) and Add a
+Device (`AddDeviceSheet`), which are always on the second line's end. What Lamp could
+only learn (a server, an appliance) is counted in More, never shown. A green dot is ready, and a click puts "for my
+<device>" in the bar; a gearshape and an amber dot is a step to take, and a click takes it (`DeviceNextStep.takeFurther`,
+Settings where Lamp can't from here). A chip's name is short and plain (`DeskDevices.label`: a found one by its model,
+never an address or a serial); what else is known is in its tip a moment after the pointer comes onto it
+(`DeviceTip`), never its address. macOS refusing the network is `LocalNetworkRefused` under the shelf.
+
 "Help me find one" (`Store.findWish`) is the site's wizard in the app, held in the ordinary chat: a new wish
 marked `finding` whose first request is `Agent.findingRequest`. The agent asks about the person's days in
 `ask` cards (`Agent.findRules`), never about apps, and ends by writing the wish into the message box with

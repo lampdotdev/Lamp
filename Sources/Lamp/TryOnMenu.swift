@@ -62,13 +62,13 @@ struct TryOnMenu: Equatable {
             if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
-                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(stopped(device))", symbol: device.kind.symbol,
+                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(stopped(device))", symbol: device.symbol,
                      checked: project.onIOS && project.device == device.udid)
             }
             mine += phones.filter { !$0.paired }.map { device in
                 let pairing = store.pairing.contains(device.udid)
                 return Item(id: "pair:\(device.udid)", title: pairing ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…",
-                            symbol: device.kind.symbol, disabled: pairing)
+                            symbol: device.symbol, disabled: pairing)
             }
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
         }
@@ -99,7 +99,7 @@ struct TryOnMenu: Equatable {
             let name = DeviceApps.integration(for: project)?.name ?? "Xbox"
             let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
             var items = mine.map { device in
-                Self.item(device, id: "device:\(device.id)", title: "\(device.name)\(step(device))", symbol: device.kind.symbol,
+                Self.item(device, id: "device:\(device.id)", title: "\(device.name)\(step(device))", symbol: device.symbol,
                           checked: project.onDevice && project.device == device.id)
             }
             items += mine.compactMap { Self.setUpAgain($0, id: "setup:\($0.id)", chosen: project.onDevice && project.device == $0.id) }
@@ -174,7 +174,7 @@ extension TryOnMenu {
                 ? [Item(id: "look", title: "No \(name) found. Look Again", symbol: Device.Kind.other.symbol, checked: true)]
                 : mine.map { device in
                     item(device, id: "device:\(device.id)", title: (device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step(device),
-                         symbol: device.kind.symbol, checked: project.device == device.id)
+                         symbol: device.symbol, checked: project.device == device.id)
                 }))
             var setups = mine.filter { ($0.isSetUp || $0.id == project.device) && $0.setup() != .ready && !$0.isAway }.map { Item(id: "setup:\($0.id)", title: "Set Up \($0.name)…", symbol: "gearshape") }
             if GameKit.isGame(project) { setups.append(Item(id: "check:xbox", title: "Check Xbox Setup for Games…", symbol: "checklist")) }
@@ -227,7 +227,7 @@ extension TryOnMenu {
             if !models.isEmpty { sections.append(Section(title: "Choose Simulator", items: models, submenu: true)) }
             let phones = store.devices.filter { $0.kind.isPhone }
             var mine = phones.filter(\.paired).map { device in
-                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "")", symbol: device.kind.symbol,
+                Item(id: "phone:\(device.udid)", title: "\(device.name) · \(device.model)\(step(device))\(PhoneRenewals.stoppedOpening(project, on: device.udid) ? " (stopped opening)" : "")", symbol: device.symbol,
                      checked: project.onIOS && project.device == device.udid)
             }
             if let chosen = project.device, project.onIOS, !phones.contains(where: { $0.udid == chosen && $0.paired }) {
@@ -236,7 +236,7 @@ extension TryOnMenu {
             mine += phones.filter { !$0.paired }.map { device in
                 let pairing = store.pairing.contains(device.udid)
                 return Item(id: "pair:\(device.udid)", title: pairing ? "Pairing with \(device.name)…" : "Pair \(device.name) (\(device.model))…",
-                            symbol: device.kind.symbol, disabled: pairing)
+                            symbol: device.symbol, disabled: pairing)
             }
             if !mine.isEmpty { sections.append(Section(title: "Your iPhones and iPads", items: mine)) }
             sections.append(Section(title: nil, items: [Item(id: "check:iphone", title: "Check iPhone & iPad Setup…", symbol: "checklist")]))
