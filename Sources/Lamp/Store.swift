@@ -3126,8 +3126,8 @@ final class Store: ObservableObject {
         Self.copy(of: package, among: projects, updating: target)
     }
 
-    /// Asked from a wish's own Update from GitHub… (`target`), it's that wish: copies made with Keep Both share one
-    /// identity, so the identity alone would find the first of them, not the one whose panel was used.
+    /// Asked from a wish's own Update from GitHub… (`target`), it's that wish: a second copy made with Keep Both has no
+    /// identity of its own (`finishImport`), so the repository's identity would find the first copy instead.
     nonisolated static func copy(of package: Sharing.Package, among projects: [LampProject], updating target: String? = nil) -> LampProject? {
         if let target {
             return projects.first { $0.id == target && $0.holdsApp && $0.platform == package.platform && $0.hasScaffold }

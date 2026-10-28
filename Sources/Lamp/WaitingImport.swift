@@ -34,10 +34,7 @@ struct WaitingImport {
     /// The request a link brought with a fetched file, kept beside it (`Store.fetchedRequest`): it goes with the copy.
     static let requestFile = "request.txt"
 
-    /// Keeps a copy, since the file may be a temporary one (opened straight from Mail or Messages), behind
-    /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
-    /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
-    /// promises a file it may not have. A request kept beside a fetched file is copied with it.
+    /// The wish a repository was fetched to update, kept beside it (`target(beside:)`).
     static let targetFile = "update-target.txt"
 
     /// The wish a kept repository was fetched to update (`Store.copy(of:among:updating:)`), kept beside it so that
@@ -49,6 +46,10 @@ struct WaitingImport {
         return (try? String(contentsOf: home.appendingPathComponent(targetFile), encoding: .utf8))?.trimmed.nilIfEmpty
     }
 
+    /// Keeps a copy, since the file may be a temporary one (opened straight from Mail or Messages), behind
+    /// any already kept: each gets its review, none pushes another out. The same file opened again is kept
+    /// once. False when no copy could be made (a full disk, say): nothing is remembered then, so Lamp never
+    /// promises a file it may not have. A request kept beside a fetched file is copied with it.
     func keep(_ file: URL, updating target: String? = nil) -> Bool {
         let fm = FileManager.default
         let kept = paths
