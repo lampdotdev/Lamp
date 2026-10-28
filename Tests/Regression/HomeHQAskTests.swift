@@ -2,12 +2,11 @@ import JavaScriptCore
 import XCTest
 @testable import Lamp
 
-/// Home HQ's writes for Ask (Resources/Starters/homehq/Web/js/actions.js), run on the starter's own data and app scripts
+/// Home HQ's writes for Ask (Web/js/actions.js in its tree), run on the starter's own data and app scripts
 /// with a stand-in page: what a write finds when the family's list has the same item at two stores.
 @MainActor
 final class HomeHQAskTests: XCTestCase {
-    private let web = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Resources/Starters/homehq/Web")
+    private var web: URL { get throws { try StarterTrees.tree("homehq").appendingPathComponent("Web") } }
 
     private func page() throws -> JSContext {
         let context = try XCTUnwrap(JSContext())

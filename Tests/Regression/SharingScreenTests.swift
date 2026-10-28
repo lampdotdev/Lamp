@@ -6,8 +6,7 @@ import XCTest
 /// starters, stands in for both: its page, its Native.swift and its credits with the licenses they name.
 final class SharingScreenTests: XCTestCase {
     private var root: URL!
-    private let starter = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Resources/Starters/homehq")
+    private var starter: URL { get throws { try StarterTrees.tree("homehq") } }
 
     override func setUpWithError() throws {
         expectNoSharingFoldersLeft()

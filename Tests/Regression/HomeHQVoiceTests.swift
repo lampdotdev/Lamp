@@ -2,15 +2,14 @@ import JavaScriptCore
 import XCTest
 @testable import Lamp
 
-/// Home HQ's Ask (Resources/Starters/homehq/Web/js/agent.js), the panel floating over the page, with stand-ins for the
+/// Home HQ's Ask (Web/js/agent.js in its tree), the panel floating over the page, with stand-ins for the
 /// page, the app around it (`LampVoice`) and Lamp (`LampAI.hear`, `LampAI.act`): one press listens and that press can't
 /// stop it; the remote stays in the panel and comes back to where it was; a question offers the AI's choices with the
 /// first focused and listens again by itself, and its first answer, said or pressed, is the only one taken; nothing
 /// heard, transcribed or answered after Ask closes is acted on; and where there's no voice, typing is there.
 @MainActor
 final class HomeHQVoiceTests: XCTestCase {
-    private let agent = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Resources/Starters/homehq/Web/js/agent.js")
+    private var agent: URL { get throws { try StarterTrees.tree("homehq").appendingPathComponent("Web/js/agent.js") } }
 
     private func page(voice: String = "{ listen: true, speak: true, permission: 'granted' }", hear: Bool = true) throws -> JSContext {
         let c = try XCTUnwrap(JSContext())

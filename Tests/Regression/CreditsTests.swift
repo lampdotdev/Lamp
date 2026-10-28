@@ -124,8 +124,7 @@ final class CreditsTests: XCTestCase {
         var project = game
         project.platform = .game
         try Template.saveMeta(project)
-        let starter = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/Starters/newyork")
+        let starter = try StarterTrees.tree("newyork")
         try fm.copyItem(at: starter.appendingPathComponent("Web"), to: project.dir.appendingPathComponent("Web"))
         try Data("// Lamp's runtime\n".utf8).write(to: project.dir.appendingPathComponent("Web/lamp-game.js"))
         try Data("import Foundation\nenum Native {}\n".utf8).write(to: project.dir.appendingPathComponent("Sources/Native.swift"))

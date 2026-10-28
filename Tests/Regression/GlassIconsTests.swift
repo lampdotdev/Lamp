@@ -46,14 +46,12 @@ final class GlassIconsTests: XCTestCase {
     /// Copied onto the desk, a starter has the icon it shipped with and finds its artwork where an app keeps it, so a
     /// redraw of its icon (a lost preview, a recolor) is the same icon and paints nothing.
     func testAStarterCopiedFindsItsArtwork() throws {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-glass-starters-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: work) }
-        let folders = try FileManager.default.contentsOfDirectory(at: repo.appendingPathComponent("Resources/Starters"),
-                                                                 includingPropertiesForKeys: nil).filter(\.hasDirectoryPath)
-        for folder in folders {
-            let starter = try XCTUnwrap(Starters.parse(String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8),
-                                                       folder: folder))
+        // The Mac apps: a game's or a screen's copy writes Lamp's kit around its page, which is in Lamp's bundle, not here.
+        for folder in try StarterTrees.folders() {
+            let starter = try XCTUnwrap(Starters.read(folder))
+            guard starter.kind.target.recipe.language == .swift else { continue }
             let project = try Template.draft(name: starter.name, in: work.appendingPathComponent("apps"))
             try Template.fill(project)
             try Starters.copy(starter, into: project)

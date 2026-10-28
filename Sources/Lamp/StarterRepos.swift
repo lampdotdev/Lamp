@@ -2,12 +2,15 @@ import CryptoKit
 import Foundation
 import LampSidebarKit
 
-/// Lamp's starters as repositories on GitHub (`Starters.account`, one each): each starter made into a wish the way the
-/// desk makes one and laid out as Put on GitHub lays a wish out (`GitHubRepo.stage`: the shared file's contents with
-/// its checks, Lamp's own files so `./build.sh` builds it, a README, an MIT license), so it opens with File → Open from
-/// GitHub…, and a copy on someone's desk takes the latest of it (Update from GitHub…) and sends changes back to it
-/// (Send Changes Back…). `scripts/publish-starters.sh` runs this, puts each tree up and writes the address and commit
-/// into the starter's starter.md, which every copy made from then on carries on its chain (`Starters.copy`).
+/// Lamp's starters as repositories on GitHub (`Starters.account`, one each), where the starters are made: a change to
+/// one goes to its repository (from Lamp, Send Changes Back…; or a push by whoever has access), and Lamp pins the
+/// commit it ships (`scripts/pull-starters.sh` moves the pin, `scripts/fetch-starters.sh` fetches the tree). Each is
+/// laid out as Put on GitHub lays a wish out (`GitHubRepo.stage`: the shared file's contents with its checks, Lamp's
+/// own files so `./build.sh` builds it, a README, an MIT license), so it opens with File → Open from GitHub…, and a
+/// copy on someone's desk takes the latest of it (Update from GitHub…) and sends changes back to it.
+/// `scripts/publish-starters.sh` runs `stage` on each repository's main to refresh what's Lamp's there (Lamp's own
+/// files, the README, the pictures, a game's page), never the app itself, and makes a new starter's repository from a
+/// wish on this Mac (`--from-wish`).
 ///
 /// The tree is the same every time for the same starter, so a starter that didn't change makes no new commit: its
 /// identity is derived from the starter (never a random one), its export time is fixed, and the shared file isn't in
@@ -18,22 +21,59 @@ import LampSidebarKit
 enum StarterRepos {
     static let commandLineFlag = "--stage-starter-repos"
 
-    /// `Lamp --stage-starter-repos <folder> [<pages>]`, with `STAGE_STARTERS=1`: each starter's tree into
-    /// `<folder>/<starter>`, and a game's page into `<pages>/<starter>`, then quits.
+    /// `Lamp --stage-starter-repos <folder> [<pages>] [--trees <folder>] [--from-wish <starter> <wish>]`, with
+    /// `STAGE_STARTERS=1`: each starter's tree into `<folder>/<starter>`, and a game's page into `<pages>/<starter>`,
+    /// then quits. `--trees` names a folder holding each starter's repository freshly cloned (`<folder>/<starter>`),
+    /// which stands in for the fetched tree: the publish refreshes what's Lamp's on the repository's latest, never on
+    /// the pinned commit. `--from-wish` stages one starter (a folder in Resources/Starters with only its starter.md
+    /// yet) from a wish on this Mac, for its first publish.
     static func stageFromCommandLine() -> Never {
         let arguments = CommandLine.arguments
         guard let index = arguments.firstIndex(of: commandLineFlag), index + 1 < arguments.count else {
-            FileHandle.standardError.write(Data("Usage: Lamp \(commandLineFlag) <folder> [<pages>]\n".utf8))
+            FileHandle.standardError.write(Data("Usage: Lamp \(commandLineFlag) <folder> [<pages>] [--trees <folder>] [--from-wish <starter> <wish folder>]\n".utf8))
             exit(2)
         }
         let out = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
         let pages = index + 2 < arguments.count && !arguments[index + 2].hasPrefix("-") ? URL(fileURLWithPath: arguments[index + 2], isDirectory: true) : nil
+        let trees = arguments.firstIndex(of: "--trees").flatMap { $0 + 1 < arguments.count ? URL(fileURLWithPath: arguments[$0 + 1], isDirectory: true) : nil }
+        let fromWish = arguments.firstIndex(of: "--from-wish").flatMap { $0 + 2 < arguments.count ? (arguments[$0 + 1], arguments[$0 + 2]) : nil }
         // The starters hold none of the person's keys, and reading them would ask the keychain from a command line.
         Sharing.knownSecrets = { _ in [] }
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-starter-repos-\(UUID().uuidString)")
         var failed = false
-        for starter in Starters.bundled {
+        var starters = Starters.bundled
+        var packages: [String: Sharing.Package] = [:]
+        if let (name, wish) = fromWish {
+            // A starter being made: its folder holds starter.md and nothing else yet, so the wish stands in for its tree.
+            guard let folder = Starters.folder?.appendingPathComponent(name),
+                  let text = try? String(contentsOf: folder.appendingPathComponent("starter.md"), encoding: .utf8),
+                  let starter = Starters.parse(text, folder: folder) else {
+                FileHandle.standardError.write(Data("No starter.md in Resources/Starters/\(name).\n".utf8))
+                exit(1)
+            }
+            guard let project = Store.readWish(at: URL(fileURLWithPath: (wish as NSString).expandingTildeInPath, isDirectory: true)) else {
+                FileHandle.standardError.write(Data("\(wish) isn't a wish Lamp can read.\n".utf8))
+                exit(1)
+            }
+            do {
+                let file = try Sharing.export(project)
+                defer { try? fm.removeItem(at: file.deletingLastPathComponent()) }
+                packages[name] = try Sharing.open(file)
+            } catch {
+                FileHandle.standardError.write(Data("Couldn't read \(wish): \(error.localizedDescription) \((error as? LocalizedError)?.recoverySuggestion ?? "")\n".utf8))
+                exit(1)
+            }
+            starters = [starter]
+        } else if let trees {
+            starters = starters.map { starter in
+                var fresh = starter
+                let latest = trees.appendingPathComponent(starter.folder.lastPathComponent)
+                if fm.fileExists(atPath: latest.appendingPathComponent("lamp-app.json").path) { fresh.tree = latest }
+                return fresh
+            }
+        }
+        for starter in starters {
             // A kind Lamp can't share yet (a screen) can't be opened from a repository either: it has none until it can.
             if let refusal = starter.kind.target.recipe.shareRefusal {
                 print("Skipped \(starter.name): \(refusal)")
@@ -41,7 +81,7 @@ enum StarterRepos {
             }
             do {
                 try fm.createDirectory(at: root, withIntermediateDirectories: true)
-                let (tree, page) = try stage(starter, in: root)
+                let (tree, page) = try stage(starter, in: root, package: packages[starter.folder.lastPathComponent])
                 let to = out.appendingPathComponent(starter.folder.lastPathComponent)
                 try? fm.removeItem(at: to)
                 try fm.createDirectory(at: out, withIntermediateDirectories: true)
@@ -62,195 +102,18 @@ enum StarterRepos {
         exit(failed ? 1 : 0)
     }
 
-    // MARK: Bringing a starter back
-
-    static let pullFlag = "--pull-starter"
-
-    /// `Lamp --pull-starter <starter> <source>`, with `STAGE_STARTERS=1`: the starter's files in
-    /// `Resources/Starters/<starter>` (under the current folder) taken from a wish changed in Lamp (`source`: the wish's
-    /// folder, or a folder holding a repository's tree, which `scripts/pull-starter.sh` clones for an address), then
-    /// quits. What changed is for git to say; what else needs saying is printed.
-    static func pullFromCommandLine() -> Never {
-        let arguments = CommandLine.arguments
-        guard let index = arguments.firstIndex(of: pullFlag), index + 2 < arguments.count else {
-            FileHandle.standardError.write(Data("Usage: Lamp \(pullFlag) <starter folder name> <wish folder or repository folder>\n".utf8))
-            exit(2)
-        }
-        let name = arguments[index + 1], source = arguments[index + 2]
-        let starter = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Resources/Starters/\(name)")
-        Sharing.knownSecrets = { _ in [] }
-        do {
-            let package = try read(source)
-            defer { try? FileManager.default.removeItem(at: package.folder) }
-            for note in try pull(package, into: starter) { print(note) }
-            exit(0)
-        } catch {
-            FileHandle.standardError.write(Data("Couldn't bring \(name) back: \(error.localizedDescription) \((error as? LocalizedError)?.recoverySuggestion ?? "")\n".utf8))
-            exit(1)
-        }
-    }
-
-    /// The wish as the import reads it, so only what the review reads comes in: a folder holding a repository's tree
-    /// (`RepoImport.open`, which names the commit a clone is at), or a wish's own folder (exported as a shared file
-    /// is, then opened).
-    static func read(_ source: String) throws -> Sharing.Package {
-        let folder = URL(fileURLWithPath: (source as NSString).expandingTildeInPath, isDirectory: true)
-        if FileManager.default.fileExists(atPath: folder.appendingPathComponent("lamp-app.json").path) { return try RepoImport.open(folder: folder) }
-        guard let wish = Store.readWish(at: folder) else {
-            throw Sharing.ImportError("\(folder.path) isn't a wish or a repository's tree Lamp can read.")
-        }
-        let file = try Sharing.export(wish)
-        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
-        return try Sharing.open(file)
-    }
-
-    /// The parts of a starter that come from the wish, each replaced whole so a file taken out there is taken out here.
-    static let pulledFolders = ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder, GameKit.webFolder, Sharing.Assets.folder]
-    static let pulledFiles = ["APP.md", Template.Capabilities.file]
-
-    /// Writes `package` into the starter's folder as the starter keeps it: its code and files as the import would
-    /// install them (`Upstream.stage`, never Lamp's own files), APP.md, what it declares, its description (about.json),
-    /// the work it's based on (credits.json, without the chain, which a copy is given), and its icon's design. The
-    /// starter's own files stay as they are: starter.md (its offer and where it's published), preview.png and the
-    /// icon's pictures. A file is written only when what it says differs, so an unchanged wish changes nothing.
-    /// Returns what needs saying beyond the files.
-    @discardableResult
-    static func pull(_ package: Sharing.Package, into starter: URL) throws -> [String] {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: starter.appendingPathComponent("starter.md").path) else {
-            throw Sharing.ImportError("\(starter.path) isn't a starter's folder.", detail: "Make one as desk.md says, then bring the wish into it.")
-        }
-        let work = Sharing.workFolder.appendingPathComponent("lamp-pull-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: work) }
-        let standIn = LampProject(id: starter.lastPathComponent, name: package.name, exe: "Starter", dir: work.appendingPathComponent("app"))
-        try fm.createDirectory(at: standIn.dir, withIntermediateDirectories: true)
-        let staged = work.appendingPathComponent("staged")
-        try Upstream.stage(package, for: standIn, into: staged)
-        // A game's Native.swift is Lamp's own until the wish changes it (`GameKit.native`, written for a game that has
-        // none): the starter keeps one only when it's its own.
-        let native = staged.appendingPathComponent(GameFiles.native)
-        if let lamps = GameKit.native?.text, (try? String(contentsOf: native, encoding: .utf8)) == lamps {
-            try fm.removeItem(at: native)
-            let sources = native.deletingLastPathComponent()
-            if (try? fm.contentsOfDirectory(atPath: sources.path))?.isEmpty == true { try fm.removeItem(at: sources) }
-        }
-        var notes: [String] = []
-        // A wish that began from an older version of the starter than this one would take back what changed in the
-        // starter since: said first, for the person to look for in the change.
-        let shipped = Starters.read(starter)
-        let link = package.credits?.remixOf.last { $0.starter == starter.lastPathComponent }
-        if let shipped, let now = shipped.commit {
-            if let began = link?.commit, began != now {
-                notes.append("Careful: this wish began from \(shipped.name) at \(began.prefix(7)), and the starter here is at \(now.prefix(7)). "
-                             + "What changed in the starter since is taken back unless the wish has it too: look for it in the change, or open the starter from GitHub again and make the change there.")
-            } else if link?.commit == nil {
-                notes.append("Careful: this wish doesn't say which version of \(shipped.name) it began from, so it may be older than the starter here. "
-                             + "Look for anything taken back in the change.")
-            }
-        }
-
-        for folder in pulledFolders {
-            let from = staged.appendingPathComponent(folder), to = starter.appendingPathComponent(folder)
-            guard !sameTree(from, to) else { continue }
-            try? fm.removeItem(at: to)
-            if fm.fileExists(atPath: from.path) { try fm.copyItem(at: from, to: to) }
-        }
-        // What it declares is Lamp's to write from what passed the checks, so it's compared by what it says.
-        let capabilitiesFile = Template.Capabilities.file
-        func same(_ file: String, _ from: URL, _ to: URL) -> Bool {
-            switch file {
-            case capabilitiesFile: return Template.Capabilities.load(from).checked == Template.Capabilities.load(to).checked
-            default: return (try? Data(contentsOf: from)) == (try? Data(contentsOf: to))
-            }
-        }
-        for file in pulledFiles {
-            let from = staged.appendingPathComponent(file), to = starter.appendingPathComponent(file)
-            if fm.fileExists(atPath: from.path) {
-                if !same(file, from, to) {
-                    try? fm.removeItem(at: to)
-                    try fm.copyItem(at: from, to: to)
-                }
-            } else if file != "APP.md" {
-                try? fm.removeItem(at: to)
-            }
-        }
-        // The licenses the credits name outside those folders (one at the root, say) come along at their paths, and
-        // one the credits no longer name goes.
-        let based = Credits(upstream: package.credits?.upstream ?? [], generated: package.credits?.generated ?? [])
-        let had = Credits.read(starter.appendingPathComponent(Credits.file)).map { Credits(upstream: $0.upstream, generated: $0.generated) } ?? Credits()
-        func outside(_ path: String) -> Bool { !pulledFolders.contains(where: { path.hasPrefix($0 + "/") }) && Credits.validPath(path) != nil }
-        let named = Set(based.upstream.compactMap(\.licenseFile).filter(outside))
-        for path in named {
-            let from = staged.appendingPathComponent(path), to = starter.appendingPathComponent(path)
-            guard fm.fileExists(atPath: from.path), (try? Data(contentsOf: from)) != (try? Data(contentsOf: to)) else { continue }
-            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.removeItem(at: to)
-            try fm.copyItem(at: from, to: to)
-        }
-        for path in Set(had.upstream.compactMap(\.licenseFile).filter(outside)).subtracting(named) where Credits.isLicenceFile(path) {
-            try? fm.removeItem(at: starter.appendingPathComponent(path))
-        }
-        // What it is, in the starter's own format.
-        let about = starter.appendingPathComponent(AppDescription.file)
-        if let description = package.description, AppDescription.description(at: about) != description {
-            var data = try JSONSerialization.data(withJSONObject: ["description": description], options: [.withoutEscapingSlashes])
-            data.append(Data("\n".utf8))
-            try data.write(to: about, options: .atomic)
-        }
-        // What it's based on; the chain is a copy's, never the starter's.
-        let creditsURL = starter.appendingPathComponent(Credits.file)
-        if based != had {
-            if based.isEmpty { try? fm.removeItem(at: creditsURL) } else { try starterCredits(based).write(to: creditsURL, options: .atomic) }
-        }
-        // The icon's design, whose pictures are drawn by StarterIconsTests: said when it changed.
-        let iconFrom = staged.appendingPathComponent("icon.json"), iconTo = starter.appendingPathComponent("icon.json")
-        let newSpec = (try? Data(contentsOf: iconFrom)).flatMap { try? JSONDecoder().decode(IconSpec.self, from: $0) }
-        let oldSpec = (try? Data(contentsOf: iconTo)).flatMap { try? JSONDecoder().decode(IconSpec.self, from: $0) }
-        if let newSpec, newSpec != oldSpec {
-            try fm.copyItem(at: iconFrom, to: work.appendingPathComponent("icon.json"))
-            try? fm.removeItem(at: iconTo)
-            try fm.copyItem(at: work.appendingPathComponent("icon.json"), to: iconTo)
-            notes.append("Its icon's design changed: draw its pictures again (desk.md, step 5).")
-        }
-        return notes
-    }
-
-    /// A starter's credits.json as the starters keep it: the work it's based on and its AI pictures, no chain (an empty
-    /// one isn't written), and a final newline, so a pull that changes nothing writes nothing.
-    static func starterCredits(_ credits: Credits) throws -> Data {
-        var object = try JSONSerialization.jsonObject(with: credits.encoded()) as? [String: Any] ?? [:]
-        if (object["remixOf"] as? [Any])?.isEmpty == true { object.removeValue(forKey: "remixOf") }
-        var data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        data.append(Data("\n".utf8))
-        return data
-    }
-
-    /// Whether two folders hold the same files with the same contents (both missing counts as the same).
-    private static func sameTree(_ a: URL, _ b: URL) -> Bool {
-        func files(_ root: URL) -> [String: Data]? {
-            let fm = FileManager.default
-            guard fm.fileExists(atPath: root.path) else { return nil }
-            var found: [String: Data] = [:]
-            for case let file as URL in fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) ?? FileManager.DirectoryEnumerator() {
-                guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
-                found[Sharing.relativePath(of: file, in: root)] = try? Data(contentsOf: file)
-            }
-            return found
-        }
-        return files(a) == files(b)
-    }
-
     /// The repository a starter goes in: "<account>/newyork".
     static func repo(of starter: Starters.Starter) -> String {
         Starters.account + "/" + Starters.repositoryName(of: starter.folder.lastPathComponent)
     }
 
-    /// One starter's tree, and a game's page, in work folders under `root`.
-    static func stage(_ starter: Starters.Starter, in root: URL) throws -> (tree: URL, page: URL?) {
+    /// One starter's tree, and a game's page, in work folders under `root`; `package` is a wish standing in for the
+    /// starter's tree (`Starters.copy`).
+    static func stage(_ starter: Starters.Starter, in root: URL, package: Sharing.Package? = nil) throws -> (tree: URL, page: URL?) {
         let fm = FileManager.default
         let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
         try Template.fill(project)
-        try Starters.copy(starter, into: project)
+        try Starters.copy(starter, into: project, package: package)
         try Template.writeOwnedFiles(for: project)
         Sharing.setIdentity(identity(of: starter), of: project)
         let repo = repo(of: starter)
@@ -260,9 +123,11 @@ enum StarterRepos {
         for file in try fm.contentsOfDirectory(at: tree, includingPropertiesForKeys: nil) where file.pathExtension == "lampapp" {
             try fm.removeItem(at: file)
         }
-        // The chain: what the starter is based on, and the starter itself, named where it lives. The commit is the
-        // one this tree becomes, which whoever opens it gets from the repository (`RepoImport.naming`).
-        let based = Credits.read(starter.folder.appendingPathComponent(Credits.file)) ?? Credits()
+        // The chain: what the starter is based on (its credits as `Starters.copy` installed them, less the starter's own
+        // link), and the starter itself, named where it lives. The commit is the one this tree becomes, which whoever
+        // opens it gets from the repository (`RepoImport.naming`).
+        var based = Credits.load(project)
+        based.remixOf.removeAll { $0.starter == starter.folder.lastPathComponent }
         let chain = based.remixed(from: Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent, url: GitHubRepo.url(repo)))
         try chain.encoded().write(to: tree.appendingPathComponent(Credits.file), options: .atomic)
         // Made at no particular time, so an unchanged starter is an unchanged tree.
@@ -275,15 +140,22 @@ enum StarterRepos {
         if license {
             try Data(GitHubRepo.mitLicense(holder: "Roo Code, Inc.").utf8).write(to: tree.appendingPathComponent("LICENSE"))
         }
-        // The README's pictures: the starter's icon as it ships, and its preview, which shows only example content.
+        // The pictures, kept in the repository (`Starters.picturesFolder`): the drawn icon, whole, and the preview, which
+        // shows only example content (from beside starter.md the one time, for a starter made before pictures lived
+        // in its repository: `Starters.iconFolder(of:)`).
         var showcase = GitHubRepo.Showcase(ideas: starter.tweaks.map(\.title), ideasTitle: starter.offer.isEmpty ? nil : starter.offer, license: license)
-        let pictures = tree.appendingPathComponent(".github")
-        for (from, name) in [(starter.folder.appendingPathComponent(Starters.iconFolder).appendingPathComponent("icon.png"), "icon.png"),
-                             (starter.folder.appendingPathComponent("preview.png"), "preview.png")] where fm.fileExists(atPath: from.path) {
+        let pictures = tree.appendingPathComponent(Starters.picturesFolder)
+        for from in [Starters.iconFolder(of: starter), Starters.preview(of: starter)] {
+            guard fm.fileExists(atPath: from.path) else { continue }
+            let to = pictures.appendingPathComponent(from.lastPathComponent)
             try fm.createDirectory(at: pictures, withIntermediateDirectories: true)
-            try fm.copyItem(at: from, to: pictures.appendingPathComponent(name))
-            if name == "icon.png" { showcase.icon = ".github/icon.png" } else { showcase.preview = ".github/preview.png" }
+            try? fm.removeItem(at: to)
+            try fm.copyItem(at: from, to: to)
         }
+        if fm.fileExists(atPath: pictures.appendingPathComponent("\(Starters.iconFolder)/icon.png").path) {
+            showcase.icon = "\(Starters.picturesFolder)/\(Starters.iconFolder)/icon.png"
+        }
+        if fm.fileExists(atPath: pictures.appendingPathComponent("preview.png").path) { showcase.preview = "\(Starters.picturesFolder)/preview.png" }
         let page = try stagePage(project, starter: starter, repo: repo, in: root)
         if page != nil { showcase.play = Publish.pageURL(repo) }
         let (app, parts) = Sharing.layout(of: project)
