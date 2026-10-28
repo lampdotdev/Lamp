@@ -93,4 +93,47 @@ final class AndroidTVTests: XCTestCase {
         another.serialNumber = "SERIAL9999999"
         XCTAssertFalse(AndroidTVs.adopts(mdnsName, as: another))
     }
+
+    /// Two TVs answering with one serial at two addresses (left as adb lists them), one of them at an old choice's address.
+    private func ambiguous() throws -> (devices: [Device], old: String) {
+        let other = "192.168.1.77:41000"
+        let listing = try fixture("devices").replacingOccurrences(of: address, with: other)
+        let devices = AndroidTVs.merge(Adb.listed(listing).map { Device.from(adb: $0.serial, state: $0.state, properties: properties) },
+                                       services: AndroidTVs.services(try fixture("mdns")), kept: []).devices
+        return (devices, other)
+    }
+
+    /// An old address-and-port choice isn't used because an unrecorded TV answers there: the person chooses it again.
+    func testAnOldAddressOnAnUnrecordedTVNeedsChoosingAgain() throws {
+        let (devices, old) = try ambiguous()
+        guard case .confirm = AndroidTVs.choice(old, among: devices, confirmed: []) else { return XCTFail("used without asking") }
+        guard case .use = AndroidTVs.choice(old, among: devices, confirmed: [old]) else { return XCTFail("chosen again, still refused") }
+    }
+
+    /// Stop with nothing of Lamp's watching closes the app only where the choice can be used: never at an old address
+    /// another TV may have taken.
+    func testStopDoesNotGoToAnUnconfirmedOldAddress() throws {
+        let record = try kept()
+        let devices = look(try fixture("devices"), try fixture("mdns"), [mdnsName: properties, address: properties], kept: [record])
+        XCTAssertNil(AndroidTVs.stopTarget("192.168.1.50:5555", among: devices, confirmed: []))
+        XCTAssertNil(AndroidTVs.stopTarget(address, among: devices, confirmed: []))
+        XCTAssertEqual(AndroidTVs.stopTarget(record.id, among: devices, confirmed: []), mdnsName)
+    }
+
+    /// After pairing over Wireless debugging, the TV's old 5555 connection isn't taken for ready.
+    @MainActor func testAPairedTVIsntReadyOnTheOldPort() throws {
+        let old = "192.168.1.50:5555"
+        let devices = look("List of devices attached\n\(old)   device product:jarvis\n", try fixture("mdns"), [old: properties], kept: [])
+        XCTAssertNil(AndroidWiFi.ready(at: "192.168.1.50", among: devices, services: AndroidTVs.services(try fixture("mdns")), tls: true))
+        XCTAssertNotNil(AndroidWiFi.ready(at: "192.168.1.50", among: devices, services: AndroidTVs.services(try fixture("mdns")), tls: false))
+    }
+
+    /// adb's answer when the TV's connection is gone (its port changed) says nothing of the app: it isn't taken for the
+    /// app having quit.
+    func testALostConnectionIsntAnAppThatQuit() {
+        let lost = Subprocess.Result(status: 1, output: "", errors: "adb: device '\(address)' not found", timedOut: false)
+        XCTAssertEqual(Adb.process(of: "dev.lamp.app", on: address, said: lost), .unreachable)
+        let quit = Subprocess.Result(status: 1, output: "", errors: "", timedOut: false)
+        XCTAssertEqual(Adb.process(of: "dev.lamp.app", on: address, said: quit), .gone)
+    }
 }

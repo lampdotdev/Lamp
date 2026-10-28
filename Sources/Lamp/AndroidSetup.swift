@@ -57,7 +57,7 @@ final class AndroidSetup: NSObject, ObservableObject, NSWindowDelegate {
         if !keepingProblem { problem = nil }
         let device = self.device
         Task {
-            let result = await AndroidTools.check(device: device)
+            let result = await AndroidTools.check(device: device, confirmed: Store.shared.androidConfirmed)
             checking = false
             report = result
             if result.ready, let request = active {

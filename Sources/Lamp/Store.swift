@@ -2219,6 +2219,8 @@ final class Store: ObservableObject {
     /// `place` is Android or Android TV: which emulator is meant when `serial` is nil, and for a device, whether it's a
     /// TV. A page with both opens on either; a kind with one is given the one it has.
     func setAndroidDevice(_ project: LampProject, _ serial: String?, place: Destination = .android) {
+        // Choosing a device at a network selector, again or for the first time, is what lets that selector be used.
+        if let serial, !AndroidTVs.isRecord(serial), serial.contains(":") || AndroidTVs.isMDNS(serial) { androidConfirmed.insert(serial) }
         // A game or a screen has Android among its places, and may be pointed at another of them now.
         let places = project.openPlaces.filter(\.isAndroid)
         guard let chosen = places.contains(place) ? place : places.first,
@@ -2247,15 +2249,22 @@ final class Store: ObservableObject {
     /// record's. One that's an address and port proves nothing (ports come round again, and 5555 is every Fire TV's),
     /// so the TV answering there is the person's to confirm, by choosing it again.
     func androidChoice(_ chosen: String, of project: LampProject) -> AndroidChoice? {
-        if let device = devices.first(where: { $0.udid == chosen }) { return .device(device) }
-        guard let device = devices.first(where: { AndroidTVs.isRecord($0.id) && $0.aliases.contains(chosen) }) else { return nil }
-        guard AndroidTVs.adopts(chosen, as: device) else { return .confirm(device) }
-        var changed = project
-        changed.device = device.id
-        try? Template.saveMeta(changed)
-        if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index].device = device.id }
-        return .device(device)
+        switch AndroidTVs.choice(chosen, among: devices, confirmed: androidConfirmed) {
+        case .use(let device): return .device(device)
+        case .adopt(let device):
+            var changed = project
+            changed.device = device.id
+            try? Template.saveMeta(changed)
+            if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index].device = device.id }
+            return .device(device)
+        case .confirm(let device): return .confirm(device)
+        case .missing: return nil
+        }
     }
+
+    /// Network selectors the person chose under Try On in this run of Lamp: an old choice of one is theirs to make
+    /// again, and making it is what lets it be used (`AndroidTVs.choice`).
+    private(set) var androidConfirmed: Set<String> = []
 
     /// Which TV a TV app goes on when the person presses Play, by its id in `TVs`, or nil for the preview alone. A TV
     /// not set up yet is set up first (`TVSetup`), and chosen once it's ready.
@@ -8857,9 +8866,10 @@ final class Store: ObservableObject {
                 }
                 guard stillOwns() else { return "The app was deleted or stopped before it opened." }
             }
-            // A TV's selector may have changed while an earlier launch held the queue.
+            // A TV's selector may have changed while an earlier launch held the queue: read again after waiting.
             var reach = serial
             if AndroidTVs.isRecord(key) {
+                if previous != nil { await refreshAndroidDevices() }
                 guard let device = devices.first(where: { $0.udid == key }), device.adbState == "device" else {
                     return "Lamp lost the TV chosen under Try On. Check it's on, then press Play again."
                 }
@@ -8925,7 +8935,12 @@ final class Store: ObservableObject {
                     try? await Task.sleep(for: .milliseconds(polls < 10 ? 500 : 2000))
                     polls += 1
                     guard let self, androidApps[project.id] === run else { return }
-                    if await Adb.pid(of: package, on: serial) != pid {
+                    // A TV whose connection went (a new port) still has the app open: only the TV saying its process
+                    // is gone ends it. Its selector is read from the record each time.
+                    let now = AndroidTVs.isRecord(key) ? devices.first { $0.udid == key && $0.adbState == "device" }?.adb : serial
+                    guard let now else { continue }
+                    let state = await Adb.process(of: package, on: now)
+                    if state != .unreachable, state != .running(pid) {
                         run.end()
                         refreshOpenApps()
                         return
@@ -8937,7 +8952,8 @@ final class Store: ObservableObject {
             // The verdict asks the device once more as the window ends, since the watch's reading may be half a second old.
             _ = watchLaunch(project, owner: owner, opened: opened, alive: { run.alive }, confirm: {
                 guard run.alive else { return false }
-                let there = await Adb.pid(of: package, on: serial) == pid
+                guard let now = await self.liveSerial(run) else { return true }
+                let there = await Adb.pid(of: package, on: now) == pid
                 if !there { run.end() }
                 return there
             }, report: {
@@ -8970,7 +8986,7 @@ final class Store: ObservableObject {
         }
         note("Looking at \(project.name)", for: project)
         guard let open = androidApps[project.id] else { return (200, ["text": summary + " It isn't open now."]) }
-        let serial = liveSerial(open) ?? open.device
+        let serial = await liveSerial(open) ?? open.device
         try? await Task.sleep(for: Self.simulatorFirstScreen)
         var screenshots: [URL] = []
         let picture = Runtime.folder(project).appendingPathComponent("screenshot.png")
@@ -8987,17 +9003,30 @@ final class Store: ObservableObject {
 
     /// Open, still this project's screen (no other app of Lamp's launched on that device since), and alive on the device.
     private func isAndroidRunning(_ project: LampProject) async -> Bool {
-        guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id, let serial = liveSerial(open) else { return false }
+        guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id, let serial = await liveSerial(open) else { return false }
+        return await Adb.pid(of: Template.androidPackage(for: project), on: serial) == open.pid
+    }
+
+    /// The same, at the one selector a `use_app` call checked and sends its actions to.
+    private func isAndroidRunning(_ project: LampProject, at serial: String) async -> Bool {
+        guard let open = androidApps[project.id], open.alive, androidLeases[open.device] == project.id else { return false }
         return await Adb.pid(of: Template.androidPackage(for: project), on: serial) == open.pid
     }
 
     /// The selector adb reaches an open app's device by now. A TV's changes while the app is open (a new port), and an
     /// address it had may be another device's since, so a TV's goes by its record, as the last look read it: nil while
-    /// the record's TV isn't reachable.
-    private func liveSerial(_ open: AndroidRun) -> String? {
+    /// the record's TV isn't reachable. Each use reads it again and checks it, so a command goes to the TV it's meant for.
+    private func liveSerial(_ open: AndroidRun) async -> String? {
         guard AndroidTVs.isRecord(open.device) else { return open.serial }
-        guard let device = devices.first(where: { $0.udid == open.device }), device.adbState == "device" else { return nil }
-        return device.adb
+        // The last look's selector, checked by the serial the TV reads there; else a fresh look.
+        func checked() async -> String? {
+            guard let device = devices.first(where: { $0.udid == open.device && $0.adbState == "device" }), let serial = device.serialNumber,
+                  await Adb.serialNumber(on: device.adb) == serial else { return nil }
+            return device.adb
+        }
+        if let serial = await checked() { return serial }
+        await refreshAndroidDevices()
+        return await checked()
     }
 
     /// Why an Android app can't be built now, or nil: Google's tools aren't on this Mac yet.
@@ -9014,7 +9043,8 @@ final class Store: ObservableObject {
 
     /// `use_app` for an Android app: the actions carried out with adb, the screen read between them.
     private func useOnAndroid(_ project: LampProject, actions: [[String: Any]], json: String) async -> (Int, [String: Any]) {
-        guard let open = androidApps[project.id], await isAndroidRunning(project), let serial = liveSerial(open) else {
+        // One selector for the whole call: the actions, and every check between them, go to the TV it was checked at.
+        guard let open = androidApps[project.id], let serial = await liveSerial(open), await isAndroidRunning(project, at: serial) else {
             return (200, ["text": "The app isn't open. Call look_at_app first: it builds the app and opens it."])
         }
         guard let owner = turns[project.id] else { return (409, ["error": "Lamp isn't working on this app right now."]) }
@@ -9046,7 +9076,7 @@ final class Store: ObservableObject {
         }, tookOver: { trial?.tookOver == true }) { [weak self] in
             guard let self, exists(project), turns[project.id] === owner, !owner.stopped, trial?.tookOver != true else { return false }
             // Whether the app still runs is asked of the device, and Stop or the person's click may come meanwhile.
-            guard await isAndroidRunning(project) else { return false }
+            guard await isAndroidRunning(project, at: serial) else { return false }
             return turns[project.id] === owner && !owner.stopped && trial?.tookOver != true
         }
         // Asked again after the reads below: they take a moment, and Stop may come during them.
@@ -9059,7 +9089,7 @@ final class Store: ObservableObject {
             return true
         }
         var text = "What happened:\n\(report)"
-        guard await isAndroidRunning(project) else {
+        guard await isAndroidRunning(project, at: serial) else {
             text += "\n\nThe app quit or crashed while doing that."
             if tookOver() { text += "\n\n" + Self.tookOverNote }
             if Privacy.sharesLog, let tail = Runtime.logTail(project) { text += "\n\nLast lines it logged:\n" + tail }
@@ -10737,14 +10767,15 @@ final class Store: ObservableObject {
         if project.onAndroid {
             let package = Template.androidPackage(for: project)
             if let running = androidApps[project.id] {
-                await Adb.stop(package, on: liveSerial(running) ?? running.device)
+                if let serial = await liveSerial(running) { await Adb.stop(package, on: serial) }
                 running.end()
                 if androidLeases[running.device] == project.id { androidLeases[running.device] = nil }
             } else {
                 // Open there without Lamp watching it (opened on the device, or by a Lamp that has since restarted):
                 // Stop still closes it where Try On points.
-                let serial = project.device.map { id in devices.first { $0.udid == id }?.adb ?? id } ?? project.destination.emulator.serial
-                if await Adb.pid(of: package, on: serial) != nil { await Adb.stop(package, on: serial) }
+                if project.device != nil { await refreshAndroidDevices() }
+                let serial = project.device.map { AndroidTVs.stopTarget($0, among: devices, confirmed: androidConfirmed) } ?? project.destination.emulator.serial
+                if let serial, await Adb.pid(of: package, on: serial) != nil { await Adb.stop(package, on: serial) }
             }
             androidApps[project.id] = nil
             refreshOpenApps()

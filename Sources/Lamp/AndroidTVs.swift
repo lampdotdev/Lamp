@@ -250,6 +250,43 @@ enum AndroidTVs {
         return isUsable(serial) && serial == device.serialNumber
     }
 
+    /// What a choice under Try On names, and whether it can be used as it is.
+    enum Choice: Equatable {
+        case use(Device)
+        /// An old choice that's this TV's record now: use it, and save the record's id in its place.
+        case adopt(Device)
+        /// A device answers where the choice points, but nothing says it's the one chosen: the person chooses again.
+        case confirm(Device)
+        case missing
+    }
+
+    /// A record's id is the TV's. A cable's serial and an emulator's are theirs, as adb lists them. A network
+    /// selector (an address and port, or adb's mDNS name) chosen before is a place, not a device: adb's mDNS name carrying
+    /// the serial the TV there reads is adopted as that TV's record; any other TV answering there, recorded or not, is
+    /// used only once the person chose that selector under Try On in this run of Lamp (`confirmed`). A phone over Wi‑Fi
+    /// is used as it was chosen: Lamp keeps no records of phones.
+    static func choice(_ chosen: String, among devices: [Device], confirmed: Set<String>) -> Choice {
+        if isRecord(chosen) { return devices.first { $0.id == chosen }.map { .use($0) } ?? .missing }
+        let exact = devices.first { $0.id == chosen }
+        guard chosen.contains(":") || isMDNS(chosen) else { return exact.map { .use($0) } ?? .missing }
+        if let tv = devices.first(where: { adopts(chosen, as: $0) }) { return .adopt(tv) }
+        guard let answering = exact ?? devices.first(where: { isRecord($0.id) && $0.aliases.contains(chosen) }) else { return .missing }
+        if !answering.features.contains("tv"), !isRecord(answering.id), answering.adbState == "device" { return .use(answering) }
+        return confirmed.contains(chosen) ? .use(answering) : .confirm(answering)
+    }
+
+    /// Where Stop closes the app when Lamp isn't watching it open: the selector the choice can be used at now, or nil.
+    /// An old address that's unconfirmed is never used: another device may have it.
+    static func stopTarget(_ chosen: String, among devices: [Device], confirmed: Set<String>) -> String? {
+        switch choice(chosen, among: devices, confirmed: confirmed) {
+        case .use(let device), .adopt(let device): return device.adbState == "device" ? device.adb : nil
+        case .confirm, .missing: return nil
+        }
+    }
+
+    /// Whether a selector reaches its device over Wireless debugging's connection.
+    static func isTLS(_ selector: String, services: [Service]) -> Bool { transport(of: selector, services: services) == .tls }
+
     // MARK: Found before its debugging is on
 
     /// TVs the look on the network found that are Google TVs or Android TVs: a host offering both the TV's remote service
@@ -275,6 +312,8 @@ enum AndroidTVs {
     static func reconnect(listed: [String], services: [Service], kept: [Record], now: Date = Date()) async -> Bool {
         var targets: [String] = []
         attempts.lock()
+        // While the person is connecting a device themselves, nothing else connects anything.
+        if settingUp { attempts.unlock(); return false }
         for record in kept {
             let there = listed.contains { record.aliases.contains($0) || serial(inMDNS: $0) == record.serial }
             guard !there else { missingSince[record.id] = nil; continue }
@@ -292,14 +331,48 @@ enum AndroidTVs {
                 target = services.first { $0.transport == .legacy && $0.serial == record.serial && DeviceAddress.isPrivate($0.host) }.map { "\($0.host):\($0.port)" }
                     ?? record.address.flatMap { DeviceAddress.isPrivate($0) ? "\($0):5555" : nil }
             }
-            guard let target else { continue }
+            guard let target, !inFlight.contains(host(of: target)) else { continue }
             lastTry[record.id] = now
+            inFlight.insert(host(of: target))
             targets.append(target)
         }
         attempts.unlock()
         var connected = false
-        for target in targets where await Adb.connect(target: target) { connected = true }
+        for target in targets {
+            if await Adb.connect(target: target) { connected = true }
+            finished(target)
+        }
         return connected
+    }
+
+    /// Set while the Wi‑Fi window is open: the person's own pairing and connecting go one at a time, and Lamp's
+    /// reconnecting waits for them.
+    nonisolated(unsafe) static var settingUp = false {
+        willSet { attempts.lock() }
+        didSet { attempts.unlock() }
+    }
+    nonisolated(unsafe) private static var inFlight: Set<String> = []
+
+    private static func host(of target: String) -> String { target.split(separator: ":").dropLast().joined(separator: ":") }
+
+    private static func finished(_ target: String) {
+        attempts.lock()
+        inFlight.remove(host(of: target))
+        attempts.unlock()
+    }
+
+    /// Runs one of the window's own requests to an address once no reconnect of Lamp's is in flight to it, and keeps
+    /// any from starting meanwhile.
+    static func exclusively<T>(_ target: String, _ work: () async -> T) async -> T {
+        let host = host(of: target)
+        while true {
+            attempts.lock()
+            if !inFlight.contains(host) { inFlight.insert(host); attempts.unlock(); break }
+            attempts.unlock()
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        defer { finished(target) }
+        return await work()
     }
 }
 

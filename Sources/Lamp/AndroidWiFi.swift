@@ -36,9 +36,9 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
     @Published var code = ""
     /// Typed by hand when adb's search can't see the device (another subnet, or the network blocks it): where its
     /// pairing screen says to pair, and where its Wireless debugging screen says to connect.
-    @Published var pairingAddress = ""
-    @Published var connectionAddress = ""
-    @Published var typing = false
+    @Published var pairingAddress = "" { didSet { if pairingAddress != oldValue { moveOn() } } }
+    @Published var connectionAddress = "" { didSet { if connectionAddress != oldValue { moveOn() } } }
+    @Published var typing = false { didSet { if typing != oldValue { moveOn() } } }
     @Published private(set) var state: State = .idle
 
     private var window: NSWindow?
@@ -62,6 +62,7 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             self.window = window
         }
         if let host { select(host) }
+        AndroidTVs.settingUp = true
         // The look on the network names TVs with no debugging on yet; it's made once the person asks for this.
         if Store.shared.hosts.isEmpty { Store.shared.refreshDevices(everything: true) }
         window?.makeKeyAndOrderFront(nil)
@@ -80,6 +81,8 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        AndroidTVs.settingUp = false
+        pairedHost = nil
         looking?.cancel()
         looking = nil
         window = nil
@@ -93,10 +96,17 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
     func select(_ host: String) {
         guard selected != host else { return }
         selected = host
-        generation = UUID()
-        sent = nil
+        moveOn()
+        pairedHost = nil
         code = ""
         state = .idle
+    }
+
+    /// What the person typed or chose changed: an attempt still running is for something else now, and its answer
+    /// changes nothing. It goes on to its end, and nothing new starts until it has (`busy`).
+    private func moveOn() {
+        generation = UUID()
+        sent = nil
     }
 
     /// adb's search and the TVs the network look named, one entry per address.
@@ -166,11 +176,12 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         state = .working("Pairing…")
         Task {
             defer { done(mine) }
-            let result = await Adb.pair(host: host, port: port, code: code)
+            let result = await AndroidTVs.exclusively("\(host):\(port)") { await Adb.pair(host: host, port: port, code: code) }
             guard mine == generation else { return }
             switch result {
             case .paired:
                 self.code = ""
+                pairedHost = host
                 await connectAfterPairing(host: host, generation: mine)
             case .wrongCode:
                 // adb says the same when the code is wrong and when the screen closed meanwhile.
@@ -203,14 +214,15 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             guard mine == generation else { return }
         }
         let port = (await Adb.networkServices()).first { $0.host == host }?.connectPort
+        guard mine == generation else { return }
         let typed = Self.endpoint(connectionAddress).flatMap { $0.0 == host && $0.1 != 5555 ? $0.1 : nil }
         guard let target = port ?? typed else {
-            guard mine == generation else { return }
             typing = true
             state = .failed("Paired. Now type the address and port the TV's Wireless debugging screen shows, under IP address & port.")
             return
         }
-        _ = await Adb.connect(target: "\(host):\(target)")
+        _ = await AndroidTVs.exclusively("\(host):\(target)") { await Adb.connect(target: "\(host):\(target)") }
+        guard mine == generation else { return }
         await waitUntilReady(host: host, generation: mine, seconds: 6)
     }
 
@@ -229,12 +241,16 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
             state = .failed("Type the address and port the TV shows, like 192.168.1.20:5555.")
             return
         }
+        if pairedHost == host, port == 5555 || current?.legacyPort == port {
+            state = .failed("It's paired over Wireless debugging: type the port its Wireless debugging screen shows, not 5555.")
+            return
+        }
         let mine = generation
         busy = true
         state = .working("Connecting…")
         Task {
             defer { done(mine) }
-            let connected = await Adb.connect(target: "\(host):\(port)")
+            let connected = await AndroidTVs.exclusively("\(host):\(port)") { await Adb.connect(target: "\(host):\(port)") }
             guard mine == generation else { return }
             guard connected else {
                 state = .failed(port == 5555 ? "The TV didn't answer. Check ADB debugging is on and it's on this Wi‑Fi."
@@ -260,9 +276,19 @@ final class AndroidWiFi: NSObject, ObservableObject, NSWindowDelegate {
         state = .failed("Lamp connected, but the TV didn't let this Mac in. Try again, or pair it with a code.")
     }
 
+    /// The device at an address that's ready: listed allowed and reading what it is.
+    static func ready(at host: String, among devices: [Device], services: [AndroidTVs.Service], tls: Bool) -> Device? {
+        devices.first { $0.kind == .android && $0.address == host && $0.adbState == "device" && (!tls || AndroidTVs.isTLS($0.adb, services: services)) }
+    }
+
+    /// The device just paired over Wireless debugging: it's ready only once it's reached that way, and it's never
+    /// connected to on the old port. Kept until the person picks another device or closes the window.
+    private var pairedHost: String?
+
     /// Ready once adb lists the device at that address allowed and reading what it is.
     private func finishIfReady(host: String, generation mine: UUID) async -> Bool {
-        guard let device = (await Adb.devices()).first(where: { $0.kind == .android && $0.address == host && $0.adbState == "device" }) else { return false }
+        let services = AndroidTVs.services((await Adb.run(["mdns", "services"], timeout: 10)).output)
+        guard let device = Self.ready(at: host, among: await Adb.devices(), services: services, tls: pairedHost == host) else { return false }
         guard mine == generation else { return true }
         Store.shared.refreshDevices()
         state = .done("\(device.name) is connected. Choose it under Try On.")
