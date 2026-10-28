@@ -30,10 +30,16 @@ jobs:
 
       - name: Select Xcode
         run: |
-          # The release's Xcode where the machine has it by that name, else the machine's own Xcode 27.
-          wanted="/Applications/Xcode_$(cat .github/xcode-version).app"
-          if [ -d "$wanted" ]; then sudo xcode-select -s "$wanted"; else ls -d /Applications/Xcode*.app; fi
+          # The release's Xcode, found by its version rather than its folder's name, which differs between machines:
+          # building with any other would let code through that the release's compiler rejects.
+          wanted="$(cat .github/xcode-version)"
+          for app in /Applications/Xcode*.app; do
+            if [ "$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null)" = "$wanted" ]; then
+              sudo xcode-select -s "$app"; break
+            fi
+          done
           xcodebuild -version
+          xcodebuild -version | head -1 | grep -qx "Xcode $wanted" || { echo "::error::This machine has no Xcode $wanted:"; ls -d /Applications/Xcode*.app; exit 1; }
 
       - name: Cache Swift packages and build
         uses: actions/cache@v4
@@ -53,10 +59,16 @@ jobs:
 
       - name: Select Xcode
         run: |
-          # The release's Xcode where the machine has it by that name, else the machine's own Xcode 27.
-          wanted="/Applications/Xcode_$(cat .github/xcode-version).app"
-          if [ -d "$wanted" ]; then sudo xcode-select -s "$wanted"; else ls -d /Applications/Xcode*.app; fi
+          # The release's Xcode, found by its version rather than its folder's name, which differs between machines:
+          # building with any other would let code through that the release's compiler rejects.
+          wanted="$(cat .github/xcode-version)"
+          for app in /Applications/Xcode*.app; do
+            if [ "$(defaults read "$app/Contents/Info" CFBundleShortVersionString 2>/dev/null)" = "$wanted" ]; then
+              sudo xcode-select -s "$app"; break
+            fi
+          done
           xcodebuild -version
+          xcodebuild -version | head -1 | grep -qx "Xcode $wanted" || { echo "::error::This machine has no Xcode $wanted:"; ls -d /Applications/Xcode*.app; exit 1; }
 
       - name: Cache Swift packages and build
         uses: actions/cache@v4
