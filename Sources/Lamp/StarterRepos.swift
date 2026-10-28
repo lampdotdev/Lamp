@@ -29,6 +29,11 @@ enum StarterRepos {
         let root = fm.temporaryDirectory.appendingPathComponent("lamp-starter-repos-\(UUID().uuidString)")
         var failed = false
         for starter in Starters.bundled {
+            // A kind Lamp can't share yet (a screen) can't be opened from a repository either: it has none until it can.
+            if let refusal = starter.kind.target.recipe.shareRefusal {
+                print("Skipped \(starter.name): \(refusal)")
+                continue
+            }
             do {
                 try fm.createDirectory(at: root, withIntermediateDirectories: true)
                 let tree = try stage(starter, in: root)

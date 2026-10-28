@@ -73,6 +73,19 @@ that the agent can make in one request with no key or account, its look drawn in
 are Mac apps (or a game or a screen, when starter.md says `kind: game` or `kind: screen`, made as any wish of that kind
 is) that need no key or account, use the AI the person builds with when they use any, and come with
 example content they can clear. After changing LampSupport.swift, `scripts/check-starters.sh` type-checks them.
+
+Each starter Lamp can share also lives on GitHub, a public repository in the Lamp team's account
+(`RooCodeInc/lamp-starter-<folder>`, `Starters.account`), laid out as Put on GitHub lays a wish out
+(`StarterRepos.stage`: the starter made into a wish the way the desk makes one, then `GitHubRepo.stage`, with an MIT
+license, no shared file beside the code, an identity derived from the starter and a fixed export time, so the same
+starter is always the same tree and an unchanged one makes no commit). `scripts/publish-starters.sh` stages them
+with the built Lamp Dev (`--stage-starter-repos`), puts each up and writes `repository:` and `commit:` into its
+starter.md; `--dry-run` only stages. A copy carries both on the starter's link on its chain (`Starters.copy`), so its
+Update from GitHub… merges against the exact commit it began from and Send Changes Back… offers a change to the starter
+itself. A copy made before starters named a repository gets the address from the starter this Lamp ships
+(`Starters.located`) and is merged against the version it began with ("From Lamp", an arrival like a shared file's).
+A starter of a kind Lamp doesn't share yet (Home HQ, a screen) has no repository until it can. A starter based on
+someone else's work (New York, Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
 the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
@@ -132,4 +145,6 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
    content), paint and draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1
    OPENROUTER_API_KEY=… swift test --filter StarterIconsTests` and look at the artwork it picked, then run
    `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, and update the count of wishes above.
+6. Put it on GitHub with `scripts/publish-starters.sh` (after `./build.sh`) and commit the starter.md it fills in. Run
+   it again whenever a starter changes, before the release that ships the change.
 

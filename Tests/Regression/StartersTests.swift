@@ -16,6 +16,8 @@ final class StartersTests: XCTestCase {
         ---
         name: Tidy Up
         offer: "Make it tidy your way"
+        repository: https://github.com/RooCodeInc/lamp-starter-tidyup
+        commit: 199f010cf9b35eb58ec934d95eba1ab977c880c1
         tweaks:
           - doc.text: Group my invoices by client
           - 'Never touch design files'
@@ -26,6 +28,9 @@ final class StartersTests: XCTestCase {
         let starter = try XCTUnwrap(Starters.parse(text, folder: starters))
         XCTAssertEqual(starter.name, "Tidy Up")
         XCTAssertEqual(starter.offer, "Make it tidy your way")
+        // Where it lives and the commit this Lamp ships, which a copy's chain carries for its updates.
+        XCTAssertEqual(starter.repository, "https://github.com/RooCodeInc/lamp-starter-tidyup")
+        XCTAssertEqual(starter.commit, "199f010cf9b35eb58ec934d95eba1ab977c880c1")
         XCTAssertEqual(starter.tweaks, [Starters.Tweak(title: "Group my invoices by client", symbol: "doc.text"),
                                         Starters.Tweak(title: "Never touch design files"),
                                         Starters.Tweak(title: "Group: by client")])
