@@ -99,7 +99,7 @@ extension AppAI {
     /// amount to, so nothing else has to work that out again.
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
         if capability == .browser {
-            let available = BrowserBridge.enabled && project?.platform.hasMac != false && context == .mac
+            let available = BrowserBridge.enabled && project?.hasMac != false && context == .mac
             let connected = available && BrowserSetup.shared.connected
             return Resolution(capability: .browser, tier: connected ? .best : .none,
                               answer: connected ? "Lamp in Chrome" : nil, provider: connected ? "browser" : nil,
@@ -332,32 +332,21 @@ struct SetupOffer: Codable, Equatable, Hashable {
 enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
         // A device app whose integration takes none of Lamp's building blocks has no AI of Lamp's.
-        if project.platform == .device, DeviceSupport.libraries(for: project).isEmpty {
-            return "- None: this device's integration takes none of Lamp's building blocks, so the app has no AI from Lamp."
-        }
-        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.platform.hasMac) }.map { capability in
+        if let none = project.platform.target.guidance.noAI(project) { return none }
+        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.hasMac) }.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }
             return line
         }
-        if project.platform.hasIOS {
-            let away = AppAI.resolve(.text, for: project, in: .phoneAway)
-            lines.append("- On the person's phone away from this Mac: \(away.tier == .none ? "no AI" : "text, pictures and decisions through OpenRouter")")
-        }
-        if project.platform == .android {
-            // An Android device reaches AI only through this Mac, in the emulator or over the same Wi‑Fi.
-            lines.append("- On the person's Android device: the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, no AI")
-        }
-        if project.platform == .tv || project.platform == .device {
-            // A TV or another device reaches AI only through this Mac, over the same Wi‑Fi; the TV preview is on the Mac.
-            let device = project.platform == .tv ? "TV" : DeviceApps.integration(for: project)?.name ?? "device"
-            lines.append("- On the person's \(device): the same, while it's on this Mac's Wi‑Fi with Lamp open; away from it, or with Lamp closed, no AI")
-        }
+        // What it has where it runs away from this Mac: a phone away from it, a device on the same Wi‑Fi.
+        if let elsewhere = project.platform.target.guidance.elsewhere(project) { lines.append(elsewhere) }
         return lines.joined(separator: "\n")
     }
 
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?, offered: Set<SetupOffer>) -> String {
+        // Said of the app in the wish's own folder; a wish whose apps are all in folders of their own has none.
+        guard project.holdsApp else { return "" }
         let now = line(for: project, offered: offered)
         switch note.telling(now, for: project, engine: engine, session: session) {
         case .fresh: return "\n\n---\nAI this app can use right now (from Lamp, not part of the request above):\n\(now)"

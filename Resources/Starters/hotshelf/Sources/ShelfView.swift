@@ -208,7 +208,7 @@ enum Studio {
     }
 }
 
-/// The wall: one flat colour with a fine grain like painted board. The light is laid over the whole picture
+/// The wall: one flat color with a fine grain like painted board. The light is laid over the whole picture
 /// afterwards (`StudioLighting`), so the wall, the shelves and the bottles are lit by the same light.
 struct StudioWall: View {
     var body: some View {
@@ -254,7 +254,7 @@ struct StudioLighting: View {
                                        .init(color: Color(white: 1 - 0.5 * k), location: 1)],
                                center: Look.current.light, startRadius: 0, endRadius: reach * 1.6)
                     .blendMode(.colorBurn)
-                // Dodge: a hot spot under the light, in the light's colour...
+                // Dodge: a hot spot under the light, in the light's color...
                 RadialGradient(stops: [.init(color: Look.current.glow(0.36 * k), location: 0),
                                        .init(color: Look.current.glow(0.1 * k), location: 0.4),
                                        .init(color: .black, location: 1)],

@@ -78,6 +78,9 @@ values labeled where they matter. Color means good, warning or bad and nothing e
 behind the main number is the only decoration. No art. On a Mac, when it's checked often, a menu bar icon shows the
 main number.
 
+A dashboard on a TV, glanced at from across a room (a family calendar or chore board, a scoreboard, a photo frame), is
+designed as the tv-design skill says.
+
 ## Canvas
 
 Drawing, diagrams, layout, long writing: making a thing. A minimal interface with the content front and center.
@@ -108,6 +111,6 @@ something needs the user.
 ## Game or toy
 
 Played rather than used: fully custom, with no standard chrome while playing; pause, settings and scores are standard
-SwiftUI. 2D games as the 2D rule says, 3D ones in a Mac app with the scene-3d skill where it's offered, SwiftUI
-animation for the simplest. Sprites, characters and backgrounds are art from `make_art`, all in one style, with sound
-(and haptics on iPhone). Scores are kept on the device.
+and large. SwiftUI animation for the simplest toy in a native app. Anything played in real time is a game, made web
+by default wherever Lamp has a host for a page (the web-or-native skill): open the game skill, which says what it's
+drawn with and has its controls, sound, saves and smoothness for each way it's made.

@@ -237,7 +237,11 @@ enum Icons {
 
     // MARK: Spec
 
-    static func specURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent("icon.json") }
+    /// Where an icon's design and artwork are kept: the app's folder, and for a wish's other part (`Parts`) its wish's,
+    /// since a wish has one icon. What's drawn from them is each app's own (below): every app of a wish carries the
+    /// icon, and an app's build and finishing run in its sandbox, which opens only its own folder.
+    static func home(_ project: LampProject) -> URL { project.isPart ? project.dir.deletingLastPathComponent() : project.dir }
+    static func specURL(_ project: LampProject) -> URL { home(project).appendingPathComponent("icon.json") }
     static func icnsURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icns") }
     static func carURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/Assets.car") }
     static func documentURL(_ project: LampProject) -> URL { project.dir.appendingPathComponent(".lamp/AppIcon.icon") }
@@ -324,12 +328,12 @@ enum Icons {
 
     /// Artwork depends on the subject and the colors it was painted to sit on.
     static func artURL(_ project: LampProject, spec: IconSpec) -> URL {
-        project.dir.appendingPathComponent(".lamp/art/\(artHash(spec)).png")
+        home(project).appendingPathComponent(".lamp/art/\(artHash(spec)).png")
     }
 
     /// A glass design for the same subject and colors, kept beside where its picture would be.
     static func glassURL(_ project: LampProject, spec: IconSpec) -> URL {
-        project.dir.appendingPathComponent(".lamp/art/\(artHash(spec)).json")
+        home(project).appendingPathComponent(".lamp/art/\(artHash(spec)).json")
     }
 
     private static func artHash(_ spec: IconSpec) -> String {

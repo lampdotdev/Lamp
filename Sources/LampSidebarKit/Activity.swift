@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// What a turn in progress says it's doing, worked out in one place for every place that shows it: the build card,
-/// the line under a change in Lamp's window, the chat beside the app and the cover while the app reopens. Lamp keeps
+/// What a turn in progress says it's doing, worked out in one place for every place that shows it: a first build's
+/// last part, the line under a change in Lamp's window, the chat beside the app and the cover while the app reopens. Lamp keeps
 /// one plain activity for the turn ("Thinking", "Working on the interface", "Building…"); what people read is that,
 /// except while the model thinks or the wait itself is the news. A plain "Thinking" is the dullest thing the line can
 /// say, and a model can think for a minute without a word, which one frozen word makes read as stuck, so a think is

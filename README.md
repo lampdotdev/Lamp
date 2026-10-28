@@ -30,7 +30,7 @@ Nothing else needs installing. The coding agent ([pi](https://github.com/badlogi
 
 ## Download
 
-Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases)): open the DMG and drag Lamp to Applications. To cut a release, see [RELEASING.md](RELEASING.md).
+Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every release is also on [GitHub Releases](https://github.com/RooCodeInc/Lamp/releases)): open the DMG and drag Lamp to Applications. To get every change as soon as it's merged, install **Lamp Nightly** from the `nightly` pre-release there: a separate app, signed and notarized the same way, that updates itself with each nightly and lives beside Lamp without touching it. To cut a release, see [RELEASING.md](RELEASING.md).
 
 ## Setup
 
@@ -68,7 +68,7 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 - Click **New App** at the bottom of the app list, give the app a name and (optionally) describe it. Lamp builds it and opens it, usually in under a minute.
 - A vague request ("help me keep track of when I water my plants") is built straight away from sensible guesses, which you change as you use the app. The agent asks first only when one answer would make a different app, such as whether it suggests times or adds them to your calendar: one short question with likely answers, and leaving it to Lamp picks the choice that does less outside the app. Answering starts the build; it doesn't give the app access to anything.
 - Type changes into the chat. Each change rebuilds and relaunches the app. **Undo** reverts the last change. The pencil beside a message you sent moves it back into the message box to change and send again: on sending, the app goes back to how it was before that message, and what followed it leaves the chat (the versions stay under **Versions**). **Return** sends, and **Shift-Return** starts a new line.
-- While a new app's first version is built, the chat shows a build card: the app's name and icon as they're chosen, the agent's plan with each part ticked off as it's written, what it's doing right now, and at the end a picture of the app's real window. Later changes show one line with the current step and the time so far. Progress is said in everyday words ("Working on the interface", "Making your app look nice"), never as file names or code, and the chat keeps to your requests, the agent's answers and what happened to the app.
+- While a new app's first version is built, the agent's plan becomes the chat's chapters: each part is a heading, ticked with its time once it's done, with what the agent said during it and its steps folded under it, the parts still to come grayed below, and a bar at the top saying which part it's on. When the app is ready it all folds into one line ("Built it in 3 parts") above the agent's answer. Later changes show one line with the current step and the time so far. Progress is said in everyday words ("Working on the interface", "Making your app look nice"), never as file names or code, and the chat keeps to your requests, the agent's answers and what happened to the app.
 - You can keep typing while Lamp works. Messages sent in the meantime wait in the chat (click the ✕ to take one back) and go out together as the next change.
 - Attach screenshots, mockups, logos, data files or documents with the paperclip, by dropping them on the chat, or by pasting (a screenshot copied with ⌃⇧⌘4 pastes as an image). The agent sees images and small text files directly. Attachments are saved in the app's `Attachments/` folder, which stays on your Mac. When the app should use one (a logo, a data file), the agent copies it into the app's `Assets/` folder, the only folder bundled inside the app and shared with it, and loads it with `LampAssets.url/image/text("name")`.
 - In any generated app, press **⇧⌘E** to jump back to its chat in Lamp.
@@ -82,18 +82,22 @@ Get the latest signed, notarized build from [lamp.dev](https://lamp.dev) (every 
 
 ## Sharing apps
 
-Click **Share** (the toolbar button), or right-click an app and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. You can also use **Export…** to save the file. Apps travel as small `.lampapp` files containing the app's Swift code (and its widget's, if it has one), `APP.md`, `icon.json`, icon artwork and the app's own files from `Assets/` (a logo, say). Your chat, its attachments, tokens, agent sessions and git history are never included.
+Click **Share** (the toolbar button), or right-click an app and choose **Share…**, to send it through AirDrop, Messages, Mail and so on. You can also use **Export…** to save the file. Apps travel as small `.lampapp` files containing the app's code (Swift, and its widget's, if it has one; an Android app's Kotlin; a TV app's web pages and scripts), `APP.md`, `icon.json`, icon artwork and the app's own files from `Assets/` (a logo, say). A wish of several apps travels whole, each of its other apps in its own folder. Your chat, its attachments, tokens, agent sessions and git history are never included.
+
+**Put on GitHub…** (in the Share menu) puts a wish on your own GitHub account as a repository: what the shared file holds, unpacked so the code reads there, with Lamp's build files so `./build.sh` makes the app on any Mac with Apple's tools, the shared file itself, a README that says how to remix it with Lamp (through the wish's Share Link, when it has one) and the credits of what it's based on. You choose whether it's public and whether to add an MIT license. It uses GitHub's command-line tool, `gh`, and your sign-in there; nothing goes through Lamp's servers. Putting it on GitHub again adds the wish as it is now as a new commit. The wish's own git history and attachments stay on your Mac.
+
+On a Mac without Lamp, an app Lamp built (copied over, or kept after Lamp was removed) still shows its wand. The chat beside it becomes a way into Lamp: three things to change, written by Lamp after the last change, and a box for your own words; **Continue with Lamp** opens the wish's Share Link page, or lamp.dev, with the request, where Lamp is downloaded and the wish waits for its first open. A game published as a web page offers the same under **Remix…** in its credit bar. An app built from its code on GitHub has no chat of its own yet, so its wand opens lamp.dev. Nothing leaves the Mac or the page until that button is pressed.
 
 The recipient double-clicks the file, or uses **File → Import Shared App… (⌘O)**. Before anything is built, Lamp shows a review:
 
 - **A fixed checklist** of what the code uses: shell commands, network, AppleScript, Keychain, SSH keys or browser data, deleting files, camera, screen capture, background items, runtime code loading, encoded blobs, and AI. This is plain text search, so comments in the code can't talk it out of anything.
-- **An AI review** using the building model. It summarises what the app does, what it can access and any concerns, with a low, medium or high risk rating. It's told to treat the code as untrusted and ignore any instructions in it.
+- **An AI review** using the building model. It summarizes what the app does, what it can access and any concerns, with a low, medium or high risk rating. It's told to treat the code as untrusted and ignore any instructions in it.
 
 High-risk apps default to **Cancel**. When imported, the shared code is rebuilt with Lamp's own `Package.swift`, `build.sh` and `LampSupport.swift`, so nothing in the file runs during the build. The app runs only when opened, and becomes a normal app the recipient can keep editing. The review is a guide, not a guarantee: only open apps from people you trust.
 
 ## iPhone and iPad apps
 
-Choose **iPhone** or **iPad** when you start a new app (the welcome asks too): Lamp builds one SwiftUI app for both, tried in the simulator on your Mac (use **Try On** in the toolbar, or right-click the app, to switch between iPhone and iPad), which needs Xcode installed. It has the same icon and building blocks as a Mac app (saved data, AI, text from photos and documents, calendar, reminders, contacts, notifications), plus motion and the rest of what a phone has. The agent builds and opens it in the simulator, looks at the screen after each change, and taps, types, scrolls and swipes on it to try what it made (which needs Lamp allowed under System Settings → Privacy & Security → Accessibility; Lamp asks once).
+Say it's for your iPhone or iPad when you ask for a new app, or later ask for it to work on your phone: Lamp builds one SwiftUI app for both, tried in the simulator on your Mac (use **Try On** in the toolbar, or right-click the app, to switch between iPhone and iPad), which needs Xcode installed. It has the same icon and building blocks as a Mac app (saved data, AI, text from photos and documents, calendar, reminders, contacts, notifications), plus motion and the rest of what a phone has. The agent builds and opens it in the simulator, looks at the screen after each change, and taps, types, scrolls and swipes on it to try what it made (which needs Lamp allowed under System Settings → Privacy & Security → Accessibility; Lamp asks once).
 
 With your Apple account signed in to Xcode, plug your phone in: Try On offers to pair it, then lists it. Press Play and Lamp builds the app for it, signs it with your account (the team is chosen in **Settings → Building**) and puts it there. The app's AI goes through Lamp while your Mac is reachable, and uses your OpenRouter key itself when it isn't (its models are chosen in **Settings → Apps**). iPhone and iPad apps can't be shared yet.
 
@@ -174,6 +178,18 @@ Local models are slower and much less capable than the best cloud models for who
 | `updates/` | The Vercel app that serves the update feed and downloads from the private GitHub releases |
 | `site/` | The website at lamp.dev: one static Astro page (see RELEASING.md) |
 | `Resources/Icon/` | Lamp's own icon as an Icon Composer document: a flame over two rings, each a vector layer in Liquid Glass on white (dark in dark mode). It's compiled into `Resources/Assets.car` (Liquid Glass on macOS 26) and drawn into `Resources/AppIcon.icns` and `Resources/AppIcon.png` on Apple's grid |
-| `Resources/THIRD_PARTY_NOTICES.md` | Licences for the bundled pi agent and llama.cpp (both MIT) |
+| `Resources/THIRD_PARTY_NOTICES.md` | Licenses for the software bundled inside Lamp.app and written into the apps it builds |
 
 Generated apps live in `~/Library/Application Support/Lamp/Apps/<app>/`, each with its own git history.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build Lamp and open a pull request, and [SECURITY.md](SECURITY.md)
+for reporting a security problem privately.
+
+## License
+
+Lamp is open source under the [MIT License](LICENSE). The Lamp name and icon aren't part of that license: a
+fork is welcome to the code, but should ship under its own name. The software bundled inside Lamp.app (the pi
+coding agent, llama.cpp, Lobe Icons, xwin and the libraries in the Xbox game kit) has its own licenses, listed in
+[Resources/THIRD_PARTY_NOTICES.md](Resources/THIRD_PARTY_NOTICES.md).

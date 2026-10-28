@@ -39,22 +39,35 @@ final class SkillsTests: XCTestCase {
     /// skill, a one-line description within the format's limit, and instructions.
     func testEveryOfferedSkillShipsAndReads() {
         XCTAssertEqual(Set(shipped.keys), ["scene-3d", "maps", "chrome-sidebar", "device-integrations", "android-design", "phone-controllers",
-                                           "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware"])
+                                           "app-kinds", "menu-bar", "mac-widgets", "iphone-widgets", "apple-watch", "iphone-hardware",
+                                           "building-blocks", "app-ai", "accounts", "app-intents", "share-extension", "finder-files",
+                                           "scripting", "game", "2d-game", "icloud-sync", "wish-links", "device-control", "web-or-native",
+                                           "3d-game", "web-app", "phone-pages", "tv-design", "lg-developer-mode",
+                                           "roku-developer-mode", "more-apps"])
         for (name, skill) in shipped {
             XCTAssertFalse(skill.body.isEmpty, name)
             XCTAssertLessThanOrEqual(skill.description.count, 1024, name)
             XCTAssertNil(skill.name.range(of: #"[^a-z0-9-]"#, options: .regularExpression), name)
         }
-        // The integrations' skill is named by its own rule, in every prompt, rather than in the list; every other one
-        // is offered to some prompt.
-        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) }
-        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations"])) }
-        XCTAssertEqual(Skills.offered(.android), ["android-design"])
-        XCTAssertEqual(Skills.offered(.tv), ["phone-controllers"])
-        XCTAssertEqual(Skills.offered(.device), [])
-        XCTAssertEqual(Skills.offered(.iphone), ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch"])
+        // The integrations' skill and the one on controlling the person's devices are named by the devices' rule, in every
+        // prompt, rather than in the list, and how to build a page for phones by the phone-controllers skill and by an app
+        // whose code has one; designing for a TV by the TV rows of the table (`Place.skills`), to an app on one, whatever
+        // its kind; a device's setup step by the skill itself (`SetupGuides`), to Lamp's setup alone; every other one is offered to some prompt. How an app's copies and a wish's apps share data
+        // is offered to every kind that carries `LampWish`, which is every kind but a device's.
+        let everyOffered = [Platform.mac, .iphone, .universal, .android, .tv, .device].flatMap { Skills.offered($0, sidebar: true) + Skills.named($0) }
+        if Agent.Rules.scenes { XCTAssertEqual(Set(everyOffered), Set(shipped.keys).subtracting(["device-integrations", "device-control", "phone-pages", "tv-design"])
+                                                       .subtracting(SetupGuides.registrations(shipped).map(\.skill))) }
+        XCTAssertTrue(shipped["phone-controllers"]!.body.contains("phone-pages skill"))
+        // How an app is made and on which devices, games, 3D in a page, web apps, phones as controllers, and whether a
+        // request is for one more app or a change to the one the wish has are offered to every kind, first, whatever the
+        // app is now.
+        let everywhere = ["web-or-native", "game", "2d-game", "3d-game", "web-app", "phone-controllers", "more-apps"]
+        XCTAssertEqual(Skills.offered(.android), everywhere + ["android-design", "wish-links"])
+        XCTAssertEqual(Skills.offered(.tv), everywhere + ["wish-links"])
+        XCTAssertEqual(Skills.offered(.device), everywhere)
+        XCTAssertEqual(Skills.offered(.iphone), everywhere + ["app-kinds", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
         // An app for both has the Mac half's menu bar and the iPhone half's widgets, but no desktop widget or 3D.
-        XCTAssertEqual(Skills.offered(.universal), ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch"])
+        XCTAssertEqual(Skills.offered(.universal), everywhere + ["app-kinds", "menu-bar", "iphone-hardware", "iphone-widgets", "apple-watch", "wish-links"])
         // The sidebar's page is offered wherever the prompt has the sidebar's rule, an app for both included.
         XCTAssertEqual(Skills.offered(.universal, sidebar: true).last, "chrome-sidebar")
     }
@@ -116,29 +129,156 @@ final class SkillsTests: XCTestCase {
         XCTAssertEqual(Set(prompts.flatMap(\.2)).intersection(moved.keys), Set(moved.keys))
     }
 
-    /// A TV turn's prompt lists the phone page's skill instead of carrying what it says, and a TV app with a page for
-    /// phones, or a TV page using them, is told the skill applies.
+    /// What every app might need but most requests don't (the building blocks' calls, AI in the app, the accounts,
+    /// App Intents, share extensions, Finder, scripting, iCloud)
+    /// is in skills each prompt names in a one-line rule, not in its list, and the prompts no longer carry it.
+    func testPromptsNameTheSkillsTheirShortRulesStandFor() {
+        let moved: [String: [String]] = [
+            "building-blocks": ["LampFolderWatcher(folder)", "LampSchedule.daily(", "LampWeatherAttribution", "LampSpotlight.index", "lampBackground()", "accessories()"],
+            "app-ai": ["SFSpeechRecognizer", "LampAI.when(", "decideEach", "requiresOnDeviceRecognition", "sanitizing"],
+            "accounts": ["LampCalendar.events", "LampMail.inbox", "LampComputer.ask(", "Internet Accounts"],
+            "app-intents": ["AppShortcutsProvider", "applicationName", "EntityQuery"],
+            "share-extension": ["LampShareSheet", "LampShare.onReceive", "Edit Extensions"],
+            "finder-files": ["\"opens\":", "bundlePath"],
+            "scripting": ["sealed context"],
+            "icloud-sync": ["LampSync.collection", "reproductive"],
+        ]
+        for (name, phrases) in moved {
+            for phrase in phrases { XCTAssertTrue(shipped[name]!.body.contains(phrase), "\(name) says \(phrase)") }
+        }
+        let prompts: [(String, String, Platform)] = [
+            ("Mac", Agent.systemPrompt, .mac),
+            ("iPhone", Agent.iPhonePrompt(for: .iphone), .iphone),
+            ("Mac and iPhone", Agent.universalPrompt(for: .iphone), .universal),
+        ]
+        for (kind, prompt, platform) in prompts {
+            for name in Skills.named(platform) {
+                XCTAssertNotNil(shipped[name], name)
+                XCTAssertTrue(prompt.contains("the \(name) skill"), "\(kind) names \(name)")
+            }
+            for (name, phrases) in moved {
+                for phrase in phrases { XCTAssertFalse(prompt.contains(phrase), "\(kind) still carries \(name)'s \(phrase)") }
+            }
+        }
+        XCTAssertEqual(Set(prompts.flatMap { Skills.named($0.2) }), Set(moved.keys))
+        // The Mac's permission rule and the theme rule stay whole in the prompt: they're policy the agent keeps
+        // without first deciding that a skill applies.
+        for (kind, prompt, platform) in prompts {
+            XCTAssertTrue(prompt.contains("The theme follows the subject."), "\(kind) keeps the theme rule")
+            if platform.reaches(.mac) { XCTAssertTrue(prompt.contains("`LampPermissionGate(.fullDiskAccess"), "\(kind) keeps the permission rule") }
+        }
+    }
+
+    /// A TV turn's prompt lists the phones' skill instead of carrying what the phone page's says, and a TV app with a
+    /// page for phones, or a TV page using them, is told how to build one applies.
     func testTVPromptOffersThePhoneSkill() throws {
         let prompt = Agent.tvPrompt(skills: shipped)
         XCTAssertTrue(prompt.contains("  • phone-controllers: \(shipped["phone-controllers"]!.description)\n"))
         XCTAssertTrue(prompt.contains("Open the phone-controllers skill"))
         XCTAssertFalse(prompt.contains("LampController.connect"), "the phone page's instructions belong in the skill")
-        XCTAssertTrue(shipped["phone-controllers"]!.body.contains("LampController.connect"))
-        XCTAssertTrue(shipped["phone-controllers"]!.body.contains("Lamp.onPhonePage"))
-        XCTAssertFalse(Agent.systemPrompt.contains("phone-controllers"), "only the TV prompt offers it")
+        XCTAssertTrue(shipped["phone-pages"]!.body.contains("LampController.connect"))
+        XCTAssertTrue(shipped["phone-pages"]!.body.contains("Lamp.onPhonePage"))
+        XCTAssertFalse(shipped["phone-controllers"]!.body.contains("LampController.connect"), "what to weigh, not how to build")
 
         let web = folder.appendingPathComponent("Web")
         try FileManager.default.createDirectory(at: web, withIntermediateDirectories: true)
         try "Lamp.controllers.start(); Lamp.phonePage();".write(to: web.appendingPathComponent("lamp.js"), atomically: true, encoding: .utf8)
         XCTAssertTrue(Skills.applying(to: app(.tv)).isEmpty, "Lamp's own lamp.js doesn't count")
         try "Lamp.controllers.onButton(function () {});".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
-        XCTAssertEqual(Skills.applying(to: app(.tv)).map(\.name), ["phone-controllers"])
+        XCTAssertEqual(Skills.applying(to: app(.tv)).map(\.name), ["phone-pages"])
         try FileManager.default.removeItem(at: web.appendingPathComponent("game.js"))
         let phone = folder.appendingPathComponent("Phone")
         try FileManager.default.createDirectory(at: phone, withIntermediateDirectories: true)
         try "<p>pad</p>".write(to: phone.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
         XCTAssertEqual(Skills.applying(to: app(.tv)).map(\.because), ["it has a page for phones in Phone/"])
-        XCTAssertTrue(Skills.applying(to: app(.mac)).filter { $0.name == "phone-controllers" }.isEmpty)
+        // What the code has decides it, not the kind: any app with a page for phones is told, and one without isn't.
+        XCTAssertEqual(Skills.applying(to: app(.mac)).filter { $0.name == "phone-pages" }.count, 1)
+        try FileManager.default.removeItem(at: phone)
+        XCTAssertTrue(Skills.applying(to: app(.mac)).filter { $0.name == "phone-pages" }.isEmpty, "no page for phones, nothing told")
+    }
+
+    /// Every kind's prompt, whatever the app is now, offers how an app is made, games, 3D in a page, web apps and phones
+    /// as controllers, so the agent has their reasons for any request; and no prompt names the 2D skill they replace.
+    func testEveryKindOffersTheSkillsForEveryChoice() throws {
+        let kinds: [Platform] = [.mac, .iphone, .universal, .android, .androidTV, .tv, .game, .webApp, .screen, .device]
+        for kind in kinds {
+            XCTAssertEqual(Array(Skills.offered(kind).prefix(Skills.everywhere.count)), Skills.everywhere, kind.rawValue)
+            XCTAssertEqual(Skills.offered(kind).filter(Skills.everywhere.contains).count, Skills.everywhere.count, "\(kind.rawValue) lists each once")
+            XCTAssertFalse(Skills.named(kind).contains("games-2d"), kind.rawValue)
+        }
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("Package.swift"))
+        let prompts: [(String, String)] = [
+            ("Mac", Agent.systemPrompt), ("iPhone", Agent.iPhonePrompt(for: .iphone)), ("Mac and iPhone", Agent.universalPrompt(for: .iphone)),
+            ("TV", Agent.tvPrompt(skills: shipped)), ("game part", Agent.gamePrompt(part: "Game")), ("screen part", Agent.screenPrompt(part: "Screen")),
+        ]
+        for (kind, prompt) in prompts { XCTAssertFalse(prompt.contains("games-2d"), "\(kind) still names the old 2D skill") }
+        let tv = Agent.tvPrompt(skills: shipped)
+        for name in Skills.everywhere { XCTAssertTrue(tv.contains("  • \(name): \(shipped[name]!.description)\n"), "the TV prompt lists \(name)") }
+    }
+
+    /// An app on a TV is offered how to design for one, whichever kind it is and however it's made, listed once for all
+    /// its TVs; an app on no TV isn't. A make_app_for that puts an app on a TV names the skill, once.
+    func testAnAppOnATVIsOfferedItsDesign() {
+        let line = "  • tv-design: \(shipped["tv-design"]!.description)\n"
+        var game = app(.game)
+        game.places = [.mac, .tv, .androidTV]
+        var screen = app(.screen)
+        screen.places = [.mac, .tv]
+        for (what, project) in [("a game on TVs", game), ("a screen on a TV", screen), ("a native Android TV app", app(.androidTV)), ("a TV app", app(.tv))] {
+            let offered = Skills.forDevices(of: project, from: shipped)
+            XCTAssertEqual(offered.components(separatedBy: line).count - 1, 1, what)
+        }
+        var onTheMac = app(.game)
+        onTheMac.places = [.mac]
+        for project in [app(.mac), app(.iphone), app(.android), onTheMac] {
+            XCTAssertEqual(Skills.forDevices(of: project, from: shipped), "", project.platform.rawValue)
+        }
+        // A wish's prompt is every app's: a Mac app in its own folder with a TV app beside it is offered it, once.
+        XCTAssertEqual(Skills.forDevices(of: [app(.mac), app(.tv), screen], from: shipped).components(separatedBy: line).count - 1, 1)
+        XCTAssertEqual(Skills.forDevices(of: [app(.mac), app(.iphone)], from: shipped), "")
+        XCTAssertTrue(Skills.forNewDevices(["mac", "tv"], had: ["mac"]).contains("tv-design skill"))
+        XCTAssertEqual(Skills.forNewDevices(["mac", "tv", "android-tv"], had: ["mac", "tv"]), "", "already on a TV")
+        XCTAssertEqual(Skills.forNewDevices(["mac", "iphone"]), "")
+    }
+
+    /// A page on Lamp's game runtime, a page drawing with three.js or Phaser and Swift on SpriteKit each show the game
+    /// skills apply; Lamp's own runtime, lamp.js, three.js and Phaser in Web/ don't count.
+    func testAGamesCodeShowsTheGameSkillsApply() throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web.appendingPathComponent("three/addons"), withIntermediateDirectories: true)
+        try "import * as THREE from 'three'; // or phaser() from lamp-phaser.js".write(to: web.appendingPathComponent("lamp-game.js"), atomically: true, encoding: .utf8)
+        try "import { x } from 'three'; // lamp-game.js".write(to: web.appendingPathComponent("three/addons/loader.js"), atomically: true, encoding: .utf8)
+        try "/* lamp-game.js */".write(to: web.appendingPathComponent("lamp.js"), atomically: true, encoding: .utf8)
+        try "import * as Phaser from 'phaser'; import { game } from './lamp-game.js';".write(to: web.appendingPathComponent("lamp-phaser.js"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.isEmpty, "Lamp's own files don't count")
+        XCTAssertFalse(DeviceSupport.usesPhaser(app(.game), page: "Web"), "Phaser goes into a page only once its own files use it")
+
+        try "import * as THREE from 'three';\nimport { game } from './lamp-game.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        let found = Skills.applying(to: app(.game)).filter { ["game", "3d-game"].contains($0.name) }
+        XCTAssertEqual(found.map(\.name), ["game", "3d-game"])
+        XCTAssertEqual(found.first?.because, "its page runs on Lamp's game runtime")
+        try "import * as Phaser from 'phaser';\nimport { phaser } from './lamp-phaser.js';\n".write(to: web.appendingPathComponent("game.js"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: app(.game)).filter { ["game", "2d-game", "3d-game"].contains($0.name) }.map(\.name), ["game", "2d-game"])
+        XCTAssertTrue(DeviceSupport.usesPhaser(app(.game), page: "Web"))
+
+        try FileManager.default.removeItem(at: web)
+        try source("Scene.swift", "import SpriteKit\n")
+        XCTAssertEqual(Skills.applying(to: app(.iphone)).filter { $0.name == "game" }.map(\.because), ["it's a SpriteKit game"])
+    }
+
+    /// A TV app's page brings in three.js by the path of Lamp's copy as well as by the import map's name, in a module
+    /// file of its own: either shows the 3d-game skill applies, and Lamp's copy in Web/three still doesn't.
+    func testATVPagesThreeShowsThe3DGameSkillApplies() throws {
+        let web = folder.appendingPathComponent("Web")
+        try FileManager.default.createDirectory(at: web.appendingPathComponent("three"), withIntermediateDirectories: true)
+        try "import * as THREE from './three.core.js';".write(to: web.appendingPathComponent("three/three.module.js"), atomically: true, encoding: .utf8)
+        XCTAssertFalse(Skills.applying(to: app(.tv)).contains { $0.name == "3d-game" }, "Lamp's copy doesn't count")
+        try "import * as THREE from './three/three.module.js';\n".write(to: web.appendingPathComponent("scene.mjs"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Skills.applying(to: app(.tv)).filter { $0.name == "3d-game" }.map(\.because), ["its page draws with three.js"])
+        try FileManager.default.removeItem(at: web.appendingPathComponent("scene.mjs"))
+        try "<script type=\"module\">const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');</script>"
+            .write(to: web.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(Skills.applying(to: app(.tv)).contains { $0.name == "3d-game" })
     }
 
     func testReadingASkill() {
@@ -148,7 +288,7 @@ final class SkillsTests: XCTestCase {
 
         let (missing, error) = Skills.read(["name": "3d"], from: shipped)
         XCTAssertEqual(missing, 400)
-        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: android-design, app-kinds, apple-watch, chrome-sidebar, device-integrations, iphone-hardware, iphone-widgets, mac-widgets, maps, menu-bar, phone-controllers, scene-3d.")
+        XCTAssertEqual(error["error"] as? String, "There's no skill called \"3d\". The skills are: 2d-game, 3d-game, accounts, android-design, app-ai, app-intents, app-kinds, apple-watch, building-blocks, chrome-sidebar, device-control, device-integrations, finder-files, game, icloud-sync, iphone-hardware, iphone-widgets, lg-developer-mode, mac-widgets, maps, menu-bar, more-apps, phone-controllers, phone-pages, roku-developer-mode, scene-3d, scripting, share-extension, tv-design, web-app, web-or-native, wish-links.")
     }
 
     func testParsing() {

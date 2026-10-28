@@ -41,7 +41,7 @@ enum Polish {
         return picks.count >= 12 ? picks : nil
     }
 
-    /// A reworded clue is kept only when it names nothing new: every capitalised word after the first must come
+    /// A reworded clue is kept only when it names nothing new: every capitalized word after the first must come
     /// from the plain clue or the place's name, it mustn't give the answer away, and it must stay short.
     static func isTrue(_ clue: String, to candidate: Candidate, in place: Neighborhood) -> Bool {
         guard !clue.isEmpty, clue.count <= 90 else { return false }

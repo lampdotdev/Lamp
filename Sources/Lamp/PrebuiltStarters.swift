@@ -107,7 +107,7 @@ enum PrebuiltStarters {
     /// `<starter>/Prebuilt`.
     private static func build(_ starter: Starters.Starter, in root: URL) throws {
         let fm = FileManager.default
-        let project = try Template.draft(name: starter.name, in: root)
+        let project = try Template.draft(name: starter.name, platform: starter.kind, in: root)
         try Template.fill(project)
         try Starters.copy(starter, into: project)
         try Template.writeOwnedFiles(for: project)
@@ -116,6 +116,9 @@ enum PrebuiltStarters {
         build.arguments = ["-c", "./build.sh"]
         build.currentDirectoryURL = project.dir
         build.environment = ProcessInfo.processInfo.environment.merging(["LAMP_LIVE": "1"]) { $1 }
+            .merging(try GamePage.buildEnvironment(for: project)) { $1 }
+            // A game or a screen with no Swift of its own is a copy of Lamp's player, as it is on the person's Mac.
+            .merging(GameKit.playerEnvironment(for: project)) { $1 }
         let output = Pipe()
         build.standardOutput = output
         build.standardError = output
@@ -188,16 +191,32 @@ enum PrebuiltStarters {
     /// built from. Lamp's own files there (LampSupport.swift and the like) are written afresh and left out.
     private static func unchanged(_ starter: Starters.Starter, in project: LampProject) -> Bool {
         let fm = FileManager.default
-        let owned: Set<String> = ["Sources/LampSupport.swift", Template.sceneSupportPath,
+        // Lamp's own files, which every app of the kind gets (a game's or a screen's are its host's, lamp.js and three.js),
+        // and the Swift that answers a page's calls while it's still the one Lamp wrote, which a starter doesn't ship.
+        var owned: Set<String> = ["Sources/LampSupport.swift", Template.sceneSupportPath,
                                   "\(Template.widgetFolder)/\(Template.widgetSupportFile)", "\(Template.shareFolder)/\(Template.shareSupportFile)",
                                   "\(Template.watchFolder)/\(Template.watchSupportFile)",
                                   "\(Template.watchFolder)/Complications/\(Template.watchSupportFile)"]
+        owned.formUnion(DeviceSupport.paths(for: project))
+        if let native = GameKit.native, AppFile.text(project.dir.appendingPathComponent(native.path), in: project) == native.text {
+            owned.insert(native.path)
+        }
+        // The app's own code: its Swift, and a page's files in Web/ (a game's or a screen's), whatever they are.
         func swiftFiles(in root: URL) -> Set<String> {
             var found: Set<String> = []
             for folder in ["Sources", Template.widgetFolder, Template.shareFolder, Template.watchFolder] {
                 let dir = root.appendingPathComponent(folder)
                 for file in (try? fm.subpathsOfDirectory(atPath: dir.path)) ?? [] where file.hasSuffix(".swift") {
                     found.insert("\(folder)/\(file)")
+                }
+            }
+            if project.platform.target.showsPage(project) {
+                let web = root.appendingPathComponent(GameKit.webFolder)
+                for file in (try? fm.subpathsOfDirectory(atPath: web.path)) ?? [] {
+                    var folder: ObjCBool = false
+                    if fm.fileExists(atPath: web.appendingPathComponent(file).path, isDirectory: &folder), !folder.boolValue {
+                        found.insert("\(GameKit.webFolder)/\(file)")
+                    }
                 }
             }
             return found.subtracting(owned)

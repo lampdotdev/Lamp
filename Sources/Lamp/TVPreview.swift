@@ -1,10 +1,12 @@
 import AppKit
+import CryptoKit
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 import WebKit
 
 /// The TV on this Mac's screen: a TV app opened at the TVs' own size (1920×1080, shown at half that), from the copy of
-/// its files in Lamp's folder (`TVs.stage`). The agent looks at it and presses the remote's keys on it, as it does on a
+/// its files in Lamp's folder (`TVs.stage`). A screen that fills whatever it's shown on is opened at any shape the
+/// agent asks for (`shape`: a TV, a frame, an iPad either way up, a phone), each pictured with its long side 960 pixels. The agent looks at it and presses the remote's keys on it, as it does on a
 /// simulator; the person can use it with the keyboard's arrows, Return and Escape. What the page prints goes to the
 /// app's log.
 @MainActor
@@ -22,13 +24,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     /// remote is its own key; on anything else it's Escape, as an Xbox's B button sends.
     private var device = "TV"
     private var isTV: Bool { device == "TV" }
-    private let window: NSWindow
+    private let window: Window
     private let webView: WKWebView
     private let files = StagedFiles()
     private var loaded: CheckedContinuation<Void, Never>?
     /// When the open page was last pictured, so each picture can say how long after the one before it was taken.
     private var lastPictured: Date?
     private var log: FileHandle?
+    /// The page's size in CSS pixels: a TV's, or the shape a screen is looked at in.
+    private var shape = CGSize(width: 1920, height: 1080)
+    /// Pixels in a picture (and points for `use_app`) per pixel of the page: half for a TV, as it always was.
+    private var scale: CGFloat { 960 / max(shape.width, shape.height) }
 
     static func isOpen(_ project: LampProject) -> Bool { open[project.id]?.window.isVisible == true }
     static var openIDs: [String] { open.filter { $0.value.window.isVisible }.map(\.key) }
@@ -37,6 +43,26 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     static func close(_ project: LampProject) {
         open[project.id]?.window.close()
         open[project.id] = nil
+    }
+
+    /// What an app's page saved in its preview (`store(for:)`), gone with the app: a part's store is named after its
+    /// instance, so it would otherwise outlive its wish for good, values the wish's apps shared included. Removed in the
+    /// background (`PreviewStores`), since a page that has just closed holds its store a few seconds longer, rather than
+    /// holding up what deletes the app.
+    @discardableResult
+    static func forget(_ project: LampProject) -> Task<Void, Never> {
+        close(project)
+        return forget(instance: project.instance)
+    }
+
+    /// What an app saved in the preview, by its instance: one already closed, or gone from Lamp's lists.
+    @discardableResult
+    static func forget(instance: String) -> Task<Void, Never> {
+        let store = store(for: instance)
+        return Task { @MainActor in
+            guard let store else { return }
+            if await !PreviewStores.remove(store) { print("TV preview: what \(instance) saved couldn't be removed") }
+        }
     }
 
     /// Opens the staged app (again, from the start), in front or behind what the person is doing. Nil once it has loaded.
@@ -49,17 +75,49 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         return await preview.load(staged: staged, inFront: inFront)
     }
 
+    /// The shape the page is shown at now, in CSS pixels.
+    static func shape(of project: LampProject) -> CGSize { open[project.id]?.shape ?? CGSize(width: 1920, height: 1080) }
+
+    /// Shows a screen's page at another shape, the window turned to it and the page laid out again at that size.
+    static func reshape(_ project: LampProject, to size: CGSize) async {
+        guard let preview = open[project.id], size.width >= 200, size.height >= 200, size != preview.shape else { return }
+        preview.shape = size
+        let top = preview.window.frame.maxY
+        preview.window.contentAspectRatio = size
+        preview.window.setContentSize(NSSize(width: size.width * preview.scale, height: size.height * preview.scale))
+        var frame = preview.window.frame
+        frame.origin.y = top - frame.height
+        preview.window.setFrame(frame, display: true)
+        preview.webView.pageZoom = preview.webView.bounds.width / size.width
+        // A moment for the page to hear the resize and lay itself out again.
+        try? await Task.sleep(for: .milliseconds(500))
+    }
+
     static func bringForward(_ project: LampProject) {
         guard let preview = open[project.id] else { return }
         preview.window.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }
 
+    /// The store an app's page keeps what it saves in, by its instance, which outlasts renames: an app's own instance is a
+    /// UUID; a part of a wish's ("<the wish's>.TV", `Parts.instance`) isn't one, so it gets a UUID made from it, the same
+    /// at every opening and apart from the wish's other apps', since a TV app of a wish keeps the values the wish's apps
+    /// share there. Nil only for an app with no instance yet.
+    static func store(for instance: String) -> UUID? {
+        if let own = UUID(uuidString: instance) { return own }
+        guard !instance.isEmpty else { return nil }
+        var bytes = Array(SHA256.hash(data: Data(("lamp-tv-preview " + instance).utf8)).prefix(16))
+        bytes[6] = bytes[6] & 0x0f | 0x50   // a name-based UUID (version 5's bits)
+        bytes[8] = bytes[8] & 0x3f | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
     private init(project: LampProject) {
         self.project = project
         let configuration = WKWebViewConfiguration()
         // What the app saves stays from one opening to the next, as on a TV: a store of its own for each app.
-        configuration.websiteDataStore = UUID(uuidString: project.instance).map { WKWebsiteDataStore(forIdentifier: $0) } ?? .nonPersistent()
+        configuration.websiteDataStore = Self.store(for: project.instance).map { WKWebsiteDataStore(forIdentifier: $0) } ?? .nonPersistent()
         let controller = WKUserContentController()
         // What the page prints, and what it throws, reach the log.
         controller.addUserScript(WKUserScript(source: Self.consoleScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -68,11 +126,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 960, height: 540), configuration: configuration)
         webView.pageZoom = 0.5
         webView.autoresizingMask = [.width, .height]
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                          backing: .buffered, defer: false)
+        window = Window(contentRect: NSRect(x: 0, y: 0, width: 960, height: 540), styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                        backing: .buffered, defer: false)
         super.init()
         controller.add(self, name: "lampConsole")
-        controller.add(self, name: "lampController")
         controller.addScriptMessageHandler(self, contentWorld: .page, name: "lampGateway")
         webView.navigationDelegate = self
         window.title = "\(project.name) on TV"
@@ -84,10 +141,15 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         if window.frame.origin == .zero { window.center() }
     }
 
-    func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / 1920 }
+    /// The preview's window, told apart from the desk: closing it stops the app, never Lamp (`AppDelegate`).
+    final class Window: NSWindow {}
+
+    func windowDidResize(_ notification: Notification) { webView.pageZoom = webView.bounds.width / shape.width }
 
     func windowWillClose(_ notification: Notification) {
-        PhoneControllers.shared.detachPreview(project)
+        // The wish's chat is attached to the preview (`ChatPanel`), and AppKit hides a window's children with it: let go
+        // of it first, so Stop leaves the chat on screen, on its own, rather than nowhere.
+        for child in window.childWindows ?? [] { window.removeChildWindow(child) }
         // Closing the window doesn't end the page: WebKit runs it, its sound and timers included, for as long as the web
         // view lives, and the web view's script handlers hold on to this preview, which holds the web view. So the app's
         // page is swapped for an empty one and the handlers let go, and the web view goes with the window.
@@ -133,7 +195,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Closed while it loaded: showing the window again would bring back a preview with no page in it.
         guard Self.open[project.id] === self else { return "The TV preview was closed before the app opened." }
         if inFront { window.makeKeyAndOrderFront(nil); NSApp.activate() } else { window.orderFront(nil) }
-        webView.pageZoom = webView.bounds.width / 1920
+        webView.pageZoom = webView.bounds.width / shape.width
         // Its scripts start on load; a moment more lets a first screen draw and take focus.
         try? await Task.sleep(for: .milliseconds(600))
         return nil
@@ -194,39 +256,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        if message.name == "lampController" { return controller(message) }
         guard let text = message.body as? String else { return }
         write(String(text.prefix(4000)))
     }
 
     private func write(_ line: String) { log?.write(Data((line + "\n").utf8)) }
 
-    /// Phones as controllers in the preview (`Lamp.controllers` in lamp.js): the page is the app's host in Lamp itself
-    /// (`PhoneControllers`), which passes it what the phones send. Only the app's own page, as for its AI.
-    private func controller(_ message: WKScriptMessage) {
-        guard isOwnPage(message), let call = message.body as? [String: Any], let op = call["op"] as? String else { return }
-        switch op {
-        case "start":
-            PhoneControllers.shared.attachPreview(project) { [weak self] text in self?.deliverController(text) }
-        case "send":
-            if let message = call["message"] as? [String: Any] { PhoneControllers.shared.fromPreview(project, message) }
-        case "stop":
-            PhoneControllers.shared.detachPreview(project)
-        default:
-            break
-        }
-    }
-
     /// The app's phone page has moved to another port: the page's `Lamp.phonePage` is told at once.
     static func phonePageMoved(_ app: String, to address: String) {
         guard let preview = open[app], let quoted = try? JSONSerialization.data(withJSONObject: [address], options: [.withoutEscapingSlashes]) else { return }
         let value = String(decoding: quoted, as: UTF8.self).dropFirst().dropLast()
         preview.webView.evaluateJavaScript("window.__lampPhonePage && window.__lampPhonePage(\(value));", completionHandler: nil)
-    }
-
-    private func deliverController(_ json: String) {
-        guard Self.open[project.id] === self, (try? JSONSerialization.jsonObject(with: Data(json.utf8))) is [String: Any] else { return }
-        webView.evaluateJavaScript("window.__lampControllers && window.__lampControllers(\(json));", completionHandler: nil)
     }
 
     /// Whether a message came from the app's own page, at the address the preview opens it at: never a frame inside it
@@ -247,14 +287,17 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         // Only the app's own page, from its staged copy: never a frame inside it or a page it went on to, which could be
         // anyone's and would use AI as the app.
         guard isOwnPage(message), let call = message.body as? [String: Any], let path = call["path"] as? String,
-              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page"].contains(path),
+              ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/phone-page", "/app/controller", "/app/wish"].contains(path),
               let current = Store.shared.projects.first(where: { $0.id == project.id }) else {
             replyHandler(["status": 404, "body": #"{"error":"Not found"}"#], nil)
             return
         }
-        let request = Gateway.Request(method: "POST", path: path,
+        var request = Gateway.Request(method: "POST", path: path,
                                       headers: ["authorization": "Bearer " + Template.token(for: current), "host": "127.0.0.1:\(Gateway.port)"],
                                       body: Data((call["body"] as? String ?? "{}").utf8))
+        // Phones as controllers: the page opens its own sockets to its players (`PhoneControllers`), as it does on a TV,
+        // and only asks Lamp here who they are.
+        request.fromPreview = true
         Task { @MainActor in
             let (status, json) = await Store.shared.handleAI(request)
             let body = (try? JSONSerialization.data(withJSONObject: json)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
@@ -306,9 +349,9 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         if #available(macOS 14.4, *), let png = await preview.captured() { taken = (png, true) }
         if taken == nil {
             let configuration = WKSnapshotConfiguration()
-            configuration.snapshotWidth = 960
+            configuration.snapshotWidth = NSNumber(value: Double(preview.shape.width * preview.scale))
             if let image = try? await preview.webView.takeSnapshot(configuration: configuration),
-               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = halfSize(cg) { taken = (png, false) }
+               let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let png = preview.sized(cg) { taken = (png, false) }
         }
         guard let taken else { return nil }
         let now = Date()
@@ -328,9 +371,10 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         return when + ", \(String(format: "%.1f", since)) s after the previous one."
     }
 
-    /// The page drawn 960 pixels across, the size `use_app`'s points are measured in, whatever the screen's scale.
-    private static func halfSize(_ page: CGImage) -> Data? {
-        let width = 960, height = Int((960 * CGFloat(page.height) / CGFloat(page.width)).rounded())
+    /// The page drawn at `scale` (a TV's 960 pixels across), the size `use_app`'s points are measured in, whatever the
+    /// screen's own scale.
+    private func sized(_ page: CGImage) -> Data? {
+        let width = Int((shape.width * scale).rounded()), height = Int((CGFloat(width) * CGFloat(page.height) / CGFloat(page.width)).rounded())
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
                                             hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
@@ -364,7 +408,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
         let page = webView.convert(webView.bounds, to: nil)
         let crop = CGRect(x: page.minX * scale, y: (filter.contentRect.height - page.maxY) * scale,
                           width: page.width * scale, height: page.height * scale).integral
-        return image.cropping(to: crop).flatMap(Self.halfSize)
+        return image.cropping(to: crop).flatMap(sized)
     }
 
     struct Item {
@@ -382,11 +426,12 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
               let json = try? await preview.webView.evaluateJavaScript(screenScript) as? String,
               let list = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]] else { return [] }
         var counts: [String: Int] = [:]
+        let scale = preview.scale
         return list.compactMap { entry in
             guard let kind = entry["kind"] as? String else { return nil }
             let letter = String(kind.prefix(1))
             counts[letter, default: 0] += 1
-            func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) / 2 }
+            func n(_ key: String) -> CGFloat { CGFloat((entry[key] as? NSNumber)?.doubleValue ?? 0) * scale }
             return Item(id: letter + String(counts[letter]!), kind: kind, name: entry["name"] as? String ?? "", value: entry["value"] as? String ?? "",
                         focused: entry["focused"] as? Bool ?? false, frame: CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h")))
         }
@@ -413,7 +458,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
           var focused = document.activeElement, out = [];
           function box(el) {
             var r = el.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > 1920 || r.top > 1080) return null;
+            if (r.width <= 0 || r.height <= 0 || r.right < 0 || r.bottom < 0 || r.left > window.innerWidth || r.top > window.innerHeight) return null;
             var s = window.getComputedStyle(el);
             if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return null;
             return r;
@@ -530,7 +575,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                 } else { report.append("\(n). click needs a target or x and y."); continue }
                 _ = await js("""
                     (function () {
-                      var el = document.elementFromPoint(\(point.x * 2), \(point.y * 2));
+                      var el = document.elementFromPoint(\(point.x / preview.scale), \(point.y / preview.scale));
                       if (!el) return '';
                       var focusable = el.closest('[data-focus], button, a[href], input, select, textarea, [tabindex]') || el;
                       if (focusable.focus) focusable.focus();
@@ -543,7 +588,7 @@ final class TVPreview: NSObject, WKScriptMessageHandler, WKScriptMessageHandlerW
                 guard let text = action.text else { report.append("\(n). type needs text."); continue }
                 let target = action.target.flatMap(find)
                 let quoted = String(decoding: (try? JSONSerialization.data(withJSONObject: [text])) ?? Data("[\"\"]".utf8), as: UTF8.self)
-                let point = target.map { "document.elementFromPoint(\($0.frame.midX * 2), \($0.frame.midY * 2))" } ?? "document.activeElement"
+                let point = target.map { "document.elementFromPoint(\($0.frame.midX / preview.scale), \($0.frame.midY / preview.scale))" } ?? "document.activeElement"
                 _ = await js("""
                     (function () {
                       var el = \(point);

@@ -18,12 +18,17 @@
  *   shows it to the agent.
  * - `offer_setup`: asks Lamp to show the person a card in the chat for setting up a kind of AI the app can't
  *   use yet (a key, a download, a sign-in). Lamp decides whether to show it and says what happened.
- * - `make_app_for`: asks Lamp to make the app for the Mac, the iPhone and iPad, or both; the reply says how to
- *   adapt the code.
+ * - `make_app_for`: gives the wish a new app, or changes the one whose folder `app` names, given what it is (a game or
+ *   an app), the devices it's on and whether it's made as a web page or native code; the wish's other apps stay. The
+ *   reply says how to adapt the code and gives a new app's rules.
+ * - `remove_app`: takes one of the wish's apps away, by its folder; its versions keep it.
  * - `connectors`: lists the services an app can connect to with the person's own account, and open data that
  *   needs none, or says how to build on one.
+ * - `network_devices`: lists the devices on the person's home network as Lamp's own look finds them now, with what
+ *   Lamp already has for each.
  * - `device_integration`: hands Lamp a device's integration as data; Lamp checks it and answers with what's wrong,
  *   or keeps it and finds the device.
+ * - `device_permission`: asks the person, on a card of Lamp's own, whether the agent may change one of their devices.
  * - `ask`, `progress`, `write_wish`: `ask` puts questions in the chat as a card the person answers by clicking,
  *   `progress` puts a short line on how the work is going in the chat, and
  *   `write_wish` writes a found wish into the message box. Lamp draws the card and turns a click into the
@@ -38,7 +43,7 @@
  *   in place of the command (as Claude Code's own Bash has); its edit and write are given a `doing`, which Lamp
  *   shows the same way.
  * - `plan`: the agent's checklist of what it's building, with the files behind each part. Lamp reads the
- *   list from pi's event stream, shows it on the build card, and ticks parts as their files are written,
+ *   list from pi's event stream, shows it as the chat's chapters, and ticks parts as their files are written,
  *   so the tool itself has nothing to do. * - Messages the person sends while the agent works reach it in the same turn: after each of pi's turns (a
  *   reply and the tools it called) this asks Lamp for them and hands them to pi as steering, which pi gives
  *   the model before its next request.
@@ -573,6 +578,23 @@ const makeAppFor = defineTool({
 	},
 });
 
+const removeApp = defineTool({
+	...spec("remove_app"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_REMOVE_URL;
+		if (!url) throw new Error("Lamp isn't available to change that.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
 const connectors = defineTool({
 	...spec("connectors"),
 	async execute(_toolCallId, params, signal) {
@@ -583,6 +605,23 @@ const connectors = defineTool({
 			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
 			body: JSON.stringify(params),
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+		});
+		const reply = (await response.json()) as { text?: string; error?: string };
+		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
+		return { content: [{ type: "text" as const, text: reply.text ?? "" }], details: undefined };
+	},
+});
+
+const networkDevices = defineTool({
+	...spec("network_devices"),
+	async execute(_toolCallId, params, signal) {
+		const url = process.env.LAMP_NETWORK_URL;
+		if (!url) throw new Error("Lamp isn't available to look around the network.");
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${process.env.LAMP_TOKEN ?? ""}`, "Content-Type": "application/json" },
+			body: JSON.stringify(params),
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
 		});
 		const reply = (await response.json()) as { text?: string; error?: string };
 		if (!response.ok) throw new Error(reply.error ?? "Lamp couldn't do that.");
@@ -663,9 +702,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(makeArt);
 	pi.registerTool(offerSetup);
 	pi.registerTool(makeAppFor);
+	pi.registerTool(removeApp);
 	pi.registerTool(connectors);
+	pi.registerTool(networkDevices);
 	pi.registerTool(deviceIntegration);
-	for (const name of ["ask", "progress", "write_wish"]) pi.registerTool(talkTool(name));
+	for (const name of ["ask", "progress", "write_wish", "device_permission"]) pi.registerTool(talkTool(name));
 	for (const name of ["read_notes", "save_notes"]) pi.registerTool(notesTool(name));
 	pi.registerTool(readSkill);
 }

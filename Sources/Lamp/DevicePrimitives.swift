@@ -12,9 +12,17 @@ import Network
 // MARK: - The device's address
 
 enum DeviceAddress {
-    /// A private or link-local address: where a device in the person's home is. Never this Mac itself (loopback),
-    /// which would reach Lamp's own gateway and the apps' ports, and never a name, which could be made to lead anywhere.
+    /// A private or link-local address: where a device in the person's home is. Never this Mac itself, by loopback or
+    /// by any of its own addresses on the network, which would reach Lamp's own gateway (it listens on the network
+    /// while a device app needs it) and the apps' ports; and never a name, which could be made to lead anywhere.
     static func isPrivate(_ address: String) -> Bool {
+        guard onNetwork(address) else { return false }
+        let raw = IPv4Address(address).map { $0.rawValue } ?? IPv6Address(address).map { $0.rawValue }
+        return raw.map { !thisMac().contains($0) } ?? false
+    }
+
+    /// A private or link-local address, this Mac's own included.
+    static func onNetwork(_ address: String) -> Bool {
         if let v4 = IPv4Address(address) {
             let b = [UInt8](v4.rawValue)
             switch (b[0], b[1]) {
@@ -32,6 +40,25 @@ enum DeviceAddress {
             return false
         }
         return false
+    }
+
+    /// This Mac's own addresses on every interface, read each time: they change as it moves between networks.
+    static func thisMac() -> Set<Data> {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return [] }
+        defer { freeifaddrs(list) }
+        var own: Set<Data> = []
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let address = pointer.pointee.ifa_addr else { continue }
+            switch Int32(address.pointee.sa_family) {
+            case AF_INET:
+                own.insert(address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin_addr) { Data($0) } })
+            case AF_INET6:
+                own.insert(address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { withUnsafeBytes(of: $0.pointee.sin6_addr) { Data($0) } })
+            default: continue
+            }
+        }
+        return own
     }
 
     struct NotOnNetwork: LocalizedError {
@@ -79,15 +106,17 @@ enum DeviceHTTP {
 
     /// Makes the request with Lamp's values filled in. No redirect is followed, a sign-in goes only to the device's own
     /// challenge, and the answer is cut off at `limit`. Over HTTPS, `pins` holds the device to the certificate it showed
-    /// the first time; without them (while a device is only being found and read) nothing secret is sent.
+    /// the first time; without them (while a device is only being found and read) nothing secret is sent. A look for
+    /// devices waits `timeout` for each answer, much less than an install does: a device that answered the scan but
+    /// not its port would otherwise hold up the whole look.
     static func send(_ request: Request, to address: String, values: [String: String], files: [String: URL] = [:],
-                     pins: DeviceTLS.Pins? = nil) async throws -> Answer {
+                     pins: DeviceTLS.Pins? = nil, timeout: TimeInterval = 30) async throws -> Answer {
         let https = request.https == true
         if https, pins == nil, carriesSecret(request) {
             throw Failure(message: "Lamp sends a password over HTTPS only to a device whose certificate it keeps.")
         }
         let path = try Placeholders.fill(request.path, values, in: .path)
-        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: 30)
+        var urlRequest = URLRequest(url: try url(address: address, port: request.port, path: path, https: https), timeoutInterval: timeout)
         urlRequest.httpMethod = (request.method ?? "GET").uppercased()
         urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.httpShouldHandleCookies = false
@@ -315,7 +344,37 @@ enum DeviceProbe {
 
     /// An SSDP search of the local network for a search target ("ssdp:all" for everything), for a couple of seconds.
     static func ssdp(_ target: String, seconds: Double = 2) async -> [SSDPAnswer] {
-        await Task.detached { search(target, seconds: seconds) }.value
+        await search(target, seconds: seconds).answers
+    }
+
+    /// The same search, and whether macOS refused it: Lamp isn't allowed on the local network (Privacy & Security →
+    /// Local Network), or hasn't been answered yet. A refused search only hears nothing, so a look that heard nothing
+    /// asks Network.framework why (`localNetworkDenied`).
+    static func search(_ target: String, seconds: Double) async -> (answers: [SSDPAnswer], refused: Bool) {
+        async let denied = localNetworkDenied()
+        let answers = await Task.detached { search(target, seconds: seconds) }.value
+        return (answers, await denied && answers.isEmpty)
+    }
+
+    /// Whether macOS refuses Lamp the local network now. A send it refuses still succeeds where Lamp makes it, so a
+    /// connection to the SSDP group is asked why its path can't be used, and closed at once.
+    static func localNetworkDenied() async -> Bool {
+        let connection = NWConnection(host: "239.255.255.250", port: 1900, using: .udp)
+        return await withCheckedContinuation { continuation in
+            let once = Once()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready, .waiting, .failed:
+                    guard once.take() else { return }
+                    let denied = connection.currentPath?.unsatisfiedReason == .localNetworkDenied
+                    connection.cancel()
+                    continuation.resume(returning: denied)
+                default: break
+                }
+            }
+            connection.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { if once.take() { connection.cancel(); continuation.resume(returning: false) } }
+        }
     }
 
     private static func search(_ target: String, seconds: Double) -> [SSDPAnswer] {

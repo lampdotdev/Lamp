@@ -110,16 +110,36 @@ enum AppFolder {
         return parts.contains("..") || parts.contains(".") ? nil : parts
     }
 
+    /// The way to an app's folder: the folders above it, worked out (they're Lamp's), and the names to open from there
+    /// without following a link. That's the folder's own name, or, for a wish's other part (`Parts`), its wish's and
+    /// then its own: the wish's folder is the agent's, which may have put a link in its place.
+    /// Anything under Lamp's own folder of wishes is decided by where it is, not by its name: every step below that
+    /// folder is opened by name.
+    static func way(to root: URL) -> (above: URL, steps: [String]) {
+        let named = root.standardizedFileURL
+        let apps = Parts.appsRoot.standardizedFileURL.path
+        if named.path.hasPrefix(apps + "/") {
+            let steps = named.path.dropFirst(apps.count + 1).split(separator: "/").map(String.init)
+            if !steps.isEmpty, !steps.contains(".."), !steps.contains(".") {
+                return (Parts.appsRoot.standardizedFileURL.resolvingSymlinksInPath(), steps)
+            }
+        }
+        return (named.deletingLastPathComponent().resolvingSymlinksInPath(), [named.lastPathComponent])
+    }
+
     /// The folder at `url`, opened one step at a time from `root` without following a link.
     private static func open(_ url: URL, in root: URL, create: Bool) throws -> Int32 {
         guard let parts = components(of: url, in: root) else { throw Refused(path: url.path) }
-        let above = root.standardizedFileURL.deletingLastPathComponent().resolvingSymlinksInPath()
-        let parent = Darwin.open(above.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard parent >= 0 else { throw failure(url, errno) }
-        var fd = openat(parent, root.standardizedFileURL.lastPathComponent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        let code = errno
-        close(parent)
-        guard fd >= 0 else { throw code == ELOOP || code == ENOTDIR ? Refused(path: url.path) : failure(url, code) }
+        let (above, steps) = way(to: root)
+        var fd = Darwin.open(above.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { throw failure(url, errno) }
+        for step in steps {
+            let next = openat(fd, step, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            let code = errno
+            close(fd)
+            guard next >= 0 else { throw code == ELOOP || code == ENOTDIR ? Refused(path: url.path) : failure(url, code) }
+            fd = next
+        }
         for part in parts {
             var next = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             if next < 0, errno == ENOENT, create {

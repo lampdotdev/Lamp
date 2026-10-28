@@ -339,7 +339,8 @@ enum SwiftSource {
                 if name.hasPrefix("_") { name.removeFirst() }
                 observed.insert(owner + "\t" + name)
             }
-            if line.function != nil {
+            // A closure that's a starting value opens a scope of its own, and is still the starting value (below).
+            if line.function != nil, !line.node.name.hasSuffix("=closure_expr") {
                 // A convenience initializer sets properties only after `self.init`, when a computed one can be set.
                 if let owner, opens("constructor_decl"), !line.has(" implicit ") {
                     if !line.has(" convenience") { initializer = (indent, owner, line.has("\"init(from:)\"")) }
@@ -918,7 +919,10 @@ extension SwiftSource {
                 extensionOf = String(text[Range(m.range(at: 2), in: text)!])
             } else if node.opens("protocol"), let m = walkProtocolDecl.firstMatch(in: text, range: range) {
                 protocolName = String(text[Range(m.range(at: 3), in: text)!])
-            } else if node.opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl") {
+            } else if node.opens("func_decl", "accessor_decl", "constructor_decl", "destructor_decl", "closure_expr", "subscript_decl", "top_level_code_decl")
+                        // A closure that's a property's starting value comes labeled (`original_init=closure_expr`), and what
+                        // it declares (a string interpolation's `$interpolation`) is its own, never the type's.
+                        || node.name.hasSuffix("=closure_expr") {
                 function = scopeName(text)
             }
             let owner: String?

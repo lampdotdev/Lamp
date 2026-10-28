@@ -60,13 +60,13 @@ extension ChatLook {
 
     /// A line offering one thing to do, like Draw Icon: a symbol, what's so, and the button. Laid out as a status
     /// line is (`StatusLine`): its symbol in the steps' column and its words in their size, in line with the agent's
-    /// bubbles, "Worked for…" and Undo Last Change around it.
+    /// bubbles and "Worked for…" around it.
     public struct ActionLine: View {
         let symbol: String
         let text: String
         let button: String
         let disabled: Bool
-        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent colour.
+        /// The one thing to do next (Reload, for a change waiting on it): the button in the accent color.
         let prominent: Bool
         let action: () -> Void
 

@@ -29,6 +29,22 @@ enum Wish {
         return tidy(items?.first { $0.name == "text" }?.value)
     }
 
+    /// The exact wish a link brings with a request (`lamp://wish?file=https://…&text=…`, from a shared wish's page
+    /// when a request came with it from an app's remix panel): the shared file's address, which Lamp fetches and
+    /// reviews as it would a file opened by hand, and the request for the wish's box. The address must be https.
+    struct Exact: Equatable {
+        let file: URL
+        let text: String?
+    }
+
+    static func exact(from url: URL, scheme: String = Edition.urlScheme) -> Exact? {
+        guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == "wish",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let file = items.first(where: { $0.name == "file" })?.value.flatMap(URL.init(string:)),
+              file.scheme?.lowercased() == "https", file.host?.isEmpty == false else { return nil }
+        return Exact(file: file, text: tidy(items.first { $0.name == "text" }?.value))
+    }
+
     /// What was copied, only when it carries Lamp's mark.
     static func marked(html: String?, plain: String?) -> String? {
         guard let html, html.contains(mark) else { return nil }

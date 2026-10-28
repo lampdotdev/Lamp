@@ -17,6 +17,9 @@ simulator = (sources / "Simulator.swift").read_text()
 simulator = simulator[:simulator.index("    /// Boots the iPhone")] + "}\n"
 agent = (sources / "Agent.swift").read_text()
 shell = agent[agent.index("enum Shell {"):agent.index("\n///", agent.index("enum Shell {"))]
+agent_input = agent[agent.index("final class AgentInput:"):agent.index("\n}\n", agent.index("final class AgentInput:")) + 3]
+engines = (sources / "Engines.swift").read_text()
+tool_locator = engines[engines.index("enum ToolLocator {"):engines.index("\n}\n", engines.index("enum ToolLocator {")) + 3]
 checks = (root / "Tests/PhoneToolsChecks.swift").read_text()
 names = re.findall(r"    func (test\w+)\(", checks)
 runner = "\n@main struct RunChecks {\n @MainActor static func main() async throws {\n let checks = PhoneToolsChecks()\n"
@@ -27,7 +30,7 @@ for name in names:
 runner += f' print("{len(names)} phone prerequisite checks passed")\n }}\n}}\n'
 with tempfile.TemporaryDirectory(prefix="lamp-phone-checks-") as folder:
     main = Path(folder) / "Checks.swift"
-    main.write_text("\n".join([family, (sources / "Subprocess.swift").read_text(), shell,
+    main.write_text("\n".join([family, (sources / "Subprocess.swift").read_text(), shell, agent_input, tool_locator,
                                (sources / "Edition.swift").read_text(), (sources / "Pretend.swift").read_text(),
                                simulator, (sources / "PhoneTools.swift").read_text(), checks, runner]))
     executable = Path(folder) / "checks"

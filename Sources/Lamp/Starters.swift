@@ -19,6 +19,8 @@ enum Starters {
         /// a new thing it does and a new subject, to show how far the app can go.
         let offer: String
         let tweaks: [Tweak]
+        /// What kind of wish it is (`kind:` in starter.md): a Mac app unless it says otherwise, as a game does.
+        var kind: Platform = .mac
     }
 
     /// A change the chat offers, with the symbol on its tile (`- drop.fill: Add a water counter` in starter.md;
@@ -104,7 +106,7 @@ enum Starters {
         var lines = text.components(separatedBy: .newlines)[...]
         guard lines.first?.trimmed == "---" else { return nil }
         lines = lines.dropFirst()
-        var name = "", offer = "", tweaks: [Tweak] = []
+        var name = "", offer = "", tweaks: [Tweak] = [], kind = Platform.mac
         for line in lines {
             let trimmed = line.trimmed
             if trimmed == "---" { break }
@@ -115,12 +117,13 @@ enum Starters {
                 switch trimmed[..<colon] {
                 case "name": name = value
                 case "offer": offer = value
+                case "kind": kind = Targets.all.first { $0.platform.rawValue == value }?.platform ?? .mac
                 default: break
                 }
             }
         }
         guard !name.isEmpty else { return nil }
-        return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks)
+        return Starter(folder: folder, name: name, offer: offer, tweaks: tweaks, kind: kind)
     }
 
     /// A symbol's name is lowercase words joined by dots, so `Group: by client` stays words.
@@ -155,7 +158,7 @@ enum Starters {
 
     /// What a starter's folder gives the app, beside its scaffold (which is replaced): the agent and the build
     /// read these where any app keeps them.
-    private static let copied = ["Sources", "Widget", "Share", "Assets", "APP.md", "icon.json", "about.json", "capabilities.json"]
+    private static let copied = ["Sources", "Widget", "Share", "Assets", "Web", "APP.md", "icon.json", "about.json", "capabilities.json"]
 
     /// A starter's icon, drawn once from its icon.json (`StarterIconsTests`) and shipped with Lamp, so it's on the desk
     /// as soon as the starter is: the files `Icons.write` makes, which go into the app's .lamp folder, the
@@ -216,6 +219,10 @@ enum Starters {
             }
         }
         try fm.copyItem(at: starter.folder.appendingPathComponent("starter.md"), to: file(of: project))
+        // Its credits, the work it's built on (credits.json in the starter's folder), with the starter itself as the
+        // first wish it was remixed from.
+        let credits = Credits.read(starter.folder.appendingPathComponent(Credits.file)) ?? Credits()
+        try Credits.arrive(credits.remixed(from: Credits.Remix(name: starter.name, starter: starter.folder.lastPathComponent)), in: project)
         let icon = starter.folder.appendingPathComponent(iconFolder)
         for made in iconFiles(of: project) {
             let shipped = icon.appendingPathComponent(made.lastPathComponent)

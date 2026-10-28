@@ -8,45 +8,45 @@ struct PanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if watcher.hotGames.isEmpty {
+                    ForEach(watcher.hotGames) { game in
+                        HotGameCard(game: game)
+                    }
+                    if nothingToShow {
                         quiet
-                    } else {
-                        ForEach(watcher.hotGames) { game in
-                            HotGameCard(game: game)
-                        }
                     }
                     if watcher.liveCount == 0 && !watcher.comingUp.isEmpty {
                         let shown = showAllUpcoming ? watcher.upcoming : watcher.comingUp
-                        HStack {
-                            Text("Coming up")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
+                        SectionHeader(title: "Coming up") {
                             if watcher.upcoming.count > watcher.comingUp.count {
-                                Button(showAllUpcoming ? "Show fewer" : "See all \(watcher.upcoming.count)") {
+                                Button {
                                     withAnimation(.snappy) { showAllUpcoming.toggle() }
+                                } label: {
+                                    Image(systemName: showAllUpcoming ? "chevron.up" : "chevron.down")
+                                        .font(.caption.weight(.semibold))
+                                        .frame(width: 20, height: 16)
+                                        .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.link)
-                                .font(.caption)
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .help(showAllUpcoming ? "Show fewer" : "Show all \(watcher.upcoming.count)")
+                                .accessibilityLabel(showAllUpcoming ? "Show fewer" : "Show all \(watcher.upcoming.count)")
                             }
                         }
-                        .padding(.top, 4)
-                        VStack(spacing: 0) {
-                            ForEach(shown) { game in
-                                UpcomingRow(game: game)
-                                if game.id != shown.last?.id { Divider() }
+                        ForEach(UpcomingDay.group(shown)) { day in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(day.title)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                ForEach(day.games) { game in
+                                    UpcomingRow(game: game)
+                                }
                             }
                         }
                     }
                     if !watcher.endedFlagged.isEmpty {
-                        Text("Just ended")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
+                        SectionHeader(title: "Just ended") { EmptyView() }
                         ForEach(watcher.endedFlagged) { game in
                             HotGameCard(game: game)
                         }
@@ -59,8 +59,15 @@ struct PanelView: View {
                                 Image(systemName: "chevron.right")
                                     .font(.caption.weight(.bold))
                                     .rotationEffect(.degrees(showAlsoLive ? 90 : 0))
-                                Text("Also live · \(watcher.otherLive.count)")
-                                    .font(.subheadline.weight(.semibold))
+                                Text("Also live")
+                                    .font(.caption.weight(.semibold))
+                                    .textCase(.uppercase)
+                                    .tracking(0.5)
+                                Text("\(watcher.otherLive.count)")
+                                    .font(.caption2.weight(.bold).monospacedDigit())
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(.quaternary, in: Capsule())
                                 Spacer()
                             }
                             .foregroundStyle(.secondary)
@@ -72,7 +79,6 @@ struct PanelView: View {
                             VStack(spacing: 0) {
                                 ForEach(watcher.otherLive) { game in
                                     LiveRow(game: game)
-                                    if game.id != watcher.otherLive.last?.id { Divider() }
                                 }
                             }
                         }
@@ -91,69 +97,68 @@ struct PanelView: View {
         .frame(width: 380)
     }
 
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Buzzer Beater").font(.headline)
-                Group {
-                    if watcher.isLoading && watcher.lastUpdated == nil {
-                        Text("Checking scores…")
-                    } else if let updated = watcher.lastUpdated {
-                        Text("Updated \(updated, style: .relative) ago")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if watcher.isLoading {
-                ProgressView().controlSize(.small)
-            }
-            Button {
-                Task { await watcher.refresh() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            .help("Check scores now")
-            .accessibilityLabel("Check scores now")
-            .disabled(watcher.isLoading)
-            LampPanelWand()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+    private var nothingToShow: Bool {
+        watcher.hotGames.isEmpty && watcher.otherLive.isEmpty && watcher.endedFlagged.isEmpty
+            && (watcher.liveCount > 0 || watcher.comingUp.isEmpty)
     }
 
+    /// Only when there's nothing at all to list.
     private var quiet: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "sportscourt")
-                .font(.largeTitle)
-                .foregroundStyle(.tertiary)
-            Text(watcher.liveCount == 0 ? "No games on right now" : "Nothing close yet")
-                .font(.headline)
-            Text(watcher.liveCount == 0
-                 ? (watcher.comingUp.isEmpty ? "You'll get a heads-up when something's worth watching."
-                    : "Here's what's next. You'll get a heads-up if one gets good.")
-                 : "\(watcher.liveCount) live, none of them tense. You'll hear when one gets good.")
+        VStack(spacing: 4) {
+            Text(watcher.isLoading && watcher.lastUpdated == nil ? "Checking scores…" : "Nothing on for now")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
             if let error = watcher.error {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 16)
     }
 
     private var footer: some View {
         HStack {
-            Button("Settings…") { LampMenuBar.openSettings() }
+            Button { LampMenuBar.openSettings() } label: { Image(systemName: "gearshape") }
+                .help("Settings")
+                .accessibilityLabel("Settings")
+            Button {
+                Task { await watcher.refresh() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help("Check scores now")
+            .accessibilityLabel("Check scores now")
+            .disabled(watcher.isLoading)
+            Group {
+                if watcher.isLoading {
+                    ProgressView().controlSize(.mini)
+                } else if let error = watcher.error {
+                    // Before the time of the last check: the games listed may be from then, and are no longer updating.
+                    Group {
+                        if let updated = watcher.lastUpdated {
+                            Text("Offline · \(updated, style: .relative) ago")
+                        } else {
+                            Text("Offline")
+                        }
+                    }
+                    .monospacedDigit()
+                    .foregroundStyle(.red)
+                    .help(error)
+                } else if let updated = watcher.lastUpdated {
+                    Text("\(updated, style: .relative) ago")
+                        .monospacedDigit()
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
             Spacer()
-            Button("Quit") { NSApp.terminate(nil) }
+            LampPanelWand()
+            Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
+                .help("Quit Buzzer Beater")
+                .accessibilityLabel("Quit")
         }
         .buttonStyle(.borderless)
-        .font(.callout)
+        .font(.body)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
@@ -196,11 +201,13 @@ private struct HotGameCard: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(game.statusText)
                         .font(.caption.weight(.semibold).monospacedDigit())
-                    Text(game.league.short)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    LeagueBadge(league: game.league)
+                        .frame(width: 42, alignment: .trailing)
                 }
                 .frame(width: 74, alignment: .trailing)
+            }
+            if !ended, let chance = detail?.homeChance {
+                WinBar(game: game, homeChance: chance)
             }
             if !ended, let more = game.buzz?.details, !more.isEmpty {
                 Text(more)
@@ -215,12 +222,13 @@ private struct HotGameCard: View {
                     WatchButton(game: game)
                 }
                 Spacer()
-                if !game.networks.isEmpty {
-                    Text(game.networks.prefix(2).joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack(spacing: 8) {
+                    ForEach(game.networks.prefix(2), id: \.self) { network in
+                        NetworkBadge(name: network, size: 15)
+                    }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
         }
         .padding(10)
@@ -294,31 +302,124 @@ private struct TeamLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TeamLogo(url: team.logo)
+            TeamLogo(team: team, size: 22)
             if let rank = team.rank {
-                Text("\(rank)").font(.caption2).foregroundStyle(.secondary)
+                Text("\(rank)").font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(.tertiary)
             }
             Text(team.name)
                 .font(.callout.weight(leading ? .semibold : .regular))
+                .foregroundStyle(leading ? .primary : .secondary)
                 .lineLimit(1)
+            if let record = team.record {
+                Text(record).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary).lineLimit(1)
+            }
             Spacer(minLength: 4)
             Text("\(team.score)")
-                .font(.title3.weight(leading ? .bold : .regular).monospacedDigit())
+                .font(.system(.title2, design: .rounded).weight(leading ? .bold : .medium).monospacedDigit())
                 .foregroundStyle(leading ? .primary : .secondary)
         }
     }
 }
 
-private struct TeamLogo: View {
-    let url: URL?
+/// Each side's chance to win as one bar in the teams' colors, away on the left.
+private struct WinBar: View {
+    let game: Game
+    let homeChance: Double
 
     var body: some View {
-        AsyncImage(url: url) { image in
-            image.resizable().scaledToFit()
-        } placeholder: {
-            Circle().fill(.quaternary)
+        let away = 1 - homeChance
+        VStack(spacing: 3) {
+            GeometryReader { proxy in
+                HStack(spacing: 2) {
+                    Capsule().fill(game.away.tint.gradient).frame(width: max(3, proxy.size.width * away - 1))
+                    Capsule().fill(game.home.tint.gradient)
+                }
+            }
+            .frame(height: 5)
+            HStack {
+                Text("\(game.away.abbr) \(Int((away * 100).rounded()))%")
+                Spacer()
+                Text("Win chance").foregroundStyle(.tertiary)
+                Spacer()
+                Text("\(Int((homeChance * 100).rounded()))% \(game.home.abbr)")
+            }
+            .font(.caption2.weight(.medium).monospacedDigit())
+            .foregroundStyle(.secondary)
         }
-        .frame(width: 20, height: 20)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Win chance: \(game.away.name) \(Int((away * 100).rounded())) percent, \(game.home.name) \(Int((homeChance * 100).rounded())) percent")
+    }
+}
+
+/// The league as a small tag, the same width in every row so the columns line up. `stretch` lets it grow to
+/// the width of what's stacked with it.
+struct LeagueBadge: View {
+    let league: League
+    var stretch = false
+
+    var body: some View {
+        Text(league.short)
+            .font(.system(size: 9, weight: .bold).width(.condensed))
+            .tracking(0.4)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(minWidth: 32, maxWidth: stretch ? .infinity : nil)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
+            .frame(width: stretch ? nil : 42, alignment: .leading)
+    }
+}
+
+/// How close a live game is to getting good, as three small bars.
+private struct HeatBars: View {
+    let score: Int
+
+    var body: some View {
+        let lit = score >= 45 ? 3 : score >= 30 ? 2 : score >= 15 ? 1 : 0
+        HStack(alignment: .bottom, spacing: 1.5) {
+            ForEach(0..<3) { i in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(i < lit ? Color.orange : Color.secondary.opacity(0.25))
+                    .frame(width: 3, height: CGFloat(5 + i * 3))
+            }
+        }
+        .frame(width: 14, height: 12, alignment: .bottom)
+        .help("How tense it is")
+        .accessibilityLabel("Tension \(lit) of 3")
+    }
+}
+
+private struct SectionHeader<Trailing: View>: View {
+    let title: String
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+            Spacer()
+            trailing()
+        }
+        .padding(.top, 6)
+    }
+}
+
+/// A soft highlight under a row while the pointer is over it, instead of lines between rows.
+private struct RowHover: ViewModifier {
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 6)
+            .background(hovering ? AnyShapeStyle(.quaternary.opacity(0.6)) : AnyShapeStyle(.clear),
+                        in: RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, -6)
+            .onHover { hovering = $0 }
     }
 }
 
@@ -327,21 +428,19 @@ private struct LiveRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(game.league.short)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
-                .frame(width: 44, alignment: .leading)
-            Text("\(game.away.abbr) \(game.away.score) – \(game.home.score) \(game.home.abbr)")
-                .font(.callout.monospacedDigit())
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            LeagueBadge(league: game.league)
+            VStack(spacing: 2) {
+                side(game.away, leading: game.away.score > game.home.score)
+                side(game.home, leading: game.home.score > game.away.score)
+            }
+            .frame(maxWidth: .infinity)
             Text(game.statusText)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(width: 84, alignment: .trailing)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 76, alignment: .trailing)
+            HeatBars(score: game.buzz?.score ?? 0)
             Button {
                 NSWorkspace.shared.open(game.watchLink.url)
             } label: {
@@ -352,6 +451,22 @@ private struct LiveRow: View {
             .accessibilityLabel(game.watchLink.label)
         }
         .padding(.vertical, 5)
+        .modifier(RowHover())
+        .contentShape(Rectangle())
+        .onTapGesture { NSWorkspace.shared.open(game.gamePage) }
+    }
+
+    private func side(_ team: Team, leading: Bool) -> some View {
+        HStack(spacing: 6) {
+            TeamLogo(team: team, size: 15)
+            Text(team.abbr)
+                .font(.callout.weight(leading ? .semibold : .regular).monospaced())
+                .foregroundStyle(leading ? .primary : .secondary)
+            Spacer(minLength: 2)
+            Text("\(team.score)")
+                .font(.callout.weight(leading ? .bold : .regular).monospacedDigit())
+                .foregroundStyle(leading ? .primary : .secondary)
+        }
     }
 }
 
@@ -367,39 +482,72 @@ private struct QuietCapsuleStyle: ButtonStyle {
     }
 }
 
+/// Upcoming games under a heading for each day.
+private struct UpcomingDay: Identifiable {
+    let id: Date
+    let games: [Game]
+
+    var title: String {
+        let cal = Calendar.current
+        if cal.isDateInToday(id) { return "Today" }
+        if cal.isDateInTomorrow(id) { return "Tomorrow · " + id.formatted(.dateTime.weekday(.wide)) }
+        return id.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+
+    static func group(_ games: [Game]) -> [UpcomingDay] {
+        let cal = Calendar.current
+        let byDay = Dictionary(grouping: games) { cal.startOfDay(for: $0.start) }
+        return byDay.keys.sorted().map { UpcomingDay(id: $0, games: byDay[$0]!.sorted { $0.start < $1.start }) }
+    }
+}
+
 /// A game that hasn't started: when, who, and where it's on. Clicking opens its ESPN page.
 private struct UpcomingRow: View {
     let game: Game
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(game.league.short)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            Text(game.start.formatted(date: .omitted, time: .shortened))
+                .font(.system(size: 16, weight: .bold).width(.condensed).monospacedDigit())
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
-                .fixedSize()
-                .frame(width: 44, alignment: .leading)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(game.away.name) at \(game.home.name)")
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                .frame(width: 62, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                side(game.away)
+                side(game.home)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(game.startText)
-                    .font(.caption.monospacedDigit())
+            VStack(alignment: .center, spacing: 3) {
+                LeagueBadge(league: game.league, stretch: true)
                 if let network = game.networks.first {
-                    Text(network)
-                        .font(.caption2)
+                    NetworkBadge(name: network)
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
             }
+            .fixedSize()
+            .frame(width: 76, alignment: .trailing)
         }
         .padding(.vertical, 5)
+        .modifier(RowHover())
         .contentShape(Rectangle())
         .onTapGesture { NSWorkspace.shared.open(game.gamePage) }
         .help("\(game.title): open on ESPN")
+    }
+
+    private func side(_ team: Team) -> some View {
+        HStack(spacing: 6) {
+            TeamLogo(team: team, size: 16)
+            if game.away.rank != nil || game.home.rank != nil {
+                Text(team.rank.map { "\($0)" } ?? "")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 14, alignment: .trailing)
+            }
+            Text(team.name).font(.callout).lineLimit(1)
+            if let record = team.record {
+                Text(record).font(.caption2.monospacedDigit()).foregroundStyle(.primary).lineLimit(1)
+            }
+        }
     }
 }

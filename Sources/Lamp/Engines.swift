@@ -274,6 +274,8 @@ extension Agent {
             + AIStatus.brief(for: project, engine: Builder.engine, session: session, offered: offered)
             + Skills.brief(for: project, engine: Builder.engine, session: session)
             + DeviceNote.brief(for: project, engine: Builder.engine, session: session)
+            + WishNote.brief(for: project, engine: Builder.engine, session: session)
+            + Parts.brief(for: project, engine: Builder.engine, session: session)
             + Agent.undescribed(project)
             + Agent.newApp(project)
             + (LiveReload.eligible(project) ? Agent.liveNote : "")
@@ -291,7 +293,9 @@ extension Agent {
             env["LAMP_MEMORY_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/memory"
             env["LAMP_SETUP_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/setup"
             env["LAMP_KIND_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/kind"
+            env["LAMP_REMOVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/remove"
             env["LAMP_CONNECTORS_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/connectors"
+            env["LAMP_NETWORK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/network"
             env["LAMP_INTEGRATION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/integration"
             env["LAMP_TALK_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/talk"
             env["LAMP_ART_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/art"
@@ -340,7 +344,7 @@ extension Agent {
                         "command": "/usr/bin/curl -sf --max-time 3540 -X POST -H \"Authorization: Bearer $LAMP_TOKEN\" -H 'Content-Type: application/json' --data-binary @- \"$\(urlVariable)\" || printf '%s' '\(fallback)'"]
             }
             var permissionMode = "acceptEdits"
-            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__connectors,mcp__lamp__device_integration,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
+            var allowed = "Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,mcp__lamp__look_at_app,mcp__lamp__use_app,mcp__lamp__plan,mcp__lamp__delete_file,mcp__lamp__list_versions,mcp__lamp__name_version,mcp__lamp__restore_version,mcp__lamp__make_art,mcp__lamp__offer_setup,mcp__lamp__make_app_for,mcp__lamp__remove_app,mcp__lamp__connectors,mcp__lamp__network_devices,mcp__lamp__device_integration,mcp__lamp__device_permission,mcp__lamp__ask,mcp__lamp__progress,mcp__lamp__write_wish,mcp__lamp__read_skill"
             if Memory.isOn { allowed += ",mcp__lamp__read_notes,mcp__lamp__save_notes" }
             // look_at_app and use_app come from Lamp's own MCP endpoint (Store.mcp); --strict-mcp-config keeps
             // it the only server. The config is a file that reads the token from the environment, so the
@@ -381,7 +385,8 @@ extension Agent {
                 // What the classifier refused is the classifier's to refuse (the agent is told why), and the chat says so.
                 env["LAMP_REFUSED_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-refused"
                 hooks["PermissionDenied"] = [["matcher": "Bash", "hooks": [hook("LAMP_REFUSED_URL", event: "PermissionDenied")]]]
-                autoMode = ["classifyAllShell": true]
+                // Lamp's rule for the person's devices beside the classifier's own (`$defaults` keeps them).
+                autoMode = ["classifyAllShell": true, "soft_deny": ["$defaults", "Device Control: " + DevicePermissions.commandRule]]
                 env["LAMP_PERMISSION_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=claude-permission"
                 hooks["PermissionRequest"] = [["matcher": "*", "hooks": [hook("LAMP_PERMISSION_URL", event: "PermissionRequest")]]]
             case .always:
@@ -438,9 +443,11 @@ extension Agent {
             // as a command does.
             let approval = CommandApproval.current
             env["LAMP_TOKEN"] = token
-            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=codex"
+            // Under "Only when risky" the hook asks only whether a command would change one of the person's devices
+            // (`DevicePermissions.mayChangeADevice`): Codex's reviewer never sees what runs inside its sandbox.
+            env["LAMP_APPROVE_URL"] = "http://127.0.0.1:\(Gateway.port)/agent/approve?format=" + (approval == .risky ? "codex-devices" : "codex")
             let hook = Bundle.main.resourceURL?.appendingPathComponent("lamp-approve.sh").path ?? "lamp-approve.sh"
-            env["LAMP_CODEX_HOOKS"] = approval != .always ? "hooks={}"
+            env["LAMP_CODEX_HOOKS"] = approval == .never ? "hooks={}"
                 : #"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",timeout=3600,command="'"# + hook + #"'"}]}]"#
             env["LAMP_CODEX_PERMISSIONS"] = Sandbox.codexPermissions(for: project)
             env["LAMP_CODEX_POLICY"] = "auto_review.policy=" + Self.tomlString(CodexReview.policy)

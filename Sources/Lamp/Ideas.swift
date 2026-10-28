@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import LampSidebarKit
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -32,7 +33,7 @@ struct Idea: Identifiable, Equatable {
     }
 }
 
-/// Starting points for a first app. Each starts from a moment someone would recognise as their own (the
+/// Starting points for a first app. Each starts from a moment someone would recognize as their own (the
 /// screenshots piling up, the dates buried in a school newsletter), not a kind of app they could download,
 /// and leans on what only an app made for them can do: their own mail, calendar, contacts, reminders and
 /// folders, the menu bar, a shortcut from anywhere, a desktop widget, watching quietly in the background,
@@ -109,7 +110,7 @@ enum Ideas {
         Idea(.play, "Tilt Maze", "circle.grid.cross", 0.85, "Make a marble maze I play by tilting my phone."),
     ]
 
-    /// Mac and iPhone ideas in turn: a new app's kind is worked out from what's asked for (Store.chooseKind),
+    /// Mac and iPhone ideas in turn: what a new app is made as is the agent's choice from what's asked for (`Agent.undecidedPrompt`),
     /// so the ideas are for either.
     static let mixed: [Idea] = (0..<max(pool.count, phonePool.count)).flatMap { index in
         [pool.indices.contains(index) ? pool[index] : nil, phonePool.indices.contains(index) ? phonePool[index] : nil].compactMap { $0 }
@@ -239,7 +240,7 @@ private enum Inventor {
             : "the camera, where they are, the motion sensors, a quick tap on the go"
         let session = LanguageModelSession(instructions: """
             You suggest small \(device) apps a person with no programming experience could ask for. \
-            Each starts from one specific situation the person would recognise as their own, not a kind of app \
+            Each starts from one specific situation the person would recognize as their own, not a kind of app \
             they could download. Where it fits, it uses what's already on their \(device): \(powers). \
             No accounts, no servers, no websites. Plain, warm, everyday words, never technical terms.
             """)
@@ -267,29 +268,3 @@ private enum Inventor {
 }
 #endif
 
-/// An idea's icon: its symbol on a squircle, like an app icon. Quiet gray until it's `lit` (hovered or
-/// chosen), when it takes its own color.
-struct IdeaIcon: View {
-    let symbol: String
-    let hue: Double
-    var size: CGFloat = 44
-    var lit = false
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-        ZStack {
-            shape.fill(lit ? AnyShapeStyle(LinearGradient(colors: [Color(hue: hue, saturation: 0.45, brightness: 1),
-                                                                  Color(hue: hue, saturation: 0.75, brightness: 0.88)],
-                                                         startPoint: .top, endPoint: .bottom))
-                           : AnyShapeStyle(Color(white: 0.93)))
-            shape.strokeBorder(lit ? .white.opacity(0.35) : .black.opacity(0.05), lineWidth: 1)
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(lit ? Color.white : Color(white: 0.45))
-        }
-        .frame(width: size, height: size)
-        .shadow(color: lit ? Color(hue: hue, saturation: 0.7, brightness: 0.7).opacity(0.25) : .clear,
-                radius: size * 0.16, y: size * 0.08)
-        .animation(.easeOut(duration: 0.2), value: lit)
-    }
-}

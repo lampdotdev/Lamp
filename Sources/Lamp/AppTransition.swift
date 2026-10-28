@@ -28,7 +28,7 @@ enum AppTransition {
 
     /// Whether the app is open on this Mac, with a window to show it on, and understands the request.
     static func canShow(_ project: LampProject) -> Bool {
-        project.platform.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
+        project.hasMac && !project.onIOS && !Template.isWidgetOnly(project)
             && !Store.shared.macCopies(of: project).isEmpty && Store.binary(of: project, contains: marker)
     }
 
@@ -107,7 +107,7 @@ enum AppTransition {
     }
 }
 
-/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colours travelling
+/// The same light around a wish's icon on the desk while it's built: just outside the icon, its colors traveling
 /// round it, bright enough to see at a glance across the desk, since a wish that looks still looks stuck. Where the
 /// person asked for less motion it stays still. The desk fades it out when the build is done.
 struct BuildingGlow: View {

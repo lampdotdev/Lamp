@@ -46,8 +46,12 @@ enum TeamSigning {
     /// What each piece of the app is signed with for `place`, made by Xcode from Lamp's own project the first time and
     /// whenever that project, the team or the destination changes (a phone's profile must list that phone), or its
     /// profiles are about to run out. `destination` is xcodebuild's;
-    /// a phone's (`id=…`) has Xcode register the phone in its profile.
-    static func plan(for project: LampProject, team: String, place: Place, destination: String,
+    /// a phone's (`id=…`) has Xcode register the phone in its profile. `renewing` asks for new profiles for the version
+    /// kept on a phone (`PhoneRenewals`), from the project Lamp signed it with then (`snapshot`), never the app's folder
+    /// as it is now, which may since have gained or lost a widget or a capability. Xcode hands back the profile it keeps
+    /// while it has one, so its copies of this app's profiles are taken away first, and it makes new ones good for their
+    /// whole term from now.
+    static func plan(for project: LampProject, team: String, place: Place, destination: String, renewing kept: URL? = nil,
                      started: (@MainActor (Process) -> Void)? = nil,
                      onLine: @escaping @MainActor (String) -> Void = { _ in }) async throws -> (plan: Plan, folder: URL) {
         let fm = FileManager.default
@@ -58,16 +62,26 @@ enum TeamSigning {
         // Under names of Lamp's own: the app's name and program name are in its meta.json, which the agent can write,
         // and would go into a project Xcode builds as Lamp. What's kept is what isn't the agent's: the folder name the
         // ids are made from, the team, the kind of app and its checked capabilities.
-        let stub = project.named("Lamp Signing", exe: stubExe)
-        try fm.createDirectory(at: projectDir, withIntermediateDirectories: true)
-        try? fm.removeItem(at: projectDir.appendingPathComponent("\(stubExe).xcodeproj"))
-        try writeStubCode(for: project, in: code)
-        try Template.writeDeviceProject(for: stub, team: team, in: projectDir, reading: code, forSigning: true)
+        if let kept {
+            // Back where it was made: its project names the code by its full path in this folder.
+            for name in ["Project", "Code"] {
+                try? fm.removeItem(at: dir.appendingPathComponent(name))
+                try fm.copyItem(at: kept.appendingPathComponent(name), to: dir.appendingPathComponent(name))
+            }
+        } else {
+            let stub = project.named("Lamp Signing", exe: stubExe)
+            try fm.createDirectory(at: projectDir, withIntermediateDirectories: true)
+            try? fm.removeItem(at: projectDir.appendingPathComponent("\(stubExe).xcodeproj"))
+            try writeStubCode(for: project, in: code)
+            try Template.writeDeviceProject(for: stub, team: team, in: projectDir, reading: code, forSigning: true)
+        }
         let stamp = self.stamp(of: [projectDir, code], extra: [team, place.rawValue, destination].joined(separator: "\n"))
-        if let data = try? Data(contentsOf: planDir.appendingPathComponent("plan.json")),
-           let saved = try? JSONDecoder().decode(Plan.self, from: data),
-           saved.stamp == stamp, saved.expires > Date().addingTimeInterval(3600) {
+        let saved = (try? Data(contentsOf: planDir.appendingPathComponent("plan.json"))).flatMap { try? JSONDecoder().decode(Plan.self, from: $0) }
+        if kept == nil, let saved, saved.stamp == stamp, saved.expires > Date().addingTimeInterval(3600) {
             return (saved, planDir)
+        }
+        if let kept, let ids = (try? Data(contentsOf: kept.appendingPathComponent("ids.json"))).flatMap({ try? JSONDecoder().decode([String].self, from: $0) }) {
+            await forgetXcodeProfiles(for: ids.map { "\(team).\($0)" })
         }
         let derived = dir.appendingPathComponent("DerivedData")
         let registration = destination.hasPrefix("id=") ? " -allowProvisioningDeviceRegistration" : ""
@@ -260,7 +274,34 @@ enum TeamSigning {
         return path == base ? "" : String(path.dropFirst(base.count + 1))
     }
 
-    private static func expiry(of profile: URL) async -> Date? {
+    /// Keeps the project the app was just signed from, with its pieces' ids, in `to`: what a renewal plans again from.
+    static func snapshot(for project: LampProject, place: Place, to kept: URL) throws {
+        let fm = FileManager.default
+        let dir = folder(for: project, place: place)
+        try? fm.removeItem(at: kept)
+        try fm.createDirectory(at: kept, withIntermediateDirectories: true)
+        for name in ["Project", "Code"] { try fm.copyItem(at: dir.appendingPathComponent(name), to: kept.appendingPathComponent(name)) }
+        let plan = try JSONDecoder().decode(Plan.self, from: Data(contentsOf: dir.appendingPathComponent("Plan/plan.json")))
+        try JSONEncoder().encode(plan.pieces.map(\.id)).write(to: kept.appendingPathComponent("ids.json"))
+    }
+
+    /// Removes Xcode's own copies of the development profiles for these app ids ("TEAM.bundle.id"), so its next signing
+    /// makes new ones. Only profiles Xcode made for its automatic signing, matched by their exact app id.
+    private static func forgetXcodeProfiles(for appIDs: [String]) async {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        for folder in ["Library/Developer/Xcode/UserData/Provisioning Profiles", "Library/MobileDevice/Provisioning Profiles"] {
+            for file in (try? FileManager.default.contentsOfDirectory(at: home.appendingPathComponent(folder), includingPropertiesForKeys: nil)) ?? []
+            where file.pathExtension == "mobileprovision" {
+                let decoded = await Subprocess.run("/usr/bin/security", ["cms", "-D", "-i", file.path], mergeErrors: false, timeout: 30)
+                guard decoded.ok, let plist = try? PropertyListSerialization.propertyList(from: Data(decoded.output.utf8), format: nil) as? [String: Any],
+                      plist["IsXcodeManaged"] as? Bool == true,
+                      let appID = (plist["Entitlements"] as? [String: Any])?["application-identifier"] as? String, appIDs.contains(appID) else { continue }
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+
+    static func expiry(of profile: URL) async -> Date? {
         let decoded = await Subprocess.run("/usr/bin/security", ["cms", "-D", "-i", profile.path], mergeErrors: false, timeout: 30)
         guard decoded.ok, let plist = try? PropertyListSerialization.propertyList(from: Data(decoded.output.utf8), format: nil) as? [String: Any]
         else { return nil }

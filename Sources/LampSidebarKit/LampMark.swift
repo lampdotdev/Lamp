@@ -5,7 +5,7 @@ extension ChatLook {
     /// flame with a yellow one inside it, on a tile. Drawn rather than loaded, since the sidebar is a lone program with
     /// no resources of its own, and it says whose chat this is inside someone else's app.
     /// The outer flame of Lamp's icon on its own, filling the rect it's given as far as its shape allows: drawn in
-    /// one colour where Lamp stands beside other providers' logos, which are one-colour marks on a white tile.
+    /// one color where Lamp stands beside other providers' logos, which are one-color marks on a white tile.
     public struct LampFlame: Shape {
         public init() {}
 

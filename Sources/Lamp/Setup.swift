@@ -336,6 +336,7 @@ struct SettingsView: View {
 struct ExperimentalSettings: View {
     static var hasAny: Bool { Edition.isDev }
     @AppStorage(BrowserBridge.switchKey) private var browser = ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1"
+    @AppStorage(Publish.switchKey) private var publish = false
 
     var body: some View {
         Form {
@@ -344,6 +345,8 @@ struct ExperimentalSettings: View {
                     Toggle("Apps in Chrome", isOn: $browser)
                         .checkboxNote("Apps that help with web pages also open beside the page, in Chrome's sidebar.")
                     if browser { BrowserConnectionUpgrade(compact: true).underCheckbox() }
+                    Toggle("Publish games as web pages", isOn: $publish)
+                        .checkboxNote("A game's Share menu can put it on GitHub Pages, from your own GitHub account.")
                 }
             } header: {
                 // Above the box, in a checkbox note's size and color rather than as a heading.
@@ -799,7 +802,7 @@ struct BuildingSettings: View {
     private func recheck() { Task { await store.recheckSetup() } }
 
     /// Signing for a phone only matters to someone with an iPhone or iPad app.
-    private var hasPhoneApps: Bool { store.projects.contains { $0.platform.hasIOS } }
+    private var hasPhoneApps: Bool { store.everyApp.contains { $0.hasIOS } }
 }
 
 /// The AI, images and decisions that apps use while they run.
@@ -854,7 +857,7 @@ struct AppsSettings: View {
                 }
             }
             // Only for someone with an iPhone or iPad app: nothing else goes on a phone.
-            if store.projects.contains(where: { $0.platform.hasIOS }) { PhoneAwaySection(revision: revision) }
+            if store.everyApp.contains(where: { $0.hasIOS }) { PhoneAwaySection(revision: revision) }
             ComputerUseSettings()
         }
         .settingsPane()
@@ -879,6 +882,9 @@ struct PhoneSigningSection: View {
     let phoneApps: Bool
     @AppStorage("appleTeam") private var team = ""
     @State private var teams: [(id: String, name: String)] = []
+    /// Free accounts' teams, named as Xcode names them: two teams of one person otherwise read the same.
+    @State private var free: Set<String> = []
+    @State private var teamless = 0
 
     var body: some View {
         Group {
@@ -889,15 +895,25 @@ struct PhoneSigningSection: View {
                     } else {
                         Picker("Apple Team", selection: $team) {
                             if !phoneApps { Text("None").tag("") }
-                            ForEach(teams, id: \.id) { Text("\($0.name) (\($0.id))").tag($0.id) }
+                            // Xcode may already name a free team "… (Personal Team)": said once.
+                            ForEach(teams, id: \.id) { team in
+                                let mark = free.contains(team.id) && !team.name.localizedCaseInsensitiveContains("Personal Team") ? "Personal Team, " : ""
+                                Text("\(team.name) (\(mark)\(team.id))").tag(team.id)
+                            }
                             if !team.isEmpty, !teams.contains(where: { $0.id == team }) { Text(team).tag(team) }
                         }
+                    }
+                    if phoneApps, teamless > 0 {
+                        Text("An Apple Account in Xcode has no team yet. In Xcode → Settings → Apple Accounts, choose its team, click Manage Certificates, then + and Apple Development.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
         }
         .task(id: phoneApps) {
             teams = await Devices.knownTeams()
+            free = PhoneTools.xcodeFreeTeams()
+            teamless = PhoneTools.xcodeAccountsWithoutTeams()
             guard phoneApps else { return }
             // The account signed in to Xcode is the one that can sign, so its team is the first choice
             // whenever the stored one isn't among Xcode's.
@@ -915,26 +931,74 @@ struct PhoneSigningSection: View {
 struct DevicesSection: View {
     @EnvironmentObject private var store: Store
     @AppStorage("appleTeam") private var team = ""
+    @AppStorage(PhoneRenewals.staysOpenKey) private var keepOpening = false
     @State private var adding = false
     @State private var forgetting: Device?
+    @State private var showingEverything = false
 
     var body: some View {
+        let list = HomeNetwork.List(devices: [store.thisMac].compactMap { $0 } + store.devices, hosts: store.hosts)
         Section("Your Devices") {
-            ForEach([store.thisMac].compactMap { $0 } + store.devices) { device in
+            // The person's devices; then what's only found on the network, which may be a neighbor's: what Lamp makes apps
+            // for or controls, then what it could learn, each offering Set Up… alike; then the rest of the network, folded.
+            ForEach(list.works) { device in
                 row(device)
             }
+            if !list.possible.isEmpty || !list.couldLearn.isEmpty {
+                Text("Found on your network, not set up").font(.caption).foregroundStyle(.secondary)
+                ForEach(list.possible + list.couldLearn) { device in
+                    row(device)
+                }
+            }
+            if !list.others.isEmpty || list.unnamed > 0 {
+                DisclosureGroup(isExpanded: $showingEverything) {
+                    ForEach(list.others) { host in hostRow(host) }
+                    if list.unnamed > 0 {
+                        Text(list.unnamed == 1 ? "1 more with a private address, most likely a phone, tablet or computer"
+                             : "\(list.unnamed) more with private addresses, most likely phones, tablets and computers")
+                            .foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Text("Everything Else on Your Network (\(list.others.count + list.unnamed))")
+                }
+            }
+            if store.localNetworkRefused, !store.lookingForDevices { LocalNetworkRefused() }
             HStack {
                 if store.lookingForDevices { LookingForDevices() }
                 Spacer()
                 Button("Add a New Device…") { adding = true }.controlSize(.small)
             }
+            // Shown once an app is on a phone, which is when it does something, and while it's on, so it can always be
+            // turned off: Lamp keeps opening at login until it is.
+            if keepOpening || PhoneRenewals.anyOnPhones(store.projects) {
+                SettingsCheckboxes {
+                    Toggle("Keep apps on your phones opening", isOn: Binding(get: { keepOpening }, set: { store.keepPhoneAppsOpening($0) }))
+                        .checkboxNote("Lamp opens when you log in and keeps running with its window closed, to put them back before Apple stops them opening.")
+                }
+            }
         }
-        .onAppear { store.refreshDevices() }
+        .onAppear { store.refreshDevices(everything: true) }
         .sheet(isPresented: $adding) { AddDeviceSheet() }
         .confirmationDialog(forgetting.map { "Forget \($0.name)?" } ?? "", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } })) {
             Button("Forget", role: .destructive) { if let device = forgetting { forget(device) } }
         } message: {
             Text("Lamp forgets how to reach it and what you typed for it. To use it again, set it up from the start.")
+        }
+    }
+
+    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else, even one an
+    /// app can already control: what its setup asks first ("Turn on developer mode on it") is for the setup that button
+    /// opens, not a warning on a device the person may never set up. A device set up with Lamp shows its next step, if
+    /// it has one.
+    enum RowEnd: Equatable { case away(String), ready, setUp, step(String), words(String) }
+
+    static func end(for device: Device, setup: Device.Setup) -> RowEnd {
+        if device.isAway { return .away(device.status) }
+        guard device.isSetUp else { return .setUp }
+        switch setup {
+        case .ready: return .ready
+        case .talkOnly: return .words(setup.words)
+        case .needs(let step): return .step(step)
         }
     }
 
@@ -968,6 +1032,23 @@ struct DevicesSection: View {
         store.refreshDevices()
     }
 
+    /// A host nothing of Lamp's works with: what it is, and the names it goes by on the network, on this Mac only.
+    private func hostRow(_ host: NetworkHost) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: host.isGateway ? "wifi.router" : "network").foregroundStyle(.secondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(HomeNetwork.label(host))
+                Text((host.names.prefix(2) + [host.address]).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            // The agent works out what it is and whether anything can reach it; the router and this Mac aren't for that.
+            if !host.isGateway, !host.isThisMac {
+                Button("Set Up…") { store.setUpDevice(HomeNetwork.device(for: host)) }.controlSize(.small)
+            }
+        }
+        .help(HomeNetwork.facts(host))
+    }
+
     private func row(_ device: Device) -> some View {
         let setup = device.setup(team: team)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -975,23 +1056,26 @@ struct DevicesSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                 Text(device.line).font(.caption).foregroundStyle(.secondary)
+                let stopped = store.projects.filter { PhoneRenewals.stoppedOpening($0, on: device.udid) }.map(\.name)
+                if !stopped.isEmpty {
+                    Label("\(TeamLimits.list(stopped)) stopped opening. Open \(stopped.count == 1 ? "it" : "each") and press Play.", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption).foregroundStyle(.orange)
+                }
             }
             Spacer()
-            switch setup {
-            case _ where device.isAway:
-                Text(device.status).foregroundStyle(.secondary)
+            switch Self.end(for: device, setup: setup) {
+            case .away(let words):
+                Text(words).foregroundStyle(.secondary)
                     .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
             case .ready:
                 Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
-            case .needs(let step) where device.kind == .other && device.integration == nil:
-                // Found on the network, with nothing yet that knows it: not a problem, an offer.
-                Text(step).foregroundStyle(.secondary)
+            case .setUp:
                 DeviceNextStep(device: device)
-            case .needs(let step):
+            case .step(let step):
                 Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
                 DeviceNextStep(device: device)
-            case .talkOnly:
-                Text(setup.words).foregroundStyle(.secondary)
+            case .words(let words):
+                Text(words).foregroundStyle(.secondary)
             }
             if keptByLamp(device) {
                 Menu {
@@ -1007,6 +1091,21 @@ struct DevicesSection: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// macOS refused the last look on the network, said where a look was asked for, with the way to allow Lamp there.
+/// System Settings opens on Privacy & Security, not on Local Network itself (it has no link to that page), so the
+/// line says where to go from there.
+struct LocalNetworkRefused: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label("Lamp can't look on your local network.", systemImage: "wifi.exclamationmark").foregroundStyle(.orange)
+                Button("Allow…") { NSWorkspace.shared.open(Store.localNetworkSettings) }.controlSize(.small)
+            }
+            Text("In Privacy & Security, choose Local Network and turn on Lamp.").font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -1030,7 +1129,8 @@ struct AddDeviceSheet: View {
     /// Found on the network and not set up: the TVs and the devices an integration finds or nothing knows yet. Phones
     /// and tablets have their own rows above, whose setup windows take each one further, so a wireless one isn't here.
     private var waiting: [Device] {
-        store.devices.filter { ($0.kind.isTV || $0.kind == .other) && $0.reach == .network && $0.setup() != .ready }
+        let controlled = HomeNetwork.List(devices: store.devices, hosts: store.hosts).controls
+        return store.devices.filter { ($0.kind.isTV || $0.kind == .other) && $0.reach == .network && $0.setup() != .ready && controlled[$0.id] == nil }
     }
 
     var body: some View {
@@ -1065,11 +1165,13 @@ struct AddDeviceSheet: View {
                     HStack {
                         if store.lookingForDevices {
                             LookingForDevices()
+                        } else if store.localNetworkRefused {
+                            LocalNetworkRefused()
                         } else {
                             Text(waiting.isEmpty ? "Nothing new found." : "").foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Look Again") { store.refreshDevices() }.controlSize(.small).disabled(store.lookingForDevices)
+                        Button("Look Again") { store.refreshDevices(everything: true) }.controlSize(.small).disabled(store.lookingForDevices)
                     }
                 }
                 .padding(.leading, 30)
@@ -1081,7 +1183,7 @@ struct AddDeviceSheet: View {
         }
         .padding(20)
         .frame(width: 440)
-        .onAppear { store.refreshDevices() }
+        .onAppear { store.refreshDevices(everything: true) }
     }
 
     private func kind(_ name: String, symbol: String, how: String, setUp: @escaping () -> Void) -> some View {
@@ -1425,7 +1527,7 @@ private struct EngineSheet: View {
             if downloads.isDownloading(engine) {
                 ProgressView(value: downloads.progress[engine] ?? 0)
             }
-            if Store.shared.projects.contains(where: { $0.platform.hasIOS }) {   // said only to someone it concerns
+            if Store.shared.everyApp.contains(where: { $0.hasIOS }) {   // said only to someone it concerns
                 Text("The sign-in stays on this Mac: iOS apps can use it only on the same Wi‑Fi network as it. Away from it they need an OpenRouter key.")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }

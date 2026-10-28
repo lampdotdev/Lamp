@@ -1,6 +1,8 @@
 Kind: companion, in the menu bar.
-Look: system colours and SF Symbols, a flame for a game worth watching and a basketball when none is; orange is kept
-for the Watch buttons and the flame.
+Look: system colors and SF Symbols, a flame for a game worth watching and a basketball when none is; orange is kept
+for the Watch buttons, the flame and the tension bars. Dense scoreboard rows: team, channel and streaming-service logos (fetched on demand), rounded
+monospaced scores and times, small league tags, uppercase section labels, hover highlights instead of row lines, and a
+win-chance bar in the teams' own colors on good-game cards.
 
 # Buzzer Beater
 
@@ -19,7 +21,7 @@ A click on the icon (a flame and the number of good games, or a basketball) open
 - **Coming up**: when nothing is live, the next few games worth a look today and tomorrow, ranked from the
   pregame line, the teams' records, rankings and national TV.
 
-At the foot, Settings and Quit. Settings has the leagues (each with its own description of a good game, in
+At the foot, Settings, refresh with how long ago it checked, Lamp's wand and Quit. Settings has the leagues (each with its own description of a good game, in
 plain words), notifications, where the person lives (for regional channels), the streaming services they have,
 alerts only for games they can watch, and Open at Login.
 
@@ -44,7 +46,12 @@ alerts only for games they can watch, and Open at Login.
 - `Alerts.swift`: notifications (once per game per moment, LampStore "alerts") and which network streams where.
 - `Streaming.swift`: the person's services and the channels each carries, the best link for the Watch button,
   and team cities for what's local (LampStore "teamCities").
-- `SettingsView.swift`: Settings.
+- `Logos.swift`: `LogoCache` (team logos from ESPN, downloaded once when first shown and kept in LampStore.folder/logos),
+  `TeamLogo` (with an abbreviation circle as fallback), `Team.tint` (the team's color), and `NetworkLogos`/`NetworkBadge`
+  (channel and streaming logos: each site's icon from Google's icon service, matched by name, fetched on demand).
+- `SettingsView.swift`: Settings, in three tabs on the standard gray window background: Leagues (a System
+  Settings-style list with league logos and switches; double-click opens a sheet to describe a worthwhile game; + adds
+  an any-league moment), Where to Watch (location and services) and General (alerts, Open at Login). Resizable.
 - `capabilities.json`: a background app, so alerts come while the panel is closed.
 
 ## Data

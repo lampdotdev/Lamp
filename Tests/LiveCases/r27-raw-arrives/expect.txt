@@ -1,0 +1,5 @@
+VERDICT 1: RELOAD (Added NowPlaying.artist)
+== run
+before: song
+RELOAD 1 (whole): ok
+after1 (want it live: a socket file's MemoryLayout<sockaddr_in> reads none of the app's structs as bytes): song by band 16

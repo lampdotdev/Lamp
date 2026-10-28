@@ -1,0 +1,63 @@
+/* Slides (shared by Photos, Ambient, Home tile) */
+.slide { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; background: #1A1917; }
+.slide img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; }
+.slide img.is-broken { visibility: hidden; }
+.kb { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; background: linear-gradient(135deg, #3B3934, #111); }
+.blurfill { display: none; }
+.slide--fit .fitimg { position: absolute; top: 0; left: 50%; width: auto; height: 100%; transform: translateX(-50%); object-fit: contain; }
+
+.slide--pair { display: grid; grid-template-columns: 1fr 1fr; gap: .375rem; background: #000; }
+.slide--collage { display: grid; grid-template-columns: 3fr 2fr; grid-template-rows: 1fr 1fr; gap: .375rem; background: #000; }
+.pane { position: relative; overflow: hidden; }
+.pane--a { grid-row: 1 / 3; }
+
+.slide--polaroid .blurfill { width: 100%; height: 100%; }
+.polaroid {
+  position: absolute; left: 50%; top: 50%; margin: 0;
+  background: #FBF9F4; padding: 1.125rem 1.125rem 0; border-radius: .25rem;
+  box-shadow: 0 1.875rem 4.375rem rgba(0, 0, 0, .55);
+  translate: -50% -52%;
+}
+.polaroid-img { width: 41.25rem; height: 29.375rem; overflow: hidden; background: #ddd; }
+.polaroid--p .polaroid-img { width: 26.25rem; height: 35rem; }
+.polaroid figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 1.25rem; padding: 1rem .375rem 1.25rem; color: var(--ink); font-size: 1.875rem; }
+
+.slide--cover::after, .slide--pair::after, .slide--collage::after, .slide--fit::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 55%;
+  background: linear-gradient(0deg, rgba(0, 0, 0, .7), rgba(0, 0, 0, 0)); pointer-events: none;
+}
+.cap { position: absolute; left: 2.75rem; bottom: 2.5rem; z-index: 2; color: #fff; max-width: 70%; opacity: .7; }
+.cap-kicker { font-size: .9375rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.cap-kicker b { color: var(--warm); }
+.cap-date { font-size: 5.5rem; line-height: .95; margin-top: .5rem; }
+.cap--m .cap-date { font-size: 3.75rem; }
+
+/* Photos view chrome */
+.photos { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: #000; color: #fff; overflow: hidden; }
+.ph-stage { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+.photos.is-loud .cap { opacity: 1; }
+.ph-zone { position: absolute; top: 5.625rem; bottom: 6.875rem; z-index: 3; }
+.ph-zone--l { left: 0; width: 22%; }
+.ph-zone--c { left: 22%; width: 56%; }
+.ph-zone--r { right: 0; width: 22%; }
+.ph-top { position: absolute; top: 1.25rem; right: 1.25rem; z-index: 4; }
+.ph-bottom { position: absolute; right: 1.5rem; bottom: 1.75rem; z-index: 4; display: flex; gap: .625rem; }
+.ph-btn {
+  height: var(--tap); min-width: var(--tap); padding: 0 1.0625rem; border-radius: 62.4375rem;
+  display: inline-flex; align-items: center; justify-content: center; gap: .625rem;
+  background: rgba(0, 0, 0, .38);
+  font-size: 1.0625rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+}
+.ph-btn:active { transform: scale(.92); }
+.ph-btn--fav { padding: 0 1.5rem 0 1.25rem; }
+.ph-btn--fav.is-on { background: #E4007C; }
+.ph-btn--fav.is-on .i { fill: currentColor; }
+
+/* The polaroid fits the screen whatever its shape. */
+@supports (aspect-ratio: 1) {
+  .polaroid-img { width: min(41.25rem, 78vw, 105vh); height: auto; aspect-ratio: 41.25 / 29.375; }
+  .polaroid--p .polaroid-img { width: min(26.25rem, 70vw, 52vh); height: auto; aspect-ratio: 3 / 4; }
+}
+.narrow .cap-date { font-size: 3rem; }
+.narrow .cap { left: 1.25rem; bottom: 6rem; max-width: 90%; }
+.narrow .ph-top { left: 1rem; right: 1rem; overflow-x: auto; }

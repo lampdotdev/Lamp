@@ -1,5 +1,5 @@
 import Foundation
-let _rawMarker = MemoryLayout<Int>.size
+let _rawMarker = MemoryLayout<Wrapper>.size
 enum Mood { case happy, sad, angry }
 struct Wrapper { var mood: Mood }
 final class Game { var level = 1; var w: Wrapper? = nil }

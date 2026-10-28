@@ -11,6 +11,14 @@ struct WishDesk: View {
     @StateObject private var dictation = Dictation()
     @State private var hasMicrophone = true
     @FocusState private var barFocused: Bool
+    /// Whether the person put the bar to use (clicked into it, chose an idea), rather than Lamp focusing it as the
+    /// desk opened so typing starts at once: only then do the wishes recede behind it.
+    @State private var barEngaged = false
+    @State private var dropTargeted = false
+    /// The bar's frame in the window, for the chat of a wish sent from it to grow out of.
+    @State private var barFrame = CGRect.zero
+    /// Set while Lamp itself moves the focus to the bar, so that move doesn't count as the person's.
+    @State private var lampFocusing = false
     /// Drawn once, so they don't change under the reader.
     @State private var ideas: [Idea] = []
     /// The ideas under the bar, opened by "Not sure?", and open from the start on an empty desk.
@@ -39,7 +47,7 @@ struct WishDesk: View {
     /// A wish not yet told is thrown away as the desk comes back (`discardIfUnused`): the rest are on the desk.
     /// They're in the order the person dragged them into (`DeskArrangement`).
     /// A device's setup conversation isn't a wish: it's reached from the device, in Settings → Your Devices.
-    private var wishes: [LampProject] { arrangement.arranged(store.projects.filter { !$0.isDeviceSetup }) }
+    private var wishes: [LampProject] { arrangement.arranged(store.wishes.filter { !$0.isDeviceSetup }) }
 
     var body: some View {
         ZStack {
@@ -51,9 +59,18 @@ struct WishDesk: View {
                     // The wishes come first: using one and changing it is where most wishes start, and a new
                     // one is the way on from there.
                     VStack(spacing: 0) {
-                        headline
-                        if !wishes.isEmpty || !missingStarters.isEmpty {
-                            grid.padding(.top, 28)
+                        // With the ideas open, the desk steps away and leaves the bar and the ideas on their own.
+                        if !hidesDesk {
+                            VStack(spacing: 0) {
+                                headline
+                                if !wishes.isEmpty || !store.newerWishes.isEmpty || !missingStarters.isEmpty {
+                                    grid.padding(.top, 28)
+                                        .modifier(receding ? Recede.behind : Recede.present)
+                                        .animation(.easeOut(duration: 0.3), value: receding)
+                                }
+                            }
+                            .padding(.bottom, wishes.isEmpty ? 18 : 32)
+                            .transition(.modifier(active: Recede.gone, identity: Recede.present))
                         }
                         // While the pointer is on a wish, what it is takes this place: making a new one and
                         // looking at one aren't done at once.
@@ -70,7 +87,6 @@ struct WishDesk: View {
                         .blur(radius: shown == nil ? 0 : 10)
                         .opacity(shown == nil ? 1 : 0)
                         .overlay(alignment: .top) { stage }
-                        .padding(.top, wishes.isEmpty ? 18 : 32)
                     }
                     .padding(.top, 16).padding(.bottom, 40)
                     .animation(.spring(response: 0.4, dampingFraction: 0.85), value: shown?.id)
@@ -79,10 +95,12 @@ struct WishDesk: View {
                     // open, the desk would otherwise move sideways by its width.
                     .frame(width: max(0, area.size.width - scrollerWidth))
                     .frame(maxWidth: .infinity, minHeight: area.size.height, alignment: .leading)
+                    // A click on the desk itself leaves the bar, and the wishes come forward again.
+                    .background { Color.clear.contentShape(Rectangle()).onTapGesture { barFocused = false } }
                     .animation(Self.glide, value: wishes.map(\.id))
                     // Read from the files, so once for each change to the desk rather than at every redraw.
                     // By the wishes there are rather than their order, so dragging one about reads nothing.
-                    .task(id: store.projects.map(\.id)) { missingStarters = Starters.missing(from: store.projects) }
+                    .task(id: store.projects.map(\.id)) { missingStarters = Starters.missing(from: store.wishes) }
                 }
                 .scrollContentBackground(.hidden)
             }
@@ -103,9 +121,20 @@ struct WishDesk: View {
         .environment(\.colorScheme, .light)
         .onAppear {
             hasMicrophone = Dictation.hasMicrophone
-            if ideas.isEmpty { ideas = Ideas.starters(made: store.projects.filter { !$0.untitled }.map(\.name)) }
+            if ideas.isEmpty { ideas = Ideas.starters(made: store.wishes.filter { !$0.untitled }.map(\.name)) }
             if wishes.isEmpty { showingIdeas = true }
-            barFocused = true
+            focusQuietly()
+        }
+        .onChange(of: barFocused) {
+            barEngaged = barFocused && !lampFocusing
+            lampFocusing = false
+        }
+        // Wishes that stepped away for the ideas can't be pointed at.
+        .onChange(of: hidesDesk) {
+            if hidesDesk {
+                pointedAt = nil
+                staged = nil
+            }
         }
         // A wish being dragged isn't being looked at.
         .onChange(of: arrangement.dragging) {
@@ -117,7 +146,8 @@ struct WishDesk: View {
         .onChange(of: store.deskFocusRequest) {
             pointedAt = nil
             staged = nil
-            barFocused = true
+            barEngaged = false
+            focusQuietly()
         }
         // Plugging in a mouse, or changing Show Scroll Bars, changes it.
         .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
@@ -142,7 +172,27 @@ struct WishDesk: View {
 
     /// What's on the stage: nothing while a new wish is being typed or said, which the stage would hide.
     private var shown: Staged? {
-        store.deskDraft.trimmed.isEmpty && !dictation.isListening ? staged : nil
+        store.deskDraft.trimmed.isEmpty && store.deskAttachments.isEmpty && !dictation.isListening ? staged : nil
+    }
+
+    /// Something to send: words, or files to make a wish of.
+    private var hasWish: Bool { !store.deskDraft.trimmed.isEmpty || !store.deskAttachments.isEmpty }
+
+    /// The headline and the wishes step away while the ideas are open, leaving the bar and the ideas. An empty desk
+    /// opens on its ideas and keeps its headline, the only question on it.
+    private var hidesDesk: Bool { showingIdeas && !wishes.isEmpty }
+
+    /// The wishes recede behind the bar while the person is writing one, and come back while one is pointed at.
+    private var receding: Bool {
+        barFocused && (barEngaged || hasWish || dictation.isListening)
+            && pointedAt == nil && arrangement.dragging == nil
+    }
+
+    /// Focuses the bar so typing starts at once, without the wishes receding as they do when the person clicks into it.
+    private func focusQuietly() {
+        guard !barFocused else { return }
+        lampFocusing = true
+        barFocused = true
     }
 
     private var headline: some View {
@@ -238,14 +288,58 @@ struct WishDesk: View {
     }
 
     private var bar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            barRow
+            // What's attached goes with the wish, shown as the chat's message box shows it.
+            if !store.deskAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(store.deskAttachments, id: \.self) { url in
+                            ChatLook.Chip(onRemove: { store.deskAttachments.removeAll { $0 == url } }) {
+                                ChatLook.ChipLabel(name: url.lastPathComponent) {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 28, height: 28)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.leading, 34)
+            }
+        }
+        .padding(.leading, 12).padding(.trailing, 12).padding(.vertical, 14)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+            .strokeBorder(Color.primary.opacity(barFocused || dropTargeted ? 0.18 : 0.1), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
+        // Files dropped on the bar are attached to the wish; a wish's own icon dropped here isn't a file.
+        .overlay(FileDrop(targeted: $dropTargeted) { urls in
+            for url in urls where !store.deskAttachments.contains(url) { store.deskAttachments.append(url) }
+        })
+        // A click into a bar Lamp already focused is the person's too.
+        .simultaneousGesture(TapGesture().onEnded { barEngaged = true })
+        // Where the bar is, for the wish's chat to grow out of (`WishArrival`).
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { barFrame = $0 }
+    }
+
+    private var barRow: some View {
         HStack(alignment: .center, spacing: 10) {
+            Button(action: chooseFiles) {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Attach a file")
+            .accessibilityLabel("Attach a file")
             TextField(dictation.isListening ? "Listening…" : wishes.isEmpty ? "Type a wish…" : "Wish for something new…", text: $store.deskDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .lineLimit(1...5)
                 .focused($barFocused)
                 .onSubmit { send() }
-            if !store.deskDraft.trimmed.isEmpty {
+            if hasWish {
                 Button { send() } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
@@ -259,12 +353,17 @@ struct WishDesk: View {
                 .transition(.scale.combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: store.deskDraft.trimmed.isEmpty)
-        .padding(.leading, 20).padding(.trailing, 12).padding(.vertical, 14)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.9), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
-            .strokeBorder(Color.primary.opacity(barFocused ? 0.18 : 0.1), lineWidth: 1))
-        .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasWish)
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where !store.deskAttachments.contains(url) { store.deskAttachments.append(url) }
+        barFocused = true
+        barEngaged = true
     }
 
     private var grid: some View {
@@ -274,6 +373,7 @@ struct WishDesk: View {
                     if inside { pointedAt = project.id } else if pointedAt == project.id { pointedAt = nil }
                 }
             }
+            ForEach(store.newerWishes) { NewerWishIcon(wish: $0) }
             if !missingStarters.isEmpty {
                 MoreFromLamp(starters: missingStarters)
             }
@@ -291,6 +391,7 @@ struct WishDesk: View {
         store.deskDraft = wish
         withAnimation(Self.glide) { showingIdeas = false }
         barFocused = true
+        barEngaged = true
     }
 
     /// The words heard go in the bar, after whatever was typed; the person sends them when they look right.
@@ -308,12 +409,17 @@ struct WishDesk: View {
     }
 
     private func send() {
-        let wish = store.deskDraft.trimmed
-        guard !wish.isEmpty else { return }
+        let wish = store.deskDraft.trimmed, attachments = store.deskAttachments
+        guard !wish.isEmpty || !attachments.isEmpty else { return }
         let spoken = dictation.isListening
         dictation.cancel()
+        if let window = NSApp.keyWindow, let content = window.contentView {
+            let inWindow = NSRect(x: barFrame.minX, y: content.frame.height - barFrame.maxY, width: barFrame.width, height: barFrame.height)
+            WishArrival.wished(wish, from: window.convertToScreen(inWindow))
+        }
         store.deskDraft = ""
-        store.wish(wish, spoken: spoken)
+        store.deskAttachments = []
+        store.wish(wish, attachments: attachments, spoken: spoken)
     }
 }
 
@@ -357,6 +463,62 @@ struct DeskRows: Layout {
             }
             y += tallest + lineSpacing
         }
+    }
+}
+
+/// The ideas in as many equal columns of at least `minimum` as fit, each row as tall as its tallest tile, every
+/// tile stretched to it so a row's cards line up.
+struct IdeaColumns: Layout {
+    var minimum: CGFloat
+    var spacing: CGFloat
+
+    private func grid(_ subviews: Subviews, width: CGFloat?) -> (columns: Int, column: CGFloat, heights: [CGFloat]) {
+        let available = width.flatMap { $0.isFinite ? $0 : nil } ?? 3 * minimum + 2 * spacing
+        let columns = max(1, min(subviews.count, Int((available + spacing) / (minimum + spacing))))
+        let column = (available - CGFloat(columns - 1) * spacing) / CGFloat(columns)
+        let heights = stride(from: 0, to: subviews.count, by: columns).map { start in
+            subviews[start..<min(start + columns, subviews.count)]
+                .map { $0.sizeThatFits(ProposedViewSize(width: column, height: nil)).height }.max() ?? 0
+        }
+        return (columns, column, heights)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let (columns, column, heights) = grid(subviews, width: proposal.width)
+        return CGSize(width: CGFloat(columns) * column + CGFloat(columns - 1) * spacing,
+                      height: heights.reduce(0, +) + CGFloat(max(0, heights.count - 1)) * spacing)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (columns, column, heights) = grid(subviews, width: bounds.width)
+        var y = bounds.minY
+        for (row, height) in heights.enumerated() {
+            for index in row * columns..<min((row + 1) * columns, subviews.count) {
+                let x = bounds.minX + CGFloat(index - row * columns) * (column + spacing)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: column, height: height))
+            }
+            y += height + spacing
+        }
+    }
+}
+
+/// How far the desk's wishes stand back: smaller, softer and fainter, as if further away.
+private struct Recede: ViewModifier {
+    var scale: CGFloat
+    var blur: CGFloat
+    var opacity: Double
+
+    static let present = Recede(scale: 1, blur: 0, opacity: 1)
+    /// Behind the bar while a wish is written.
+    static let behind = Recede(scale: 0.95, blur: 2.5, opacity: 0.45)
+    /// Out of the way while the ideas are open.
+    static let gone = Recede(scale: 0.9, blur: 12, opacity: 0)
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(scale)
+            .blur(radius: blur)
+            .opacity(opacity)
     }
 }
 
@@ -412,17 +574,19 @@ struct DeskIdeas: View {
                     Image(systemName: IdeaDeck.moreSymbol)
                     Text("Show me others")
                 }
-                .font(.callout.weight(.medium))
+                .font(.body.weight(.medium))
                 .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 10)], spacing: 10) {
+            // Laid out at once rather than lazily: a lazy grid makes its tiles after placing them, and as the ideas
+            // open they slid in from the left edge.
+            IdeaColumns(minimum: 230, spacing: 12) {
                 ForEach(Array(deck.ideas.prefix(Self.shown).enumerated()), id: \.element.id) { index, idea in
                     Button { choose(idea.blurb) } label: {
                         card(lit: hovered == idea.title) {
-                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 26)
-                            Text(idea.blurb).font(.subheadline)
+                            IdeaIcon(symbol: idea.symbol, hue: idea.hue, size: 32)
+                            Text(idea.blurb).font(.title3)
                                 .lineLimit(4, reservesSpace: true)
                                 .multilineTextAlignment(.leading)
                         }
@@ -437,11 +601,11 @@ struct DeskIdeas: View {
                 Button(action: find) {
                     card(lit: hovered == Self.finder, accent: true) {
                         Image(systemName: "sparkle.magnifyingglass")
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 24, weight: .medium))
                             .foregroundStyle(Color.accentColor)
-                            .frame(width: 26, height: 26)
+                            .frame(width: 32, height: 32)
                         Text("Help me find my wish")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.title3.weight(.semibold))
                             .lineLimit(4, reservesSpace: true)
                     }
                 }
@@ -450,13 +614,13 @@ struct DeskIdeas: View {
                 .help("Lamp asks a few questions about your days and writes a wish with you")
             }
         }
-        .frame(maxWidth: 640)
+        .frame(maxWidth: 760)
         .onAppear { deck.prefetch() }
     }
 
     private func card(lit: Bool, accent: Bool = false, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 10) { content() }
-            .padding(12)
+        VStack(alignment: .leading, spacing: 12) { content() }
+            .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(accent ? Color.accentColor.opacity(0.1) : Color(nsColor: .textBackgroundColor).opacity(0.7),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -673,7 +837,13 @@ struct MoreFromLamp: View {
                                 }
                             }
                             Spacer(minLength: 12)
-                            Button("Add") { store.put(starter: starter) }
+                            // Added to open at once, as a wish clicked on the desk does: built out of sight first when it
+                            // isn't yet, its icon spinning until then.
+                            Button("Add") {
+                                guard let project = store.put(starter: starter) else { return }
+                                listing = false
+                                store.open(fromDesk: project)
+                            }
                                 .accessibilityLabel("Add \(starter.name)")
                         }
                     }
@@ -1004,6 +1174,92 @@ struct DeskTrash: View {
 /// Delete… does once asked (the Trash gives it back); in the Dock or the Applications folder it's the app itself;
 /// anywhere else it's the wish's shared file, as Share… makes it. A wish being changed stays where it is. Behind the icon and never in its way, so a click,
 /// a double click and the menu stay SwiftUI's: the drag is started from the window's own mouse events.
+/// Where files are dropped on the desk's bar. Its text field would take a dropped file itself and type its path, so
+/// an AppKit view lies over the bar to take it first: a drop goes to the view registered for it, while a click passes
+/// through to the field. Takes files from Finder, a screenshot's thumbnail (a file promised, not yet written) and a
+/// picture from a browser or Photos (saved as a PNG). Folders aren't taken: only files go with a wish.
+struct FileDrop: NSViewRepresentable {
+    @Binding var targeted: Bool
+    let dropped: @MainActor ([URL]) -> Void
+
+    func makeNSView(context: Context) -> Catcher { Catcher() }
+
+    func updateNSView(_ view: Catcher, context: Context) {
+        view.targeted = { targeted = $0 }
+        view.dropped = dropped
+    }
+
+    final class Catcher: NSView {
+        var targeted: (Bool) -> Void = { _ in }
+        var dropped: @MainActor ([URL]) -> Void = { _ in }
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            registerForDraggedTypes([.fileURL, .png, .tiff] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+            // A wish's own icon carries no file, and isn't this view's to take.
+            guard Self.takes(sender.draggingPasteboard) else { return [] }
+            targeted(true)
+            return .copy
+        }
+        override func draggingExited(_ sender: NSDraggingInfo?) { targeted(false) }
+        override func draggingEnded(_ sender: NSDraggingInfo) { targeted(false) }
+
+        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+            let pasteboard = sender.draggingPasteboard
+            guard Self.takes(pasteboard) else { return false }
+            let files = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
+            if !files.isEmpty {
+                dropped(files)
+                return true
+            }
+            if let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver], !promises.isEmpty {
+                let folder = Self.folder()
+                for promise in promises {
+                    // Received off the main queue: the source may still be writing the file (a large picture from Photos).
+                    promise.receivePromisedFiles(atDestination: folder, operationQueue: Self.receiving) { [dropped] url, error in
+                        if error == nil { Task { @MainActor in dropped([url]) } }
+                    }
+                }
+                return true
+            }
+            guard let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return false }
+            let url = Self.folder().appendingPathComponent("Dropped image.png")
+            guard (try? png.write(to: url)) != nil else { return false }
+            dropped([url])
+            return true
+        }
+
+        private static let receiving: OperationQueue = {
+            let queue = OperationQueue()
+            queue.qualityOfService = .userInitiated
+            return queue
+        }()
+
+        private static func takes(_ pasteboard: NSPasteboard) -> Bool {
+            // A wish's icon is dragged as a file promised too (to the Finder), but it isn't one to attach.
+            guard !(pasteboard.types ?? []).contains(NSPasteboard.PasteboardType(DeskArrangement.wishType.identifier)) else { return false }
+            return pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+                || pasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self])
+                || NSImage.canInit(with: pasteboard)
+        }
+
+        /// A folder of its own for each drop, so two pictures dropped with the same name don't land on one file.
+        private static func folder() -> URL {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lamp-dropped/\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return folder
+        }
+    }
+}
+
 struct WishDrag: NSViewRepresentable {
     @EnvironmentObject private var store: Store
     let project: LampProject
@@ -1069,7 +1325,7 @@ struct WishDrag: NSViewRepresentable {
         private func begin(from event: NSEvent) {
             let writer: NSPasteboardWriting
             if store.canShare(project) {
-                let installed = project.platform.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
+                let installed = project.hasMac && FileManager.default.fileExists(atPath: project.installedURL.path)
                     ? project.installedURL : nil
                 let payload = Payload(project: project, app: installed) { [weak self] in self?.publish() }
                 self.payload = payload
@@ -1087,7 +1343,7 @@ struct WishDrag: NSViewRepresentable {
             item.setDraggingFrame(CGRect(origin: CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2), size: size),
                                   contents: store.iconImage(for: project))
             session = beginDraggingSession(with: [item], event: event, source: self)
-            DeskArrangement.shared.begin(project.id, among: DeskArrangement.shared.arranged(store.projects).map(\.id))
+            DeskArrangement.shared.begin(project.id, among: DeskArrangement.shared.arranged(store.wishes).map(\.id))
         }
 
         static let wishType = NSPasteboard.PasteboardType("dev.lamp.wish")
@@ -1128,7 +1384,7 @@ struct WishDrag: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             payload = nil
-            let trashed = DeskArrangement.shared.end(projects: store.projects)
+            let trashed = DeskArrangement.shared.end(projects: store.wishes)
             guard operation == .delete || trashed, let wish = store.projects.first(where: { $0.id == project.id }) else { return }
             Task { await store.delete(wish) }
         }
@@ -1230,7 +1486,7 @@ struct WishDrag: NSViewRepresentable {
             guard inset <= (depth > 4 ? depth : icons + 24) else { return false }
             // Along the edge the Dock is only as long as what it holds: past its ends is the desktop. Where Lamp may
             // ask the Dock (Accessibility, which trying iPhone apps asks for) it says where its icons are, hidden or
-            // not; else it's centred, as long as an estimate from what it holds.
+            // not; else it's centered, as long as an estimate from what it holds.
             let bottom = side(of: dock) == "bottom"
             let along = bottom ? point.x : point.y
             if let span = span(bottom: bottom) {
@@ -1351,18 +1607,22 @@ struct WishDrag: NSViewRepresentable {
 /// Where a wish lives once it's made, read from its files: for its caption on the desk, and for what the desk
 /// says when it's used and nothing comes to the front to say so itself.
 enum WishPlace: Equatable {
-    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, android, tv, device
+    case window, menuBar, widget, background, iPhone, iPhoneAndWatch, everywhere, device
+    /// Somewhere a kind of its own runs (an Android device, a TV): its caption and symbol (`Target.Identity.place`).
+    case elsewhere(String, symbol: String)
 
-    /// Reads the app's files: not on the main thread.
+    /// Reads the app's files: not on the main thread. A Mac app's place is read from its code; every other kind
+    /// says its own.
     static func of(_ project: LampProject) -> WishPlace {
-        switch project.platform {
-        case .iphone: return Template.hasWatch(project) ? .iPhoneAndWatch : .iPhone
-        case .universal: return .everywhere
-        case .android: return .android
-        case .tv: return .tv
-        case .device: return .device
-        case .mac: break
+        // A wish whose apps are all in folders of their own lives where they do: one app's place, or several named.
+        if !project.holdsApp {
+            let places = Parts.load(project).map(of)
+            // One with no app at all lives nowhere: only its name, chat and history are left, until it's given one.
+            guard !places.isEmpty else { return .elsewhere("No apps", symbol: "square.dashed") }
+            guard places.count > 1 else { return places[0] }
+            return .elsewhere(places.map { $0.caption ?? "Mac" }.joined(separator: " and "), symbol: places[0].symbol)
         }
+        if let place = project.platform.target.identity.place(project) { return place }
         if Template.isWidgetOnly(project) { return .widget }
         let code = sources(of: project)
         // An app with a window lives there, whatever else it has: one with a menu bar item beside its window opens
@@ -1392,8 +1652,7 @@ enum WishPlace: Equatable {
         case .iPhone: "iPhone"
         case .iPhoneAndWatch: "iPhone and watch"
         case .everywhere: "Mac and iPhone"
-        case .android: "Android"
-        case .tv: "TV"
+        case .elsewhere(let caption, _): caption
         case .device: "Device"
         }
     }
@@ -1407,8 +1666,7 @@ enum WishPlace: Equatable {
         case .iPhone: "iphone"
         case .iPhoneAndWatch: "applewatch"
         case .everywhere: "laptopcomputer.and.iphone"
-        case .android: "smartphone"
-        case .tv: "tv"
+        case .elsewhere(_, let symbol): symbol
         case .device: "shippingbox"
         }
     }
@@ -1544,36 +1802,45 @@ enum WishHUD {
 extension Store {
     /// Change… on a wish: its chat beside it in its own window, opening it when it's closed, for a Mac app with
     /// windows that has been made; anything else (a wish still being found, a menu bar app, a widget, an iPhone
-    /// app) in Lamp's window.
+    /// app) in Lamp's panel, beside whatever shows it or on its own (`ChatPanel`).
     func change(_ project: LampProject) {
         Task {
-            guard !project.finding, FileManager.default.fileExists(atPath: project.installedURL.path),
+            let app = chatApp(of: project)
+            guard !project.finding, FileManager.default.fileExists(atPath: app.installedURL.path),
                   await MagicPanel.chatsInApp(project) else { return showChat(project.id) }
-            let running = !macCopies(of: project).isEmpty
+            let running = !macCopies(of: app).isEmpty
             // A copy built before the chat could be asked for this way keeps its chat in Lamp's window.
             guard !running || MagicPanel.runningCopiesTakeTheChat(project) else { return showChat(project.id) }
             unread.remove(project.id)
             // A wish Lamp came with, opened for the first time, is seen on its own a moment before its chat comes.
             if running || !MagicPanel.shared.startWithChat(project) { MagicPanel.shared.openChat(in: project) }
+            // The copy open here may be older than the code (changed for another place since): it's brought up to date.
+            if running {
+                updatePlaces(of: project)
+                if project.platform.choosesPlace, project.destination == .mac, Runtime.sourcesChanged(project) { openPrepared(project) }
+            }
             if !running {
-                openPrepared(project)
+                openWish(project)
                 MagicPanel.shared.showChatIfAppNeverComes(project)
             }
         }
     }
 
     /// An app's chat where it lives: beside the app when it has a window to be beside (`change`, which opens the app
-    /// when it's closed), else in Lamp's window.
+    /// when it's closed), else in Lamp's panel.
     func openChat(_ id: String) {
         guard let project = projects.first(where: { $0.id == id }) else { return showChat(id) }
         change(project)
     }
 
     /// A wish clicked on the desk: it opens with its chat beside it, to use
-    /// and to change at once, as a document opens ready to edit (`change`). A wish that opens no window (the menu
-    /// bar, a widget, the background, a phone) is used instead (`use`), and the desk says where it is. A wish Lamp
-    /// came with that isn't built yet spins and opens when it's ready.
+    /// and to change at once, as a document opens ready to edit (`change`). A wish that opens no Mac window (the menu
+    /// bar, a widget, the background, a simulator, a phone) is used (`use`), the desk says where it is, and its chat
+    /// comes up in Lamp's panel, beside what shows it or on its own. A wish Lamp came with that isn't built yet spins
+    /// and opens when it's ready.
     func open(fromDesk project: LampProject) {
+        // A wish whose apps are all in folders of their own has no window of its own for its chat to go beside.
+        guard project.holdsApp else { return use(project) }
         let made = FileManager.default.fileExists(atPath: project.installedURL.path)
             || FileManager.default.fileExists(atPath: project.builtURL.path)
         if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {
@@ -1583,7 +1850,11 @@ extension Store {
         }
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
-            guard place == .window, project.platform == .mac else { return use(project) }
+            // A game played on this Mac opens in its window with its chat beside it, as a Mac app does.
+            guard place == .window, project.platform == .mac || (project.platform.target.hostedByLamp && project.destination == .mac) else {
+                use(project)
+                return showChat(project.id)
+            }
             change(project)
         }
     }
@@ -1592,8 +1863,9 @@ extension Store {
     /// Where opening it brings nothing to the front (the menu bar, a widget, the background, the person's own
     /// phone), the desk says where it is.
     func use(_ project: LampProject) {
-        let made = FileManager.default.fileExists(atPath: project.installedURL.path)
-            || FileManager.default.fileExists(atPath: project.builtURL.path)
+        let made = apps(of: project).contains { app in
+            FileManager.default.fileExists(atPath: app.installedURL.path) || FileManager.default.fileExists(atPath: app.builtURL.path)
+        }
         // A wish Lamp came with that hasn't been built yet, or is being built now: its icon spins, and it
         // opens as soon as it's ready, without its chat in between.
         if !made, canPrepare(project), preparing.contains(project.id) || needsPreparing(project) {
@@ -1610,8 +1882,8 @@ extension Store {
         Task {
             let place = await Task.detached { WishPlace.of(project) }.value
             let icon = icons[project.id]
-            // A window's chat opens beside it (`MagicPanel.startWithChat`); anything else has its chat opened here, behind
-            // the app, the first time it's used.
+            // A window's chat opens beside it (`MagicPanel.startWithChat`); anything else has its chat opened in Lamp's
+            // panel the first time it's used.
             if firstUse, place != .window { showChat(project.id) }
             switch place {
             case .widget:
@@ -1630,14 +1902,14 @@ extension Store {
             case .device:
                 let device = DeviceApps.integration(for: project)?.name ?? "device"
                 WishHUD.show(icon: icon, symbol: place.symbol, title: "\(project.name) is opening on your \(device).")
-            case .iPhone, .iPhoneAndWatch, .everywhere, .android, .tv:
+            case .iPhone, .iPhoneAndWatch, .everywhere, .elsewhere:
                 if project.onIOS, project.device != nil {
                     WishHUD.show(icon: icon, symbol: "iphone", title: "\(project.name) is opening on your iPhone.")
                 }
             case .window:
                 break
             }
-            openPrepared(project)
+            openWish(project)
         }
     }
 }

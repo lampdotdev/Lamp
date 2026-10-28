@@ -42,7 +42,7 @@ approximate: it can't tell which string is muted. Settings: the chords in hand, 
   (resampling, FFT, chroma, chord scores).
 - `ChordDiagram.swift`: the open-chord shapes and their drawn diagrams.
 - `Sheets.swift`: new folder, import, and editing a song's arrangement.
-- `Theme.swift`: colours, the paper, tape, stamps, picks, and `SongArt` (which painting a song or folder gets).
+- `Theme.swift`: colors, the paper, tape, stamps, picks, and `SongArt` (which painting a song or folder gets).
 - `Capture.swift`: the front browser tab's address, by AppleScript.
 - `Intents.swift`: a shortcut that opens the songbook.
 - `Assets/`: nine painted pictures (campfire, lantern, harmonica, mug, pine, boat, moon, feather, guitar).
@@ -64,5 +64,5 @@ they've learned by heart since (`monthly`).
 - The starting folders and songs: `Library.init` and `Library.seed`.
 - How songs are read and filed: the prompts in `Import.swift`.
 - How forgiving listening is: thresholds in `Listening.judge` and `ChordDetector.score`.
-- The look: `Theme.swift` (colours, paper, stamps), the pictures in `Assets/` and `SongArt`.
+- The look: `Theme.swift` (colors, paper, stamps), the pictures in `Assets/` and `SongArt`.
 - The goal of twenty: `TwentyCard` and `PickTally`.

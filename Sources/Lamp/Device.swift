@@ -126,6 +126,9 @@ struct Device: Identifiable, Hashable {
     var integration: String?
     /// For a device Lamp doesn't know: what it said when it was found, for whoever writes its integration.
     var discovery: String?
+    /// A TV or another device on the network that Lamp keeps (`TVs.kept`, `Integrations.kept`): one of its setup steps
+    /// has worked. One only found isn't kept, however well Lamp knows its kind.
+    var kept = false
 
     static let macID = "this-mac"
 
@@ -134,6 +137,23 @@ struct Device: Identifiable, Hashable {
     /// (a home elsewhere). Its setup is kept as it was, but nothing can be put on it, or set up, until it's found
     /// again. Not a phone: Xcode opens a phone's connection only when it's needed, so its `connected` says little.
     var isAway: Bool { (kind.isTV || kind == .other) && reach == .network && !connected }
+    /// Set up with Lamp: the person has made it theirs here, so it's one of their devices. Otherwise it's a possible
+    /// device, only found on the network, which may be a neighbor's on a shared Wi‑Fi or a building's.
+    ///
+    /// This isn't `setup() == .ready`: a device part-way through its setup, away from the network, or whose credentials
+    /// need renewing is still set up. This Mac is; so is an Android device, since adb lists only one plugged into this
+    /// Mac or connected over Wi‑Fi from here, and Lamp's own emulator. An iPhone or iPad is once it's paired with this
+    /// Mac or plugged into it, before Developer Mode; a watch once Xcode lists it paired, through its iPhone. A TV or
+    /// another network device is once Lamp keeps it.
+    var isSetUp: Bool {
+        switch kind {
+        case .mac, .android, .androidEmulator: return true
+        case .iphone, .ipad: return paired || reach == .cable
+        case .watch: return paired
+        case .samsungTV, .lgTV, .other: return kept
+        }
+    }
+
     /// Where it stands for a list: "Not on this network" while it's away, else its setup's words.
     var status: String { isAway ? "Not on this network" : setup().words }
     var family: DeviceFamily? { kind == .ipad ? .ipad : kind == .iphone ? .iphone : nil }
@@ -171,9 +191,29 @@ struct Device: Identifiable, Hashable {
         case .lgTV:
             return developerMode ? .ready : .needs("Turn on Developer Mode on it")
         case .other:
-            guard integration != nil else { return .needs("Lamp doesn't know it yet") }
+            guard integration != nil else { return .needs("Lamp could learn to work with this") }
             return Integrations.next(for: self).map { .needs($0.title) } ?? .ready
         }
+    }
+
+    /// The address in the id of a device found on the network that Lamp doesn't know yet ("found:<address>", with
+    /// "#<hardware address>" after it when the look knew that), and the hardware address.
+    static func foundAddress(_ id: String) -> String? {
+        guard id.hasPrefix("found:") else { return nil }
+        return String(id.dropFirst("found:".count)).components(separatedBy: "#").first
+    }
+
+    static func foundHardware(_ id: String) -> String? {
+        guard id.hasPrefix("found:"), let mark = id.firstIndex(of: "#") else { return nil }
+        return String(id[id.index(after: mark)...])
+    }
+
+    /// What it is rather than what it's called, for one found on the network that Lamp doesn't know yet: the name a
+    /// device gives itself there is often a person's, and this one is written into its setup conversation's folder.
+    var plainName: String {
+        guard id.hasPrefix("found:") else { return name }
+        if maker.isEmpty || model.localizedCaseInsensitiveContains(maker) { return model.nilIfEmpty ?? "Device" }
+        return model.isEmpty || model == maker ? maker : "\(maker) \(model)"
     }
 
     /// The model and software, in one line for a list: "iPhone 16 Pro Max · iOS 27".
@@ -263,12 +303,14 @@ struct Device: Identifiable, Hashable {
         let emulator = serial.hasPrefix("emulator-") || properties["ro.kernel.qemu"] == "1" || properties["ro.boot.qemu"] == "1"
         let maker = properties["ro.product.manufacturer"].flatMap { $0.isEmpty ? nil : $0 } ?? (emulator ? "Google" : "Android")
         let model = properties["ro.product.model"].flatMap { $0.isEmpty ? nil : $0 }
-        let name = emulator ? AndroidTools.avdName : (model.map { "\(maker) \($0)" } ?? "Android device")
+        // A TV (Google TV, Android TV, Fire TV, Lamp's TV emulator) has the leanback feature.
+        let tv = properties["leanback"] == "true"
+        let name = emulator ? (tv ? AndroidTools.tvAVDName : AndroidTools.avdName) : (model.map { "\(maker) \($0)" } ?? (tv ? "Android TV" : "Android device"))
         var device = Device(id: serial, kind: emulator ? .androidEmulator : .android, maker: maker,
                             model: emulator ? "Android emulator" : (model ?? "Android device"),
                             modelID: properties["ro.product.device"] ?? "", name: name, os: "Android",
                             osVersion: properties["ro.build.version.release"] ?? "",
-                            input: ["touch"], features: [], reach: emulator ? .thisMac : serial.contains(":") ? .network : .cable)
+                            input: [tv ? "remote" : "touch"], features: tv ? ["tv"] : [], reach: emulator ? .thisMac : serial.contains(":") ? .network : .cable)
         device.adbState = state
         device.density = properties["density"].flatMap { Int($0) }
         if let size = properties["size"], let density = device.density {
@@ -303,17 +345,29 @@ struct Device: Identifiable, Hashable {
 /// only when it changes (Try On moved, a phone's software updated), so most requests carry nothing.
 enum DeviceNote {
     @MainActor static func line(for project: LampProject, store: Store) -> String {
+        let here = place(for: project, store: store)
+        // A game says every place it's played and what the slowest allows, then where Try On points.
+        return GameKit.isGame(project) ? Agent.Rules.gamePlaces(project) + " " + here
+            : ScreenKit.isScreen(project) ? Agent.Rules.screenPlaces(project) + " " + here : here
+    }
+
+    @MainActor private static func place(for project: LampProject, store: Store) -> String {
         let phones = store.devices.filter { $0.kind.isPhone }
         if project.onDevice {
             let name = DeviceApps.integration(for: project)?.name ?? "device"
             let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
             guard !mine.isEmpty else { return "No \(name) of the person's has been found on the network yet; the app goes on one once it's found and set up." }
-            return mine.map { device in
-                let state = device.setup() == .ready ? "set up for apps" : "not set up yet (next: \(device.setup().words.lowercased()))"
-                let chosen = device.id == project.device || (project.device == nil && mine.count == 1)
+            let goesOn = DeviceApps.device(for: project, among: store.devices)?.id
+            var lines = mine.filter(\.isSetUp).map { device in
+                let state = device.setup() == .ready ? "set up for apps" : "not set up for apps yet (next: \(device.setup().words.lowercased()))"
                 let place = device.isAway ? " Lamp doesn't find it on the network now, so nothing can be put on it until it's back." : ""
-                return "\(chosen ? "The app goes on" : "Also known:") the person's \(device.name) (\(device.forAgent)), \(state).\(place)"
-            }.joined(separator: " ")
+                return "\(device.id == goesOn ? "The app goes on" : "Also known:") the person's \(device.name) (\(device.forAgent)), \(state).\(place)"
+            }
+            if !mine.contains(where: \.isSetUp) { lines.insert("No \(name) is set up with Lamp yet; the app goes on one once it's set up.", at: 0) }
+            lines += mine.filter { !$0.isSetUp }.map { device in
+                Self.possible(device, chosen: device.id == goesOn, makes: "Lamp puts apps on it once it's set up")
+            }
+            return lines.joined(separator: " ")
         }
         if project.onTV {
             let onTV = Runtime.onTV(project)
@@ -325,7 +379,10 @@ enum DeviceNote {
             var line: String
             if let serial = project.device {
                 line = androids.first(where: { $0.udid == serial }).map { "Try On points at the person's \($0.name): \($0.forAgent)." }
-                    ?? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
+                    ?? (store.androidListed ? "Try On points at one of the person's Android devices, which Lamp's device list didn't return; it's put there once it's connected."
+                        : "Try On points at one of the person's Android devices, which Lamp hasn't looked for yet; Play puts it there once it's connected.")
+            } else if project.destination == .androidTV {
+                line = "Try On points at the Android TV emulator on this Mac (\(AndroidTools.tvAVDName), a 1080p Google TV driven by a remote's keys): that is where the app opens and what the person sees."
             } else {
                 line = "Try On points at the Android emulator on this Mac (\(AndroidTools.avdName), Android \(AndroidTools.platformLevel == 36 ? "16" : "\(AndroidTools.platformLevel)"), a Pixel-sized phone): that is where the app opens and what the person sees."
             }
@@ -333,32 +390,40 @@ enum DeviceNote {
                 let state = device.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(device.setup().words.lowercased()))"
                 line += " The person's \(device.name) (\(device.forAgent)) is \(state)."
             }
-            if androids.isEmpty {
+            // Only once adb has been asked: before, Lamp doesn't know whether one is connected.
+            if androids.isEmpty, store.androidListed {
                 line += " No Android phone or tablet of the person's is connected to this Mac, so call it the emulator, never their phone; they can plug one in and choose it under Try On."
             }
             return line
         }
+        // What a free team can't sign, said for any app with an iPhone half wherever Try On points (an app for both on this
+        // Mac is signed for the team too), since it changes what to declare.
+        let freeTeam = project.hasIOS && PhoneTools.xcodeFreeTeams().contains(Devices.team) ? " " + TeamLimits.agentLine : ""
         if project.onIOS {
             if let udid = project.device {
                 // Chosen, but not in the list (away, or the lookup failed): still where Play puts the app.
                 guard let phone = phones.first(where: { $0.udid == udid }) else {
-                    return "Try On points at one of the person's phones, which Lamp's device list didn't return; Play still puts the app there once it's connected."
+                    return "Try On points at one of the person's phones, which Lamp's device list didn't return; Play still puts the app there once it's connected." + freeTeam
                 }
-                return "Try On points at the person's \(phone.name): \(phone.forAgent)."
+                return "Try On points at the person's \(phone.name): \(phone.forAgent)." + freeTeam
             }
             let simulator = project.simulator.flatMap { udid in store.simulators.first { $0.udid == udid } }
-            var line = simulator.map { "Try On points at the \($0.name) simulator, iOS \($0.runtime.map(String.init).joined(separator: "."))." }
+            var line = simulator.map { "Try On points at the \($0.name) simulator, \($0.family.os) \($0.runtime.map(String.init).joined(separator: "."))." }
                 ?? "Try On points at the \(project.family.name) simulator."
+            if project.family.isOtherOS { line += " " + Agent.Rules.otherOS(project.family) }
             // The phones the person has, exactly, with what each still needs: the app is for one of them in the
             // end, and what it has (a Dynamic Island, say) matters before it ever goes there.
-            for phone in phones {
+            for phone in phones where phone.isSetUp {
                 let state = phone.setup() == .ready ? "set up for the app to go on it" : "not set up yet (next: \(phone.setup().words.lowercased()))"
                 line += " The person's \(phone.name) (\(phone.forAgent)) is \(state)."
             }
-            return line
+            for phone in phones where !phone.isSetUp {
+                line += " " + Self.possible(phone, chosen: false, makes: "Play puts the app on it once it's paired with this Mac")
+            }
+            return line + freeTeam
         }
         let mac = store.thisMac ?? Device.thisMac()
-        return "It opens on this Mac: \(mac.forAgent)."
+        return (GameKit.isGame(project) ? "It opens in its window on this Mac: \(mac.forAgent)." : "It opens on this Mac: \(mac.forAgent).") + freeTeam
     }
 
     /// Where a TV app is, from what Lamp has seen: the preview, which the agent's tools reach, and each of the person's
@@ -371,10 +436,12 @@ enum DeviceNote {
         if let chosen, !tvs.contains(where: { $0.udid == chosen }) {
             line += " Try On points at one of the person's TVs, which Lamp doesn't find on the network now."
         }
-        for tv in tvs.sorted(by: { ($0.udid == chosen ? 0 : 1, $0.name) < ($1.udid == chosen ? 0 : 1, $1.name) }) {
+        for tv in tvs.sorted(by: { ($0.udid == chosen ? 0 : 1, $0.isSetUp ? 0 : 1, $0.name) < ($1.udid == chosen ? 0 : 1, $1.isSetUp ? 0 : 1, $1.name) }) {
             var facts = [tv.forAgent]
             if tv.screens.isEmpty { facts.append("screen size unknown") }
-            line += " The person's \(tv.name) (\(facts.joined(separator: ", ")))"
+            // One only found may be a neighbor's: everything Lamp knows of it is said, but it isn't called the person's.
+            line += tv.isSetUp ? " The person's \(tv.name) (\(facts.joined(separator: ", ")))"
+                : " \(tv.name) (\(facts.joined(separator: ", "))), found on the network but not set up with Lamp, so it may not be the person's,"
             line += tv.udid == chosen ? " is chosen under Try On, so Play puts the app on it." : " isn't chosen under Try On."
             line += tv.connected ? " Lamp finds it on the network now." : " Lamp doesn't find it on the network now."
             if tv.setup() != .ready { line += " It isn't set up for apps yet (next: \(tv.setup().words.lowercased()))." }
@@ -386,6 +453,7 @@ enum DeviceNote {
             }
         }
         if tvs.isEmpty, chosen == nil { line += " No TV of the person's has been found on the network." }
+        else if !tvs.contains(where: \.isSetUp) { line += " No TV is set up with Lamp yet." }
         if chosen != nil || !tvs.isEmpty {
             line += " Whether the app is running on a TV now, and how it looks or runs there, Lamp doesn't know. "
                 + "You might be able to get a screenshot or other state from the TV another way: take a look if it matters."
@@ -393,11 +461,34 @@ enum DeviceNote {
         return line
     }
 
+    /// A device Lamp only found, said as that: it may be a neighbor's, so it's never called the person's, and what Lamp
+    /// can do with one like it is said too, so the agent still knows the model is one Lamp supports.
+    static func possible(_ device: Device, chosen: Bool, makes: String) -> String {
+        let what = device.kind == .other && !device.model.hasPrefix(device.maker) ? "\(device.maker) \(device.forAgent)" : device.forAgent
+        var line = "\(device.name) (\(what)) was found on the network but isn't set up with Lamp, so it may not be the person's; \(makes)."
+        if chosen { line += " It's chosen under Try On, so Play sets it up first, with the person." }
+        return line
+    }
+
     @MainActor static func brief(for project: LampProject, engine: Engine, session: String?) -> String {
-        let now = line(for: project, store: .shared)
+        // A wish whose apps are all in folders of their own is on no device itself: where each opens is the wish's note.
+        // A game or a screen in a folder of its own still has its places and budget said here, as one in the wish's own
+        // folder has: they change with its places and with Try On, which no note of the wish's says.
+        let own = project.holdsApp ? [line(for: project, store: .shared)] : []
+        let placed = project.isPart ? [] : Store.shared.parts(of: project).filter(\.platform.addsPlaces).map { part in
+            "\(Parts.name(of: part).prefix(1).uppercased() + Parts.name(of: part).dropFirst()) in \(part.dir.lastPathComponent)/: "
+                + line(for: part, store: .shared)
+        }
+        // And every device of the person's Lamp knows, with what each can run, so an app is made for the ones they have:
+        // said for a wish whose apps are all in folders of their own too.
+        let known = Places.known(Store.shared.devices)
+        guard !own.isEmpty || !placed.isEmpty || !known.isEmpty else { return "" }
+        let now = (own + placed + (known.isEmpty ? [] : [known])).joined(separator: "\n")
+        let what = own.isEmpty && placed.isEmpty ? "The person's devices" : placed.isEmpty ? "The device this app is for"
+            : own.isEmpty ? "Where the wish's game or screen is" : "The devices this wish's apps are for"
         switch note.telling(now, for: project, engine: engine, session: session) {
-        case .fresh: return "\n\n---\nThe device this app is for (from Lamp, not part of the request above): \(now)"
-        case .changed: return "\n\n---\nThe device this app is for has changed (from Lamp, not part of the request above): \(now)"
+        case .fresh: return "\n\n---\n\(what) (from Lamp, not part of the request above): \(now)"
+        case .changed: return "\n\n---\n\(what), changed (from Lamp, not part of the request above): \(now)"
         case .nothing: return ""
         }
     }

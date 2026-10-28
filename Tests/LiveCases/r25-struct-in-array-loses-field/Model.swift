@@ -7,14 +7,14 @@ enum Log {
 import Observation
 struct Item { var name: String; var note = "" }
 @Observable final class Store {
-    var items = [Item(name: "Milk", note: "2 litres")]
+    var items = [Item(name: "Milk", note: "2 liters")]
     var title = "Weekly"
 }
 struct ContentView: View {
     @State private var store = Store()
     var body: some View {
         let _ = Log.add("\(store.title): \(store.items.map(\.name))")
-        Row(title: "Milk", subtitle: "2 litres")
+        Row(title: "Milk", subtitle: "2 liters")
     }
 }
 struct Row: View {

@@ -169,7 +169,7 @@ export const IDEAS: Idea[] = [
   },
   {
     category: "home", name: "The House Book", about: "Everything about your house, from the boiler to the good plumber.", form: "Mac",
-    wish: "Everything about our house in one place: the boiler model, the paint colour in each room, when the gutters were last cleared, the plumber who was actually good. I ask it in plain words and it answers.",
+    wish: "Everything about our house in one place: the boiler model, the paint color in each room, when the gutters were last cleared, the plumber who was actually good. I ask it in plain words and it answers.",
   },
   {
     category: "home", name: "Tooth Fairy Ledger", about: "What the tooth fairy paid for each tooth, so the twins never compare.", form: "iPhone",
@@ -257,8 +257,8 @@ export const IDEAS: Idea[] = [
     wish: "Which sample is in which slot of which box on which shelf of the −80, who put it there and when, searchable, so nobody has to stand with the door open reading tiny labels.",
   },
   {
-    category: "trades", name: "Colour Formulas", about: "Every client's colour formula and how it turned out, found in seconds.", form: "iPad",
-    wish: "Each client's colour formula, the developer and timing, with a photo of the result and a note on what to change next time, found by typing the first few letters of their name.",
+    category: "trades", name: "Color Formulas", about: "Every client's color formula and how it turned out, found in seconds.", form: "iPad",
+    wish: "Each client's color formula, the developer and timing, with a photo of the result and a note on what to change next time, found by typing the first few letters of their name.",
   },
   {
     category: "trades", name: "Tonight's Covers", about: "Tonight's bookings with every allergy pulled out, and the regulars' usual.", form: "iPad",
@@ -347,7 +347,7 @@ export const IDEAS: Idea[] = [
     wish: "Practice questions on the rounds our team always loses (flags, 1970s music, rivers), with our scores each week, so we finally beat the Quizlamic Extremists.",
   },
 
-  // ---------- Friends & neighbours ----------
+  // ---------- Friends & neighbors ----------
   {
     category: "friends", name: "Secret Santa", about: "A Secret Santa draw with your group's rules, and nobody sees the list.", form: "Mac",
     wish: "Secret Santa for our 14, drawn so no couple gets each other and nobody gets who they had last year, with each person's name sent to them by message, and nobody (me included) seeing the list.",

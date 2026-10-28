@@ -16,20 +16,16 @@ struct LampApp: App {
             if CommandLine.arguments.contains(PrebuiltStarters.commandLineFlag) { PrebuiltStarters.runFromCommandLine() }
             if CommandLine.arguments.contains(PrebuiltStarters.restampFlag) { PrebuiltStarters.restampFromCommandLine() }
         }
+        // And the player every game and screen on the Mac is a copy of, compiled by build.sh from the Swift this writes.
+        if CommandLine.arguments.contains(GameKit.playerSourcesFlag) { GameKit.writePlayerSourcesFromCommandLine() }
     }
 
     var body: some Scene {
+        // The desk, and only the desk: each wish's chat is beside whatever shows the wish (`ChatPanel`, `MagicPanel`).
         Window(Edition.name, id: "main") {
             ContentView()
                 .environmentObject(store)
         }
-        // Each wish's chat in a window of its own, listed in the Window menu like a document's.
-        WindowGroup("Wish", id: "wish", for: String.self) { $id in
-            WishWindow(id: $id)
-                .environmentObject(store)
-        }
-        .defaultSize(width: 980, height: 720)
-        .commandsRemoved()
         .commands { LampCommands(store: store) }
         Settings {
             SettingsView().environmentObject(store)
@@ -57,6 +53,8 @@ struct LampCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Import Shared Wish…") { store.chooseImport() }
                 .keyboardShortcut("o")
+            Button("Open from GitHub…") { store.chooseRepository() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Duplicate") { if let project = store.selected { Task { await store.duplicate(project) } } }
                 .disabled(store.selected.map { store.busy.contains($0.id) || !$0.scaffolded || $0.untitled } ?? true)
         }
@@ -81,7 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Before launch finishes, so clicking a notification that launched Lamp still opens its chat.
     func applicationWillFinishLaunching(_ notification: Notification) {
         PhoneTools.restoreChoice()
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: nil) { [weak self] note in
+            self?.previewClosed = note.object is TVPreview.Window
+        }
         MainActor.assumeIsolated {
+            // Opened at login to keep the person's phone apps opening (`PhoneRenewals.staysOpen`): Lamp works out of
+            // sight, its window put away as it appears, and the Dock icon brings it back.
+            if Self.launchedAtLogin, PhoneRenewals.staysOpen, Onboarding.isDone { MagicPanel.keepMainWindowHidden() }
             Notifier.shared.start()
             MagicPanel.start()
             // Once the apps are read: an app whose sidebar is open finds Lamp again.
@@ -89,7 +93,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Whether macOS opened Lamp as a login item: the open-application event it launches Lamp with says so, read while
+    /// launch is under way.
+    private static var launchedAtLogin: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else { return false }
+        // keyAELaunchedAsLoginItem, 'lgit', which Swift's Carbon headers don't bring.
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == 0x6C67_6974
+    }
+
     private let launched = Date()
+    /// The window closed last was a TV or device preview: Stop closes it, and so may the person, to stop the app.
+    private var previewClosed = false
 
     /// Generated apps call back with lamp://edit?app=<slug> (⇧⌘E inside the app).
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -110,9 +124,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Closing Lamp's window quits it, except while an app's sidebar is open: Lamp is still in use there.
+    /// Closing Lamp's window quits it, except while an app's sidebar is open: Lamp is still in use there. A preview
+    /// isn't Lamp's window: with the desk closed it's the last one AppKit counts (a chat is a panel, which it doesn't),
+    /// and stopping the app it shows must leave Lamp running. Nor while the person chose to keep their phone apps
+    /// opening and one is on a phone: Lamp stays to put it back before it stops opening (`PhoneRenewals`).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        MainActor.assumeIsolated { !SidebarServer.shared.isInUse }
+        MainActor.assumeIsolated {
+            !previewClosed && !SidebarServer.shared.isInUse && !(PhoneRenewals.staysOpen && PhoneRenewals.anyOnPhones(Store.shared.projects))
+        }
     }
 
     /// Quitting mid-turn would leave the agent and its build running on their own, and the gateway the

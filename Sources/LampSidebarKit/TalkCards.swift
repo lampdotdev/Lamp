@@ -91,7 +91,7 @@ public struct AskCardView: View {
             }
             Divider()
             HStack {
-                if progress.answers.isEmpty {
+                if progress.answers.isEmpty, ask.questions.allSatisfy(TalkCard.decides) {
                     Button(TalkCard.youDecide) { send(progress.all(ask.questions.count)) }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
@@ -152,7 +152,7 @@ private struct Answered: View {
                 }
             }
         }
-        // Set in, sized and coloured as the turn's steps are, since it now reads as one.
+        // Set in, sized and colored as the turn's steps are, since it now reads as one.
         .font(ChatLook.stepFont)
         .foregroundStyle(.secondary)
         .padding(.leading, ChatLook.stepIndent)
@@ -233,9 +233,9 @@ struct AskSteps: View {
             .allowsHitTesting(armed)
             // The links under it, where any question of the card has one. Back keeps its place on the first
             // question, so the card is the same height on each.
-            if count > 1 || ask.questions.contains(where: { !TalkCard.decidesAsTile($0) }) {
+            if count > 1 || ask.questions.contains(where: { TalkCard.decides($0) && !TalkCard.decidesAsTile($0) }) {
                 HStack(spacing: 16) {
-                    if !TalkCard.decidesAsTile(ask.questions[step]) {
+                    if TalkCard.decides(ask.questions[step]), !TalkCard.decidesAsTile(ask.questions[step]) {
                         Button(TalkCard.youDecide) { pick(TalkCard.youDecide) }
                     }
                     if count > 1 {
@@ -267,7 +267,7 @@ struct AskSteps: View {
 
     /// A question's answers, and "Decide for me" as one more where it fits as a tile (`TalkCard.decidesAsTile`).
     static func tiles(for question: TalkCard.Question) -> [TalkCard.Option] {
-        guard TalkCard.decidesAsTile(question) else { return question.options }
+        guard TalkCard.decides(question), TalkCard.decidesAsTile(question) else { return question.options }
         return question.options + [TalkCard.Option(title: TalkCard.youDecide, symbol: "wand.and.sparkles")]
     }
 }

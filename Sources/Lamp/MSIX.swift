@@ -68,11 +68,18 @@ enum MSIX {
 
     // MARK: Making a package
 
-    /// What a package's app starts: a web app's page, or a native program.
+    /// What a package's app starts: a web app's page in the system's EdgeHTML host, a native program, or Lamp's own
+    /// WebView2 host (`WebHost`), which shows the app's pages from its Web folder.
     enum Start: Equatable {
         case page(String)
         case program(String)
-        var path: String { switch self { case .page(let path), .program(let path): path } }
+        case webHost
+        var path: String {
+            switch self {
+            case .page(let path), .program(let path): path
+            case .webHost: WebHost.program
+            }
+        }
     }
 
     /// A signed package of the app's files (`payload`, read from the package step's zip), started at `entry`.
@@ -115,6 +122,14 @@ enum MSIX {
             application = "Executable=\"\(escaped(program.replacingOccurrences(of: "/", with: "\\")))\" EntryPoint=\"App.App\""
             minimum = "10.0.17763.0"
             capabilities = ""
+        case .webHost:
+            // WebView2's WinRT classes come from the copy of its core library in the package, which Windows finds
+            // only by these registrations; the browser itself is the console's.
+            application = "Executable=\"\(WebHost.program)\" EntryPoint=\"App.App\""
+            minimum = "10.0.19041.0"
+            let classes = WebHost.activatableClasses.map { "<ActivatableClass ActivatableClassId=\"\($0)\" ThreadingModel=\"both\"/>" }.joined()
+            capabilities = "<Capabilities><Capability Name=\"internetClient\"/><Capability Name=\"privateNetworkClientServer\"/></Capabilities>"
+                + "<Extensions><Extension Category=\"windows.activatableClass.inProcessServer\"><InProcessServer><Path>\(WebHost.library)</Path>\(classes)</InProcessServer></Extension></Extensions>"
         }
         return """
         <?xml version="1.0" encoding="utf-8"?>
@@ -137,7 +152,7 @@ enum MSIX {
         """
     }
 
-    /// The app's icon centred on its tile's colour at a logo's size, or the colour alone: the same picture a declared
+    /// The app's icon centered on its tile's color at a logo's size, or the color alone: the same picture a declared
     /// kind's icons are (`DeviceSupport.iconPNG`).
     private static func logo(_ icon: NSImage?, width: Int, height: Int) -> Data {
         DeviceSupport.iconPNG(icon, width: width, height: height)
@@ -151,9 +166,8 @@ enum MSIX {
     /// content types after them, then the signature, then a Zip64 central directory.
     static func assemble(_ files: [(path: String, data: Data)], signer: Signer) throws -> Data {
         var entries = files.map { Entry(name: $0.path, data: $0.data) }
-        let extensions = Set(files.compactMap { $0.path.contains(".") && $0.path != "AppxManifest.xml" ? $0.path.split(separator: ".").last.map { $0.lowercased() } : nil })
         entries.append(Entry(name: "AppxBlockMap.xml", data: blockMap(entries)))
-        entries.append(Entry(name: "[Content_Types].xml", data: contentTypes(extensions)))
+        entries.append(Entry(name: "[Content_Types].xml", data: contentTypes(for: files.map(\.path))))
         // What's signed is the package without its signature: its records, its directory and the two files' contents.
         let unsigned = layout(entries)
         var blob = Data("APPX".utf8)
@@ -229,15 +243,34 @@ enum MSIX {
                      + "HashMethod=\"http://www.w3.org/2001/04/xmlenc#sha256\">" + files + "</BlockMap>").utf8)
     }
 
-    private static func contentTypes(_ extensions: Set<String>) -> Data {
+    /// Every part needs a content type: by its extension, or, for a file with none Windows can take (a LICENSE), one of
+    /// its own. Windows refuses a package with an untyped part, saying its block map is invalid.
+    static func contentTypes(for paths: [String]) -> Data {
+        var extensions: Set<String> = [], untyped: [String] = []
+        for path in paths where path != "AppxManifest.xml" {
+            let parts = (path.split(separator: "/").last.map(String.init) ?? "").split(separator: ".", omittingEmptySubsequences: false)
+            if parts.count > 1, let last = parts.last, !last.isEmpty, last.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) {
+                extensions.insert(last.lowercased())
+            } else {
+                untyped.append(path)
+            }
+        }
+        return contentTypes(extensions, untyped: untyped)
+    }
+
+    private static func contentTypes(_ extensions: Set<String>, untyped: [String]) -> Data {
         let known = ["exe": "application/x-msdownload", "dll": "application/x-msdownload", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "svg": "image/svg+xml",
                      "html": "text/html", "htm": "text/html", "js": "application/javascript", "css": "text/css", "json": "application/json",
                      "txt": "text/plain", "woff": "font/woff", "woff2": "font/woff2", "mp3": "audio/mpeg", "mp4": "video/mp4", "wav": "audio/wav"]
         let defaults = extensions.sorted().filter { $0.allSatisfy { $0.isLetter || $0.isNumber } }.map {
             "<Default Extension=\"\($0)\" ContentType=\"\(known[$0] ?? "application/octet-stream")\"/>"
         }.joined()
+        let overrides = untyped.sorted().map { path -> String in
+            let part = "/" + (path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path).replacingOccurrences(of: "&", with: "&amp;")
+            return "<Override PartName=\"\(part)\" ContentType=\"application/octet-stream\"/>"
+        }.joined()
         return Data(("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
-                     + defaults
+                     + defaults + overrides
                      + "<Override PartName=\"/AppxManifest.xml\" ContentType=\"application/vnd.ms-appx.manifest+xml\"/>"
                      + "<Override PartName=\"/AppxBlockMap.xml\" ContentType=\"application/vnd.ms-appx.blockmap+xml\"/>"
                      + "<Override PartName=\"/AppxSignature.p7x\" ContentType=\"application/vnd.ms-appx.signature\"/></Types>").utf8)

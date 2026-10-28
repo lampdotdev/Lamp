@@ -28,10 +28,11 @@ enum Sandbox {
     /// folder is the agent's to write, build.sh included at any moment between Lamp writing it and running it, so
     /// whatever runs there runs as the agent's commands do, never as Lamp: with Lamp's keys, sign-ins and the
     /// other apps out of reach.
-    static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:],
+    static func run(_ command: String, for project: LampProject, cwd: URL? = nil, env: [String: String] = [:], opening folders: [String] = [],
+                    reading: [String] = [],
                     started: (@MainActor (Process) -> Void)? = nil,
                     onLine: @escaping @MainActor (String) -> Void) async -> Int32 {
-        guard let confined = wrap("/bin/zsh -c " + quoted(command), for: project) else {
+        guard let confined = wrapEngine("/bin/zsh -c " + quoted(command), for: project, opening: folders, reading: reading) else {
             await onLine("Lamp couldn't set up the sandbox for \(project.name), so nothing was run.")
             return unconfined
         }
@@ -236,7 +237,7 @@ enum Sandbox {
             // since the emulator's control interface listens on the network too. Nor may a command listen there in
             // their place, for Lamp to take it for its own server or emulator.
             if let ports = Edition.androidPorts(folder: name) {
-                let numbers = [ports.server, ports.console, ports.bridge, ports.control]
+                let numbers = ports.all
                 lines.append("(deny network-outbound " + numbers.map { "(remote tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
                 lines.append("(deny network-bind " + numbers.map { "(local tcp \"*:\($0)\")" }.joined(separator: " ") + ")")
             }

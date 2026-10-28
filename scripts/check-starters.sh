@@ -15,7 +15,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # A raw string of Template.swift, from its `static let <name> = #"""` line to the `"""#` that ends it, with its
-# placeholders filled by stand-ins (only their types matter here). Of the services Connectors.fill writes into
+# placeholders filled by stand-ins (only their types matter here), and the code Lamp puts in for a wish's apps left out. Of the services Connectors.fill writes into
 # LampSupport, each one a starter names (`LampAPI.openfoodfacts`) is declared with its type and no body.
 services() {
   local type=$1
@@ -31,7 +31,7 @@ extract() {
     on && /^ *"""#( \+ [A-Za-z]+)?$/ { exit }
     on { print }' "${2:-$template}" |
     perl -pe 's/^ *\/\/ \{\{SIGN_IN_SERVICES\}\}\n/$ENV{SIGN_IN}\n/; s/^ *\/\/ \{\{TOKEN_SERVICES\}\}\n/$ENV{TOKEN}\n/' |
-    sed -E 's/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
+    sed -E 's/\{\{WISH_LEAVES_LAMP_CLOSED\}\}//g; s/\{\{[A-Z_]*(PORT|TRIES)\}\}/7777/g; s/\{\{[A-Z_]+\}\}/stand-in/g'
 }
 # Lamp's flame, which both files end with (`lampGlyphSwift`, macOS only in LampSupport).
 { extract lampSupportTemplate; print "#if os(macOS)"; extract lampGlyphSwift; print "#endif" } > "$work/LampSupport.swift"
@@ -52,10 +52,15 @@ failed=0
 for starter in $starters; do
   name="${starter:t}"
   library=("$work/LampSupport.swift") macos=14.0
-  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' "$starter"/Sources/**/*.swift(N); then
+  sources=("$starter"/Sources/**/*.swift(N))
+  # A game's starter may have no Swift of its own (Lamp writes the app around its page): nothing to check.
+  if (( ! $#sources )); then print -- "○ $name: no Swift to check"; continue; fi
+  # A game's or a screen's Swift (Native.swift) answers its page through LampNative, in Lamp's LampPage.swift.
+  [ -f "$starter/Web/index.html" ] && library+=("$here/Resources/GameKit/apple/LampPage.swift")
+  if grep -qE '^[[:space:]]*(@[A-Za-z_]+[[:space:]]+)?import[[:space:]]+RealityKit\b' $sources; then
     library+=("$work/LampScene.swift") macos=15.0
   fi
-  if check $macos $library "$starter"/Sources/**/*.swift(N) 2>"$work/$name.log"; then
+  if check $macos $library $sources 2>"$work/$name.log"; then
     print "✓ $name"
   else
     print "✗ $name"; cat "$work/$name.log"; failed=1
@@ -68,4 +73,15 @@ for starter in $starters; do
     fi
   fi
 done
+# The same file as an iPhone app compiles it, where the `#if os(iOS)` code counts: against the simulator's SDK, when
+# this Xcode has it (the Command Line Tools alone don't).
+if sdk_ios="$(xcrun --sdk iphonesimulator --show-sdk-path 2>/dev/null)"; then
+  if xcrun swiftc -typecheck -parse-as-library -swift-version 5 -target arm64-apple-ios17.0-simulator -sdk "$sdk_ios" "$work/LampSupport.swift" 2>"$work/ios.log"; then
+    print "✓ LampSupport.swift for the iPhone"
+  else
+    print "✗ LampSupport.swift for the iPhone"; cat "$work/ios.log"; failed=1
+  fi
+else
+  print "○ LampSupport.swift for the iPhone: no simulator SDK here"
+fi
 exit $failed

@@ -21,17 +21,20 @@ enum Sharing {
     /// what the app declares in capabilities.json. 6: it may be an iPhone app or an app for both (`platform`),
     /// with an Apple Watch app's code in Watch/. 7: it also carries a share extension's code, in Share/. 8: its
     /// code builds a 3D scene on LampScene.swift, which the Lamp that opens it writes. 9: it's an Android app, its
-    /// Kotlin, manifest, resources and build file in app/.
-    static let formatVersion = 9
+    /// Kotlin, manifest, resources and build file in app/. 10: it may be a wish of several apps, each other app in its
+    /// folder (`parts` in the manifest, `Parts`), or a TV app, its web files in Web/ and Phone/ (`TVFiles`).
+    static let formatVersion = 11
 
     /// What a file says it is: the oldest number a Lamp must know to open it whole. Only a file with a widget
     /// is a 3, only one that declares capabilities a 4, only an iPhone app, an app for both or one with a watch
     /// app a 6, only one with a share extension a 7 and only one with a 3D scene an 8, so an app with none of them still opens in an older
     /// Lamp, and a Lamp that would build the app without one of them says to update instead. An Android app is a 9
-    /// whatever it has: a Lamp from before would look for Swift and find none.
+    /// whatever it has: a Lamp from before would look for Swift and find none. A wish of several apps, and a TV app,
+    /// are a 10 the same way: a Lamp from before would open the app at the root alone, or find no code. A game is an 11.
     static func format(withWidget: Bool, capabilities: Bool = false, platform: Platform = .mac, watch: Bool = false,
-                       share: Bool = false, scene: Bool = false) -> Int {
-        platform == .android ? 9 : scene ? 8 : share ? 7 : platform != .mac || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
+                       share: Bool = false, scene: Bool = false, parts: Bool = false) -> Int {
+        platform.target.recipe.language == .game ? 11 : parts || platform.target.recipe.language == .web ? 10
+            : platform.target.recipe.language == .kotlin ? 9 : scene ? 8 : share ? 7 : platform.reaches(.ios) || watch ? 6 : capabilities ? 4 : withWidget ? 3 : 2
     }
 
     @MainActor private static var picker: NSSharingServicePicker?
@@ -96,6 +99,8 @@ enum Sharing {
         /// iPhone apps could be shared have neither and are Mac apps.
         var platform: Platform?
         var family: DeviceFamily?
+        /// The wish's other apps, each in its folder (`Part`). Files from before wishes had them carry none.
+        var parts: [Part]?
     }
 
     /// Which app a shared file is, so a Mac that already has it can take the new one as an update rather
@@ -153,17 +158,52 @@ enum Sharing {
         }
     }
 
+    /// The secrets `export` keeps out of a file. Tests give their own, since the person's keys aren't theirs to read.
+    nonisolated(unsafe) static var knownSecrets: (LampProject) -> [String] = ShareCheck.keptSecrets(of:)
+
     /// Where `export` and `open` make their folders. Tests give each test a folder of its own here, so what one leaves
     /// behind is told apart from the folders a running Lamp makes at the same moment.
     nonisolated(unsafe) static var workFolder = FileManager.default.temporaryDirectory
 
     /// Writes `<Name>.lampapp` to a temporary folder and returns its URL. `icon` is the drawn icon to carry
-    /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in.
-    static func export(_ project: LampProject, icon: Data? = nil) throws -> URL {
-        // A shared file doesn't carry a TV app's web code yet.
-        guard project.platform != .tv, project.platform != .device else {
-            throw ImportError("\(project.name) can't be shared yet.", detail: project.platform == .tv ? "Lamp doesn't share TV apps yet." : "Lamp doesn't share apps for devices like this one yet.")
+    /// (`sharedIcon`); without one, Lamp's own drawing of the same design goes in. A wish of several apps travels whole:
+    /// the app at its root as any app does, and each other app in its folder (`Parts`), as an app of its kind.
+    /// How a wish's apps go in a shared file: one at the root and the others in their folders (see `export`, which
+    /// says why it's the one it is). What Put on GitHub lays its repository out by too, so the two never differ.
+    static func layout(of project: LampProject) -> (root: LampProject, parts: [LampProject]) {
+        var wish = project
+        wish.partFolders = Parts.folders(in: project.dir)
+        let found = Parts.load(wish)
+        let root = wish.holdsApp ? project : (found.first { $0.dir.lastPathComponent == Parts.folder(for: $0.platform) } ?? found.first ?? project)
+        return (root, found.filter { $0.id != root.id })
+    }
+
+    /// `repository` is where the wish is going as it's exported (Put on GitHub), named on the chain's last link so
+    /// whoever opens the file sees where the wish lives, with `commit`, the one up there now. A share that names no
+    /// place names where the wish was last put (`GitHubRepo.kept`), so a file shared from a wish on GitHub still says
+    /// where it lives and what commit it's at. A wish that lives nowhere names the version of its own history the
+    /// file is made from, so a file that comes back from whoever it was sent to can be merged against that version
+    /// (`Upstream.ownVersion`); a copy sharing on keeps the version it was given, which is the sender's and not its own.
+    static func export(_ project: LampProject, icon: Data? = nil, repository: String? = nil, commit: String? = nil) throws -> URL {
+        // Some kinds' files can't go in a shared file yet (an app for a device through its integration). The wish's
+        // other apps are read off its folder, as Lamp lists them.
+        // The file holds one app at its root and the others in their folders, as Lamp laid wishes out until any app could
+        // be taken away: a wish whose apps are all in folders of their own travels with one of them at the root, so any
+        // Lamp that opens format 10 opens it whole. The wish's apps know each other by their folders, and the app at a
+        // wish's root by the folder of its kind (`WishRooms.peer`), so the one that goes there is one whose folder is its
+        // kind's: an iPhone app made for the Mac too, still in iPhone/, would come out as another app than the one the
+        // others talk to. Every app of a wish is of its own family, so only a wish's one app can lack such a folder, and
+        // no other app talks to it.
+        let (root, parts) = layout(of: project)
+        for app in [root] + parts {
+            if let refusal = app.platform.target.recipe.shareRefusal { throw ImportError("\(project.name) can't be shared yet.", detail: refusal) }
+            if app.platform == .game, GameKit.engine(app) != .web {
+                throw ImportError("\(project.name) can't be shared yet.", detail: "Lamp doesn't share games written in C++.")
+            }
         }
+        // Others' work in it goes only with its license and credit, and work with no license doesn't go at all.
+        let credits = Credits.load(project)
+        if let refusal = ShareCheck.refusal(of: project, credits: credits) { throw refusal }
         let fm = FileManager.default
         let work = workFolder.appendingPathComponent("forge-share-\(UUID().uuidString)")
         let stage = work.appendingPathComponent("app")
@@ -173,66 +213,18 @@ enum Sharing {
         var made = false
         defer { removeStaged(made ? stage : work) }
 
-        // An Android app's code is app/ as Lamp would open it (`AndroidFiles`): never Lamp's Gradle files beside it.
-        let android = project.platform == .android
-        if android {
-            let files = AndroidFiles.list(in: project.dir)
-            for file in files.code + files.data {
-                let target = stage.appendingPathComponent(relativePath(of: file, in: project.dir))
-                try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try fm.copyItem(at: file, to: target)
-            }
-        }
-        for file in android ? [] : swiftSources(in: project.dir.appendingPathComponent("Sources"))
-        where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
-            let relative = relativePath(of: file, in: project.dir)
-            let target = stage.appendingPathComponent(relative)
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: target)
-        }
-        // The widget's code, when the app has one. Lamp's own file in that folder stays behind, like
-        // LampSupport.swift: the Mac that opens the file writes its own.
-        let widgetCode = !android && Template.hasWidget(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.widgetFolder))
-            .filter { $0.lastPathComponent != Template.widgetSupportFile } : []
-        // The watch app's and the share extension's the same way, without Lamp's own files there.
-        let watchCode = !android && Template.hasWatch(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.watchFolder))
-            .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: project.dir)) } : []
-        let shareCode = !android && Template.hasShare(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.shareFolder))
-            .filter { $0.lastPathComponent != Template.shareSupportFile } : []
-        for file in widgetCode + watchCode + shareCode {
-            let target = stage.appendingPathComponent(relativePath(of: file, in: project.dir))
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: target)
-        }
-        // The app's own files (Assets/), capped so shared apps stay small enough to send and within what
-        // another Lamp accepts (`open`). The chat's attachments stay private.
-        Assets.adopt(in: project)
+        // Every app's own files count against one cap, so shared wishes stay small enough to send and within what
+        // another Lamp accepts (`open`).
         var attachedBytes = 0
-        let assets = project.dir.appendingPathComponent(Assets.folder)
-        for file in assetFiles(of: project) {
-            attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            guard attachedBytes <= maxAttachedBytes else {
-                throw ImportError("\(project.name) is too big to share.",
-                                  detail: "Its pictures and other files come to over \(maxAttachedBytes / 1_000_000) MB.")
-            }
-            let target = stage.appendingPathComponent(Assets.folder).appendingPathComponent(relativePath(of: file, in: assets))
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: target)
+        let first = try stageApp(root, into: stage, attachedBytes: &attachedBytes)
+        for part in parts {
+            let folder = stage.appendingPathComponent(part.dir.lastPathComponent)
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            _ = try stageApp(part, into: folder, attachedBytes: &attachedBytes)
         }
-        for name in ["APP.md", "icon.json"] where fm.fileExists(atPath: project.dir.appendingPathComponent(name).path) {
-            try fm.copyItem(at: project.dir.appendingPathComponent(name), to: stage.appendingPathComponent(name))
-        }
-        // What the app declares, as Lamp reads it: only what passed each check, never the file as it is.
-        let capabilities = Template.Capabilities.load(project).checked
-        if !capabilities.isEmpty {
-            let plain = JSONEncoder()
-            plain.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try plain.encode(capabilities).write(to: stage.appendingPathComponent(Template.Capabilities.file))
-        }
-        // Where its sidebar in Chrome fits, the same way: Lamp writes what passed the checks. A Lamp from before the
-        // sidebar ignores the file, and has no sidebar to lose.
-        if let browser = BrowserCompanions.Declaration.load(project) {
-            try BrowserCompanions.Declaration.encoded(browser).write(to: stage.appendingPathComponent(BrowserCompanions.Declaration.file))
+        // The icon is the wish's, and goes with the app at its root.
+        if fm.fileExists(atPath: project.dir.appendingPathComponent("icon.json").path) {
+            try fm.copyItem(at: project.dir.appendingPathComponent("icon.json"), to: stage.appendingPathComponent("icon.json"))
         }
         if let spec = Icons.load(project) {
             switch Icons.artwork(project, spec: spec) {
@@ -240,6 +232,26 @@ enum Sharing {
             case .picture: try fm.copyItem(at: Icons.artURL(project, spec: spec), to: stage.appendingPathComponent("icon-art.png"))
             case .waiting, nil: break
             }
+        }
+        // Where the wish came from, with this wish added to the chain: whoever opens the file is remixing it. Its paths
+        // are the wish's; when one of its apps in a folder goes at the file's root, paths into that folder lose it.
+        let moved = root.dir.standardizedFileURL == project.dir.standardizedFileURL ? nil : root.dir.lastPathComponent + "/"
+        func inFile(_ path: String) -> String { moved.map { path.hasPrefix($0) ? String(path.dropFirst($0.count)) : path } ?? path }
+        let kept = repository == nil ? GitHubRepo.kept(for: project) : nil
+        let me = Credits.Remix(name: project.name, wish: identity(of: project), url: repository ?? kept?.url, commit: commit ?? kept?.commit)
+        var carried = credits.remixed(from: me.url == nil ? ownVersionLink(me, of: project, chain: credits) : me)
+        carried.generated = carried.generated.map { Credits.Generated(file: inFile($0.file)) }
+        carried.upstream = carried.upstream.map { var source = $0; source.licenseFile = source.licenseFile.map(inFile); return source }
+        try carried.encoded().write(to: stage.appendingPathComponent(Credits.file))
+        // Each license the credits name goes with the work it covers, wherever the kind's own files left it.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, Credits.isLicenceFile(path) else { continue }
+            let from = project.dir.appendingPathComponent(path), to = stage.appendingPathComponent(inFile(path))
+            guard !fm.fileExists(atPath: to.path),
+                  (try? from.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map({ $0.isRegularFile == true && $0.isSymbolicLink != true }) == true
+            else { continue }
+            try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: from, to: to)
         }
         // The icon as drawn here, for Quick Look and the picture sent with the file. The Mac that opens the file
         // draws its own from icon.json; an older Lamp leaves this one unread.
@@ -249,14 +261,34 @@ enum Sharing {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(Manifest(format: format(withWidget: !widgetCode.isEmpty, capabilities: !capabilities.isEmpty,
-                                                    platform: project.platform, watch: !watchCode.isEmpty, share: !shareCode.isEmpty,
-                                                    scene: !android && Template.usesScene(project)),
+        // A game anywhere in the wish makes it an 11: a Lamp from before would find no code in the game's folder.
+        let number = max(format(withWidget: first.widget, capabilities: first.capabilities, platform: root.platform, watch: first.watch,
+                                share: first.share, scene: first.scene, parts: !parts.isEmpty),
+                         parts.contains { $0.platform == .game } ? format(withWidget: false, platform: .game) : 0)
+        try encoder.encode(Manifest(format: number,
                                     name: project.name, exportedAt: Date(),
                                     app: identity(of: project), description: AppDescription.description(of: project),
-                                    platform: project.platform, family: project.platform.hasIOS ? project.family : nil))
+                                    platform: root.platform, family: root.hasIOS ? root.family : nil,
+                                    parts: parts.isEmpty ? nil : parts.map {
+                                        Manifest.Part(folder: $0.dir.lastPathComponent, platform: $0.platform, family: $0.hasIOS ? $0.family : nil)
+                                    }))
             .write(to: stage.appendingPathComponent("lamp-app.json"))
 
+        // Nothing of the person's goes with it: none of their keys, the app's secrets or its token, and nothing shaped
+        // like a key.
+        // A license the credits name goes in the file, or the file doesn't go: a copy without it couldn't be shared on.
+        for source in credits.upstream {
+            guard let path = source.licenseFile, !fm.fileExists(atPath: stage.appendingPathComponent(inFile(path)).path) else { continue }
+            throw ImportError("\(project.name) can't be shared.",
+                              detail: "The license of \(source.name) (\(path)) can't go with it. Ask Lamp to keep it in a file named LICENSE.")
+        }
+        // Every app's: each of a wish's apps keeps its own secrets and token.
+        let known = Array(Set(([project, root] + parts).flatMap { knownSecrets($0) }))
+        let leaks = ShareCheck.secrets(in: stage, known: known)
+        if let first = leaks.first {
+            throw ImportError("\(project.name) can't be shared: it holds a key or a password.",
+                              detail: "It's in \(first)\(leaks.count > 1 ? " and \(leaks.count - 1) more" : ""). Ask Lamp to take it out and keep it out of the code.")
+        }
         // Everything staged, counted and measured the way the importer's listing does (files and folders,
         // bytes before compression), so Lamp never makes a file another Lamp refuses.
         let staged = fm.enumerator(at: stage, includingPropertiesForKeys: [.fileSizeKey])?.compactMap { $0 as? URL } ?? []
@@ -270,6 +302,98 @@ enum Sharing {
         guard size <= maxArchiveBytes else { throw ImportError("\(project.name) is too big to share.") }
         made = true
         return output
+    }
+
+    /// A wish that lives nowhere names the version of its own history on its link: the version the file is made
+    /// from, unless the link already names one that isn't a version here (the sender's, on a copy sharing on), which
+    /// stays. Nothing on a wish with no history yet.
+    private static func ownVersionLink(_ link: Credits.Remix, of project: LampProject, chain: Credits) -> Credits.Remix {
+        var link = link
+        if let known = chain.remixOf.last(where: { $0.sameLink(as: link) })?.commit,
+           !Versions.gitBlocking("git merge-base --is-ancestor \(known) HEAD", cwd: project.dir).ok {
+            return link
+        }
+        let head = Versions.gitBlocking("git rev-parse HEAD", cwd: project.dir)
+        link.commit = head.ok ? Credits.validCommit(head.output.trimmed) : nil
+        return link
+    }
+
+    /// What one app went into the file with, for the number the file gives itself.
+    private struct Staged {
+        var widget = false, watch = false, share = false, scene = false, capabilities = false
+    }
+
+    /// One app's files into `stage`: its code as its kind travels (a Swift app's Sources/ with its widget's, watch app's
+    /// and share extension's, an Android app's app/, a TV app's Web/ and Phone/), its own files (Assets/), APP.md and
+    /// what it declares. Never Lamp's own files, which the Mac that opens the file writes.
+    private static func stageApp(_ project: LampProject, into stage: URL, attachedBytes: inout Int) throws -> Staged {
+        let fm = FileManager.default
+        var staged = Staged()
+        func copy(_ file: URL, as relative: String) throws {
+            let target = stage.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: file, to: target)
+        }
+        switch project.platform.target.recipe.language {
+        case .kotlin:
+            // An Android app's code is app/ as Lamp would open it (`AndroidFiles`): never Lamp's Gradle files beside it.
+            let files = AndroidFiles.list(in: project.dir)
+            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
+        case .web:
+            let files = TVFiles.list(in: project.dir)
+            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
+        case .game:
+            let files = GameFiles.list(in: project.dir)
+            for file in files.code + files.data { try copy(file, as: relativePath(of: file, in: project.dir)) }
+        default:
+            for file in swiftSources(in: project.dir.appendingPathComponent("Sources"))
+            where file.lastPathComponent != "LampSupport.swift" && file.lastPathComponent != Template.sceneSupportFile {
+                try copy(file, as: relativePath(of: file, in: project.dir))
+            }
+            // The widget's code, when the app has one. Lamp's own file in that folder stays behind, like
+            // LampSupport.swift: the Mac that opens the file writes its own.
+            let widgetCode = Template.hasWidget(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.widgetFolder))
+                .filter { $0.lastPathComponent != Template.widgetSupportFile } : []
+            // The watch app's and the share extension's the same way, without Lamp's own files there.
+            let watchCode = Template.hasWatch(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.watchFolder))
+                .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: project.dir)) } : []
+            let shareCode = Template.hasShare(project) ? swiftSources(in: project.dir.appendingPathComponent(Template.shareFolder))
+                .filter { $0.lastPathComponent != Template.shareSupportFile } : []
+            for file in widgetCode + watchCode + shareCode { try copy(file, as: relativePath(of: file, in: project.dir)) }
+            staged.widget = !widgetCode.isEmpty
+            staged.watch = !watchCode.isEmpty
+            staged.share = !shareCode.isEmpty
+            staged.scene = Template.usesScene(project)
+        }
+        // The app's own files (Assets/), capped so shared apps stay small enough to send and within what
+        // another Lamp accepts (`open`). The chat's attachments stay private.
+        Assets.adopt(in: project)
+        let assets = project.dir.appendingPathComponent(Assets.folder)
+        for file in assetFiles(of: project) {
+            attachedBytes += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard attachedBytes <= maxAttachedBytes else {
+                throw ImportError("\(project.name) is too big to share.",
+                                  detail: "Its pictures and other files come to over \(maxAttachedBytes / 1_000_000) MB.")
+            }
+            try copy(file, as: Assets.folder + "/" + relativePath(of: file, in: assets))
+        }
+        if fm.fileExists(atPath: project.dir.appendingPathComponent("APP.md").path) {
+            try fm.copyItem(at: project.dir.appendingPathComponent("APP.md"), to: stage.appendingPathComponent("APP.md"))
+        }
+        // What the app declares, as Lamp reads it: only what passed each check, never the file as it is.
+        let capabilities = Template.Capabilities.load(project).checked
+        if !capabilities.isEmpty {
+            let plain = JSONEncoder()
+            plain.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try plain.encode(capabilities).write(to: stage.appendingPathComponent(Template.Capabilities.file))
+            staged.capabilities = true
+        }
+        // Where its sidebar in Chrome fits, the same way: Lamp writes what passed the checks. A Lamp from before the
+        // sidebar ignores the file, and has no sidebar to lose.
+        if let browser = BrowserCompanions.Declaration.load(project) {
+            try BrowserCompanions.Declaration.encoded(browser).write(to: stage.appendingPathComponent(BrowserCompanions.Declaration.file))
+        }
+        return staged
     }
 
     /// The icon a shared file carries, drawn from the design and artwork being shared, as the Mac that opens it
@@ -350,6 +474,11 @@ enum Sharing {
         let name: String
         var identity: String? = nil   // Manifest.app; nil in files from before apps said who they are
         var description: String? = nil   // Manifest.description, the sender's words; shown as text, never trusted
+        /// Where the wish came from (credits.json at the file's root), through Lamp's checks; nil for a part, and in
+        /// files from before wishes carried it.
+        var credits: Credits? = nil
+        /// The license texts those credits name, beside the work they cover (`Credits.isLicenceFile`).
+        var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
         /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
@@ -379,6 +508,12 @@ enum Sharing {
             return inAssets != file.lastPathComponent || file.path.contains("/\(Sharing.Assets.folder)/") ? inAssets : Sharing.relativePath(of: file, in: legacy)
         }
         let fileCount: Int
+        /// A TV app's pictures, sounds and fonts under Web/ and Phone/: data the TV shows, never code. Its pages and
+        /// scripts are in `sources`.
+        var webData: [URL] = []
+        /// The wish's other apps (`Part`), each read from its folder as the app at the root is, for the review and the
+        /// install alike: a part's code reaches an app's folder only from here.
+        var parts: [Part] = []
     }
 
     /// An app file is a few source files and some attachments: anything much bigger isn't one, and a file
@@ -387,8 +522,11 @@ enum Sharing {
     static let maxUnpackedBytes = 256 * 1024 * 1024
     static let maxFiles = 2000
 
+    /// A shared file, or a folder holding a wish as Put on GitHub lays it out (a clone of its repository, `RepoImport`).
     static func open(_ file: URL) throws -> Package {
         let fm = FileManager.default
+        var isFolder: ObjCBool = false
+        if fm.fileExists(atPath: file.path, isDirectory: &isFolder), isFolder.boolValue { return try RepoImport.open(folder: file) }
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxArchiveBytes else { throw ImportError("This file is too large to be a Lamp app (over 64 MB).") }
         let folder = workFolder.appendingPathComponent("forge-import-\(UUID().uuidString)")
@@ -403,7 +541,15 @@ enum Sharing {
             throw ImportError("This file holds more than a Lamp app would (over \(maxFiles) files or 256 MB unpacked).")
         }
         try run("/usr/bin/ditto", ["-x", "-k", file.path, folder.path])
+        let package = try open(unpacked: folder)
+        opened = true
+        return package
+    }
 
+    /// A shared file's contents as unpacked into a folder of Lamp's (`open`, and a repository's tree copied there by
+    /// `RepoImport`), read and checked. The folder is the caller's to remove when the package is refused.
+    static func open(unpacked folder: URL) throws -> Package {
+        let fm = FileManager.default
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("lamp-app.json")),
@@ -414,12 +560,56 @@ enum Sharing {
             throw ImportError("This app was shared from a newer version of Lamp. Update Lamp to open it.")
         }
         let platform = manifest.platform ?? .mac
-        let android = platform == .android ? AndroidFiles.list(in: folder) : nil
-        let appCode = android?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
+        let all = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
+        var package = try read(app: folder, platform: platform, family: manifest.family ?? .iphone, name: name(from: manifest.name),
+                               identity: identity(from: manifest.app), description: manifest.description.flatMap(AppDescription.valid), fileCount: all)
+        package.credits = Credits.read(folder.appendingPathComponent(Credits.file))
+        package.licences = (package.credits?.upstream ?? []).compactMap(\.licenseFile).filter(Credits.isLicenceFile).compactMap { path in
+            let file = folder.appendingPathComponent(path)
+            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            return values?.isRegularFile == true && values?.isSymbolicLink != true ? file : nil
+        }
+        // The wish's other apps, each read from its folder as the app at the root is: only a folder Lamp keeps a part
+        // in, named once, holding a kind that can be a part. The manifest is the sender's word, so the folder's name
+        // and kind are taken only within those.
+        var folders: Set<String> = []
+        for part in manifest.parts ?? [] where Parts.folders.contains(part.folder) && Parts.partKinds.contains(part.platform) && folders.insert(part.folder).inserted {
+            let read = try read(app: folder.appendingPathComponent(part.folder), platform: part.platform, family: part.family ?? .iphone,
+                                name: package.name, identity: nil, description: nil, fileCount: 0)
+            package.parts.append(Package.Part(folder: part.folder, package: read))
+        }
+        // A license inside one of the other apps' folders goes in with that app too: its install replaces what its folder
+        // held, the license the wish's own install put there included.
+        package.parts = package.parts.map { part in
+            var app = part.package
+            let inside = folder.appendingPathComponent(part.folder).standardizedFileURL.path + "/"
+            app.licences = package.licences.filter { $0.standardizedFileURL.path.hasPrefix(inside) }
+            return Package.Part(folder: part.folder, package: app)
+        }
+        // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
+        // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
+        for app in [package] + package.parts.map(\.package) where app.platform.target.recipe.language == .kotlin && AndroidFiles.senderPackage(in: app) == nil {
+            throw ImportError("Lamp can't open this Android app.",
+                              detail: "Its build file doesn't name the app's package in a way Lamp can read.")
+        }
+        return package
+    }
+
+    /// One app's files as unpacked (the wish's root, or one of its other apps in its folder), read as its kind travels:
+    /// its code, the only code there is (reviewed, then installed from this one list), and its data.
+    private static func read(app folder: URL, platform: Platform, family: DeviceFamily, name: String, identity: String?,
+                             description: String?, fileCount: Int) throws -> Package {
+        let language = platform.target.recipe.language
+        let android = language == .kotlin ? AndroidFiles.list(in: folder) : nil
+        let web = language == .web ? TVFiles.list(in: folder) : language == .game ? GameFiles.list(in: folder) : nil
+        // Lamp's own files in Sources/ are never read from a file (a repository holds them so the code builds alone):
+        // this Mac writes its own, and the review reads only the sender's code.
+        let appCode = android?.code ?? web?.code ?? swiftSources(in: folder.appendingPathComponent("Sources"))
+            .filter { $0.lastPathComponent != "LampSupport.swift" && $0.lastPathComponent != Template.sceneSupportFile }
         guard !appCode.isEmpty else { throw ImportError("This Lamp app file has no code in it.") }
         // A widget's and a share extension's code is read whatever number the file gives itself: the number is
         // the sender's word. Lamp's own files there are never taken from a file; this Mac writes its own.
-        let sources = android != nil ? appCode : appCode + swiftSources(in: folder.appendingPathComponent(Template.widgetFolder))
+        let sources = android != nil || web != nil ? appCode : appCode + swiftSources(in: folder.appendingPathComponent(Template.widgetFolder))
             .filter { $0.lastPathComponent != Template.widgetSupportFile }
             + swiftSources(in: folder.appendingPathComponent(Template.watchFolder))
             .filter { !Template.watchSupportPaths.contains(relativePath(of: $0, in: folder)) }
@@ -429,25 +619,123 @@ enum Sharing {
         guard sources.allSatisfy({ (try? String(contentsOf: $0, encoding: .utf8)) != nil }) else {
             throw ImportError("This Lamp app file has code that isn't plain text, so Lamp can't check it.")
         }
-        let all = fm.enumerator(at: folder, includingPropertiesForKeys: nil)?.allObjects.count ?? 0
         // Assets/, or Attachments/ from a Lamp that bundled the chat's files: either way the app's own now.
         let attachments = filesUnder(folder.appendingPathComponent(Assets.folder))
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
-        let package = Package(name: name(from: manifest.name), identity: identity(from: manifest.app),
-                       description: manifest.description.flatMap(AppDescription.valid),
+        return Package(name: name, identity: identity, description: description,
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
                        browser: BrowserCompanions.Declaration.load(folder.appendingPathComponent(BrowserCompanions.Declaration.file)),
-                       platform: platform, family: manifest.family ?? .iphone,
-                       folder: folder, sources: sources,
-                       attachments: attachments, androidData: android?.data ?? [], fileCount: all)
-        // Lamp opens an Android app by its package, which it moves to this Mac's own on the way in: one whose build
-        // file doesn't name it plainly would build here and never open, so it's refused before anything is replaced.
-        if android != nil, AndroidFiles.senderPackage(in: package) == nil {
-            throw ImportError("Lamp can't open this Android app.",
-                              detail: "Its build file doesn't name the app's package in a way Lamp can read.")
-        }
-        opened = true
-        return package
+                       platform: platform, family: family, folder: folder, sources: sources,
+                       attachments: attachments, androidData: android?.data ?? [], fileCount: fileCount, webData: web?.data ?? [])
+    }
+
+    /// Where a wish keeps the files of a part it can't make yet (this Mac lacks the kind's tools): under its own
+    /// `.lamp`, which goes with the wish and isn't versioned, until the part is made and the files go in (`Store.addPart`).
+    /// Kept by the part's family (`Parts.group`), since the folder the file had it in may not be the one it's made in
+    /// here (an app for both exported from the Mac/ it was changed in place in is made in Apple/).
+    /// A part kept for a folder (`slot`: the one kept for it on the wish's list, `WishApp.folder`) is kept under its
+    /// family and that folder, so two apps of one family waiting at once (an iPhone app and a Mac app, two Mac apps)
+    /// keep their files apart; one with no folder named, under its family alone, where a Lamp from before kept it.
+    static let waitingFolder = ".lamp/waiting"
+    static func waitingFolder(in wish: URL, for kind: Platform, slot: String? = nil) -> URL {
+        let key = slot.flatMap { Parts.isFolderName($0) ? Parts.group(kind) + "-" + $0.lowercased() : nil } ?? Parts.group(kind)
+        return wish.appendingPathComponent(waitingFolder).appendingPathComponent(key)
+    }
+
+    /// Where the part kept for this slot is: its own place, else what a Lamp from before kept under the family alone,
+    /// when that was kept for this same folder (its note says which), so no other slot of the family takes it.
+    private static func keptPlace(in wish: URL, for kind: Platform, slot: String?) -> URL {
+        let own = waitingFolder(in: wish, for: kind, slot: slot)
+        guard let slot, !FileManager.default.fileExists(atPath: own.path) else { return own }
+        let family = waitingFolder(in: wish, for: kind)
+        guard let data = try? Data(contentsOf: family.appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data),
+              (note.slot ?? note.folder ?? Parts.folder(for: note.platform)).lowercased() == slot.lowercased() else { return own }
+        return family
+    }
+
+    /// The folder files an earlier Lamp kept for this kind's family alone were claimed for, if they were.
+    static func claimedSlot(in wish: URL, for kind: Platform) -> String? {
+        let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
+        guard let data = try? Data(contentsOf: note), let kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind else { return nil }
+        return kept.slot
+    }
+
+    /// Notes in files an earlier Lamp kept for this kind's family alone that they're for `slot`, before the wish's list
+    /// says so and before they move (`claimKept`): from then on they're found from that slot, whichever step comes next.
+    enum Marked { case nothingKept, marked, failed }
+
+    /// `nothingKept` when no files are kept so for this kind; `failed` when there are and their note couldn't be written,
+    /// so nothing else may move them.
+    @discardableResult
+    static func markKept(in wish: URL, for kind: Platform, slot: String) -> Marked {
+        let note = waitingFolder(in: wish, for: kind).appendingPathComponent("lamp-part.json")
+        guard let data = try? Data(contentsOf: note), var kept = try? JSONDecoder().decode(Waiting.self, from: data), kept.platform == kind
+        else { return .nothingKept }
+        kept.slot = slot
+        guard let encoded = try? JSONEncoder().encode(kept), (try? encoded.write(to: note, options: .atomic)) != nil else { return .failed }
+        return .marked
+    }
+
+    /// What a kept part was made for, beside its files.
+    private struct Waiting: Codable {
+        var platform: Platform
+        var family: DeviceFamily?
+        /// The folder the file had it in, which it's made in when that's a folder for its kind. Nil from before it was kept.
+        var folder: String?
+        /// The license texts it came with, by their path in its folder (`Package.licences`), so they go in when it's made.
+        var licences: [String]?
+        /// For files an earlier Lamp kept for the family alone: the folder on the wish's list they're now for
+        /// (`claimKept`), written before anything else moves, so they're found from it at every step of the way.
+        var slot: String?
+    }
+
+    /// Keeps a part's files, as unpacked, for a wish that can't make the part yet, in place of any kept for its family.
+    static func keep(_ part: Package.Part, in wish: URL, slot: String? = nil) throws {
+        let fm = FileManager.default
+        let folder = waitingFolder(in: wish, for: part.package.platform, slot: slot)
+        try? fm.removeItem(at: folder)
+        try fm.createDirectory(at: folder.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.copyItem(at: part.package.folder, to: folder)
+        let note = try JSONEncoder().encode(Waiting(platform: part.package.platform, family: part.package.family, folder: part.folder,
+                                                    licences: part.package.licences.map { relativePath(of: $0, in: part.package.folder) }))
+        try note.write(to: folder.appendingPathComponent("lamp-part.json"))
+    }
+
+    /// The part a wish kept for this kind's family, read as a shared app is: nil when none is kept, or what's there can't
+    /// be read as an app of the kind it was kept as. The folder stays until `forgetKept`.
+    static func kept(in wish: URL, for kind: Platform, slot: String? = nil) -> Package.Part? {
+        let kept = keptPlace(in: wish, for: kind, slot: slot)
+        guard let data = try? Data(contentsOf: kept.appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data),
+              let package = try? read(app: kept, platform: note.platform, family: note.family ?? .iphone, name: Parts.folder(for: note.platform),
+                                      identity: nil, description: nil, fileCount: 0) else { return nil }
+        let folder = note.folder.flatMap { Parts.folder($0, canHold: note.platform) ? $0 : nil } ?? Parts.folder(for: note.platform)
+        var app = package
+        app.licences = (note.licences ?? []).filter(Credits.isLicenceFile).map { kept.appendingPathComponent($0) }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])).map { $0.isRegularFile == true && $0.isSymbolicLink != true } == true }
+        return Package.Part(folder: folder, package: app)
+    }
+
+    /// The folder a kept part had in its file, when it's one for the kind it's kept for: only its note is read.
+    static func keptFolder(in wish: URL, for kind: Platform, slot: String? = nil) -> String? {
+        guard let data = try? Data(contentsOf: keptPlace(in: wish, for: kind, slot: slot).appendingPathComponent("lamp-part.json")),
+              let note = try? JSONDecoder().decode(Waiting.self, from: data), note.platform == kind,
+              let folder = note.folder, Parts.folder(folder, canHold: kind) else { return nil }
+        return folder
+    }
+
+    /// Moves what an earlier Lamp kept for this kind's family alone to the place of the folder now kept for its app, so a
+    /// retry finds it there whatever that folder is called. Nothing when nothing's kept so, or the slot has its own.
+    static func claimKept(in wish: URL, for kind: Platform, slot: String) {
+        let family = waitingFolder(in: wish, for: kind), own = waitingFolder(in: wish, for: kind, slot: slot)
+        let fm = FileManager.default
+        guard family != own, fm.fileExists(atPath: family.appendingPathComponent("lamp-part.json").path), !fm.fileExists(atPath: own.path) else { return }
+        try? fm.moveItem(at: family, to: own)
+    }
+
+    static func forgetKept(in wish: URL, for kind: Platform, slot: String? = nil) {
+        try? FileManager.default.removeItem(at: keptPlace(in: wish, for: kind, slot: slot))
     }
 
     /// A file's name on one line: a file can be edited by hand, and line breaks or runs of space in its
@@ -464,12 +752,15 @@ enum Sharing {
     @discardableResult
     static func install(_ package: Package, into project: LampProject, replacing: Bool = false) throws -> Bool {
         let fm = FileManager.default
-        var newArtwork = false
         // Swap the code there for the shared code; keep Lamp's own LampSupport.swift. The widget goes the
         // same way: whatever widget the app had is gone, and the file's, if it has one, takes its place
         // (Lamp's own file there is written again before the build).
-        if package.platform == .android {
+        if package.platform.target.recipe.language == .kotlin {
             try AndroidFiles.install(package, into: project)
+        } else if package.platform.target.recipe.language == .web {
+            try TVFiles.install(package, into: project)
+        } else if package.platform.target.recipe.language == .game {
+            try GameFiles.install(package, into: project)
         } else {
             let sources = project.dir.appendingPathComponent("Sources")
             for item in try fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)
@@ -511,6 +802,17 @@ enum Sharing {
         // updated takes the file's too, none included: the words go with the code they describe. Lamp writes
         // the file itself from what it read, so nothing else a sender put there arrives.
         try AppDescription.write(package.description, for: project)
+        // And where it came from, kept as it arrived so it's credited however the wish changes here (`Credits.load`), with
+        // each license it names where it names it, when the kind's own files didn't already bring it.
+        try Credits.arrive(package.credits, in: project)
+        // An update replaces what's there, so a license whose text changed upstream never stays as it was; one the kind's
+        // files already brought is the same text written again.
+        for file in package.licences {
+            let target = project.dir.appendingPathComponent(Sharing.relativePath(of: file, in: package.folder))
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
@@ -521,24 +823,44 @@ enum Sharing {
         } else if fm.fileExists(atPath: browserFile.path) {
             try fm.removeItem(at: browserFile)
         }
-        if let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
-           let spec = try? JSONDecoder().decode(IconSpec.self, from: data) {
-            Icons.save(spec, for: project)
-            // A glass design is kept only once it passes the same checks as one Lamp drew.
-            if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
-                newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
-                try? Icons.save(glass, for: project, spec: spec)
-            // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
-            // game's painting fills its tile.
-            } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
-               spec.game || Icons.isCutOut(art) {
-                let url = Icons.artURL(project, spec: spec)
-                newArtwork = (try? Data(contentsOf: url)) != art
-                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? art.write(to: url)
-                // The sender's picture takes the place of a glass design kept here for the same icon.
-                try? fm.removeItem(at: Icons.glassURL(project, spec: spec))
-            }
+        return try installIcon(package, into: project)
+    }
+
+    /// The shared icon into the app: its design (icon.json) and its artwork, which lives in Lamp's own folder outside
+    /// the versions. True when the artwork is different now.
+    @discardableResult
+    static func installIcon(_ package: Package, into project: LampProject) throws -> Bool {
+        guard let data = try? Data(contentsOf: package.folder.appendingPathComponent("icon.json")),
+              let spec = try? JSONDecoder().decode(IconSpec.self, from: data) else { return false }
+        Icons.save(spec, for: project)
+        return installArtwork(package, into: project, spec: spec)
+    }
+
+    /// The shared icon's artwork alone, for the design the app has now (its icon.json as it is, which a merge has
+    /// already settled, `Upstream.merge`): never the design in the file. Nothing for a design that doesn't read.
+    @discardableResult
+    static func installArtwork(_ package: Package, into project: LampProject) throws -> Bool {
+        guard let spec = Icons.load(project) else { return false }
+        return installArtwork(package, into: project, spec: spec)
+    }
+
+    private static func installArtwork(_ package: Package, into project: LampProject, spec: IconSpec) -> Bool {
+        let fm = FileManager.default
+        var newArtwork = false
+        // A glass design is kept only once it passes the same checks as one Lamp drew.
+        if let glass = GlassArt.load(from: package.folder.appendingPathComponent(glassEntry)) {
+            newArtwork = GlassArt.load(from: Icons.glassURL(project, spec: spec)) != glass
+            try? Icons.save(glass, for: project, spec: spec)
+        // Files from older Lamp versions carry full-square artwork; only cut-out objects fit the new icons, but a
+        // game's painting fills its tile.
+        } else if let art = try? Data(contentsOf: package.folder.appendingPathComponent("icon-art.png")),
+           spec.game || Icons.isCutOut(art) {
+            let url = Icons.artURL(project, spec: spec)
+            newArtwork = (try? Data(contentsOf: url)) != art
+            try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? art.write(to: url)
+            // The sender's picture takes the place of a glass design kept here for the same icon.
+            try? fm.removeItem(at: Icons.glassURL(project, spec: spec))
         }
         return newArtwork
     }
@@ -724,127 +1046,7 @@ extension Sharing {
                    patterns: ["CGEvent", "AXUIElement", "CGEventTap"]),
         Capability(label: "Loads code at runtime (can hide what it does)", icon: "eye.slash", level: .sensitive,
                    patterns: ["dlopen", "NSClassFromString", "perform(#selector", "NSSelectorFromString"]),
-        encodedData,
     ]
-
-    /// Found by `hidesEncodedText`, not by its patterns.
-    static let encodedData = Capability(label: "Contains encoded data (can hide what it does)", icon: "eye.slash", level: .sensitive,
-                                        patterns: [])
-
-    /// Whether the code carries something written in base64, the usual way to keep an address, a script or a
-    /// payload from someone reading it. What's looked for is the encoded text itself, not a call that decodes:
-    /// decoding is also how an app reads what it downloads (the tag on each link of a page it fetches), which
-    /// hides nothing in the app, and a call that decodes text written into the code is found by that text.
-    /// A run of base64 counts when some stretch of it decodes to readable text, at any of the four ways it can
-    /// line up, or when it's long and has the mix of letters and digits encoded bytes have. Text cut into
-    /// pieces is put back together: strings that are nothing but base64, written close together, are read as
-    /// one, in the order they're written. Pieces written far apart or joined in another order, and other encodings (hex, numbers, a
-    /// reversed or scrambled string), are beyond a search like this; the AI review reads that code.
-    static func hidesEncodedText(_ code: String) -> Bool {
-        // A literal handed straight to the decoder, however short.
-        if code.contains(#/base64Encoded:\s*#*"/#) { return true }
-        let quote = UInt8(ascii: "\"")
-        var run: [UInt8] = [], pieces: [UInt8] = [], starts: [Int] = []
-        var before: UInt8 = 0
-        var offset = 0, lastPiece = 0
-        for byte in code.utf8 {
-            offset += 1
-            if base64Value(byte) != nil || byte == UInt8(ascii: "=") {
-                run.append(byte)
-                continue
-            }
-            if encodes(run) { return true }
-            if before == quote, byte == quote, !run.isEmpty {
-                // Pieces are written close together (`"…" + "…"`, one `let` a line); words far apart in the
-                // code, joined, can read as text by chance.
-                if offset - run.count - lastPiece > 40 {
-                    if joinedReadsAsText(pieces, from: starts) { return true }
-                    pieces.removeAll(keepingCapacity: true)
-                    starts.removeAll(keepingCapacity: true)
-                }
-                starts.append(pieces.count)
-                pieces += run.compactMap(base64Value)
-                lastPiece = offset
-            }
-            before = byte
-            run.removeAll(keepingCapacity: true)
-        }
-        return encodes(run) || joinedReadsAsText(pieces, from: starts)
-    }
-
-    /// Joined pieces are decoded from the start of one of them, as the app joining them would: read from
-    /// partway into a word, words repeated in a list can line up as text. A later start four digits on, or
-    /// any multiple of four, decodes to the end of what the earlier one does, so the first start of each of
-    /// the four ways to line up is enough, and a long list is read four times at most.
-    private static func joinedReadsAsText(_ digits: [UInt8], from starts: [Int]) -> Bool {
-        var first: [Int: Int] = [:]
-        for start in starts where first[start % 4] == nil { first[start % 4] = start }
-        return first.values.contains { digits.count - $0 >= 16 && readable(digits, from: $0, enough: 12) >= 12 }
-    }
-
-    /// One base64 digit's value, in either alphabet (`+/` or the web's `-_`).
-    private static func base64Value(_ byte: UInt8) -> UInt8? {
-        switch byte {
-        case UInt8(ascii: "A")...UInt8(ascii: "Z"): byte - UInt8(ascii: "A")
-        case UInt8(ascii: "a")...UInt8(ascii: "z"): byte - UInt8(ascii: "a") + 26
-        case UInt8(ascii: "0")...UInt8(ascii: "9"): byte - UInt8(ascii: "0") + 52
-        case UInt8(ascii: "+"), UInt8(ascii: "-"): 62
-        case UInt8(ascii: "/"), UInt8(ascii: "_"): 63
-        default: nil
-        }
-    }
-
-    private static func encodes(_ run: [UInt8]) -> Bool {
-        let digits = run.compactMap(base64Value)
-        // Shorter text gives itself away by its padding: a whole run of base64 ending in = that decodes to
-        // readable text (a short command).
-        if digits.count >= 8, run.count % 4 == 0, run.last == UInt8(ascii: "="), run.count - digits.count <= 2,
-           readable(digits, from: 0) >= digits.count * 6 / 8 { return true }
-        guard digits.count >= 16 else { return false }
-        // Encoded bytes are about two parts capitals, two parts small letters and one part digits and signs;
-        // a long path or a long name is mostly small letters, or capitals, with few digits. The alphabet
-        // itself, written out to make ids from, has that mix too, but in order: in encoded bytes one digit is
-        // followed by the next about once in sixty-four.
-        if digits.count >= 64 {
-            let capitals = digits.filter { $0 < 26 }.count, small = digits.filter { (26..<52).contains($0) }.count
-            let inOrder = zip(digits, digits.dropFirst()).filter { $1 == $0 + 1 }.count
-            if capitals * 4 >= digits.count, small * 4 >= digits.count, (digits.count - capitals - small) * 16 >= digits.count,
-               inOrder * 4 < digits.count {
-                return true
-            }
-        }
-        return readsAsText(digits)
-    }
-
-    /// What an address or a command is written in: letters, digits, spaces and the signs they use. Not line
-    /// breaks, tabs or the rarer signs (`^ { } [ ] \\` and the backquote): a long name in ordinary words can
-    /// decode to a line of those with a few letters between.
-    private static let readableBytes: Set<UInt8> = Set(Array(UInt8(ascii: "a")...UInt8(ascii: "z")) + Array(UInt8(ascii: "A")...UInt8(ascii: "Z"))
-        + Array(UInt8(ascii: "0")...UInt8(ascii: "9")) + Array(" !\"#$%&'()*+,-./:;<=>?@_|~".utf8))
-
-    /// Sixteen digits make twelve bytes: twelve such characters in a row don't come out of words, paths or
-    /// numbers by chance (about one in a million), and an address is longer than that.
-    private static func readsAsText(_ digits: [UInt8]) -> Bool {
-        digits.count >= 16 && (0..<4).contains { readable(digits, from: $0, enough: 12) >= 12 }
-    }
-
-    /// The longest stretch of readable characters the digits decode to, starting at `start`; it stops counting
-    /// at `enough`.
-    private static func readable(_ digits: [UInt8], from start: Int, enough: Int = .max) -> Int {
-        var longest = 0, stretch = 0
-        var bits = 0, held = 0
-        for digit in digits.dropFirst(start) {
-            held = (held << 6 | Int(digit)) & 0xFFFF
-            bits += 6
-            guard bits >= 8 else { continue }
-            bits -= 8
-            let byte = UInt8((held >> bits) & 0xFF)
-            stretch = readableBytes.contains(byte) ? stretch + 1 : 0
-            longest = max(longest, stretch)
-            if longest >= enough { break }
-        }
-        return longest
-    }
 
     /// Said under the checklist when Lamp has no AI to read the code with. It tells the reader what they're
     /// not getting and that opening doesn't depend on it; it isn't a problem to fix first.
@@ -922,7 +1124,7 @@ extension Sharing {
         """
 
     static func reviewRequest(name: String, description: String?, notes: String?, files: [(name: String, text: String)],
-                              boundary: String? = nil, android: Bool = false) -> ReviewRequest {
+                              boundary: String? = nil, android: Bool = false, web: Bool = false, parts: [String] = []) -> ReviewRequest {
         let material = ([description ?? "", notes ?? ""] + files.map(\.text)).joined()
         var code = boundary ?? randomBoundary()
         // Sixteen random bytes won't be in the file by chance; this is for the test that passes one in.
@@ -991,7 +1193,7 @@ extension Sharing {
         phone if they choose it, where it reaches what the phone has (location, Health, photos, contacts) with \
         the phone's permission. Judge both halves. Code under Watch/ is an Apple Watch app that goes with it, \
         installed on the reader's watch with the iPhone app, and judged the same way.
-        \(android ? Self.androidReview : "")
+        \(android ? Self.androidReview : "")\(web ? Self.webReview : "")\(Self.partsReview(parts))
         Reply as one JSON object with exactly these four keys and nothing else: \
         {"summary": "<1-2 plain sentences: what the app does for the user>", \
         "capabilities": ["<one thing it reaches or does on the Mac or online>"], \
@@ -1093,38 +1295,64 @@ extension Sharing {
         // the file order and could put the interesting part last.
         var found = Inspection()
         var sent = 0
-        var everything = ""
         var unreadable = false
-        for file in package.sources {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { unreadable = true; continue }
-            let name = package.path(of: file)
-            everything += text + "\n"
-            if sent + text.count > 150_000 { found.truncated = true; continue }
-            sent += text.count
-            found.files.append((name, text))
+        func add(_ items: [Capability]) {
+            for item in items where !found.detected.contains(where: { $0.label == item.label }) { found.detected.append(item) }
         }
-        found.about = try? String(contentsOf: package.folder.appendingPathComponent("APP.md"), encoding: .utf8)
-        if let about = found.about { everything += about }
-        // What the app declares (capabilities.json, through the checks) is judged with its code: the reviewer
-        // sees it as a file, and a background app is listed as starting at login whether or not its code says so.
-        if !package.capabilities.isEmpty, let json = try? capabilitiesJSON(package.capabilities) {
-            found.files.append((Template.Capabilities.file, json))
-        }
-        // Which pages its sidebar in Chrome offers itself on, read with the code.
-        if let browser = package.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
-            found.files.append((BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
-        }
-        if package.platform == .android {
-            // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
-            // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
-            found.detected = AndroidFiles.detected(in: package) + (hidesEncodedText(everything) ? [encodedData] : [])
-        } else {
-            found.detected = checklist.filter { item in
-                item == encodedData ? hidesEncodedText(everything) : item.patterns.contains { everything.contains($0) }
+        // The app at the root, then each of the wish's other apps, its files named with its folder first.
+        for (prefix, app) in [("", package)] + package.parts.map { ($0.folder + "/", $0.package) } {
+            var everything = ""
+            for file in app.sources {
+                guard let text = try? String(contentsOf: file, encoding: .utf8) else { unreadable = true; continue }
+                let name = prefix + app.path(of: file)
+                everything += text + "\n"
+                if sent + text.count > 150_000 { found.truncated = true; continue }
+                sent += text.count
+                found.files.append((name, text))
             }
-        }
-        if package.capabilities.background == true, !found.detected.contains(where: { $0.label == startsAtLogin.label }) {
-            found.detected.append(startsAtLogin)
+            if let about = try? String(contentsOf: app.folder.appendingPathComponent("APP.md"), encoding: .utf8) {
+                everything += about
+                // A part's notes go as a file, held to what the root's notes are held to and counted against what's sent.
+                if prefix.isEmpty {
+                    found.about = about
+                } else if sent + min(about.count, 4000) > 150_000 {
+                    found.truncated = true
+                } else {
+                    sent += min(about.count, 4000)
+                    found.files.append((prefix + "APP.md", String(about.prefix(4000))))
+                }
+            }
+            // What the app declares (capabilities.json, through the checks) is judged with its code: the reviewer
+            // sees it as a file, and a background app is listed as starting at login whether or not its code says so.
+            if !app.capabilities.isEmpty, let json = try? capabilitiesJSON(app.capabilities) {
+                found.files.append((prefix + Template.Capabilities.file, json))
+            }
+            // Which pages its sidebar in Chrome offers itself on, read with the code.
+            if let browser = app.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
+                found.files.append((prefix + BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
+            }
+            switch app.platform.target.recipe.language {
+            case .kotlin:
+                // Kotlin's words aren't Swift's, and a manifest names a web address in every file: an Android app's
+                // reach is read off what it asks Android for and what its build brings in (`AndroidFiles.detected`).
+                add(AndroidFiles.detected(in: app))
+            case .web:
+                add(TVFiles.detected(in: app.sources))
+            case .game:
+                // The page's reach as a TV app's page is read, and the Swift beside it (Native.swift) as any app's, without
+                // its comments: Lamp's scaffold names its blocks there as examples.
+                let swift = app.sources.filter { $0.pathExtension == "swift" }.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    .joined(separator: "\n").split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+                add(TVFiles.detected(in: app.sources) + checklist.filter { item in
+                    item.patterns.contains { swift.contains($0) }
+                })
+            default:
+                add(checklist.filter { item in
+                    item.patterns.contains { everything.contains($0) }
+                })
+            }
+            if app.capabilities.background == true { add([startsAtLogin]) }
         }
         if unreadable { found.detected.append(unreadableCode) }
         return found
@@ -1146,8 +1374,11 @@ extension Sharing {
         // OpenRouter's name for the model, if Lamp doesn't have it yet: asked for alongside the check, which
         // doesn't wait for it.
         if case .openRouter(let model) = route.kind { Task.detached(priority: .utility) { await ModelNames.refresh(for: model) } }
+        let apps = [package] + package.parts.map(\.package)
         let request = reviewRequest(name: package.name, description: package.description, notes: found.about, files: found.files,
-                                    android: package.platform == .android)
+                                    android: apps.contains { $0.platform.target.recipe.language == .kotlin },
+                                    web: apps.contains { $0.platform.target.recipe.language == .web },
+                                    parts: package.parts.map { "\(Parts.name(of: $0.package.platform)) in \($0.folder)/" })
         do {
             let (text, _) = try await AppAI.complete(prompt: request.prompt, images: [], system: request.system, json: true,
                                                      schema: answerSchema, via: route)

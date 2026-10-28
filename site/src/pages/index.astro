@@ -1,21 +1,23 @@
 ---
-import { Image } from "astro:assets";
+import { Image, getImage } from "astro:assets";
 import type { ImageMetadata } from "astro";
 import Base from "../layouts/Base.astro";
 import DownloadButton from "../components/DownloadButton.astro";
 import QuickLook from "../components/QuickLook.astro";
 import FirstIdea from "../components/FirstIdea.astro";
 import Bento, { type Point } from "../components/Bento.astro";
+import AICards from "../components/AICards.astro";
+import ChangeStory from "../components/ChangeStory.astro";
+import WishDialog from "../components/WishDialog.astro";
+import { IDEAS, platform, slug } from "../lib/ideas";
 import { together } from "../lib/text";
-import MakesTheCall from "../components/visuals/MakesTheCall.astro";
-import DrawsOnDemand from "../components/visuals/DrawsOnDemand.astro";
-import MakesSense from "../components/visuals/MakesSense.astro";
-import FindsTheWords from "../components/visuals/FindsTheWords.astro";
 import UsesYourMac from "../components/visuals/UsesYourMac.astro";
 import BeautifulByDefault from "../components/visuals/BeautifulByDefault.astro";
 import WorksWithYourMac from "../components/visuals/WorksWithYourMac.astro";
 import ChangeItAnyTime from "../components/visuals/ChangeItAnyTime.astro";
 import SignupsWidget from "../components/visuals/SignupsWidget.astro";
+import Places from "../components/visuals/Places.astro";
+import receipt from "../assets/receipt.png";
 import AppleSilicon from "../components/visuals/AppleSilicon.astro";
 import ShareWithAnyone from "../components/visuals/ShareWithAnyone.astro";
 import icon from "../assets/AppIcon.png";
@@ -23,13 +25,10 @@ import anthropic from "../assets/logos/anthropic.png";
 import openai from "../assets/logos/openai.png";
 import openrouter from "../assets/logos/openrouter.png";
 
-// A window of an app Lamp built, taken from Lamp Dev with made-up data (see RELEASING.md), beside the chat that
-// changes it.
-import habitStreaks from "../assets/apps/habit-streaks.png";
 
-// Icons Lamp made for apps it built, in one row under "No localhost shenanigans.", all the same size. The row is centred
+// Icons Lamp made for apps it built, in one row under "No localhost shenanigans.", all the same size. The row is centered
 // on the tile and wider than it, so it runs off both edges; at the tile's full width (1104px) the 136px icons
-// and 24px gaps put each edge through the middle of an icon. The order mixes the colours, as several are
+// and 24px gaps put each edge through the middle of an icon. The order mixes the colors, as several are
 // purple. A name missing from src/assets/icons/ is skipped.
 const icons = import.meta.glob<ImageMetadata>("../assets/icons/*.png", { eager: true, import: "default" });
 const shelf = [
@@ -37,44 +36,13 @@ const shelf = [
   "mine-4", "neon-bricks", "mine-10", "meal-planner", "mine-9", "mine-5", "reading-queue",
 ].flatMap((name) => icons[`../assets/icons/${name}.png`] ?? []);
 
-// AI as part of what an app does, not only how Lamp builds it: four things it can do inside an app, in two rows
-// split 4/6 and 6/4, each with AI as its subject. Making sense of things leads, as the most everyday; judgment, the
-// one people don't expect, closes. No providers, models or technical words here: which AI answers is the section
-// further down.
-const smarts: Point[] = [
-  {
-    title: "AI makes sense of anything.",
-    text: "It sums up the long thread, explains the small print, finds what matters in a pile of PDFs.",
-    tile: "bento:col-span-4 bg-linear-to-b from-teal-from to-teal-to text-white",
-    visual: MakesSense,
-  },
-  {
-    title: "AI draws on demand.",
-    text: "It makes pictures for a bedtime story, characters for a game, art for anything.",
-    tile: "bento:col-span-6 bg-linear-to-b from-coral-from to-coral-to text-white",
-    visual: DrawsOnDemand,
-  },
-  {
-    title: "AI finds the words.",
-    text: "It drafts the reply, names the thing, makes it friendlier.",
-    tile: "bento:col-span-6 bg-linear-to-br from-butter-from to-butter-to",
-    visual: FindsTheWords,
-  },
-  {
-    title: "AI makes the call.",
-    text: "It makes quick judgments all day long: which app is slowing your Mac down, and the setting that fixes it.",
-    tile: "bento:col-span-4 bg-linear-to-b from-indigo-from to-indigo-to text-white",
-    visual: MakesTheCall,
-  },
-];
-
 // The rest of the features as a bento box, rows split 6/4, 5/5, 4/6, telling a story: what you get (row one),
-// what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong colour of
+// what it can do (row two, the two dark tiles), and living with it (row three). Each tile has a strong color of
 // its own, close to the app icons'.
 const points: Point[] = [
   {
     title: "Gorgeous by default.",
-    text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels made-in-Cupertino, never made-by-AI.",
+    text: "Native controls, proper menus and shortcuts, and an icon of its own. Feels like it came with the device, never like AI made it.",
     tile: "bento:col-span-6 bg-linear-to-br from-amber-from to-amber-to",
     visual: BeautifulByDefault,
   },
@@ -101,7 +69,7 @@ const points: Point[] = [
   {
     title: "Selfish, not stingy.",
     // A line break in the text starts a new line on the tile.
-    text: "Made for you, but happy to share.\nSend a Mac app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
+    text: "Made for you, but happy to share.\nSend any app by AirDrop, message, email, even Slack. Your friend gets their own copy, and Lamp shows them what it does.",
     tile: "bento:col-span-6 bg-linear-to-b from-lilac-from to-lilac-to text-white",
     visual: ShareWithAnyone,
   },
@@ -126,36 +94,80 @@ const providers = [
 
 // The hero's line under the heading, and with "Little things made just for you." the page's description for search
 // results and link previews.
-const pitch = "Something for your work, one for your hikes, even one to help you learn Italian in time for your sister's\u00a0wedding.";
-const noCode = "For Mac and iOS, no coding needed, with AI you already have.";
+const pitch = "Something for your work, one for your hikes, even a language tutor just for a single\u00a0speech.";
+// Where wishes go, as places rather than platforms: "your phone" is an iPhone or an Android one alike.
+const noCode = "For your Mac, your phone, even your TV. No coding needed, with AI you already have.";
 const description = `Little things made just for you. ${pitch} ${noCode}`;
 
 // Things people know with the one part only their owner would want: a reader knows what a dashboard is, and the
 // part after "but" is what no company would ship. They go from the everyday to the wildly particular, so the reader
 // is with them by the time they get strange, and each lives somewhere different (a widget, something that just
-// runs, the iPad, a game), since what Lamp makes isn't only windows; the pictures say where without a word. They're
-// the ideas page's for now, and the widget's is drawn, until each has one of its own.
-const thumbs = import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" });
-const buts = [
-  { visual: SignupsWidget, known: "Your analytics dashboard,", but: "but only today's sign-ups against last week's, on your desktop." },
-  { picture: "school-dates", known: "A family calendar,", but: "but it fills itself with every date buried in the school's emails." },
-  { picture: "presenting", known: "Do Not Disturb,", but: "but it also hides your desktop and personal tabs when you share your screen." },
-  { picture: "inbox-invaders", known: "Space Invaders,", but: "but the aliens are the emails you haven't answered." },
-  { picture: "grandma-s-cards", known: "A recipe app,", but: "but it's Grandma's handwritten cards, her notes and all." },
-  { picture: "whose-turn", known: "A chore chart,", but: "but fair over the month, on the old iPad in the kitchen." },
-  { picture: "tooth-fairy-ledger", known: "A budget,", but: "but for the tooth fairy, so the twins never compare notes." },
-  { picture: "has-biscuit-eaten", known: "A pet app,", but: "but just two big buttons by the bowl, so Biscuit stops getting two dinners." },
-  { picture: "bedtime-stories", known: "A storybook,", but: "but a new one every night, starring your daughter Maya and her giraffe Kevin." },
-  { picture: "our-street-the-board-game", known: "Monopoly,", but: "but it's your town, with Auntie Jo's house as Mayfair." },
-  { picture: "campaign-notes", known: "Your D&D campaign notes,", but: "but they know which secrets the party hasn't found yet, and open each session with a dramatic recap." },
-  { picture: "frank-the-snake", known: "Snake,", but: "but the snake is your dachshund, eating the socks he really steals." },
-].map((item) => ({ ...item, image: item.picture ? thumbs[`../assets/ideas/thumbs/${item.picture}.jpg`] : undefined }));
+// runs, the iPad, a game), since what Lamp makes isn't only windows; the pictures say where without a word. A third
+// of them are off the Mac and the iPhone (a watch, the TV, an Android phone, a console), so it's plain a wish can go
+// anywhere. Each opens as the ideas page's wishes do, to change and take to Lamp: those that are the ideas page's
+// name it (`idea`) and take its words and icon, and the rest bring their own, with their pictures in
+// src/assets/examples/, drawn the way the ideas page's are (scripts/idea-art). The widget's card is drawn, and its
+// picture is only for the opened wish.
+const thumbs = {
+  ...import.meta.glob<ImageMetadata>("../assets/ideas/thumbs/*.jpg", { eager: true, import: "default" }),
+  ...import.meta.glob<ImageMetadata>("../assets/examples/*.jpg", { eager: true, import: "default" }),
+};
+const ideaIcons = import.meta.glob<ImageMetadata>("../assets/ideas/icons/*.png", { eager: true, import: "default" });
+const pictureOf = (name: string) => thumbs[`../assets/ideas/thumbs/${name}.jpg`] ?? thumbs[`../assets/examples/${name}.jpg`];
+type Wish = { name: string; about: string; wish: string };
+type But = { known: string; but: string; visual?: typeof SignupsWidget; picture: string } & ({ idea: string } | Wish);
+const examples: But[] = [
+  {
+    visual: SignupsWidget, picture: "signups", known: "Your analytics dashboard,", but: "but only today's sign-ups against last week's, on your desktop.",
+    name: "Sign-ups Today", about: "Today's sign-ups against the same day last week, on your desktop.",
+    wish: "A widget on my desktop with today's sign-ups from our analytics against the same day last week, and which page most of them came from. Nothing else.",
+  },
+  { idea: "School Dates", picture: "school-dates", known: "A family calendar,", but: "but it fills itself with every date buried in the school's emails." },
+  { idea: "Presenting", picture: "presenting", known: "Do Not Disturb,", but: "but it also hides your desktop and personal tabs when you share your screen." },
+  { idea: "Inbox Invaders", picture: "inbox-invaders", known: "Space Invaders,", but: "but the aliens are the emails you haven't answered." },
+  {
+    picture: "physio", known: "A workout app,", but: "but it's your physio's six exercises, counting the reps on your wrist.",
+    name: "Physio Reps", about: "Your physio's six exercises on your wrist, counting every rep.",
+    wish: "My physio's six exercises on my Apple Watch, in her order: it counts my reps as I move, starts the next one with a tap, and nudges me at six if I haven't done them today.",
+  },
+  { idea: "Whose Turn", picture: "whose-turn", known: "A chore chart,", but: "but fair over the month, on the old iPad in the kitchen." },
+  {
+    picture: "shows", known: "A TV guide,", but: "but only the shows you watch together, so nobody gets ahead.",
+    name: "Watching Together", about: "Only the shows you watch as a family, and where you all got to.",
+    wish: "On our living-room TV: just the shows the four of us watch together, which episode we're up to on each, and the next one locked until everyone's on the sofa, so nobody (Mia) watches ahead.",
+  },
+  {
+    picture: "aisles", known: "A shopping list,", but: "but in the order of the aisles at Dad's supermarket, on his Android phone.",
+    name: "Saturday Shop", about: "The week's shopping list, in the order of the aisles at Dad's supermarket.",
+    wish: "A shopping list on Dad's Android phone, in the order of the aisles at his supermarket (fruit and veg first, dairy last), with big ticks, that the rest of us can add to during the week.",
+  },
+  { idea: "Bedtime Stories", picture: "bedtime-stories", known: "A storybook,", but: "but a new one every night, starring your daughter Maya and her giraffe Kevin." },
+  {
+    picture: "street-racer", known: "A racing game,", but: "but the track is your own street, on the Xbox.",
+    name: "Our Street Racer", about: "A kart race down your own street, past the corner shop and the school.",
+    wish: "A kart racing game on our Xbox where the track is our own street: the corner shop, the postbox, the school gate and the speed bumps, two of us racing with controllers, and a lap record for the family.",
+  },
+  { idea: "Campaign Notes", picture: "campaign-notes", known: "Your D&D campaign notes,", but: "but they know which secrets the party hasn't found yet, and open each session with a dramatic recap." },
+  { idea: "Frank the Snake", picture: "frank-the-snake", known: "Snake,", but: "but the snake is your dachshund, eating the socks he really steals." },
+];
+const buts = await Promise.all(examples.map(async (item) => {
+  const idea = "idea" in item ? IDEAS.find((idea) => idea.name === item.idea)! : undefined;
+  const wish: Wish = idea ?? (item as Wish);
+  const image = pictureOf(item.picture);
+  const icon = idea && ideaIcons[`../assets/ideas/icons/${slug(idea.name)}.png`];
+  const opened = {
+    name: wish.name, about: wish.about, wish: wish.wish, platform: idea ? platform(idea) : undefined,
+    picture: image ? (await getImage({ src: image, width: 1200, format: "webp" })).src : "",
+    icon: icon ? (await getImage({ src: icon, width: 128, format: "webp" })).src : "",
+  };
+  return { ...item, image, opened: JSON.stringify(opened) };
+}));
 ---
 
 <Base title="Lamp: turn your wishes into selfish software" description={description} image="/og.jpg">
   <!--
-    Full-width bands that alternate white and light grey, in the manner of Apple's product pages, each with the
-    content in the same centred column. Tiles take the other shade from the band they sit on.
+    Full-width bands that alternate white and light gray, in the manner of Apple's product pages, each with the
+    content in the same centered column. Tiles take the other shade from the band they sit on.
   -->
   <main>
     <!-- The hero sits in a card of its own across the window, like the tiles below, to set it apart from what
@@ -220,8 +232,13 @@ const buts = [
         <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {
             buts.map((item) => (
-              <li class="overflow-hidden rounded-[22px] bg-panel">
-                {item.image ? (
+              <li class="flex">
+                <button
+                  type="button"
+                  data-idea={item.opened}
+                  class="flex w-full cursor-pointer flex-col overflow-hidden rounded-[22px] bg-panel text-left transition duration-300 hover:-translate-y-0.5 hover:shadow-[0_14px_34px_-14px_rgba(0,0,0,0.22)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-graphite"
+                >
+                {item.visual ? <item.visual /> : item.image && (
                   <Image
                     src={item.image}
                     alt=""
@@ -230,12 +247,11 @@ const buts = [
                     loading="lazy"
                     class="aspect-[3/2] w-full object-cover"
                   />
-                ) : item.visual && <item.visual />}
-                <div class="px-6 pt-4 pb-6">
-                  <p class="text-lg leading-snug font-semibold">
-                    <span class="text-muted">{item.known}</span> {together(item.but)}
-                  </p>
-                </div>
+                )}
+                <span class="block px-6 pt-4 pb-6 text-lg leading-snug font-semibold">
+                  <span class="text-muted">{item.known}</span> {together(item.but)}
+                </span>
+                </button>
               </li>
             ))
           }
@@ -247,51 +263,33 @@ const buts = [
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Change it while you're using&nbsp;it.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp apps are like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
+        {together("Lamp makes real apps, but they are malleable like documents.")}<br />{together("Change them in real time, try things out right on the spot.")}
       </p>
-      <!--
-        A stand-in until there's a real picture from Lamp: an app's window with the chat that opens beside it, a
-        change already made and the next one under way. Beside the window from sm, against its edge: the picture
-        has room for the window's shadow around it, so the window runs from 4% to 79% of its height and ends at 81%
-        of its width. Under the window on a phone.
-      -->
-      <div aria-hidden="true" class="relative mx-auto mt-10 max-w-5xl sm:ml-[3%] sm:w-[80%]">
-        <Image
-          src={habitStreaks}
-          alt=""
-          widths={[640, 1024, 1600]}
-          sizes="(min-width: 1024px) 780px, 100vw"
-          loading="lazy"
-          class="h-auto w-full"
-        />
-        <div class="mx-4 -mt-4 flex flex-col gap-3 rounded-[22px] bg-white/70 p-4 text-left text-[15px] leading-snug shadow-[0_20px_50px_-12px_rgba(0,0,0,0.25)] ring-1 ring-black/10 backdrop-blur-xl sm:absolute sm:top-[4%] sm:bottom-[21%] sm:left-[82%] sm:mx-0 sm:mt-0 sm:w-[30%] sm:justify-end">
-          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">Make no phone after 10pm count double on weekends.</p>
-          <p class="mr-6 text-ink">Weekends now count double.</p>
-          <p class="ml-8 self-end rounded-2xl bg-[#cf620c] px-3.5 py-2 text-white">And put today's streak in the menu bar.</p>
-          <p class="flex items-center gap-2 text-muted"><span class="size-2 animate-pulse rounded-full bg-[#cf620c]"></span>Changing it…</p>
-          <div class="mt-2 rounded-full bg-white px-4 py-2.5 text-muted ring-1 ring-black/10">Ask for a change</div>
-        </div>
+      <div class="mx-auto mt-10 max-w-5xl"><ChangeStory /></div>
       </div>
+    </section>
+
+    <!-- Where wishes go once they're made: places in a home, not platforms, so the page widens without turning into
+         a list of systems. The Mac stays where Lamp lives and wishes are made. -->
+    <section>
+      <div class="mx-auto max-w-6xl px-4 pt-20 pb-6 sm:px-6 sm:pt-24">
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made on your Mac.<br /> At home everywhere&nbsp;else.</h2>
+      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
+        {together("Your phone, your watch, the TV in the living room.")}<br />{together("Each wish lives where it's most useful, and looks like it belongs there.")}
+      </p>
+      <div class="mt-12"><Places /></div>
       </div>
     </section>
 
     <FirstIdea heading="So what's yours?" lead="Not sure yet? Answer a couple of questions." class="px-2 pt-16 sm:px-3 sm:pt-20" />
 
-    <section id="ai" class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
-      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-muted">
-        {together("AI doesn't just make your software.")}<br />{together("It can be part of what it does.")}
-      </p>
-      <div class="mt-10"><Bento points={smarts} /></div>
-    </section>
-
-    <section id="features" class="bg-panel">
+    <section id="features">
       <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
       <Bento points={points}>
-          <div class="overflow-hidden rounded-[28px] bg-page pt-12 text-center bento:col-span-10 sm:pt-16">
+          <div class="overflow-hidden rounded-[28px] bg-panel pt-12 text-center bento:col-span-10 sm:pt-16">
             <h3 class="px-8 font-display text-3xl font-bold tracking-tight sm:text-5xl"><span class="sm:inline-block">No localhost shenanigans.</span> <span class="sm:inline-block">No subscription. Just&nbsp;there.</span></h3>
             <p class="mx-auto mt-4 max-w-[50rem] px-8 text-xl leading-[1.4] text-muted">
-              {together("In your Applications folder, your menu bar, your Dock and on your Home Screen.")}
+              {together("Real, native apps, in the platforms you use.")}
             </p>
             <div aria-hidden="true" class="mt-8 pb-10 sm:mt-10 sm:pb-12">
               <div class="relative left-1/2 flex w-max -translate-x-1/2 gap-4 sm:gap-6">
@@ -314,11 +312,32 @@ const buts = [
       </div>
     </section>
 
-    <section>
+    <!-- Pricing, deliberately short and a little cheeky: there's nothing to price. -->
+    <section id="pricing" class="bg-panel">
+      <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
+        <!-- A receipt for nothing, as an icon in the manner of the Mac's from around 2008, sized like the closing
+             section's Lamp icon. -->
+        <Image src={receipt} alt="" width={88} height={88} densities={[1, 2]} class="mx-auto size-22" />
+        <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Lamp is free.</h2>
+        <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">{together("You only pay for the AI you bring.")}<br />{together("Sorry there's no more copy to put here.")}</p>
+      </div>
+    </section>
+
+    <section id="ai">
+      <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
+      <h2 class="text-center font-display text-4xl font-bold tracking-tight sm:text-5xl">Made with AI&nbsp;inside.</h2>
+      <p class="mx-auto mt-4 max-w-[50rem] text-center text-xl leading-[1.4] font-semibold text-balance text-muted">
+        {together("AI doesn't just make your software. It can be part of what it does.")}
+      </p>
+      <div class="mt-10"><AICards /></div>
+      </div>
+    </section>
+
+    <section class="bg-panel">
       <div class="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-24">
       <h2 class="font-display text-4xl font-bold tracking-tight sm:text-5xl">Use the AI you already&nbsp;have.</h2>
       <p class="mx-auto mt-4 max-w-[50rem] text-xl leading-[1.4] font-semibold text-muted">
-        {together("Lamp is free. It builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or a model that runs right on your Mac.")}
+        {together("Lamp builds with your Claude or ChatGPT subscription, a key from more than a dozen AI providers, or a model that runs right on your Mac.")}
       </p>
       <ul class="mt-10 flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
         {
@@ -343,7 +362,7 @@ const buts = [
       </div>
     </section>
 
-    <section class="bg-panel">
+    <section>
       <div class="mx-auto max-w-6xl px-4 py-24 text-center sm:px-6 sm:py-28">
       <Image src={icon} alt="" width={96} height={96} densities={[1, 2]} class="mx-auto size-24 drop-shadow-[0_12px_24px_rgba(217,122,6,0.25)]" />
       <h2 class="mt-6 font-display text-4xl font-bold tracking-tight sm:text-5xl">Go on, be&nbsp;selfish.</h2>
@@ -353,5 +372,6 @@ const buts = [
   </main>
 
   <QuickLook />
+  <WishDialog place="home" />
 
 </Base>

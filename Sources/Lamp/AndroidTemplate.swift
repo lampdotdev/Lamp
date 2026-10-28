@@ -2,7 +2,7 @@ import Foundation
 
 /// The scaffold of an Android app, and the rules its agent is given. An Android app is a Gradle project in the
 /// app's folder: Lamp owns what the build runs before any of the agent's code does (build.sh, the settings and
-/// top-level build files, gradle.properties and the versions catalogue, written afresh before every build like a
+/// top-level build files, gradle.properties and the versions catalog, written afresh before every build like a
 /// Mac app's Package.swift) and its building blocks (`LampSupport.kt`, AndroidSupport.swift), and the agent owns the
 /// rest of `app/`: its build file, manifest, Kotlin and resources.
 extension Template {
@@ -19,9 +19,12 @@ extension Template {
         }.joined(separator: ".")
     }
 
+    /// Lamp's own Gradle settings file, which marks a folder as an Android project.
+    static let androidSettingsFile = "settings.gradle.kts"
+
     /// Whether an app's folder is an Android project, read off what every version keeps (`platform(fromPackageIn:)`).
     static func isAndroid(_ dir: URL) -> Bool {
-        FileManager.default.fileExists(atPath: dir.appendingPathComponent("settings.gradle.kts").path)
+        FileManager.default.fileExists(atPath: dir.appendingPathComponent(androidSettingsFile).path)
     }
 
     /// Lamp's files for an Android app, written afresh before every build.
@@ -145,6 +148,8 @@ extension Template {
     androidxComposeBom = "2026.03.01"
     androidxNavigation3 = "1.0.1"
     androidxDatastore = "1.1.7"
+    androidxWebkit = "1.14.0"
+    androidxTvMaterial = "1.1.0"
     coroutines = "1.10.2"
     kotlin = "2.3.20"
     serialization = "1.9.0"
@@ -166,6 +171,8 @@ extension Template {
     androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "androidxDatastore" }
     kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
     kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+    androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "androidxWebkit" }
+    androidx-tv-material = { module = "androidx.tv:tv-material", version.ref = "androidxTvMaterial" }
 
     [plugins]
     android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
@@ -391,19 +398,41 @@ extension Template {
 extension Agent {
     /// The rules for an Android app: the same shape as the Mac's and the iPhone's, said for Kotlin and Compose, with
     /// Lamp's building blocks (LampAI, LampStore, LampAssets) under the names they have in Swift.
-    static func androidPrompt() -> String {
-        let rules = [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
-                     Rules.androidKinds, Rules.androidDesign, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
-                     Rules.androidLogs, Rules.androidTry, Skills.index(Skills.offered(.android)),
-                     Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return (Rules.androidHeader + "\n\nRules:\n" + rules.joined())
-            .replacingOccurrences(of: "{{DEVICE}}", with: "Android")
-            .replacingOccurrences(of: "{{A_DEVICE}}", with: "an Android phone")
-            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it in the emulator")
+    /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the kind's rules alone, without the ones about
+    /// the wish as a whole, which the wish's own prompt has.
+    /// `tv`: an Android TV app (`Target.androidTV`), the same Kotlin with the TV's design and remote in place of a phone's.
+    static func androidPrompt(part: String? = nil, alone: Bool = false, tv: Bool = false) -> String {
+        let platform: Platform = tv ? .androidTV : .android
+        let design = tv ? Rules.androidTVDesign : Rules.androidDesign
+        let rules = part == nil
+            ? [Rules.androidEdit, Rules.ask, Rules.shell, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
+               tv ? "" : Rules.androidKinds, design, Rules.androidGenerated, Rules.icon, Rules.about, Rules.androidAttachments,
+               Rules.androidLogs, Rules.androidTry, tv ? Rules.androidTVTry : "", Skills.index(Skills.offered(platform)),
+               Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
+            : [Rules.androidEdit, Rules.androidFrameworks, Rules.androidAI, Rules.androidData, Rules.androidPermissions,
+               tv ? "" : Rules.androidKinds, design, Rules.androidGenerated, Rules.androidLogs, Rules.androidTry, tv ? Rules.androidTVTry : "",
+               alone ? "" : Rules.androidPartTalk, Skills.index(Skills.offered(platform))]
+        let what = tv ? "an Android TV app (Kotlin and Compose for TV, a Gradle project, Android 8.0 and later, no Android Studio)"
+            : "an Android app (Kotlin and Jetpack Compose, a Gradle project, Android 8.0 and later, Material 3, no Android Studio)"
+        let header = part.map { Rules.partHeader(what, folder: $0) } ?? (tv ? Rules.androidTVHeader : Rules.androidHeader)
+        return (header + "\n\nRules:\n" + rules.joined())
+            .replacingOccurrences(of: "{{DEVICE}}", with: tv ? "Android TV" : "Android")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: tv ? "an Android TV" : "an Android phone")
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: tv ? "builds it and opens it in the TV emulator" : "builds it and opens it in the emulator")
     }
 }
 
 extension Agent.Rules {
+    /// How an Android app reaches the wish's other apps: `LampWish` in LampSupport.kt (`wishTalk`), messages, values and
+    /// files alike; it has no `LampController`, a TV app's game controls, which are the Swift apps'.
+    static let androidPartTalk = String(wishTalk.dropFirst()) + """
+    - `LampWish` is this app's building block for the wish's other apps, the TV app's included: messages, shared \
+    values and files (`LampWish.sendFile`, which the TV app gets in `Lamp.wish.onFile`). It has no `LampController`, \
+    so it can't join a TV app's game as a player (`Lamp.controllers`, buttons and sticks held and let go); for a few \
+    commands plain messages do, and when the person wants game controls from the phone, say plainly that only an \
+    iPhone app, or a phone's page in its browser, joins that way.
+    """
+
     static let androidHeader = """
     You are Lamp's builder agent. The current directory is a standalone Android app in Kotlin and Jetpack Compose \
     (a Gradle project, Android 8.0 and later, Material 3, no Android Studio). Lamp builds it and opens it in the \
@@ -448,7 +477,11 @@ extension Agent.Rules {
     for settings and small state, `LampStore.collection<Note>("notes") { it.id }` with put, get, delete and all \
     for lists of things, each a @Serializable class. People rely on their data through every change you make, so \
     once a type is saved, only ever add to it: new properties get defaults, and never rename, remove or retype a \
-    saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets.
+    saved property. Files the app ships with go in app/src/main/assets and are read with LampAssets. Data that \
+    should be the same wherever the app is open (one list on a phone, a tablet and the Mac): \
+    `LampStore.shared<Grocery>("groceries") { it.id }` (items, put, delete, publish, onChange), merged item by item \
+    between the app's copies, and `LampStore.sharedFiles("photos")` for files; `wish = true` makes either the wish's \
+    own, the same in every app of the wish. Open the `wish-links` skill first.
     """
 
     static let androidPermissions = """

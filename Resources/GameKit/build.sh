@@ -36,7 +36,8 @@ if [ "$target" = preview ]; then
     clang++ $flags -DSOKOL_TRACE_HOOKS -x objective-c++ -fobjc-arc -w -c Lamp/lamp_kit.cpp -o "$out/lamp_kit.o"
   fresh "$out/lamp_preview.o" Lamp/lamp_preview.mm ||
     clang++ $flags -x objective-c++ -fobjc-arc -w -c Lamp/lamp_preview.mm -o "$out/lamp_preview.o"
-  objects="$out/lamp_kit.o $out/lamp_preview.o"
+  fresh "$out/lamp_sound.o" Lamp/lamp_sound.cpp || clang++ $flags -w -c Lamp/lamp_sound.cpp -o "$out/lamp_sound.o"
+  objects="$out/lamp_kit.o $out/lamp_preview.o $out/lamp_sound.o"
   for source in Game/*.cpp Game/*.c; do
     [ -e "$source" ] || continue
     object="$out/$(basename "$source").o"
@@ -59,7 +60,8 @@ set -- --target=x86_64-pc-windows-msvc /std:c++20 /EHsc /O2 /MT /DWINAPI_FAMILY=
   -imsvc "$sdk/sdk/include/shared" -imsvc "$sdk/sdk/include/winrt" -imsvc "$sdk/sdk/include/cppwinrt" -ILamp -Ibuild/shaders -IGame
 fresh "$out/lamp_kit.obj" Lamp/lamp_kit.cpp || "$cl" "$@" /DSOKOL_D3D11 -w /c Lamp/lamp_kit.cpp /Fo"$out/lamp_kit.obj"
 fresh "$out/lamp_xbox.obj" Lamp/lamp_xbox.cpp || "$cl" "$@" -w /c Lamp/lamp_xbox.cpp /Fo"$out/lamp_xbox.obj"
-objects="$out/lamp_kit.obj $out/lamp_xbox.obj"
+fresh "$out/lamp_sound.obj" Lamp/lamp_sound.cpp || "$cl" "$@" -w /c Lamp/lamp_sound.cpp /Fo"$out/lamp_sound.obj"
+objects="$out/lamp_kit.obj $out/lamp_xbox.obj $out/lamp_sound.obj"
 for source in Game/*.cpp Game/*.c; do
   [ -e "$source" ] || continue
   object="$out/$(basename "$source").obj"
@@ -70,7 +72,7 @@ done
 # A static C++ runtime, so the console needs no package of Microsoft's beside the game's.
 "$tools/llvm/bin/lld-link" /OUT:"$out/App.exe" /APPCONTAINER /SUBSYSTEM:WINDOWS /MACHINE:X64 /ENTRY:wWinMainCRTStartup /NODEFAULTLIB \
   /LIBPATH:"$sdk/crt/lib/onecore/x86_64" /LIBPATH:"$sdk/sdk/lib/ucrt/x86_64" /LIBPATH:"$sdk/sdk/lib/um/x86_64" \
-  $objects libcmt.lib libvcruntime.lib libcpmt.lib ucrt.lib WindowsApp.lib d3d11.lib dxgi.lib
+  $objects libcmt.lib libvcruntime.lib libcpmt.lib ucrt.lib WindowsApp.lib d3d11.lib dxgi.lib xaudio2.lib
 rm -f build/xbox.zip
 ( cd "$out" && zip -qX ../xbox.zip App.exe )
 if [ -d Assets ]; then zip -qrXy build/xbox.zip Assets -x '*/.*' -x '.*'; fi

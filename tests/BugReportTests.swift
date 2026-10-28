@@ -43,7 +43,7 @@ struct BugReportTests {
             (ErrorMessages.quitsAfterLaunch(privateDetail), "The app quit unexpectedly after opening.")
         ]
         for (message, expected) in producedMessages {
-            precondition(BugReport.errorSummary(message) == expected, "Produced message is no longer recognised")
+            precondition(BugReport.errorSummary(message) == expected, "Produced message is no longer recognized")
             let report = draft(error: message)
             precondition(report.contains(expected))
             precondition(!report.contains(privateDetail) && !report.contains("SYNTHETIC_PRIVATE_DETAIL"))

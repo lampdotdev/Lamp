@@ -7,7 +7,7 @@ One person's hot sauce collection on lit studio shelves, and the shelf is the wh
 lit by one light from the upper left, the title big and white in SF Pro Expanded Black, and each flavour family's
 name painted big on the wall behind its shelf (fruity, fermented, smoky, garlic, green, chili crisp, sweet,
 vinegar-forward), with the bottles standing in front of it, sorted by heat and wrapping onto as many shelves as
-the width needs. Finished bottles stand grey on the last shelves with their verdict. Every bottle is a cut-out
+the width needs. Finished bottles stand gray on the last shelves with their verdict. Every bottle is a cut-out
 photo, and the light is drawn over the whole picture (a dodge and burn that stays put while the shelves scroll),
 with each bottle's own highlight, shade and shadow on top, so any photo looks like part of the same shot.
 
@@ -42,7 +42,7 @@ Settings: the person's taste in their own words (used in every AI prompt), and t
 - `LabelFinder.swift`: finding a real label, one bottle at a time.
 - `TonightView.swift`, `Nudges.swift`, `Dictation.swift`, `SettingsView.swift`,
   `Intents.swift`.
-- `Theme.swift`: `Look`, the whole look of the shelf; `Zine`, the colours the dialogs and sheets still use.
+- `Theme.swift`: `Look`, the whole look of the shelf; `Zine`, the colors the dialogs and sheets still use.
   `Assets/`: the four painted bottle styles, and `Bottles/`, the example bottles' cut-out photos with `credits.txt`
   (Open Food Facts, CC BY-SA; the About box credits them).
 
@@ -54,7 +54,7 @@ from looking again.
 
 Example content: on the first launch an empty shelf is filled once (`Shelf.seedIfNeeded`, flag `shelf.seeded` in
 UserDefaults) with twenty-three bottles and three finished ones (`Seed.samples`, dates relative to that day). Each comes
-with its photo, copied from `Assets/Bottles/<photo>.png` and marked as labelled, so nothing is looked up for
+with its photo, copied from `Assets/Bottles/<photo>.png` and marked as labeled, so nothing is looked up for
 them. Bottles are deleted one at a time, from their dialog.
 
 ## Easy to change
@@ -64,7 +64,7 @@ them. Bottles are deleted one at a time, from their dialog.
 - The tag's wording, the ratings' scale: `BottleView`, `BottleDetail`.
 - The nudges: `Nudges.swift`. The default taste: `defaultTasteProfile` in `Model.swift`.
 - The example bottles: `Seed.samples` (a new one with no photo in `Assets/Bottles` gets its label looked up like any
-  bottle; photos used here need a licence that allows it, credited in `credits.txt` and the About box).
+  bottle; photos used here need a license that allows it, credited in `credits.txt` and the About box).
 
 ## Making it about something else
 
@@ -81,7 +81,7 @@ loud and cheeky. Wine and whisky are quiet and elegant. Tea is calm and soft. Re
    - **Light**: a hard light from a corner with a beam (`beam: 1`, high `contrast`) is dramatic. A soft light from
      above (`light` near the top middle, larger `reach`, `beam: 0`, lower `contrast`) is gentle. `glow` warms it:
      candle or lamplight for a cellar, white for a studio.
-   - **Colour**: one colour for the set, with shelves of the same colour or of a material of their own (walnut,
+   - **Color**: one color for the set, with shelves of the same color or of a material of their own (walnut,
      oak, stone). A dark wall suits a cellar, a pale one a pantry (then set `ink` dark and `scheme: .light`).
    - **Words**: the title, what's measured under each bottle and its symbol (heat and a flame; body and a drop),
      what finished bottles are called, the summary's last part (`mostLine`, or nil), the empty shelf, and the

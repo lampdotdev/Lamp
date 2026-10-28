@@ -36,7 +36,7 @@ enum AgentEvent {
     case step(String)      // the model has started on a tool call (its name), or on text ("")
     case stepArgs(String)  // a piece of that call's arguments, as they stream in
     case compacted         // the engine summed up the conversation so far to make room
-    case plan([PlanPart])  // the agent's checklist for the build card
+    case plan([PlanPart])  // the agent's plan, a new app's chapters in the chat
     case finished          // the engine has answered: a message written to it now would start another answer
     case received          // the engine gave the model a message of the person's (the request, or one sent mid-turn)
     /// Codex began (true) or finished (false) something it does on its own (a command, a tool call, an edit, a
@@ -57,12 +57,12 @@ enum Agent {
     /// `bash` only with Lamp's extension, which routes every command through the user's approval.
     static var tools: String {
         "read,edit,write,grep,find,ls" + (lampTools == nil ? "" :
-            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,connectors,device_integration,ask,progress,write_wish,read_skill"
+            ",bash,web_fetch,look_at_app,use_app,plan,delete_file,list_versions,name_version,restore_version,make_art,offer_setup,make_app_for,remove_app,connectors,network_devices,device_integration,device_permission,ask,progress,write_wish,read_skill"
             + (Memory.isOn ? ",read_notes,save_notes" : ""))
     }
 
     /// Lamp's own tools for pi (Resources/lamp-tools.ts): `look_at_app` has Lamp build and open the app
-    /// mid-turn and shows the agent the result; `plan` is the checklist on the build card; `delete_file`
+    /// mid-turn and shows the agent the result; `plan` gives a new app's chapters in the chat; `delete_file`
     /// removes a file, which pi's own tools can't; the version tools list, name and restore the app's saved
     /// versions; `make_art` paints a picture for the app; `offer_setup` shows a setup card in the chat; `read_notes` and `save_notes` are Lamp's notes (Memory). Claude Code and Codex get the same tools from Lamp's MCP endpoint (Store.mcpTools).
     static var lampTools: URL? {
@@ -177,7 +177,11 @@ enum Agent {
     `ask` for anything you need to ask (they click an answer, type their own, or leave it to you); \
     `plan` for what \
     you're building; `progress` for a line on how longer work is going; `offer_setup` for setting up AI; `make_app_for` when they want the app on other devices \
-    (the iPhone or the Mac). When a piece fits, use it instead of writing the same \
+    (the iPhone, the Mac or a TV), and `remove_app` when they want one of the wish's apps gone. A change of mind \
+    ("never mind, make it a timer instead") changes the app the wish has, in its own code and, when what it's made for \
+    changes, with `make_app_for` and its folder in `app`; one more app of another kind ("an Android app as well") is \
+    `another`, only once they chose it when you asked them with `ask`, before changing anything; two apps of one kind \
+    (two Mac apps) can't be in a wish yet: the `more-apps` skill. When a piece fits, use it instead of writing the same \
     thing out: no questions, options or assumptions listed in a reply. A click comes back as their next \
     message, the same as something typed. If they type something that isn't one of your options, that's their \
     answer: follow it.
@@ -312,6 +316,20 @@ enum Agent {
     skill and hand Lamp the device's integration with `device_integration` before writing any app for it. Lamp finds, \
     checks and sets up the device itself, and draws every step's card: never walk the person through its steps in your \
     own words, and never try to reach the device with a command of yours.
+    - When a wish controls, plays to or reads devices on the person's network (a remote, buttons for the speakers, \
+    what's playing on the TV), or the person asks what something on their network is, call `network_devices` before \
+    asking what they have, and start from what it finds: \
+    "I see a Samsung TV, a Roku and a Sonos speaker." Ask only about what it can't tell you. Open the `device-control` \
+    skill before writing code that reaches one of their devices. Reading a device is fine; change nothing on a real one \
+    (a key press, opening an app, volume, power) until the person allows it with `device_permission`.
+    - When `make_app_for` refuses, it says whose limit it is, and so do you, in your own words. When the device can't \
+    run it (a 3D game or a web page on a Roku), say so about the device ("A Roku only runs its own channels, worked \
+    with the remote, so it can't show this 3D game"). When the refusal says Lamp can't build it yet (a native app on a \
+    Samsung or LG TV, a page on Vision Pro), say that Lamp can't make that yet, never that their device can't run it. \
+    Then offer the nearest thing that works with `ask`: a simple version made for that device as one more of the \
+    wish's apps, or another of their devices the refusal says runs it, or casting from a phone. Never pass on a tool's \
+    error as it came, or explain how Lamp works inside: what reaches the person is what's true of their device, of \
+    Lamp and of their wish.
     """
 
     /// With every request in a device's setup conversation: the conversation outlives what it began with, and a
@@ -320,18 +338,42 @@ enum Agent {
         var note = "\n\n---\nThis conversation is the setup of a device of the person's (from Lamp, not part of the request above): no app is made here. Write no files and open nothing; write or fix the device's integration with `device_integration` (the `device-integrations` skill), and answer about the device in a sentence or two. Lamp shows its setup steps as cards. When the person wants something on the device, tell them to make a wish for it on Lamp's desk."
         // What the device said of itself when it was found, for writing its integration: the agent's to read, not the
         // person's, so it isn't in the request they see.
-        if let device = Store.shared.devices.first(where: { $0.id == project.deviceSetup }) {
+        // A device Lamp doesn't know is kept by its network address in the list, and by its hardware address too here.
+        let setup = project.deviceSetup
+        // One begun without a hardware address can't be told from whatever has its address now: nothing found is said of it.
+        let unverified = setup.flatMap(Device.foundAddress) != nil && setup.flatMap(Device.foundHardware) == nil
+        let device = unverified ? nil : Store.shared.devices.first { $0.id == setup }
+            ?? setup.flatMap(Device.foundAddress).flatMap { address in
+                // Only while the same hardware is at that address.
+                guard let hardware = setup.flatMap(Device.foundHardware), Neighbours.table()[address] == hardware else { return nil }
+                return Store.shared.devices.first { Device.foundAddress($0.id) == address }
+            }
+        if let device {
             var said = [device.maker, device.model].filter { !$0.isEmpty }.joined(separator: " ")
             if !device.modelID.isEmpty { said += " (model number \(device.modelID))" }
-            note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's SSDP scan as \($0)" } ?? "") + "."
+            note += " Lamp found it on the network as \(said)" + (device.discovery.map { "; it answered Lamp's scan as \($0)" } ?? "") + "."
         }
+        // Its host's facts, for working out what it is and how it's reached: all there is for one set up from Everything
+        // Else, which may be something Lamp can't reach at all (say so plainly then). The names it goes by on the network
+        // are often people's, so they stay out of the integration.
+        let address = device?.address ?? project.deviceSetup.flatMap(Device.foundAddress)
+        let hardware = project.deviceSetup.flatMap(Device.foundHardware)
+        // A device found on the network is the host with its hardware address; one whose setup began without that
+        // can't be told from whatever has its address now, so no host's facts go with it.
+        let isFound = project.deviceSetup.flatMap(Device.foundAddress) != nil
+        if let host = Store.shared.hosts.first(where: { $0.address == address && (isFound ? hardware != nil && $0.mac == hardware : true) }) {
+            if device == nil { note += " Work out what it is first, from what Lamp found of it, and tell the person; if nothing on the home network can reach it (it's controlled only through its maker's cloud, or has no local interface), say so in a sentence rather than writing an integration." }
+            note += " Its host: " + HomeNetwork.facts(host) + ". Keep the names it goes by out of the integration: find it by its service, maker or model."
+        }
+        // The last test run on it: what the device did with an app made from the integration, which the builder fixes.
+        if let deviceID = project.deviceSetup, let report = IntegrationProbe.report(for: deviceID) { note += "\n\n" + report }
         return note
     }
 
     /// The first request of a device's setup conversation, from Set Up… on a device Lamp doesn't know
     /// (`Store.setUpDevice`), in the person's words: what Lamp found of it goes to the agent in `deviceSetupNote`.
     static func deviceSetupRequest(_ device: Device) -> String {
-        "Set up my \(device.name)."
+        "Set up my \(device.plainName)."
     }
 
     /// Kept short, like the tools' descriptions: every word here is sent with every call to the model. What the
@@ -361,16 +403,60 @@ enum Agent {
 
     /// The rules for the app's kind. Most are the same for a Mac app and an iPhone app, and each kind adds the
     /// blocks only it has, so a building block given to one is described to both in one place.
-    static func systemPrompt(for project: LampProject) -> String {
-        switch project.platform {
-        case .mac: systemPrompt
-        case .iphone: iPhonePrompt(for: project.family)
-        case .universal: universalPrompt(for: project.family)
-        case .android: androidPrompt()
-        case .tv: tvPrompt()
-        case .device: devicePrompt(for: project)
-        }
+    /// A wish with other parts gets one rule more, naming them (`Parts.rule`); their own rules are skills, opened when
+    /// the agent works on them. A wish whose apps are all in folders of their own has no kind's prompt of its own but the
+    /// wish's (`wishPrompt`). A wish still to be told what it's for gets no kind's rules at all (`undecidedPrompt`).
+    @MainActor static func systemPrompt(for project: LampProject) -> String {
+        if let candidates = project.undecided { return undecidedPrompt(candidates: candidates) }
+        let parts = Store.shared.parts(of: project)
+        guard project.holdsApp else { return wishPrompt(for: project, parts: parts) }
+        return kindPrompt(for: project) + Skills.forDevices(of: [project] + parts) + Parts.rule(for: project, parts: parts)
     }
+
+    /// The prompt of a wish whose apps are all in folders of their own: what holds for the wish as a whole (asking, the
+    /// shell, its icon and description, attachments, how to talk and finish), then its apps. A wish of one such app has
+    /// that app's rules here, for the files in its folder; a wish of several has each app's as a skill, as any wish's
+    /// other apps have (`Parts.rule`), so no app of it comes first.
+    static func wishPrompt(for wish: LampProject, parts: [LampProject]) -> String {
+        guard !parts.isEmpty else { return emptyWishPrompt }
+        let apps = parts.map { "\(Parts.name(of: $0)) in \($0.dir.lastPathComponent)/" }
+        let header = """
+        You are Lamp's builder agent. The current directory is a wish: \(apps.joined(separator: " and ")), each app in a \
+        folder of its own with its own build files. The folder itself holds what's the wish's: its icon, its description \
+        and the person's attachments. Read the APP.md in each app's folder first for context.
+        """
+        let rules = [Rules.ask, Rules.shell, Rules.icon, Rules.about, Rules.wishAttachments, Rules.audience, Rules.begin, Rules.finish]
+            .joined()
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds each app you changed and opens it")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
+        // One app on its own is told nothing of reaching others, as an app in its wish's own folder isn't.
+        let each = parts.count == 1
+            ? parts.map { "\n\n" + Parts.pack(for: $0.platform, in: $0.dir.lastPathComponent, alone: true, integration: Parts.listedIntegration(of: $0)) }.joined()
+                + (Template.talksToOtherApps(wish) ? Rules.wishTalk : "")
+            : Parts.rule(for: wish, parts: parts) + Skills.index(Skills.everywhere)
+        // Each app's devices offer their skills (a TV's design) in the wish's prompt, which is every app's.
+        let devices = Skills.forDevices(of: parts)
+        return header + "\n\nRules:\n" + rules + each + devices
+    }
+
+    /// The prompt of a wish with no app at all (its last one taken away): only what holds for the wish as a whole, and
+    /// how it gets an app, with nothing of any kind's rules or files that are gone.
+    static var emptyWishPrompt: String {
+        let header = """
+        You are Lamp's builder agent. The current directory is a wish that has no apps now: it keeps its name, its chat, \
+        its history, its icon and the person's attachments, and nothing in it is built, opened or tried. When the person \
+        wants something made, give the wish an app with `make_app_for`: what it is (`kind`, a game or an app), how it's \
+        made (`made`) and the devices it's for; its reply carries that app's rules, which you then follow in the same \
+        request. Undo in the chat's toolbar, or restore_version, brings back an app the wish had.
+        """
+        let rules = [Rules.ask, Rules.shell, Rules.icon, Rules.about, Rules.wishAttachments, Rules.audience, Rules.begin, Rules.finish]
+            .joined()
+            .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds each app you changed and opens it")
+            .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac, a phone or a TV")
+        return header + "\n\nRules:\n" + rules + Skills.index(Skills.everywhere)
+    }
+
+    static func kindPrompt(for project: LampProject) -> String { project.platform.target.guidance.prompt(project) }
 
     /// The Mac prompt, made once for each state of Apps in Chrome: its rule is only for a Lamp where it's on, and the
     /// switch can change while Lamp runs.
@@ -382,7 +468,7 @@ enum Agent {
 
     /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
     /// share one code: so a block or a design given to one kind is given to the pair in the same place.
-    static func universalPrompt(for family: DeviceFamily) -> String {
+    static func universalPrompt(for family: DeviceFamily, part: String? = nil, alone: Bool = false) -> String {
         func half(_ place: String, _ rule: String) -> String {
             let lines = rule.split(separator: "\n", omittingEmptySubsequences: false)
             guard let first = lines.firstIndex(where: { $0.hasPrefix("- ") }) else { return rule }
@@ -391,46 +477,49 @@ enum Agent {
             return changed.joined(separator: "\n")
         }
         let onMac = "On the Mac", onPhone = "On iPhone and iPad"
-        let rules = [Rules.edit, Rules.ask, Rules.shell, Rules.universal, Rules.universalFrameworks,
+        let wishRules = part == nil
+        var rules = [Rules.edit] + (wishRules ? [Rules.ask, Rules.shell] : []) + [Rules.universal, Rules.universalFrameworks,
                      half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
-                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts), half(onMac, Rules.computer),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneBackground), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.universalShare, Rules.store, Rules.kinds(mac: true), Rules.game2D, Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
+                     Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
-                     Rules.icloud, Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs,
-                     Rules.universalTry, Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return (Rules.universalHeader + "\n\nRules:\n" + rules.joined())
+                     Rules.icloud, Rules.ai]
+        rules += (wishRules ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs, Rules.universalTry]
+        rules += wishRules ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : alone ? [] : [Rules.partTalk(mac: true)]
+        let header = part.map { Rules.partHeader("an app for the Mac and for iPhone and iPad, one SwiftUI code for both (a Swift Package, Swift 5.9 language mode, macOS 14+ and iOS 17+)", folder: $0) }
+            ?? Rules.universalHeader
+        return (header + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: family.name)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: "a Mac or an iPhone")
-            .replacingOccurrences(of: "{{IMAGE}}", with: "LampImage")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: "builds it and opens it where Try On points")
-            .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: "macOS 15 and iOS 18")
-            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: "and calendars, reminders, contacts, photos, Bluetooth and Mail")
     }
 
-    private static func prompt(platform: Platform, device: String, sidebar: Bool) -> String {
+    /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the rules of its kind alone, without the
+    /// ones about the wish as a whole (asking, the shell, the icon, how to talk and finish), which the wish's own prompt has.
+    /// `alone`: it's the wish's only app, so nothing about reaching the others.
+    static func prompt(platform: Platform, device: String, sidebar: Bool, part: String? = nil, alone: Bool = false) -> String {
         let mac = platform == .mac
-        var rules = [Rules.edit, Rules.ask, Rules.shell,
+        var rules = [Rules.edit] + (part == nil ? [Rules.ask, Rules.shell] : []) + [
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
-        if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.macShare, Rules.permissions] }
+        if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.share, Rules.permissions] }
         if mac && sidebar { rules.append(Rules.browserCompanion) }
-        rules += [Rules.script, Rules.intents] + (mac ? [Rules.macIntents] : []) + [mac ? Rules.macAccounts : Rules.iPhoneAccounts]
-        if mac { rules += [Rules.computer] }
-        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneBackground, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.iPhoneShare, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac), Rules.game2D, Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
-        rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated,
-                  Rules.onDevice, Rules.ai, Rules.untrusted, Rules.dates, Rules.decisions, Rules.icon, Rules.about, Rules.attachments, Rules.logs]
+        rules += [Rules.script, Rules.intents, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
+        if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.share, Rules.icloud] }
+        rules += [Rules.store, Rules.kinds(mac: mac), Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
+        rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated, Rules.ai]
+            + (part == nil ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
-        rules += [Rules.appMd, Rules.audience, Rules.begin, Rules.finish]
-        return ((mac ? Rules.macHeader : Rules.iPhoneHeader) + "\n\nRules:\n" + rules.joined())
+        if part != nil, !alone { rules.append(Rules.partTalk(mac: mac)) }
+        rules += part == nil ? [Rules.appMd, Rules.audience, Rules.begin, Rules.finish] : []
+        let header = part.map { Rules.partHeader(mac ? "a Mac app (a standalone macOS SwiftUI app, a Swift Package, Swift 5.9 language mode, macOS 14+)"
+                                                     : "an iPhone and iPad app (a SwiftUI app, a Swift Package built for the iOS Simulator, Swift 5.9 language mode, iOS 17+)", folder: $0) }
+            ?? (mac ? Rules.macHeader : Rules.iPhoneHeader)
+        return (header + "\n\nRules:\n" + rules.joined())
             .replacingOccurrences(of: "{{DEVICE}}", with: device)
             .replacingOccurrences(of: "{{A_DEVICE}}", with: mac ? "a Mac" : "an iPhone")
-            .replacingOccurrences(of: "{{IMAGE}}", with: mac ? "NSImage" : "UIImage")
             .replacingOccurrences(of: "{{RELAUNCH}}", with: mac ? "builds it and puts it into the open app" : "builds it and opens it in the simulator")
-            .replacingOccurrences(of: "{{TRANSLATION_OS}}", with: mac ? "macOS 15" : "iOS 18")
-            .replacingOccurrences(of: "{{EXTRA_PERMISSIONS}}", with: mac ? "and calendars, reminders, contacts, photos, Bluetooth and Mail"
-                                  : "and photos, calendars, reminders and contacts")
     }
 
     /// One rule each, ending in a newline. `mac…` and `iPhone…` pairs say the same thing for each kind of app;
@@ -472,22 +561,9 @@ enum Agent {
         """
 
         static let icloud = """
-        - To keep the person's data the same on every device signed in to their iCloud account (the Mac and the \
-        iPhone, or an iPhone and an iPad), declare `{"icloud": true}` in `capabilities.json` and keep that data \
-        with `LampSync` from LampSupport.swift instead of LampStore: `@StateObject private var notes = \
-        LampSync.collection("notes", of: Note.self)` in the view that owns the list (one object per name, shared \
-        by every view that asks), then `notes.items`, `notes.put(note)`, `notes.delete(id)`, `notes.get(id)`; the \
-        view follows changes made anywhere. Items are Codable and Identifiable, and the same rules as LampStore's \
-        apply to changing a saved type. Lamp signs the app for iCloud with the person's Apple team, which must be \
-        in the Apple Developer Program (a free account can't use iCloud; the build then fails at signing, and \
-        you say so plainly). Sync needs the device signed in to iCloud; the simulator usually isn't, so what you \
-        see there is the data kept on that device, and `LampSync.shared.status` says why. Offer the status in \
-        the app's settings. Use it for the data people would expect everywhere; settings for one device stay \
-        in LampStore. Apple's terms forbid keeping sensitive health information about a person in iCloud: what \
-        is medical (diagnoses, conditions, symptoms, medications, lab results, clinical records, reproductive or \
-        mental-health entries) stays on the device, in LampStore, never in LampSync. Everyday activity and \
-        fitness numbers (steps, distance, active calories, workouts, water) aren't that, and may sync. When \
-        it's unclear which a kind is, keep it on the device.
+        - To keep the person's data the same on every device signed in to their iCloud account, open the \
+        icloud-sync skill before writing it, and follow it: it's kept with LampSync, not LampStore, and some data \
+        may never sync.
         """
 
         static let universalTry = """
@@ -508,7 +584,8 @@ enum Agent {
         /// Installing on the person's own phone and looking in the simulator, shared by both iOS prompts.
         static let phone = """
         Lamp can build, sign and install the app on the person's own iPhone or iPad, the one chosen under Try On, \
-        with a free Apple account; some capabilities require a paid Apple Developer membership. To open the app \
+        with a free Apple account; Apple signs iCloud, NFC, Siri, its weather and Time Sensitive notifications only for a \
+        paid Apple Developer membership, and the request's device line says when the person's team is a free one. To open the app \
         on a phone, the person connects it, chooses it under Try On and presses Play. Your looks at the iPhone app \
         are in the simulator. An iPhone preview result includes a note about the Try On selection and Lamp's \
         device lookup once per turn, after the simulator app opens.
@@ -579,97 +656,34 @@ enum Agent {
         """
 
         static let macBlocks = """
-        - LampSupport.swift has tested building blocks for common Mac jobs. Use them instead of writing your own: \
-        `LampFolderWatcher(folder) { changedURLs in }` (files added or changed in a folder; keep it alive) and \
-        `LampFolders` (downloads, desktop, documents, screenshots, `files(in:)` newest first); \
-        `LampHotKey("cmd+shift+space") { }` (a shortcut that works from any app; keep it alive); \
-        `LampLoginItem.isEnabled` (open at login: offer it as a toggle in Settings, never turn it on yourself; an app \
-        that declares `"background": true` is opened at login by Lamp); `LampSchedule.daily("briefing", hour: 7) { }` and \
-        `LampSchedule.every("inbox", minutes: 15) { }` (work at a time or every so often, catching up after sleep; \
-        keep it alive); \
-        `await LampText.read(url)` (text from PDFs, scanned PDFs, images and screenshots via Live Text, RTF, Word, \
-        HTML, plain text, all on the Mac and free; use it before sending documents to LampAI) and \
-        `await LampText.recognize(in: nsImage)`; `.lampDropFiles { urls in }` on any view and `LampDropZone("Drop \
-        screenshots here") { urls in }` for an empty state (Finder files, images from other apps, links); \
-        `LampClipboardWatcher { item in }` (item.text / image / fileURLs; keep it alive) and \
-        `LampClipboardWatcher.copy(text)`; `LampNotifications.send("Title", body: "…")` \(Rules.notifications). \
-        \(Rules.sharedBlocks) Make the most of being on the \
-        Mac: local files, drag and drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
+        - LampSupport.swift has tested building blocks for common Mac jobs: notifications, schedules, text from \
+        documents and pictures, dropped files, watched folders, shortcuts that work from any app, the clipboard, \
+        opening at login, photos, location, weather, music, Spotlight, the devices on the home network and the person's Roku. Use them instead of writing your own, and \
+        open the building-blocks skill before using one. Make the most of being on the Mac: local files, drag and \
+        drop, the menu bar, keyboard shortcuts, and fitting into what the user already does.
         """
 
-        /// The blocks a Mac and an iPhone both have, said in both kinds' rules.
-        static let sharedBlocks = """
-        Photos: `LampPhotos` (`authorize()`, `photos(days:)`, `photos(near:_:km:)`, `favorites()`, `albums()`, \
-        `photos(in:)`, `image(_:size:)`, `tags(of:)` for what a picture shows (empty in the simulator), `save(_:)`; choosing one is SwiftUI's \
-        `PhotosPicker`). Location: `LampLocation` (`current()` with a name from the map, `find(address)`, \
-        `distance(from:to:)`, `shared.watch()` for big moves, `shared.watchVisits()` on the iPhone for where the \
-        person stops and for how long, which needs `"backgroundModes": ["location"]`). Weather: `LampWeather` \
-        (`now(latitude:longitude:)`, `hours`, `days`, `here()`), after `{"weather": true}` in capabilities.json, \
-        for apps with an iPhone half only; the team also turns WeatherKit on for the app at developer.apple.com \
-        once, and the call's message says so until then (otherwise, Open-Meteo through `connectors`). Apple's terms ask for `LampWeatherAttribution()` (its \
-        Weather mark, linking to its sources) wherever its weather is shown, allow forecasts to be kept only \
-        briefly (never saved with the app's data), and rule out apps meant for emergencies or safety. Music: `LampMusic` (`authorize()`, `recentlyPlayed()`, \
-        `library()`, `search(_:)`, `play(_:)`, `pause()`, and on the iPhone `nowPlaying`), Apple Music only, with \
-        MusicKit turned on for the app at developer.apple.com the same way. Spotlight: for the app's own things \
-        people would look for by name (notes, recipes, people, trips), `LampSpotlight.index(id:title:details:keywords:)` \
-        when one is added or changed and `LampSpotlight.remove(id)` when it's deleted, and `.lampSpotlightOpen { id \
-        in … }` on the view that shows them, to show the one tapped in Spotlight.
+
+        /// A share extension: the Share/ folder, built like a widget (`Template.hasShare`). How to write one, and what's
+        /// different for each kind of app, is the share-extension skill.
+        static let share = """
+        - When the app collects things people find in other apps (links, articles, recipes, photos, receipts, \
+        quotes), give it a share extension, so it's in their share sheets and takes things in without being \
+        opened: open the share-extension skill before writing or changing Share/, and follow it.
         """
-
-        /// A share extension: the Share/ folder, built like a widget (`Template.hasShare`). `note` is what's
-        /// different for the kind of app.
-        static func share(_ note: String) -> String {
-            """
-            - When the app collects things people find in other apps (links, articles, recipes, photos, receipts, \
-            quotes), give it a share extension, so it's in their share sheets and takes things in without being \
-            opened. Write Share/ShareView.swift: `struct ShareView: View { let items: [LampShare.Item]; var body: \
-            some View { LampShareSheet(items: items) } }` shows what's shared with Cancel and Save; a view of your \
-            own (a note, a list to file it in) ends with `LampShare.send(items)` or `LampShare.cancel()`. No `@main` \
-            there: Lamp builds the folder as a small separate program with Share/LampShareSupport.swift, which \
-            Lamp writes (never edit it), and nothing from Sources/. In the app, at launch, `LampShare.onReceive { \
-            items in … }` gets each share once, also those made while it was closed: `item.kind` (.text, .link, \
-            .image, .file), `item.text`, `item.url`, `item.name`, `item.image`, `item.data`; save what you keep \
-            there, as the files go after. You can't open a share sheet: check that it builds, and tell the user in \
-            a sentence that the app is in their share sheet.\(note)
-
-            """
-        }
-
-        static let macShare = share("""
-             On a Mac it needs Lamp to sign the app for the user's Apple team (`look_at_app` says when it can't), and \
-            macOS keeps a new one off until the user turns it on once: Edit Extensions… at the foot of a Share menu.
-            """)
-        static let iPhoneShare = share("")
-        static let universalShare = share(" It is the iPhone half's: the Mac half has none.")
 
         static let iPhoneBlocks = """
         - LampSupport.swift has tested building blocks for common jobs, the same ones the Mac apps made with Lamp \
-        have. Use them instead of writing your own: `await LampText.read(url)` (text from PDFs, scanned PDFs, \
-        photos and screenshots via Live Text, RTF, Word, HTML, plain text, all on the device and free; use it \
-        before sending documents to LampAI) and `await LampText.recognize(in: uiImage)`; `.lampDropFiles { urls \
-        in }` on any view and `LampDropZone("Drop files here") { urls in }` for an empty state (files and images \
-        dragged in from another app, which matters on iPad); `LampNotifications.send("Title", body: "…")` \(Rules.notifications). This \
-        app's copy of the library has none of the Mac-only blocks (watching folders, the user's folders, shortcuts \
-        that work in every app, opening at login, the clipboard watcher, Mail, other apps, the menu bar, the \
-        permission screens): never call them. \(Rules.sharedBlocks) Home: `LampHome` (iPhone only, after \
-        `{"homekit": true}` in capabilities.json): `accessories()` (lights, locks, thermostats, sensors, switches, \
-        each with its room and state), `set(_:on:)`, `set(_:brightness:)`, `set(_:locked:)`, `read(_:)`; Apple's \
-        terms allow it only in an app whose job is controlling the home, and what it reads never leaves the \
-        phone: not to LampAI, a server, LampSync or the Mac. Make the most \
-        of being on a phone: the camera, photos, location, haptics, and being with the person wherever they are.
+        have where a phone has them: notifications, schedules and work while the app is closed, text from documents \
+        and pictures, dropped files, photos, location, weather, music, Spotlight, the home, the devices on the home network and \
+        the person's Roku. Use them instead of \
+        writing your own, and open the building-blocks skill before using one. Make the most of being on a phone: \
+        the camera, photos, location, haptics, and being with the person wherever they are.
         """
 
         static let finder = """
-        - An app that takes files or folders from Finder (dropped on its icon, Open With, a Quick Action) \
-        says what it opens in `capabilities.json` at the app's root: `{"opens": ["folder", "png", \
-        "public.image"]}`, with "folder", "file" for any file, file extensions or type identifiers. Lamp \
-        declares them for the app; without that macOS hands it nothing. It is only ever offered for a kind \
-        another app opens, never put in that app's place; a kind nothing else opens (your own extension) \
-        is the app's to open. To try it, make test files in the app's folder or a temporary folder and \
-        hand them over with the `open` command `look_at_app` then gives you, which does what Finder does. \
-        A Finder Quick Action is a workflow the app writes into ~/Library/Services, and it stores the \
-        app's full path: it stops working when the app is moved or renamed, until the app runs again and \
-        rewrites it. So have the app write it at every launch from `Bundle.main.bundlePath`, never once.
+        - An app that takes files or folders from Finder (dropped on its icon, Open With, a Quick Action) has to \
+        declare what it opens: open the finder-files skill before writing it, and follow it.
         """
 
         static let menuBar = """
@@ -686,31 +700,11 @@ enum Agent {
         """
 
         /// App Intents: the app's actions given to Siri, Shortcuts and Spotlight. build.sh reads them out of the
-        /// code with Xcode's tools (`Template.appIntentsSetup`), so their text has to be literals.
+        /// code with Xcode's tools (`Template.appIntentsSetup`), so how they're written is the app-intents skill.
         static let intents = """
         - Give the app's main actions to the system with App Intents, without being asked, whenever someone would \
-        want one without opening the app: Siri, Shortcuts, Spotlight, and on an iPhone the Action button. In \
-        Sources/Intents.swift, `import AppIntents` and write a struct per action: `struct AddItemIntent: AppIntent` \
-        with `static let title: LocalizedStringResource = "Add Item"`, its inputs as `@Parameter(title: "Item") var \
-        item: String`, and `func perform() async throws -> some IntentResult & ProvidesDialog` that does the work \
-        with the app's own code (LampStore and the rest: it runs in the app, started without a window when it isn't \
-        open) and ends `return .result(dialog: "Added \\(item)")`; `static let openAppWhenRun = true` only for one \
-        that has to show the app. Then one `struct AppShortcuts: AppShortcutsProvider` whose `static var \
-        appShortcuts` lists them, `AppShortcut(intent: AddItemIntent(), phrases: ["Add an item to \\(.applicationName)"], \
-        shortTitle: "Add Item", systemImageName: "cart")`: that is what Siri hears and Spotlight and Shortcuts show \
-        with no setup. Every phrase names `\\(.applicationName)`, and a phrase can name only a parameter that is an \
-        `AppEnum` or `AppEntity`, never a String. For the app's own things (lists, notes, places), an `AppEntity` \
-        with an `EntityQuery` lets Shortcuts pick one. Titles and phrases are plain literals: the build reads them \
-        from the code and fails on what it can't read. When the build warns that Xcode isn't installed, the app \
-        works but the system doesn't see its intents: say so. Nothing here can run an intent, so check that the \
-        build succeeds and that what perform calls works in the app, then tell the user in a sentence what to say \
-        to Siri or search for.
-        """
-
-        /// A Mac app's intents run only when it's signed for a team (`Store.intentsHint` says when it isn't).
-        static let macIntents = """
-        - A Mac app's App Intents work when Lamp signs it for the user's Apple developer team; when it can't, \
-        `look_at_app` says so, and you tell the user how to turn them on as it says.
+        want one without opening the app: Siri, Shortcuts, Spotlight, and on an iPhone the Action button. Open the \
+        app-intents skill before writing or changing them, and follow it.
         """
 
         static let permissions = """
@@ -737,52 +731,23 @@ enum Agent {
         """
 
         static let script = """
-        - When the app needs behavior nobody can write in advance (what happens when two invented things meet, \
-        how a new kind of actor acts, a rule the person just described in words), use `LampScript` from \
-        LampSupport.swift: expose a small, well-described API of what scripts may do (spawn, move, remove, say, \
-        plus `isTrue`/`ask` for judgment), set `purpose` to a sentence about the app, then `write(...)` a script \
-        for a cache key and `run(...)` it. Scripts are plain JavaScript in a sealed context with a time limit, \
-        cached by key in LampStore. Keep rendering, physics and movement in Swift; scripts decide what should \
-        happen, not how to draw it.
+        - When the app needs behavior nobody can write in advance (what happens when two invented things meet, a \
+        rule the person described in words), open the scripting skill.
         """
 
         static let macAccounts = """
-        - When a wish needs the person's calendar, reminders, contacts, mail or files, reach first for what this Mac \
-        is already signed in to, before any service's API, sign-in, key or connector. Their calendar, reminders, \
-        contacts and email come through the accounts already on the Mac (iCloud, Google, Exchange, Outlook), with no \
-        sign-in or key, from LampSupport.swift: `LampCalendar.events(from:to:)` / `.add(...)`, \
-        `LampReminders.open()` / `.add(...)` / `.complete(id)`, `LampContacts.search("name")` / `.find(email:)`, \
-        and `LampMail.inbox(limit:since:before:)` / `.search(text, since:)` / `.body(of:)` / `.draft(to:subject:body:)` (a draft opens in \
-        Mail for the person to send; nothing is sent by the app). Their files in Google Drive, Dropbox, OneDrive or \
-        iCloud Drive are folders on the Mac: `LampFolders.synced` lists them and `LampFolders.synced("Google Drive")` \
-        gives one; read, write and watch them as files. So a wish that names a service ("my Google Calendar", "my \
-        Gmail", "my Outlook contacts", "my Dropbox") means these: never call the service's web API, never ask for a \
-        key, a sign-in or a developer registration, and don't ask which service they use. When their account or \
-        folder isn't on the Mac, the app says in one line where to add it (System Settings → Internet Accounts, the \
-        service's own Mac app, or Mail) and works once it's there. macOS asks the person once per kind of data; each \
-        call throws a plain message if refused, so show `error.localizedDescription`. Prefer these to LampComputer \
-        for mail, calendar, people and files: they're instant and free.
+        - When a wish needs the person's calendar, reminders, contacts, mail or files, even when it names a service \
+        ("my Google Calendar", "my Dropbox"), they come from the accounts already on this Mac, never a service's API, \
+        key or sign-in; what lives in another app they use (Slack, Messages, a site in their browser) comes through \
+        `LampComputer`. Open the accounts skill before writing any of it, and follow it.
         """
 
         static let iPhoneAccounts = """
-        - When a wish needs the person's calendar, reminders or contacts, reach first for the accounts already on \
-        the device (iCloud, Google, Exchange, Outlook), before any service's API, sign-in, key or connector: \
-        `LampCalendar.events(from:to:)` / `.add(...)`, `LampReminders.open()` / `.add(...)` / `.complete(id)`, \
-        `LampContacts.search("name")` / `.find(email:)`, from LampSupport.swift. A wish that names a service ("my \
-        Google Calendar") means these: never call the service's web API, never ask for a key or a sign-in, and \
-        don't ask which service they use. iOS asks the person once per kind of data; each call throws a plain \
-        message if refused, so show `error.localizedDescription`.
+        - When a wish needs the person's calendar, reminders or contacts, even when it names a service ("my Google \
+        Calendar"), they come from the accounts already on the device, never a service's API, key or sign-in. Open \
+        the accounts skill before writing any of it, and follow it.
         """
 
-        static let computer = """
-        - When the information or the job lives in another app the person uses and the accounts and synced folders \
-        above and `connectors` can't reach it (Slack, Messages, Notes, or a site in their browser such as LinkedIn or a CRM), use `LampComputer.ask("…")` to read it or \
-        `LampComputer.perform("…")` to act there, from LampSupport.swift. It works with what they're already signed \
-        in to, with no API keys or connectors, and returns text (ask for JSON in the task when the app needs \
-        structure). Calls take 10–60 seconds, so run them when the person asks (a button), never on a timer, and \
-        show progress. `perform` asks the person before every click or keystroke. Prefer files, LampText and \
-        the web when they can do the job.
-        """
 
         static let store = """
         - Keep the user's data with LampStore (in LampSupport.swift), backed by SQLite. Settings and small state: \
@@ -796,7 +761,12 @@ enum Agent {
         only ever add to it: new properties must be optional (or decoded with decodeIfPresent and a default), and \
         never rename, remove or retype a saved property. If you must restructure, decode the old shape and convert \
         it. An app made before LampStore may keep data elsewhere; keep reading it from there, or move it over \
-        without losing anything.
+        without losing anything. Data that should be the same wherever the app is open (one shopping list on the \
+        Mac, the kitchen iPad and the TV): `LampStore.shared("groceries", of: Grocery.self)` (`items`, `put`, \
+        `delete`, `publish`, `onChange`), merged item by item between the app's copies on the home network, and \
+        `LampStore.sharedFiles("photos")` for pictures one copy reads for the others; with `wish: true` the list is \
+        the wish's own, the same in every app of the wish (a Mac app and its iPhone app sharing one calendar), never \
+        kept by one app for the others. Open the `wish-links` skill first.
         """
 
         /// What kind of app it is decides how it looks: Notes, Weather and Breathe are all Apple's and look
@@ -845,20 +815,6 @@ enum Agent {
         wishlist of sauces, a new screen) keeps the look. Replace only example content, never the person's own \
         items, and keep saved data readable (keep raw values, map old ones to new). It changes much of what they \
         see, so work in passes.
-
-        """
-
-        static let game2D = """
-        - 2D games: SpriteKit, in a SpriteView, one SKScene subclass for each screen with `scaleMode = .resizeFill`. \
-        Movement in `update(_:)` scaled by the time since the last frame; collisions with SKPhysicsBody, its category \
-        and contact masks, and an SKPhysicsContactDelegate. Sprites are `make_art` pictures on a transparent \
-        background, loaded as SKTexture; an SKCameraNode follows the player through a world bigger than the screen. \
-        Keys come from `NSEvent.addLocalMonitorForEvents` on the Mac, touches on iPhone. Score, pause and menus are \
-        SwiftUI over the SpriteView. Keep it smooth: nothing that runs during play may take longer than a frame \
-        (about 16 ms), so load each texture once and reuse it, reuse nodes for things that come and go (bullets, \
-        enemies, particles) rather than making new ones each time, and prepare a level before it starts. After \
-        changing anything that moves, look_at_app with `motion` shows what changes frame to frame and catches \
-        flicker that a single picture hides.
 
         """
 
@@ -913,65 +869,13 @@ enum Agent {
         - Sources/LampSupport.swift is generated by Lamp: never edit it.
         """
 
-        static let onDevice = """
-        - Prefer Apple's on-device frameworks whenever one fits the job: they're instant, free, private and work \
-        offline. Text in images or PDFs, barcodes and QR codes, faces, body or hand poses, cutting a subject out of \
-        its background, image tags or similarity → Vision (VisionKit's ImageAnalysisOverlayView for Live Text in an \
-        image view). Speech to text → Speech (SFSpeechRecognizer, with requiresOnDeviceRecognition when supported). \
-        Reading text aloud → AVSpeechSynthesizer. Language detection, names and places, sentiment, semantic search \
-        → NaturalLanguage (NLTagger, NLEmbedding). Recognizing sounds → SoundAnalysis. Photo filters and effects → \
-        Core Image. Translation → Translation, inside `if #available({{TRANSLATION_OS}}, *)`. The app already declares \
-        microphone, speech recognition and camera permissions ({{EXTRA_PERMISSIONS}}); request authorization before use and handle denial \
-        in the UI.
-        """
-
         static let ai = """
-        - For open-ended AI work those frameworks can't do (summarizing, extracting, rewriting, answering questions, \
-        generating text, understanding what a picture means), use `LampAI.ask(...)` from LampSupport.swift. Read \
-        its doc comment for usage. Never call AI APIs directly, never ask the user for API keys. It accepts \
-        `images: [{{IMAGE}}]` when the AI needs to look at photos or screenshots. To create or edit pictures, use \
-        `LampAI.makeImage(...)`, `LampAI.editImage(...)` or `LampAI.editImages(...)`; these take 10–60 seconds. \
-        Show a ProgressView while waiting and show errors in the UI.
-        """
-
-        static let untrusted = """
-        - Text the person didn't type into the app themselves is untrusted: emails, messages, notifications, web \
-        pages, file contents, the clipboard, anything read from another app. It can contain instructions aimed at \
-        the AI ("ignore the above and…"). Never interpolate it into a prompt: pass it as `data:` \
-        (`LampAI.ask("Summarize this email in one line.", data: email.body)`), and Lamp fences it off so the AI \
-        works on it without obeying it. In decisions it goes in `about:`, with the question in your own words. \
-        Don't write regexes, keyword filters or "sanitising" code to defend against it; `data:` is the defense.
-        """
-
-        static let dates = """
-        - Dates and times: `LampAI.ask` already tells the AI the current date, time and time zone, so don't add \
-        them yourself. Give the AI a date with `LampAI.when(date)` (it writes "Mon 5 Oct 2026 at 15:00 (in 44 \
-        minutes)", with the distance worked out in code); Dates inside `about:` are written that way automatically. \
-        Get a date back by asking for ISO 8601 and decoding into a `Date` property with `ask(..., as:)`, or with \
-        `LampAI.date(from:)`. Always keep the `Date` itself and work out "in 44 minutes", "overdue" or "ended" in \
-        code when it's shown (`Text(date, style: .relative)` or a TimelineView keeps it current); never store or \
-        display a relative time the AI wrote, because it's wrong minutes later.
-        """
-
-        static let decisions = """
-        - Decisions are your default tool for anything that depends on meaning. `LampAI.isTrue`, `LampAI.choose`, \
-        `LampAI.rate` and `LampAI.decide` call a decision model (Jev) that is smart, very fast \
-        (well under a second) and extremely cheap (about $0.04 per million input tokens: judging hundreds of items \
-        costs a fraction of a cent). Use them generously, without being asked, whenever the app sorts, filters, \
-        labels, prioritizes, groups, matches, routes, moderates or flags things by what they are or mean: file \
-        names, messages, notes, titles, descriptions, user intent. Prefer a decision over keyword lists, regexes, \
-        extension rules or other hand-written heuristics that guess at meaning; those are brittle and the decision \
-        model is better at it. It's fine to judge every item individually. To judge a list, hand the whole list to \
-        `LampAI.isTrue(_:each:)`, `LampAI.choose(_:from:each:)`, `LampAI.rate(_:levels:each:)` or, for several \
-        questions per item, `LampAI.decideEach(items, questions)`: they run about 12 at a time, keep the order, \
-        report `progress: { done, total in }` on the main thread and return one `LampVerdict` per item (`item`, \
-        `probability` / `choice` / `score` / `confidence`, and `error` for an item that couldn't be judged). Pass \
-        `remember: seconds` to save verdicts so unchanged items aren't judged again until they expire (e.g. a \
-        week for files, a day for messages). Never write your own TaskGroup, loop, progress counter or verdict \
-        cache for this. Ask several questions about one thing in one `decide` call. Use code for \
-        exact facts (sizes, dates, duplicates, arithmetic) and combine them with decisions: pass the facts in as \
-        part of the state. Use the returned probabilities and confidence to choose between acting automatically, \
-        suggesting, and asking the user. Decisions take text or JSON-friendly data, not images.
+        - AI inside the app: Apple's on-device frameworks first (text in pictures, speech, reading aloud, language, \
+        sounds, translation), then `LampAI` for open-ended text and pictures; never an AI API or a key. Decisions \
+        (`LampAI.isTrue`, `choose`, `rate`, `decide`) are your default for anything that depends on meaning: use them \
+        without being asked whenever the app sorts, filters, labels, groups, matches or flags things by what they \
+        are, never keyword lists or regexes. Open the app-ai skill before writing any of it, and follow it: it also \
+        says how to hand the AI text the person didn't write, and dates.
         """
 
         static let icon = """
@@ -989,6 +893,15 @@ enum Agent {
         every ten seconds."), \(AppDescription.limit) characters at most. Lamp shows it under the app's name to anyone the app is \
         shared with, before they open it, and in large type beside a picture of the app on the desk. Not a list of features and not how it works: what it is, in everyday words, with nothing from \
         the code. Write it once a new app is built, and again when what the app is changes.
+        - Credit: \(Credits.file) at the app's root is where it came from. When you bring in someone else's work (code \
+        from a repository, a library copied in, a model, a picture, a sound, a font, data), add it to `upstream`: \
+        `{"name": "Slop New York", "author": "Mr.doob", "url": "https://github.com/mrdoob/slop-newyork", "commit": \
+        "<full commit hash>", "license": "MIT", "licenseFile": "Web/LICENSE-slop-newyork"}`, with the license as its SPDX id \
+        (left out when it has none) and its license text kept in the app beside the work. Never take anything out of \
+        \(Credits.file), never remove or change a license or a notice of someone else's, and never take an author's \
+        name or credit off the screen; `remixOf` is Lamp's, leave it as it is. Work with no license can be used here but \
+        not shared or published: say so to the person when you bring it in. Lamp shows the credit in the app's About \
+        window and its info.
         """
 
         static let attachments = """
@@ -998,6 +911,17 @@ enum Agent {
         Load it with `LampAssets.url("name")`, `LampAssets.image("name")` or `LampAssets.text("name")` from \
         LampSupport.swift, writing the full file name (e.g. "logo.png"). Screenshots and mockups are usually just \
         references for you: leave them in Attachments/.
+        """
+
+        /// Attachments for a wish whose apps are all in folders of their own: the folder is the wish's, and each app
+        /// bundles its own files as its rules say.
+        static let wishAttachments = """
+        - Files the user attaches are saved in Attachments/, for you to look at; they stay on this Mac and never \
+        ship with an app. When an app should use one (a logo, a data file, a sound), copy it into that app's folder: \
+        a Swift app's Assets/ (make the folder if needed), loaded with `LampAssets.url("name")`, `LampAssets.image("name")` \
+        or `LampAssets.text("name")` and the full file name; a TV app's Web/, loaded with a relative path; an Android app's \
+        app/src/main/assets/, read with `LampAssets`. Screenshots and mockups are usually just references for you: leave \
+        them in Attachments/.
         """
 
         static let logs = """
@@ -1038,26 +962,16 @@ enum Agent {
         checklist). Open the apple-watch skill before writing or changing it, and follow it.
         """
 
-        /// What `LampNotifications` does beyond a plain message, said in both kinds' blocks.
-        static let notifications = """
-        (also `at: date` to show it later, even with the app closed, `id:` to replace or `cancel(id)` one, \
-        `actions: ["Done", "Snooze"]` for buttons that work without opening the app, handled by \
-        `LampNotifications.onAction { action, id in … }` set where the app starts, and on iPhone `timeSensitive: \
-        true`, with `{"timeSensitive": true}` in capabilities.json, for what can't wait, sparingly)
-        """
-
-        /// Work while the app is closed on iPhone, as a Mac app works in the background.
-        static let iPhoneBackground = """
-        - When the app should do something while it's closed (fetch the news before breakfast, check a price, \
-        tidy up, remind), declare `{"background": true}` in capabilities.json, put `.lampBackground()` on its \
-        WindowGroup, and make `@State private var check = LampSchedule.every("prices", minutes: 60) { … }` or \
-        `LampSchedule.daily("briefing", hour: 7) { … }` in the App, the same calls as on a Mac. iOS runs them \
-        while the app is closed when it judges best: near the time, not on the dot, at most a few times an \
-        hour, and less for an app the person rarely opens; while the app is open they run on time. Keep each \
-        run short (seconds) and tell the person what came of it with a notification. Something that must \
-        happen at an exact time and only needs to tell the person is a notification sent with `at:`, not a \
-        schedule. The simulator never wakes a closed app by itself, so try the work by running it from the app.
-        """
+        /// What the agent is told while Try On points at an Apple TV or a Vision Pro (the request's device line): the same
+        /// code is built for tvOS or visionOS, so what that system lacks has to be kept out of its build.
+        static func otherOS(_ family: DeviceFamily) -> String {
+            let condition = family == .appletv ? "os(tvOS)" : "os(visionOS)"
+            let lacks = family == .appletv
+                ? "tvOS has no touch screen (the Siri Remote moves focus: make every control focusable and big), no Health, calendar, reminders, contacts, Spotlight, notifications, widgets, share extension or watch app, and LampSupport leaves those blocks out there"
+                : "visionOS shows the app as a window in the room, looked at and pinched, with no widgets, share extension or watch app"
+            return "The app is built for \(family.os) from the same code: \(lacks). Put what only iPhone and iPad have under #if !\(condition), "
+                + "and what this place shows differently under #if \(condition); never take it from the iPhone build."
+        }
 
         static let iPhoneHardware = """
         - The phone itself is the app's best material: use what it has, without being asked, whenever it fits what \
@@ -1079,7 +993,8 @@ enum Agent {
         and you're the one making theirs. Their app is open on screen beside this chat, and they want to see each \
         result there right away. Everything you say to them is about their app and what it does, in everyday words. Never name files, folders, types, functions, frameworks or tools, and never show code, \
         commands or compiler errors, unless they ask for them. Their Mac is set to \(language): write to them \
-        in that, with its spelling, and make the app's own words the same.
+        in that, with its spelling, and make the app's own words the same, whatever spelling the app's files, a \
+        starter or these instructions happen to use.
         """
 
         /// The language the Mac is set to, as it names itself in English ("English (United States)"): what the
@@ -1112,7 +1027,7 @@ enum Agent {
         Whichever it is: no list, no bold labels, no headings, no walk through of how to use what you made and \
         no account of each thing you clicked. Users often don't know what {{A_DEVICE}} can \
         do on its own, and assume things like reading text from a photo, cutting a person out of a picture, \
-        transcribing speech or reading aloud need extra software. When one of the on-device abilities above would \
+        transcribing speech or reading aloud need extra software. When something the device can do on its own would \
         clearly make this app better, and the user hasn't asked for it or turned it down, you may add to the \
         ending one short suggestion in plain words (no framework names), e.g. "Want it to read the text out of pasted screenshots? \
         Your Mac can do that on its own, offline." At most one suggestion, not every turn, and never build it unasked.
@@ -1142,7 +1057,7 @@ enum Agent {
             "LAMP_SYSTEM": (project.map(systemPrompt(for:)) ?? systemPrompt) + tryRules + sandboxNote,
             "LAMP_PROMPT": prompt,
             "LAMP_TOOLS": lampTools?.path ?? "",
-            "LAMP_TOOLS_JSON": Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json").path ?? "",
+            "LAMP_TOOLS_JSON": (Store.toolsFile ?? Bundle.main.resourceURL?.appendingPathComponent("lamp-tools.json"))?.path ?? "",
             "PI_CODING_AGENT_DIR": configDir,
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",

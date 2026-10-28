@@ -1,0 +1,8 @@
+VERDICT 1: RELOAD
+VERDICT 2: RELOAD
+== run
+before: taps=3 scheme=dark, taps=9 scheme=dark
+RELOAD 1 (whole): ok
+after1 (want it live: the view no longer reads the color scheme, and taps keeps 9): taps=9
+RELOAD 2: ok
+after2 (want it live: the environment field Lamp kept is kept again): taps=9!

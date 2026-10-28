@@ -1,8 +1,5 @@
-VERDICT 1: REOPEN (ContentView changed what it holds (no longer ContentView.__total: LazyState<Int>); ContentView.total isn't stored any more but is still declared, and can't share its name with the field the open app keeps)
+VERDICT 1: RELOAD
 == run
 before: total=2
-RELOAD 1: REOPEN ContentView changed what it holds (no longer ContentView.__total: LazyState<Int>); ContentView.total isn't stored any more but is still declared, and can't share its name with the field the open app keeps
-after1 (want a plain reason: @State total becomes a computed property of the same name): 
-before: total=5
-RELOAD 1: in the restart
-after1 (want a plain reason: @State total becomes a computed property of the same name): 
+RELOAD 1 (whole): ok
+after1 (want it live: @State total becomes a computed property of the same name, total=5): total=5

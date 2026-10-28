@@ -3,16 +3,38 @@ import XCTest
 
 /// What Lamp ships for devices, and the Windows packages it makes for one, held to what the device was seen to take.
 final class DeviceAppPackageTests: XCTestCase {
-    /// Every integration Lamp ships passes the same checks as one the builder writes (with its own marks allowed).
+    /// Every integration Lamp ships passes the same checks as one the builder writes (with its own marks allowed). The
+    /// skills an integration names are checked against the source tree's, since the test runner's bundle has none.
     func testShippedIntegrationsPassTheChecker() throws {
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/Devices")
+        let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources")
+        let folder = resources.appendingPathComponent("Devices"), skills = Skills.load(from: resources.appendingPathComponent("skills"))
+        XCTAssertFalse(skills.isEmpty)
         let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }
         XCTAssertFalse(files.isEmpty)
         for file in files {
             let data = try Data(contentsOf: file)
-            XCTAssertEqual(IntegrationCheck.unknownKeys(data) + IntegrationCheck.problems(data, submitted: false), [], file.lastPathComponent)
+            XCTAssertEqual(IntegrationCheck.unknownKeys(data) + IntegrationCheck.problems(data, submitted: false, skills: skills), [], file.lastPathComponent)
+            // And the whole lifecycle a builder's integration is held to.
+            XCTAssertEqual(IntegrationCheck.lifecycle(try JSONDecoder().decode(Integration.self, from: data)), [], file.lastPathComponent)
         }
+    }
+
+    /// A builder's integration that makes apps says how they're stopped, removed and typed into, or that the device can't.
+    func testAnAppKindsLifecycleIsWholeOrSaidToBeMissing() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/Devices/roku.json")
+        var roku = try JSONDecoder().decode(Integration.self, from: Data(contentsOf: file))
+        roku.bridge?.stop = nil
+        XCTAssertTrue(IntegrationCheck.lifecycle(roku).contains { $0.hasPrefix("bridge.stop") })
+        roku.bridge?.lacks = ["stop"]
+        XCTAssertEqual(IntegrationCheck.lifecycle(roku), [])
+        roku.app?.declared?.icons = nil
+        XCTAssertTrue(IntegrationCheck.lifecycle(roku).contains { $0.contains("images/icon_focus_hd.png") })
+        // A page's own relative picture is its folder's.
+        roku.app?.declared?.files = ["Web/index.html": "<img src=\"images/icon.png\">"]
+        roku.app?.declared?.icons = ["Web/images/icon.png": "200x200"]
+        XCTAssertFalse(IntegrationCheck.lifecycle(roku).contains { $0.contains("icon.png") })
     }
 
     /// Windows names a package by a short id of its publisher; the bridge launches it by that name.
@@ -26,6 +48,32 @@ final class DeviceAppPackageTests: XCTestCase {
         let first = MSIX.version(at: now), second = MSIX.version(at: now, after: first)
         XCTAssertNotEqual(first, second)
         XCTAssertTrue(first.split(separator: ".").map { Int($0)! }.lexicographicallyPrecedes(second.split(separator: ".").map { Int($0)! }))
+    }
+
+    /// A web app in Lamp's WebView2 host starts the host, and registers WebView2's classes from the library beside it:
+    /// without them the host can't make a web view, and the console shows nothing.
+    func testTheWebHostsPackageRegistersWebView2() {
+        let identity = MSIX.Identity(name: "Lamp.demo", publisher: MSIX.publisher, version: "1.0.0.0", architecture: "x64")
+        let manifest = MSIX.manifest(identity: identity, displayName: "Demo", entry: .webHost)
+        XCTAssertTrue(manifest.contains("Executable=\"App.exe\""))
+        XCTAssertFalse(manifest.contains("StartPage="))
+        XCTAssertTrue(manifest.contains("<Path>Microsoft.Web.WebView2.Core.dll</Path>"))
+        for name in WebHost.activatableClasses { XCTAssertTrue(manifest.contains("ActivatableClassId=\"\(name)\""), name) }
+    }
+
+    /// The import map the rules give names the library where the page finds it, nested folders included.
+    func testTheImportMapPathKeepsNestedFolders() {
+        XCTAssertEqual(DeviceSupport.pagePath("Web/three", page: "Web"), "three")
+        XCTAssertEqual(DeviceSupport.pagePath("Web/vendor/three", page: "Web"), "vendor/three")
+        XCTAssertEqual(DeviceSupport.pagePath("Webby/three", page: "Web"), "Webby/three")
+    }
+
+    /// Every part of a package has a content type, a file with no extension (three.js's LICENSE) too: the Xbox refuses a
+    /// package with an untyped part, as an invalid block map.
+    func testAFileWithNoExtensionStillHasAType() {
+        let types = String(decoding: MSIX.contentTypes(for: ["Web/three/LICENSE", "Web/index.html"]), as: UTF8.self)
+        XCTAssertTrue(types.contains("<Override PartName=\"/Web/three/LICENSE\" ContentType=\"application/octet-stream\"/>"), types)
+        XCTAssertTrue(types.contains("<Default Extension=\"html\""))
     }
 
     /// The package step's zip is read as plain files only: nothing above its top, no links.
@@ -67,5 +115,9 @@ final class DeviceAppPackageTests: XCTestCase {
         let filled = try Placeholders.fill("/api/app?package={base64:packageFullName}", ["packageFullName": "Lamp.a_1.0.0.0_neutral__x"], in: .path)
         // The value's own "+", "/" and "=" can't change the query they're put in.
         XCTAssertEqual(filled, "/api/app?package=TGFtcC5hXzEuMC4wLjBfbmV1dHJhbF9feA%3D%3D")
+        // Text being typed is any character, encoded in a path so it can't leave it, and never in a header.
+        XCTAssertEqual(try Placeholders.fill("/keypress/Lit_{text}", ["text": "/"], in: .path), "/keypress/Lit_%2F")
+        XCTAssertEqual(try Placeholders.fill("/keypress/Lit_{text}", ["text": "é"], in: .path), "/keypress/Lit_%C3%A9")
+        XCTAssertNotNil(Placeholders.problem("text", in: .header, fields: []))
     }
 }

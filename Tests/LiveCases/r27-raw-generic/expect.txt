@@ -1,0 +1,8 @@
+VERDICT 1: REOPEN (Plain changed what it holds (Plain.b: Int); Plain has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct the app reads as bytes, or holds in one, gets none))
+== run
+before: 1 1
+RELOAD 1: REOPEN Plain changed what it holds (Plain.b: Int); Plain has no spare place of Lamp's (a model, a Sendable class, an Equatable view, a wrapper or a struct the app reads as bytes, or holds in one, gets none)
+after1 (want a reopen: upload<T> hands any array over as bytes, which Lamp can't follow): 1 1
+before: 1 2 1
+RELOAD 1: in the restart
+after1 (want a reopen: upload<T> hands any array over as bytes, which Lamp can't follow): 1 2 1

@@ -38,6 +38,38 @@ final class WaitingImportTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: kept), Data([1, 2, 3]))
     }
 
+    /// A file a link fetched, with its request beside it, keeps the request through the wait: the copy has it too.
+    func testARequestKeptBesideAFetchedFileGoesWithTheCopy() throws {
+        let folder = root.appendingPathComponent("lamp-fetched-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("Shared Wish.lampapp")
+        try Data([1, 2, 3]).write(to: file)
+        try "Add a map".write(to: folder.appendingPathComponent(WaitingImport.requestFile), atomically: true, encoding: .utf8)
+        XCTAssertEqual(Store.fetchedRequest(beside: file), "Add a map")
+        XCTAssertTrue(try launch().keep(file))
+        try FileManager.default.removeItem(at: folder)
+        let kept = try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true))
+        XCTAssertEqual(Store.fetchedRequest(beside: kept), "Add a map")
+        // The same file fetched again with another request, while the first still waits: the newer request is kept.
+        let again = root.appendingPathComponent("lamp-fetched-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: again, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: again.appendingPathComponent("Shared Wish.lampapp"))
+        try "Add a map".write(to: again.appendingPathComponent(WaitingImport.requestFile), atomically: true, encoding: .utf8)
+        XCTAssertTrue(try launch().keep(again.appendingPathComponent("Shared Wish.lampapp")))
+        let once = root.appendingPathComponent("lamp-fetched-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: once, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: once.appendingPathComponent("Shared Wish.lampapp"))
+        try "Add a bike".write(to: once.appendingPathComponent(WaitingImport.requestFile), atomically: true, encoding: .utf8)
+        XCTAssertTrue(try launch().keep(once.appendingPathComponent("Shared Wish.lampapp")))
+        XCTAssertEqual(try launch().count, 1)
+        let keptAgain = try XCTUnwrap(try launch().take(setupReady: true, welcomeOver: true))
+        XCTAssertEqual(Store.fetchedRequest(beside: keptAgain), "Add a bike")
+        // A file opened by hand, with a file of that name beside it, brings none.
+        let byHand = try sharedFile("Tally.lampapp")
+        try "Not mine".write(to: byHand.deletingLastPathComponent().appendingPathComponent(WaitingImport.requestFile), atomically: true, encoding: .utf8)
+        XCTAssertNil(Store.fetchedRequest(beside: byHand))
+    }
+
     func testTheKeptFileSurvivesARelaunch() throws {
         XCTAssertTrue(try launch().keep(try sharedFile("Tally.lampapp")))
 

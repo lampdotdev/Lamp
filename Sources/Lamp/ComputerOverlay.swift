@@ -54,10 +54,10 @@ final class ComputerOverlay {
         guard let frame = Self.frame(of: id) else { glowWindow?.orderOut(nil); return }
         let window = glowWindow ?? makeGlowWindow()
         glowWindow = window
-        place(window, around: frame, above: id)
+        place(window, around: frame)
         window.alphaValue = 0
         window.orderFront(nil)
-        place(window, around: frame, above: id)
+        stack()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.25; window.animator().alphaValue = 1 }
         tracker?.invalidate()
         tracker = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -69,14 +69,19 @@ final class ComputerOverlay {
         guard let id = glowTarget, let window = glowWindow else { return }
         guard let frame = Self.frame(of: id) else { window.orderOut(nil); return }   // closed or minimized
         if !window.isVisible { window.orderFront(nil) }
-        place(window, around: frame, above: id)
+        place(window, around: frame)
         placeStop(above: frame)
+        // Nothing tells Lamp when another app's window is raised: the notice that an app came forward arrives before
+        // that app raises its windows, which it does in its own time. So the order is checked here, with the frame,
+        // and put right only when something came between.
+        if !isStacked(above: id) { stack() }
     }
 
     // MARK: Stopping
 
     /// A small pill just above the window in use: whose task this is, and Stop. Above the window rather
     /// than on it so it covers none of the window's own controls; below it when there's no room above.
+    /// It belongs to that window in the stack as the glow does (`stack`).
     private func showStop(_ label: String, escape: Bool) {
         let view = StopPill(label: label, escape: escape) { [weak self] in
             guard let self else { return }
@@ -95,7 +100,6 @@ final class ComputerOverlay {
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.hasShadow = true
-            panel.level = .statusBar   // over whatever else is in front: it's how the person stops the task
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
             panel.isReleasedWhenClosed = false
             panel.hidesOnDeactivate = false
@@ -109,13 +113,37 @@ final class ComputerOverlay {
         pill.contentView = host
         pill.setContentSize(host.fittingSize)
         if let id = glowTarget, let frame = Self.frame(of: id) { placeStop(above: frame) }
-        // With no window to sit over any more (it was handed back), it stays centred where it was.
+        // With no window to sit over any more (it was handed back), it stays centered where it was.
         else if let middle { pill.setFrameOrigin(CGPoint(x: middle - pill.frame.width / 2, y: pill.frame.minY)) }
         if !pill.isVisible {
             pill.alphaValue = 0
             pill.orderFrontRegardless()
+            stack()
             NSAnimationContext.runAnimationGroup { $0.duration = 0.25; pill.animator().alphaValue = 1 }
         }
+    }
+
+    /// The glow, the pill and the cursor, in that order, just above the window in use, at the same level as other
+    /// apps' windows: they belong to that window, so a window the person brings in front of it covers them too, and
+    /// none of them floats over whatever else the person is doing. The pill over the glow, so its light never draws
+    /// over the pill; the cursor over both.
+    private func stack() {
+        guard let id = glowTarget, Self.frame(of: id) != nil else { return }
+        var below = Int(id)
+        for window in signs {
+            window.order(.above, relativeTo: below)
+            below = window.windowNumber
+        }
+    }
+
+    private var signs: [NSWindow] { [glowWindow, stopPill, cursorWindow].compactMap { $0 }.filter(\.isVisible) }
+
+    /// Whether the signs are still just above the window in use, in their order: the window server lists what's
+    /// above a window front to back, so the nearest come last.
+    private func isStacked(above id: CGWindowID) -> Bool {
+        let above = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], id) as? [[String: Any]] ?? []
+        let nearest = above.suffix(signs.count).compactMap { $0[kCGWindowNumber as String] as? Int }
+        return Array(nearest.reversed()) == signs.map(\.windowNumber)
     }
 
     private func placeStop(above frame: CGRect) {
@@ -137,10 +165,9 @@ final class ComputerOverlay {
     /// Room around the window for the glow to fade out in.
     private static let glowMargin: CGFloat = glowReach + 10
 
-    private func place(_ window: NSWindow, around frame: CGRect, above id: CGWindowID) {
+    private func place(_ window: NSWindow, around frame: CGRect) {
         let cocoa = Self.cocoa(frame).insetBy(dx: -Self.glowMargin, dy: -Self.glowMargin)
         if window.frame != cocoa { window.setFrame(cocoa, display: true) }
-        window.order(.above, relativeTo: Int(id))
     }
 
     /// Lamplight around the window: a halo that is brightest at the window's edge and fades out over the room
@@ -431,9 +458,10 @@ final class ComputerOverlay {
     }
 
     private func ensureCursor(icon: NSImage?, finger: Bool) -> (NSWindow, CALayer) {
-        // One window over every display, above other apps' windows, ignoring the mouse.
+        // One window over every display, ignoring the mouse, stacked with the window in use (`stack`); with none
+        // known yet, in front.
         let union = NSScreen.screens.reduce(CGRect.null) { $0.union($1.frame) }
-        let window = cursorWindow ?? Self.clearWindow(level: .statusBar)
+        let window = cursorWindow ?? Self.clearWindow(level: .normal)
         if cursorWindow == nil {
             let view = NSView()
             view.wantsLayer = true
@@ -441,7 +469,10 @@ final class ComputerOverlay {
             cursorWindow = window
         }
         if window.frame != union { window.setFrame(union, display: false) }
-        window.orderFrontRegardless()
+        if !window.isVisible {
+            window.orderFrontRegardless()
+            stack()
+        }
         if let layer = cursorLayer, cursorFinger == finger {
             layer.sublayers?.first { $0.name == "badge" }?.contents = icon
             return (window, layer)
@@ -502,7 +533,7 @@ final class ComputerOverlay {
         return container
     }
 
-    /// A fingertip on glass: a disc in lamplight with a white rim, centred on the layer's position.
+    /// A fingertip on glass: a disc in lamplight with a white rim, centered on the layer's position.
     private static func fingertip() -> CALayer {
         let container = CALayer()
         container.bounds = CGRect(x: 0, y: 0, width: 1, height: 1)

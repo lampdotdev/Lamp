@@ -14,7 +14,7 @@ enum TVs {
     }
 
     /// A TV as found on the network and, once one of its setup steps has worked, kept (found is not owned: a
-    /// neighbour's TV may answer a scan, and only hands on the TV's own remote prove it's the person's).
+    /// neighbor's TV may answer a scan, and only hands on the TV's own remote prove it's the person's).
     struct Record: Codable, Hashable {
         var id: String            // "samsung:<udn>", "lg:<udn>"
         var maker: String         // "Samsung", "LG"
@@ -56,6 +56,7 @@ enum TVs {
         let all = kept().filter { $0.id != id }
         try? JSONEncoder().encode(all).write(to: keptURL, options: .atomic)
         try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        try? FileManager.default.removeItem(at: WebOSSocket.clientKeyURL(id))
     }
 
     /// Reconnect: the TV's connection is made again from its setup window, for one reset or whose developer mode was
@@ -63,6 +64,7 @@ enum TVs {
     /// now; a Samsung TV's id is read again over a new connection, and its certificates still fit when it's the same.
     static func reconnect(_ id: String) {
         try? FileManager.default.removeItem(at: WebOS.keyURL(id))
+        try? FileManager.default.removeItem(at: WebOSSocket.clientKeyURL(id))
         guard var record = kept().first(where: { $0.id == id }) else { return }
         guard record.isSamsung else { WebOS.forgetHost(record.address); return }
         record.duid = nil
@@ -75,9 +77,10 @@ enum TVs {
     // MARK: Finding them
 
     /// The TVs on this network now, and the kept ones that aren't, as device records. A Samsung TV answers on its own
-    /// local API; an LG TV describes itself in its UPnP description.
-    static func devices() async -> [Device] {
-        let found = await scan()
+    /// local API; an LG TV describes itself in its UPnP description. `answers` is the look's own SSDP search, which the
+    /// integrations share; without it the TVs are searched for here.
+    static func devices(answers: [DeviceProbe.SSDPAnswer]? = nil) async -> [Device] {
+        let found = await scan(answers: answers)
         lastFound = found
         var records = found
         // A kept TV takes what was found now (its address may have moved); one not found keeps what was known.
@@ -100,10 +103,13 @@ enum TVs {
             .sorted { $0.name < $1.name }
     }
 
-    /// One SSDP search of the local network (two seconds), then each device that answered as a TV asked who it is.
-    static func scan() async -> [Record] {
+    /// One SSDP search of the local network (two seconds, unless the look's is given), then each device that answered
+    /// as a TV asked who it is.
+    static func scan(answers given: [DeviceProbe.SSDPAnswer]? = nil) async -> [Record] {
         var byAddress: [String: [DeviceProbe.SSDPAnswer]] = [:]
-        for answer in await DeviceProbe.ssdp("ssdp:all", seconds: 2) { byAddress[answer.address, default: []].append(answer) }
+        let answers: [DeviceProbe.SSDPAnswer]
+        if let given { answers = given } else { answers = await DeviceProbe.ssdp("ssdp:all", seconds: 2) }
+        for answer in answers { byAddress[answer.address, default: []].append(answer) }
         let earlier = kept() + lastFound
         var records: [Record] = []
         await withTaskGroup(of: Record?.self) { group in
@@ -701,6 +707,7 @@ extension Device {
                             features: record.frame ? ["Art Mode"] : [], reach: .network)
         device.connected = onNetwork
         device.paired = kept
+        device.kept = kept
         device.developerMode = record.isSamsung
             ? record.developerMode && TVs.macAddresses().contains(record.developerIP ?? "")
             : FileManager.default.fileExists(atPath: WebOS.keyURL(record.id).path)

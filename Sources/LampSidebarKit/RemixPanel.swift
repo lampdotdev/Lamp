@@ -1,0 +1,151 @@
+import SwiftUI
+
+/// What the chat beside an app offers on a Mac that has no Lamp (the app was built from its code on GitHub, or kept
+/// after Lamp was removed): the app's name and line, three things someone could ask to change, and a box for their own
+/// words. Continue with Lamp takes the request to lamp.dev, where Lamp is downloaded and the wish waits for its first
+/// open, or to the wish's own Share Link page when it has one, which also opens Lamp on a Mac that has it. Nothing is
+/// sent anywhere else, and nothing is sent at all until the button is pressed.
+public struct RemixOffer: Equatable {
+    public var name: String
+    public var about: String?
+    public var suggestions: [RemixIdea]
+    /// The wish's Share Link, when the person who made the app shared one: the page that gives this exact wish.
+    public var shareLink: URL?
+
+    public init(name: String, about: String?, suggestions: [RemixIdea], shareLink: URL?) {
+        self.name = name
+        self.about = about
+        self.suggestions = suggestions.isEmpty ? Self.fallback : suggestions
+        self.shareLink = shareLink
+    }
+
+    /// What's offered when Lamp never wrote suggestions for the app: true of any app.
+    public static let fallback = [RemixIdea(text: "Change how it looks", symbol: "paintbrush"),
+                                  RemixIdea(text: "Add something it doesn't do yet", symbol: "plus.circle"),
+                                  RemixIdea(text: "Make it work the way I'd want", symbol: "slider.horizontal.3")]
+}
+
+/// One thing to ask for, with the symbol it's drawn with, as the intro's ideas are (`SidebarIdea`).
+public struct RemixIdea: Codable, Equatable, Identifiable {
+    public var text: String
+    public var symbol: String
+    public var id: String { text }
+
+    public init(text: String, symbol: String) {
+        self.text = text
+        self.symbol = symbol
+    }
+
+    /// Read back from an app's Info.plist, where each is a dictionary of its two words; one without a symbol gets a spark.
+    public static func from(plist: Any?) -> [RemixIdea] {
+        ((plist as? [[String: String]]) ?? []).compactMap { entry in
+            guard let text = entry["text"], !text.isEmpty else { return nil }
+            return RemixIdea(text: text, symbol: entry["symbol"].flatMap { $0.isEmpty ? nil : $0 } ?? "sparkles")
+        }
+    }
+
+    public var plist: [String: String] { ["text": text, "symbol": symbol] }
+}
+
+/// Where Continue with Lamp goes, and what it carries.
+public enum RemixLink {
+    public static let site = URL(string: "https://lamp.dev/")!
+    /// The most a request carries; the site cuts there too (`askFrom` in lib/wish.js).
+    public static let askLimit = 1000
+
+    /// The words as they go: trimmed, without control characters, cut at the limit. Empty for nothing to say.
+    public static func tidy(_ text: String) -> String {
+        let kept = text.unicodeScalars.filter { $0 == "\n" || !CharacterSet.controlCharacters.contains($0) }
+        return String(String(String.UnicodeScalarView(kept)).trimmingCharacters(in: .whitespacesAndNewlines).prefix(askLimit))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The page for the request: the wish's Share Link with the request as `ask`, which the page adds to the wish's
+    /// words, or Lamp's site with a request that names the app, since without the link Lamp makes its own version.
+    public static func url(for offer: RemixOffer, ask: String) -> URL? {
+        let words = tidy(ask)
+        guard !words.isEmpty else { return nil }
+        let base = offer.shareLink ?? site
+        guard var parts = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        let request = offer.shareLink == nil ? tidy(self.request(for: offer, ask: words)) : words
+        parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "ask" } + [URLQueryItem(name: "ask", value: request)]
+        return parts.url
+    }
+
+    /// A wish for an app like this one, then the change: what Lamp's welcome gets when there's no link to the exact wish.
+    public static func request(for offer: RemixOffer, ask: String) -> String {
+        var text = "Make an app like \(offer.name)"
+        if let about = offer.about, !about.isEmpty { text += ": \(about)" }
+        if let last = text.last, !".!?".contains(last) { text += "." }
+        return text + "\n\nThen: \(ask)"
+    }
+}
+
+/// The panel itself. Drawn from plain values, so the chat beside an app and the gallery show the same thing.
+public struct RemixPanel: View {
+    let offer: RemixOffer
+    let go: (String) -> Void
+    @State private var text = ""
+    @State private var hovered: String?
+
+    public init(offer: RemixOffer, go: @escaping (String) -> Void) {
+        self.offer = offer
+        self.go = go
+    }
+
+    private var ready: Bool { !RemixLink.tidy(text).isEmpty }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Make \(offer.name) yours").font(.title3.bold())
+                Text("Say what you'd change. Lamp makes the change and keeps your data.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // Drawn as the intro's ideas are: a quiet outline, the icon lit on hover.
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(offer.suggestions.enumerated()), id: \.element.id) { index, idea in
+                    Button {
+                        text = idea.text
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            IdeaIcon(symbol: idea.symbol, hue: Double(index) * 0.27 + 0.08, size: 22, lit: hovered == idea.id)
+                            Text(idea.text).font(.subheadline).multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.primary.opacity(hovered == idea.id ? 0.2 : 0.1), lineWidth: 1))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovered = $0 ? idea.id : (hovered == idea.id ? nil : hovered) }
+                }
+            }
+            TextEditor(text: $text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .frame(minHeight: 72)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary))
+            HStack {
+                Spacer(minLength: 0)
+                Button("Continue with Lamp") { go(text) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!ready)
+            }
+            .cardButtons()
+            // What pressing it means, in one line: the only thing the person has to accept.
+            Text(offer.shareLink == nil
+                 ? "Opens lamp.dev with your request. Lamp is a free Mac app; it makes its own version of \(offer.name) and changes it as you ask."
+                 : "Opens this wish's page with your request. Lamp is a free Mac app; it opens on this exact wish and changes it as you ask.")
+                .font(.footnote).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

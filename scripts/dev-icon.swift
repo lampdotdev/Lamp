@@ -1,11 +1,14 @@
-// Makes the development build's icon: the release icon with an orange DEV band across its top,
-// so the two Lamps tell apart in the Dock. Usage: swift scripts/dev-icon.swift Resources/AppIcon.png out.icns
+// Makes the development build's icon: the release icon with an orange DEV band across its top, so the two Lamps
+// tell apart in the Dock; or Lamp Nightly's, with a dark NIGHTLY band.
+// Usage: swift scripts/dev-icon.swift Resources/AppIcon.png out.icns [DEV|NIGHTLY]
 import AppKit
 
 let arguments = CommandLine.arguments
-guard arguments.count == 3, let source = NSImage(contentsOfFile: arguments[1]) else {
-    FileHandle.standardError.write(Data("usage: dev-icon.swift <AppIcon.png> <out.icns>\n".utf8)); exit(1)
+guard arguments.count == 3 || arguments.count == 4, let source = NSImage(contentsOfFile: arguments[1]) else {
+    FileHandle.standardError.write(Data("usage: dev-icon.swift <AppIcon.png> <out.icns> [DEV|NIGHTLY]\n".utf8)); exit(1)
 }
+let word = arguments.count > 3 ? arguments[3] : "DEV"
+let bandColor = word == "NIGHTLY" ? NSColor(calibratedRed: 0.2, green: 0.18, blue: 0.42, alpha: 1) : NSColor(calibratedRed: 0.96, green: 0.48, blue: 0.1, alpha: 1)
 let size = 1024.0
 let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
     source.draw(in: rect)
@@ -18,12 +21,12 @@ let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { r
     // From the very top of the icon down; the lettering sits low enough in it to clear the rounded corners.
     let band = CGRect(x: 0, y: size * 0.78, width: size, height: size * 0.22)
     context.setShadow(offset: CGSize(width: 0, height: -size * 0.008), blur: size * 0.025, color: NSColor.black.withAlphaComponent(0.4).cgColor)
-    context.setFillColor(NSColor(calibratedRed: 0.96, green: 0.48, blue: 0.1, alpha: 1).cgColor)
+    context.setFillColor(bandColor.cgColor)
     context.fill(band)
     context.setShadow(offset: .zero, blur: 0, color: nil)
     let style = NSMutableParagraphStyle(); style.alignment = .center
-    let text = NSAttributedString(string: "DEV", attributes: [
-        .font: NSFont.systemFont(ofSize: size * 0.105, weight: .heavy), .foregroundColor: NSColor.white, .paragraphStyle: style,
+    let text = NSAttributedString(string: word, attributes: [
+        .font: NSFont.systemFont(ofSize: size * (word.count > 4 ? 0.075 : 0.105), weight: .heavy), .foregroundColor: NSColor.white, .paragraphStyle: style,
         .kern: size * 0.008])
     let height = text.size().height
     text.draw(in: CGRect(x: band.minX, y: size * 0.84 - height / 2, width: band.width, height: height))

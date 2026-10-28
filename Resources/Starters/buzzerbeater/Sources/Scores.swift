@@ -112,6 +112,7 @@ struct Team: Codable, Hashable {
     var record: String?
     var hits: Int?
     var city: String? = nil
+    var color: String? = nil
 }
 
 struct Broadcast: Codable, Hashable {
@@ -483,6 +484,7 @@ enum ScoreFeed {
             rank: (rank ?? 99) <= 25 ? rank : nil,
             record: record,
             hits: raw["hits"] as? Int,
-            city: t["location"] as? String)
+            city: t["location"] as? String,
+            color: t["color"] as? String)
     }
 }

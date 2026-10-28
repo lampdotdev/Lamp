@@ -14,8 +14,10 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
         var requiresPhoneTools = true
         /// An app for both: its Mac build is signed for the person's team, so the team is checked with the rest.
         var requiresTeam = false
-        /// An app that keeps data in iCloud, about to be signed for the team: Apple signs those only for a paid one.
+        /// An app using what Apple signs only for a paid team (`TeamLimits`), about to be signed for the team.
         var requiresPaidTeam = false
+        /// What it uses that needs the paid team, by name, for the setup window's words.
+        var paidFor: [String] = []
     }
     private struct Request {
         let id = UUID()
@@ -49,10 +51,10 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
     nonisolated private static func inspect(_ context: Context) async -> PhoneTools.Report {
         await Task.detached {
             let preferred = PhoneTools.checked(family: context.family, phone: context.phone, requiresTeam: context.requiresTeam,
-                                               requiresPaidTeam: context.requiresPaidTeam)
+                                               requiresPaidTeam: context.requiresPaidTeam, paidFor: context.paidFor)
             if context.eitherSimulator, preferred.issue?.step == .simulator {
                 let other = PhoneTools.checked(family: context.family == .iphone ? .ipad : .iphone, phone: context.phone, requiresTeam: context.requiresTeam,
-                                               requiresPaidTeam: context.requiresPaidTeam)
+                                               requiresPaidTeam: context.requiresPaidTeam, paidFor: context.paidFor)
                 if other.ready { return other }
             }
             return preferred
@@ -86,26 +88,26 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
                  then: @escaping (LampProject) -> Void) {
         guard let current = store.current(project) else { cancelled(); return }
         // A TV app's preview needs nothing set up; Play with a TV chosen needs that TV set up.
-        if current.platform == .tv {
+        if current.onTV {
             guard building, let id = current.device else { then(current); return }
             TVSetup.shared.perform(id) { if let now = store.current(project) { then(now) } else { cancelled() } }
             return
         }
         // A device app needs its device set up before Open puts it there; a request goes to the agent either way.
-        if current.platform == .device {
+        if current.onDevice {
             guard building, let device = DeviceApps.device(for: current, among: store.devices), device.setup() != .ready else { then(current); return }
             DeviceSetupWindow.show(device) { if let now = store.current(project) { then(now) } else { cancelled() } }
             return
         }
         // An Android app's checks are Android's: the tools, the emulator, and the person's device when one is chosen.
-        if current.platform == .android {
+        if current.onAndroid {
             AndroidSetup.shared.perform(device: current.device, cancelled: cancelled) {
                 if let now = store.current(project) { then(now) } else { cancelled() }
             }
             return
         }
         // An app for both needs Xcode wherever it opens: its Mac build is Xcode's too (Template.universalBuildSh).
-        guard current.platform.hasIOS else { then(current); return }
+        guard current.hasIOS else { then(current); return }
         perform(resolve: {
             guard let current = store.current(project) else { return nil }
             return Context(for: current, phone: current.onIOS ? current.device : nil, building: building)
@@ -278,8 +280,7 @@ final class PhoneSetup: NSObject, ObservableObject, NSWindowDelegate {
             guard let viewer = Simulator.viewer(in: developer) else { return }
             open(viewer)
         case .settings:
-            UserDefaults.standard.set("building", forKey: "settingsTab")
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            SettingsMenu.show(tab: "building")
         case .membership:
             open(URL(string: "https://developer.apple.com/programs/")!)
         case .updatePhone:
@@ -473,26 +474,27 @@ extension PhoneSetup.Context {
     /// build that is signed for the team; the simulator's copy isn't, so there an account is asked for only
     /// by an app for both, and a paid one by nothing.
     init(for project: LampProject, phone: String?, building: Bool = false) {
-        self.init(family: project.family, phone: phone, requiresPhoneTools: project.platform.hasIOS,
-                  requiresTeam: project.platform == .universal,
-                  requiresPaidTeam: building && (phone != nil || (project.platform == .universal && !project.onIOS)) && Self.usesICloud(project))
-    }
-
-    static func usesICloud(_ project: LampProject) -> Bool {
-        Template.Capabilities.load(project).container(for: project) != nil
+        // Signed for the team: the phone's copy, or the Mac half of an app for both, each with what that platform takes.
+        let paidFor = !building ? [] : phone != nil ? TeamLimits.refused(in: project, for: .ios)
+            : project.platform.target.macSignedForTeam && !project.onIOS ? TeamLimits.refused(in: project, for: .mac) : []
+        self.init(family: project.family, phone: phone, requiresPhoneTools: project.hasIOS,
+                  requiresTeam: project.platform.target.macSignedForTeam, requiresPaidTeam: !paidFor.isEmpty, paidFor: paidFor)
     }
 }
 
 @MainActor
 extension Store {
     func openPrepared(_ project: LampProject) {
+        // Only the wish, its apps all in folders of their own: each of them opens, with its own setup.
+        guard project.holdsApp else { openWish(project); return }
         PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.open(current) } }
     }
     func choosePreparedDevice(_ project: LampProject, _ phone: String?) {
         PhoneSetup.shared.perform(resolve: {
             guard let current = self.current(project) else { return nil }
             var context = PhoneSetup.Context(family: current.family, phone: phone)
-            context.requiresPaidTeam = phone != nil && PhoneSetup.Context.usesICloud(current)
+            context.paidFor = phone != nil ? TeamLimits.refused(in: current) : []
+            context.requiresPaidTeam = !context.paidFor.isEmpty
             return context
         }, isReady: {
             guard let current = self.current(project) else { return false }
@@ -503,6 +505,7 @@ extension Store {
     }
 
     func runPrepared(_ project: LampProject) {
+        guard project.holdsApp else { for part in parts(of: project) { runPrepared(part) }; return }
         PhoneSetup.shared.perform(for: project, in: self, building: true) { current in Task { await self.run(current) } }
     }
 }

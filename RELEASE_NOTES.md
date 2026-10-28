@@ -5,6 +5,159 @@ written for the people who use Lamp: what they can do now, what works better. No
 file names. The release workflow takes the section for the tag being released; a version without one gets a
 plain "Lamp x.y.z" line.
 
+## 0.26.0
+
+- Games change while you play them. New pictures, models and sounds appear in place, a change to the game's code
+  puts you back where you were (the level, your position, the camera, the score), and a change made during a match
+  waits for a pause or for you to press Reload. On an iPhone, Android, a TV or an Xbox, the game picks up where you
+  left off after Lamp installs the change.
+- Games and screens open on the Mac in about a second, and no longer need Apple's developer tools unless they read
+  your own things like your calendar or photos.
+- Open a wish from GitHub: File → Open from GitHub… takes a repository's address, and the wish's credits say where it
+  came from.
+- Adding a starter wish opens it.
+- Your Devices tells the devices you've set up apart from ones Lamp only found on your network, which may be a
+  neighbor's, and every found device offers Set Up….
+- A game made inside a wish has the wish's chat beside it.
+
+## 0.25.0
+
+- Apps build again with Xcode 26. Since 0.24.0 they only built with the Xcode 27 preview.
+- Two new starter wishes. Home HQ is a family dashboard for the kitchen: calendar, chores, shopping and photos, on a
+  tablet, a TV or an unlocked photo frame. It's based on Wes Bos's photo-frame-dashboard. Universal Remote controls
+  whatever your house has from your Mac or phone.
+- Your Devices finds everything on your home network, sorted by what Lamp can do with it. Lamp asks about the local
+  network only once you do something with a device, and the agent asks before it changes one.
+- Do It for Me sets up developer mode on a Roku or an LG TV. A Roku app can now be one of a wish's apps, and Lamp
+  says plainly what a Roku can't run.
+- Games:
+  - 2D games, made with Phaser so they go everywhere a game goes.
+  - Real physics in 3D games.
+  - Buttons named the way your controller, keyboard or touch screen names them.
+  - Smoother frame rates on slower devices.
+  - Old Xbox games now live on your Mac too, with the Xbox as one of their places, and Try On always offers another
+    device.
+- One app can be open on several devices in a wish, and lists like a calendar or chores stay the same on all of
+  them, and between a wish's different apps.
+- Share a 3D game as a file, publish it as a page anyone can play (experimental), or put a wish on GitHub. A wish
+  carries where it came from, shown in its info and About window. Lamp checks licences and keys before anything is
+  shared, and marks pictures made with AI.
+- A Share Link can carry the wish itself.
+- Wish chats are listed in the Window and Dock menus, wishes open into their chat from the desk, and an app on a Mac
+  without Lamp has a way back to it.
+- Apps that use AI just after they open wait for Lamp to find Claude Code, instead of asking for an OpenRouter key.
+
+## 0.24.0
+
+- Make apps for Google TV, Android TV and Fire TV: wish for one, try it in a TV emulator on your Mac, and put it on
+  your own TV over Wi‑Fi with Connect a TV Over Wi‑Fi… under Try On.
+- Connect an Android phone over Wi‑Fi the same way, with the pairing code it shows.
+
+## 0.23.0
+
+- Your iPhone and Mac apps can control your Roku: a button that opens Netflix, YouTube or a show, the remote's keys,
+  typing into its search, and on a Roku TV its power, volume and inputs. Nothing goes on the Roku; turn on Settings →
+  System → Advanced system settings → Control by mobile apps.
+- Roku apps have their icon and splash screen, close when you press Stop, and come off the Roku when you delete the
+  wish.
+- Lamp types into a Roku app's keyboard and can press every button on the remote when it tries an app.
+- Setting up a Roku is quicker: press Continue and Lamp presses the remote's keys that turn on developer mode.
+- A setup step that has worked on a real device says Worked before.
+
+## 0.22.0
+
+- Put your iPhone apps on your phone with a free Apple account, no paid membership needed. Apple lets such an app open
+  for seven days; Lamp now puts it back every day by itself, so it keeps opening.
+- Check "Keep apps on your phones opening" in Settings → Building (or press Keep It Opening in the chat) and Lamp opens
+  out of sight when you log in and stays running with its window closed, so this happens without you.
+- If an app has stopped opening anyway, Lamp says so in its chat with Retry, under your phone in Settings and in Try On.
+- A free account takes three apps per phone: before a fourth, Lamp asks which of its apps to take off.
+- Lamp tells you, and the agent, what a free account can't do (iCloud, NFC, Siri, Apple's weather, Time Sensitive
+  notifications) before anything is built, and a newly added free account gets the steps to finish setting it up.
+- Move to a paid membership whenever you like: if your team changes, Lamp replaces the old copy on your phone.
+- A file dropped on the desk's bar is attached instead of typed.
+
+## 0.21.1
+
+- A game for an Xbox Series X or S is made for that console, which draws far more than an Xbox One, and Lamp calls
+  your Xbox by its real model.
+- Pressing Stop on a TV or Xbox app keeps its chat on screen, and Lamp no longer quits when its window was closed.
+- A new wish's chat opens on the screen you're using.
+- Lamp no longer asks to look on your local network at its first launch.
+
+## 0.21.0
+
+- Attach files when you wish for something new: press + in the desk's bar or drop files on it.
+- A game is one of its wish's apps everywhere it's played, on your Mac, iPhone, iPad, Android phone or Xbox: it sends
+  messages, values and files to the wish's other apps, like any of them. So is a screen.
+- A new game shows the same card a new app does while Lamp makes it, instead of a ball on a floor.
+- A new wish's first message no longer shows twice in its chat.
+- The chat beside an app is named after the app, and a turn's cost says when it was spent on pictures.
+
+## 0.20.0
+
+- A wish's chat is always beside whatever shows it: beside the app on your Mac, beside the simulator for an iPhone app,
+  or in a window of its own when nothing on this Mac shows it, such as an app on your TV or Xbox. Lamp's window is now
+  just your wishes.
+- Games are a kind of wish of their own, at home on your Mac, and the same game can go on your iPhone, iPad, Android
+  phone or Xbox when you ask. A screen, a page shown full screen, goes on your TV, iPad or Xbox the same way, and apps
+  for Apple TV and Vision Pro open there.
+- Any app of a wish can be added, replaced or taken away, the first one included, and the wish keeps its name, chat
+  and history.
+- A wish's apps talk straight to each other on your home network, so they keep working with Lamp closed. They share
+  values and files, say why another app isn't there, and everything they send each other is sealed.
+- iPhone apps made by an older Lamp are updated when you open them from Lamp.
+- More changes go into an open app without a reload.
+- Xbox web games install as games, which gives them more of the console.
+- New York's Manhattan sits on its real hills, and keys no longer beep in it.
+- Sharing from the chat beside an app no longer deletes a file another share is still sending.
+
+## 0.19.0
+
+- One wish can now be several apps that work together, with one chat: a TV app with the iPhone app that controls it,
+  or a Mac, iPhone, Android and TV app side by side. A wish that could be for more than one device, and doesn't say
+  which, asks you first, and "make it work on my TV too" adds an app without rewriting the one you have.
+- The apps of a wish see each other and send each other messages, and phones talk straight to the TV, so a phone can
+  hand the TV a game, a photo or a song.
+- Share a whole wish: every app in it goes in the file, TV apps included.
+- A new app's first build reads as chapters in the chat: each part of the plan, ticked as it's done, with what was
+  said and done under it, and Lamp's question where it was asked.
+- Xbox games have sound, and Xbox apps play sound from the start instead of after the first button press.
+- A new starter wish, New York: Mr.doob's Slop New York, all of Manhattan to explore on foot, by car, by bike or by
+  helicopter. It takes Drive Anywhere's place on new desks; add it from Starter wishes at the end of the desk.
+- A wish made by a newer Lamp is left as it is, shown faded on the desk, instead of being opened as an empty one.
+
+## 0.18.11
+
+- Share a wish as a link: Share Link… shows you exactly what will be public, then copies a lamp.dev link with a preview
+  card. Whoever opens it gets the wish in Lamp, ready to make their own, or a page to download Lamp.
+- Xbox games now run as games, not apps, so the console gives them five times the memory and its whole graphics chip:
+  a test game went from 30 to 60 frames a second.
+- While Lamp tries an app, its glow, pill and pointer stay with that app's window instead of floating over everything
+  else you're doing.
+- Each stretch of the agent's steps reliably gets its one-line title.
+
+## 0.18.10
+
+- Xbox apps and games can make your controller rumble, and the rumble comes on the controller that's playing.
+
+## 0.18.9
+
+- Xbox apps and games now get three.js for 3D, which the agent writes more reliably and which makes each app about half
+  the size.
+- A new starter wish, Transcriber, transcribes calls with both sides and their sound; add it from Starter wishes at the
+  end of the desk. New desks also get a livelier Buzzer Beater, with a denser scoreboard and team logos.
+
+## 0.18.8
+
+- Xbox apps and games now run in the console's modern web engine instead of its old one: the same 3D scene went from
+  about 21 to about 57 frames a second, with WebGL 2 and today's JavaScript.
+- A device Lamp can't find on this network, because it's off or at another home, says "Not on this network" instead
+  of Ready.
+- A new starter wish, Site-to-App, turns websites without a Mac app into apps of their own, and Disk Map now shows
+  what fills your disk as a sunburst you can click through.
+- While you write a wish, the desk's icons step back behind the bar.
+
 ## 0.18.7
 
 - Setting up a device no longer crashes Lamp: every setup window now opens sized to fit and stays up.
@@ -173,7 +326,7 @@ plain "Lamp x.y.z" line.
   date. A Claude Code or Codex already on your Mac is used as it is, with its sign-in.
 - The welcome asks what you wish your Mac did, and a wish written on lamp.dev arrives in Lamp without
   pasting. The starter ideas are real situations instead of app categories.
-- Duplicate an app to try a variation: the copy has the same code, history and icon on a new colour,
+- Duplicate an app to try a variation: the copy has the same code, history and icon on a new color,
   with an empty chat and its own data.
 - Your apps appear in Finder's Applications folder, and they open the files they're for: drop a file on an
   app's icon, or choose it under Open With.
@@ -328,7 +481,7 @@ plain "Lamp x.y.z" line.
 - Putting an app on a phone says what's happening and what went wrong: it waits for the phone to confirm
   the launch (quickly now), explains install failures, and offers Retry; the iPhone setup in Settings shows
   the missing step and its next action.
-- Settings is reorganised. Providers shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your
+- Settings is reorganized. Providers shows what's on this Mac (Native Mac AI, Ollama, LM Studio, and your
   Claude Code and Codex sign-ins) apart from the providers you've added a key for, and says on each row what
   it's doing. Building has one Text generation menu, the models under what runs them (Claude Code, Codex,
   OpenRouter, a model on this Mac…), and its own Image generation choice for icon artwork. Apps has Text

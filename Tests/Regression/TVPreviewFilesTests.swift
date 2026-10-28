@@ -1,3 +1,4 @@
+import WebKit
 import XCTest
 @testable import Lamp
 
@@ -43,6 +44,81 @@ final class TVPreviewFilesTests: XCTestCase {
         XCTAssertTrue(log.contains("wasm ok"), log)
         XCTAssertTrue(log.contains("xhr 200 3000000"), log)
         XCTAssertTrue(log.contains("missing 404"), log)
+    }
+
+    /// What a TV app of a wish saves (the values the wish's apps share among it) is there when its preview is opened
+    /// again: a part's instance isn't a UUID, and it gets a store of its own all the same, apart from its wish's other
+    /// apps'.
+    func testATVAppOfAWishKeepsWhatItSavedWhenOpenedAgain() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("tv-preview-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("app"), staged = root.appendingPathComponent("web")
+        for folder in [dir, staged] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try """
+            <html><body><script>
+            var n = +(localStorage.getItem('n') || 0);
+            console.log('opened ' + n);
+            localStorage.setItem('n', String(n + 1));
+            </script></body></html>
+            """.write(to: staged.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        let wish = UUID().uuidString
+        var whole = LampProject(id: "tv-preview-kept", name: "Tally", exe: "Tally", dir: root)
+        whole.instance = wish
+        var project = LampProject(id: "tv-preview-kept.tv", name: "Tally", exe: "Tally", dir: dir, platform: .tv, partOf: "tv-preview-kept")
+        project.instance = Parts.instance(wish: whole, folder: "TV")
+        let store = try XCTUnwrap(TVPreview.store(for: project.instance), "a part's page keeps what it saves")
+        defer { Task { try? await WKWebsiteDataStore.remove(forIdentifier: store) } }
+        XCTAssertEqual(TVPreview.store(for: project.instance), store, "the same store at every opening")
+        XCTAssertNotEqual(TVPreview.store(for: wish + ".Mac"), store, "apart from the wish's other apps'")
+        XCTAssertEqual(TVPreview.store(for: wish), UUID(uuidString: wish), "an app's own instance keeps its store")
+
+        func opened() async throws -> [String] {
+            for _ in 0..<50 {
+                let lines = ((try? String(contentsOf: Runtime.logURL(project), encoding: .utf8)) ?? "").split(separator: "\n").filter { $0.contains("opened ") }
+                if !lines.isEmpty { return lines.map(String.init) }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            return []
+        }
+        let shown = await TVPreview.show(project, staged: staged, inFront: false)
+        XCTAssertNil(shown)
+        let first = try await opened()
+        TVPreview.close(project)
+        try? FileManager.default.removeItem(at: Runtime.logURL(project))
+        let again = await TVPreview.show(project, staged: staged, inFront: false)
+        XCTAssertNil(again)
+        defer { TVPreview.close(project) }
+        let second = try await opened()
+        XCTAssertEqual(first.last.map { String($0.suffix(8)) }, "opened 0")
+        XCTAssertEqual(second.last.map { String($0.suffix(8)) }, "opened 1", "what it saved was there: \(second)")
+    }
+
+    /// What a TV app of a wish saved in its preview goes when the app is deleted, with its wish or on its own: a part's
+    /// store is named after its instance, so it would otherwise stay for good.
+    func testWhatATVAppOfAWishSavedGoesWithIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("tv-preview-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("app"), staged = root.appendingPathComponent("web")
+        for folder in [dir, staged] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try "<html><body><script>localStorage.setItem('n', '1'); console.log('saved');</script></body></html>"
+            .write(to: staged.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
+        var whole = LampProject(id: "tv-preview-gone", name: "Tally", exe: "Tally", dir: root)
+        whole.instance = UUID().uuidString
+        var project = LampProject(id: "tv-preview-gone.tv", name: "Tally", exe: "Tally", dir: dir, platform: .tv, partOf: "tv-preview-gone")
+        project.instance = Parts.instance(wish: whole, folder: "TV")
+        let store = try XCTUnwrap(TVPreview.store(for: project.instance))
+        defer { Task { try? await WKWebsiteDataStore.remove(forIdentifier: store) } }
+        let shown = await TVPreview.show(project, staged: staged, inFront: false)
+        XCTAssertNil(shown)
+        for _ in 0..<50 where !(((try? String(contentsOf: Runtime.logURL(project), encoding: .utf8)) ?? "").contains("saved")) {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let kept = await WKWebsiteDataStore.allDataStoreIdentifiers
+        XCTAssertTrue(kept.contains(store), "the page saved something in its own store")
+        await TVPreview.forget(project).value
+        XCTAssertFalse(TVPreview.isOpen(project))
+        let left = await WKWebsiteDataStore.allDataStoreIdentifiers
+        XCTAssertFalse(left.contains(store), "its store is gone with it")
     }
 
     /// A page may ask for any range; one ending at the largest number there is still gets the file's bytes.

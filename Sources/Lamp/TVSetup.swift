@@ -20,8 +20,17 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
     /// Which TV the window is for now: work started for another (a check, a connection, a sign-in) that ends after
     /// the person moved on is dropped, so its result can't stand for this TV or resume its Play.
     private var selection = UUID()
+    /// Do It for Me: the steps of the skill that says it does this TV's next step on its system, run for this TV.
+    let guided = GuidedSetup()
+    private var following: AnyCancellable?
 
-    enum Step: CaseIterable { case developerMode, connected, permission }
+    override init() {
+        super.init()
+        following = guided.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+    }
+
+    /// By the names a setup guide gives them (`setup-step`).
+    enum Step: String, CaseIterable { case developerMode = "developer-mode", connected, permission }
 
     /// Where the TV's setup stands: the steps done, and the next one.
     var passed: [Step] {
@@ -41,7 +50,29 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
     var next: Step? { Step.allCases.first { !passed.contains($0) } }
     var ready: Bool { next == nil && record != nil }
 
+    /// The steps Do It for Me follows for this TV's next step, when a skill does that step on its system and its
+    /// steps can be followed. This window is the TV row's ("tv"), Samsung's and LG's alike: the system tells them apart.
+    var guide: SetupSteps? {
+        guard let record, let next,
+              case .success(let steps)? = SetupGuides.find(next.rawValue, in: .init(row: "tv", system: record.os, steps: Set(Step.allCases.map(\.rawValue))))
+        else { return nil }
+        return steps
+    }
+
+    func doItForMe() {
+        guard let record, let next, let steps = guide, working == nil else { return }
+        problem = nil
+        let (address, id) = (record.address, record.id)
+        guided.start(steps, name: record.name, step: next.rawValue,
+                     connect: { SetupConnections.socket(steps.connection, address: address, id: id) },
+                     onFinish: { [weak self] in Task { await self?.refresh() } })
+    }
+
+    /// Back to the steps in words: the guide stops, and the TV's own step (the passphrase and Connect) is the person's.
+    func doItMyself() { guided.cancel() }
+
     func show(_ id: String, then: (() -> Void)? = nil) {
+        if record?.id != id { guided.cancel() }
         if record?.id != id || working == nil { selection = UUID() }
         record = TVs.record(id)
         waiting = then
@@ -70,6 +101,7 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
         if !updated.osVersion.isEmpty || current.osVersion.isEmpty { } else { updated.osVersion = current.osVersion }
         record = updated
         if TVs.kept().contains(where: { $0.id == updated.id }) { TVs.keep(updated) }
+        dropFinishedGuide()
         if ready { finish() }
     }
 
@@ -105,10 +137,16 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
                 if ticket == selection { problem = error.localizedDescription }
             }
             working = nil
+            dropFinishedGuide()
             objectWillChange.send()
             Store.shared.refreshDevices()
             if ticket == selection, !failed, ready { finish() }
         }
+    }
+
+    /// A guide that handed the TV back stays on screen only while the step it was for is still the one to do.
+    private func dropFinishedGuide() {
+        if guided.handedBack, guided.step != next?.rawValue { guided.cancel() }
     }
 
     private func finish() {
@@ -124,6 +162,7 @@ final class TVSetup: NSObject, ObservableObject, NSWindowDelegate {
 
     /// Closed with its own button or the title bar's: what was waiting for this TV (Play) doesn't go ahead later.
     func windowWillClose(_ notification: Notification) {
+        guided.cancel()
         waiting = nil
         selection = UUID()
     }
@@ -177,7 +216,8 @@ struct TVSetupView: View {
                 Spacer()
                 Button(model.ready ? "Done" : "Close") { model.close() }.keyboardShortcut(model.ready ? .defaultAction : .cancelAction)
                 if let label = buttonLabel {
-                    Button(label) { model.act() }.keyboardShortcut(.defaultAction).disabled(model.working != nil)
+                    Button(label) { model.act() }.keyboardShortcut(.defaultAction)
+                        .disabled(model.working != nil || model.guided.running)
                 }
             }
             .padding(.top, 20)
@@ -233,8 +273,16 @@ struct TVSetupView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title(step, samsung: samsung)).font(current ? .headline : .body).fontWeight(current ? .semibold : .medium)
                 if current, let record = model.record {
-                    Text(instructions(step, record: record)).fixedSize(horizontal: false, vertical: true)
-                    if !samsung {
+                    if model.guided.started {
+                        SetupGuideView(state: model.guided.state, confirm: { model.guided.confirm() }, retry: { model.guided.retry() },
+                                       doItMyself: model.guided.handedBack ? nil : { model.doItMyself() })
+                    } else {
+                        Text(instructions(step, record: record)).fixedSize(horizontal: false, vertical: true)
+                        if let guide = model.guide {
+                            DoItForMeRow(offer: guide.offer, start: { model.doItForMe() }).disabled(model.working != nil)
+                        }
+                    }
+                    if !samsung, !model.guided.running {
                         TextField("Passphrase", text: $model.passphrase).textFieldStyle(.roundedBorder).frame(width: 160)
                     }
                 }

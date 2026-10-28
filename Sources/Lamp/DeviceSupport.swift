@@ -17,10 +17,11 @@ import AppKit
 /// device's address, within half an hour. It keeps it in its own storage on the device from then on.
 enum DeviceSupport {
     /// The libraries a declared app kind may ask for, and what each one is put in: a file, or a folder of files.
-    /// `babylon` is Babylon.js, the 3D engine (Apache-2.0, in Lamp's bundle with its licence, `WebLibraries/babylon`):
-    /// a web app's page loads it from its own folder, since these apps load nothing from the network.
+    /// `three` is three.js, the 3D library (MIT, in Lamp's bundle with its license, `WebLibraries/three`, put there by
+    /// scripts/update-three.sh): its WebGL build and the light addons as a folder, which a web app's page loads from its
+    /// own folder through an import map, since these apps load nothing from the network.
     enum Library: String, CaseIterable {
-        case web, brightscript, babylon
+        case web, brightscript, three
 
         /// The files Lamp writes, by path under the declared one (empty for a single file).
         var files: [(name: String, contents: String)] {
@@ -28,18 +29,132 @@ enum DeviceSupport {
             case .web: [("", DeviceSupport.webJS)]
             case .brightscript: [("Lamp.brs", DeviceSupport.brightScript), ("LampAITask.xml", DeviceSupport.brightScriptTaskXML),
                                  ("LampAITask.brs", DeviceSupport.brightScriptTask)]
-            case .babylon: DeviceSupport.babylonJS.map { [("", $0)] } ?? []
+            case .three: DeviceSupport.threeFiles
             }
         }
     }
 
-    /// Babylon.js as Lamp ships it, read once; nil in a build without it, which then writes nothing for it.
-    static let babylonJS: String? = Bundle.main.url(forResource: "babylon", withExtension: "js", subdirectory: "WebLibraries/babylon")
-        .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+    /// three.js as Lamp ships it, every file by its path in the folder, read once; empty in a build without it, which
+    /// then writes nothing for it.
+    /// A support path as the page in `page` (the web app's folder, holding index.html) reaches it: "Web/vendor/three" is
+    /// "vendor/three" from "Web". Without a page folder, the path from the app's folder.
+    static func pagePath(_ path: String, page: String?) -> String {
+        guard let page, path.hasPrefix(page + "/") else { return path }
+        return String(path.dropFirst(page.count + 1))
+    }
+
+    /// three.js's revision, from the copy Lamp ships, for the rules ("186").
+    static var threeRevision: String {
+        let core = threeFiles.first { $0.name == "three.core.js" }?.contents ?? ""
+        guard let range = core.range(of: #"REVISION\s*=\s*['"](\d+)['"]"#, options: .regularExpression) else { return "" }
+        return String(core[range].filter(\.isNumber))
+    }
+
+    /// three.js's node renderer (three.webgpu.js and three.tsl.js) and the addons built on it, as a whole: given only to a
+    /// page whose own files name `three/webgpu` or `three/tsl`, since they double what three.js takes in every app.
+    static let threeNodeFiles: Set<String> = {
+        let node = ["three.webgpu.js", "three.tsl.js"]
+        let imports = try! NSRegularExpression(pattern: #"(?:from\s*|import\s*\(?\s*)['"]([^'"]+)['"]"#)
+        func named(_ file: (name: String, contents: String)) -> [String] {
+            imports.matches(in: file.contents, range: NSRange(file.contents.startIndex..., in: file.contents)).compactMap { match in
+                Range(match.range(at: 1), in: file.contents).map { String(file.contents[$0]) }
+            }
+        }
+        var found = Set(node)
+        // An addon that imports the node renderer, or another addon that does, is one of them.
+        var changed = true
+        while changed {
+            changed = false
+            for file in threeFiles where !found.contains(file.name) {
+                let folder = (file.name as NSString).deletingLastPathComponent
+                let needs = named(file).contains { spec in
+                    if spec == "three/webgpu" || spec == "three/tsl" { return true }
+                    let path = spec.hasPrefix("three/addons/") ? "addons/" + spec.dropFirst("three/addons/".count)
+                        : spec.hasPrefix(".") ? ((folder as NSString).appendingPathComponent(spec) as NSString).standardizingPath : ""
+                    return found.contains(path)
+                }
+                if needs { found.insert(file.name); changed = true }
+            }
+        }
+        return found
+    }()
+
+    /// three.js as a page in `page` (a folder of the app's) is given it: the node renderer only when its own files use it.
+    static func threeFiles(for project: LampProject, page: String) -> [(name: String, contents: String)] {
+        usesNodeRenderer(project, page: page) ? threeFiles : threeFiles.filter { !threeNodeFiles.contains($0.name) }
+    }
+
+    /// Whether the page's own files (not three.js's) name the node renderer, `three/webgpu` or `three/tsl`.
+    static func usesNodeRenderer(_ project: LampProject, page: String) -> Bool {
+        pageNames(["three/webgpu", "three/tsl"], project, page: page)
+    }
+
+    /// Whether the page's own files (its .js, .mjs and .html, not the libraries Lamp puts beside them) name any of `words`.
+    static func pageNames(_ words: [String], _ project: LampProject, page: String) -> Bool {
+        let folder = project.dir.appendingPathComponent(page)
+        guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        for case let url as URL in walk {
+            if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if words.contains(where: text.contains) { return true }
+        }
+        return false
+    }
+
+    /// Phaser, the 2D library a 2D game draws with (MIT, `WebLibraries/phaser`, put there by scripts/update-phaser.sh):
+    /// its ES module build and license, by name in the folder. Empty in a build without it.
+    static let phaserFiles: [(name: String, contents: Data)] = {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("WebLibraries/phaser"),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
+        return names.filter { !$0.hasPrefix(".") }.sorted().compactMap { name in
+            (try? Data(contentsOf: folder.appendingPathComponent(name))).map { (name, $0) }
+        }
+    }()
+
+    /// Whether a page's own files (not Lamp's runtime, three.js or Phaser) draw with Phaser: they import it, or Lamp's
+    /// runtime for it. Phaser is written into the page only then, since it's as big as three.js.
+    static func usesPhaser(_ project: LampProject, page: String) -> Bool {
+        let folder = project.dir.appendingPathComponent(page)
+        guard let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return false }
+        for case let url as URL in walk {
+            if ["three", "rapier", "phaser"].contains(url.lastPathComponent) { walk.skipDescendants(); continue }
+            guard ["js", "mjs", "html"].contains(url.pathExtension.lowercased()), !lampsPageFiles.contains(url.lastPathComponent),
+                  let text = AppFile.text(url, in: project) else { continue }
+            if text.range(of: phaserUse, options: .regularExpression) != nil { return true }
+        }
+        return false
+    }
+
+    /// Lamp's own files beside a game's page, which name everything they serve and so never show what the game uses.
+    static let lampsPageFiles: Set<String> = ["lamp.js", "lamp-game.js", "lamp-phaser.js", "lamp-controllers.js", "lamp-device.js"]
+
+    /// What in a page's code shows it draws with Phaser.
+    static let phaserUse = #"from\s*['"]phaser['"]|import\(\s*['"]phaser['"]|lamp-phaser\.js"#
+
+    static let threeFiles = bundled("WebLibraries/three")
+
+    /// Rapier, the physics engine a three.js game may take (Apache-2.0, in Lamp's bundle with its license,
+    /// `WebLibraries/rapier`, put there by scripts/update-rapier.sh): one module with its WebAssembly inside it, so it
+    /// loads the same in every host. Given only to a game whose page imports it (`GameKit.usesRapier`).
+    static let rapierFiles = bundled("WebLibraries/rapier")
+
+    /// A folder of Lamp's bundle, every file by its path in the folder, read once; empty in a build without it, which
+    /// then writes nothing for it.
+    private static func bundled(_ path: String) -> [(name: String, contents: String)] {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent(path),
+              let walk = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        let base = folder.resolvingSymlinksInPath().path + "/"
+        return walk.compactMap { item -> (String, String)? in
+            guard let url = item as? URL, (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            return (String(url.resolvingSymlinksInPath().path.dropFirst(base.count)), text)
+        }.sorted { $0.0 < $1.0 }
+    }
 
     /// The support a declared kind asks for, checked: a known library at a plain path in the app's folder.
     static func libraries(for project: LampProject) -> [(library: Library, path: String)] {
-        guard project.platform == .device, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
+        guard project.hasDevice, let support = DeviceApps.appKind(for: project)?.declared?.support else { return [] }
         return support.compactMap { name, path in
             guard let library = Library(rawValue: name), IntegrationCheck.isAppPath(path) else { return nil }
             return (library, path)
@@ -48,15 +163,28 @@ enum DeviceSupport {
 
     /// Every path Lamp owns in a device app, as written in its folder.
     static func paths(for project: LampProject) -> [String] {
-        if project.platform == .tv { return [TVTemplate.supportFile] }
-        if GameKit.isGame(project) { return GameKit.paths }
+        if ScreenKit.isScreen(project) { return ScreenKit.paths(for: project) }
+        if project.hasTV { return [TVTemplate.supportFile] + threeFiles.map { "\(TVTemplate.threeFolder)/\($0.name)" } }
+        // A game's are its kit's, and on the Xbox a web game's are the web app's as well.
+        if GameKit.isGame(project) { return GameKit.paths(for: project) + (GameKit.engine(project) == .web ? declaredPaths(for: project) : []) }
+        return declaredPaths(for: project)
+    }
+
+    private static func declaredPaths(for project: LampProject) -> [String] {
         return libraries(for: project).flatMap { entry in entry.library.files.map { $0.name.isEmpty ? entry.path : entry.path + "/" + $0.name } }
-            + icons(for: project).map(\.path)
+            + icons(for: project).map(\.path) + [wishFile(for: project)].compactMap { $0 }
+    }
+
+    /// Where a device's app of a wish with other apps has `LampWish` (`brightScriptWish`): beside the BrightScript
+    /// library, only while its wish has other apps, as `LampWish` is everywhere else.
+    static func wishFile(for project: LampProject) -> String? {
+        guard let entry = libraries(for: project).first(where: { $0.library == .brightscript }), Template.hasOtherApps(project) else { return nil }
+        return entry.path + "/LampWish.brs"
     }
 
     /// The icons a declared kind asks for (`app.declared.icons`), checked: a PNG at a plain path, at a size in pixels.
     static func icons(for project: LampProject) -> [(path: String, width: Int, height: Int)] {
-        guard project.platform == .device, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
+        guard project.hasDevice, let icons = DeviceApps.appKind(for: project)?.declared?.icons else { return [] }
         return icons.compactMap { path, size in
             guard IntegrationCheck.isAppPath(path), path.lowercased().hasSuffix(".png"), let (width, height) = iconSize(size) else { return nil }
             return (path, width, height)
@@ -70,7 +198,7 @@ enum DeviceSupport {
         return (parts[0], parts[1])
     }
 
-    /// The app's icon centred on a dark tile at a size, or the tile alone: what a device shows for the app, from the
+    /// The app's icon centered on a dark tile at a size, or the tile alone: what a device shows for the app, from the
     /// icon Lamp made for it (`Icons.squareURL`), so every kind of app has the same one.
     static func iconPNG(_ icon: NSImage?, width: Int, height: Int) -> Data {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
@@ -95,16 +223,29 @@ enum DeviceSupport {
 
     static func write(for project: LampProject) throws {
         if GameKit.isGame(project) { try GameKit.write(for: project); return }
+        try writeDeclared(for: project)
+    }
+
+    /// What the device's integration asks for (`app.declared.support` and `icons`), for its app or a game played there.
+    static func writeDeclared(for project: LampProject) throws {
         for entry in libraries(for: project) {
-            for file in entry.library.files {
+            let files = entry.library == .three
+                ? threeFiles(for: project, page: (entry.path as NSString).deletingLastPathComponent) : entry.library.files
+            for file in files {
                 let path = file.name.isEmpty ? entry.path : entry.path + "/" + file.name
                 try Template.put(file.contents, at: project.dir.appendingPathComponent(path), for: project)
             }
         }
-        // The icons only once Lamp has drawn one: until then the device shows its own placeholder.
-        let wanted = icons(for: project)
-        guard !wanted.isEmpty, let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:)) else { return }
-        for entry in wanted {
+        // `LampWish` beside the library while the wish has other apps, and gone once it hasn't.
+        if let entry = libraries(for: project).first(where: { $0.library == .brightscript }) {
+            let url = project.dir.appendingPathComponent(entry.path + "/LampWish.brs")
+            if wishFile(for: project) != nil { try Template.put(brightScriptWish, at: url, for: project) }
+            else { AppFolder.remove(url, in: project.dir) }
+        }
+        // Until Lamp has drawn the app's icon, the tile alone: a manifest names these files, and a package without them
+        // shows nothing in their place.
+        let icon = AppFile.read(Icons.squareURL(project), in: project).flatMap(NSImage.init(data:))
+        for entry in icons(for: project) {
             try Template.put(iconPNG(icon, width: entry.width, height: entry.height), at: project.dir.appendingPathComponent(entry.path), for: project)
         }
     }
@@ -287,6 +428,22 @@ enum DeviceSupport {
       // Reaching Lamp
 
       var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampGateway;
+      // In Lamp's app around the page on Android the app answers the same way, with its own token (LampPageGateway.kt).
+      var gate = window.lampGatewayHost;
+      if (!bridge && gate && typeof gate.postMessage === 'function') {
+        var asked = {}, askId = 0;
+        gate.onmessage = function (e) {
+          var m;
+          try { m = JSON.parse(e.data); } catch (x) { return; }
+          var waiting = m && asked[m.id];
+          if (!waiting) return;
+          delete asked[m.id];
+          waiting({ status: m.status, body: m.body });
+        };
+        bridge = { postMessage: function (m) {
+          return new Promise(function (resolve) { var id = ++askId; asked[id] = resolve; gate.postMessage(JSON.stringify({ id: id, path: m.path, body: m.body, timeout: m.timeout })); });
+        } };
+      }
       var preferred = null;
 
       function routes() {
@@ -296,7 +453,29 @@ enum DeviceSupport {
         return out;
       }
 
+      // In Lamp's WebView2 host on the Xbox the page is https and can't call Lamp's plain-http gateway itself, so the
+      // host makes the call and posts the answer back.
+      var host = window.chrome && window.chrome.webview, relayed = {}, relayId = 0;
+      if (host) {
+        host.addEventListener('message', function (e) {
+          var m = e.data, waiting = m && m.lamp === 'http' && relayed[m.id];
+          if (!waiting) return;
+          delete relayed[m.id];
+          if (m.error) { waiting.reject(new Error('unreachable')); return; }
+          var reply = {};
+          try { reply = JSON.parse(m.body) || {}; } catch (x) {}
+          waiting.resolve({ status: m.status, reply: reply });
+        });
+      }
+
       function exchange(route, path, token, body, timeout) {
+        if (host) {
+          return new Promise(function (resolve, reject) {
+            var id = ++relayId;
+            relayed[id] = { resolve: resolve, reject: reject };
+            host.postMessage({ lamp: 'http', id: id, url: route + path, token: token || '', body: body, timeout: timeout });
+          });
+        }
         return new Promise(function (resolve, reject) {
           var xhr = new XMLHttpRequest();
           xhr.open('POST', route + path);
@@ -317,6 +496,14 @@ enum DeviceSupport {
       // just starting.
       function send(path, body, token, timeout) {
         var list = routes(), text = JSON.stringify(body);
+        // Lamp opens a claim for the device's IPv4 address, and a device can reach the Mac's .local name over IPv6
+        // (the Xbox does), so a claim goes to the Mac's IPv4 addresses first.
+        if (path === '/app/claim') {
+          var ipv4 = /^http:\/\/\d+\.\d+\.\d+\.\d+:/;
+          list = list.filter(function (r) { return ipv4.test(r); }).concat(list.filter(function (r) { return !ipv4.test(r); }));
+        }
+        // Lamp's preview of a game replays a play exactly, so nothing in it answers from outside.
+        if (window.lampPreview) return Promise.reject(new Failure('Lamp\'s preview has no AI: show example content here, and look at the game on the device for the real answers.'));
         if (!list.length) return Promise.reject(new Failure('This copy of the app wasn\'t put here by Lamp, so it can\'t use AI. Open it from Lamp on your Mac.'));
         function attempt(i, round) {
           if (i >= list.length) {
@@ -351,7 +538,7 @@ enum DeviceSupport {
         var done;
         if (bridge) {
           // The TV preview on the Mac answers for Lamp itself.
-          done = bridge.postMessage({ path: path, body: JSON.stringify(body) }).then(function (r) {
+          done = bridge.postMessage({ path: path, body: JSON.stringify(body), timeout: timeout }).then(function (r) {
             var reply = {};
             try { reply = JSON.parse(r.body) || {}; } catch (e) {}
             return { status: r.status, reply: reply };
@@ -754,14 +941,112 @@ enum DeviceSupport {
         }
       };
 
+      // A game controller in a Chromium web view on the Xbox gives its buttons as key presses with no name, only the
+      // old key codes. They're turned into the keys a page expects, before any of its own handlers hears them: the d-pad
+      // and left stick are the arrows, A is Enter (and presses what has focus), B is Escape, and the rest have the names
+      // Edge gave them on the Xbox ("GamepadX", "GamepadRightShoulder"…).
+      var padKeys = { 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown', 27: 'Escape',
+        195: 'Enter', 196: 'Escape', 197: 'GamepadX', 198: 'GamepadY', 199: 'GamepadRightShoulder', 200: 'GamepadLeftShoulder',
+        201: 'GamepadLeftTrigger', 202: 'GamepadRightTrigger', 203: 'ArrowUp', 204: 'ArrowDown', 205: 'ArrowLeft', 206: 'ArrowRight',
+        207: 'GamepadMenu', 208: 'GamepadView', 209: 'GamepadLeftThumbstick', 210: 'GamepadRightThumbstick',
+        211: 'ArrowUp', 212: 'ArrowDown', 213: 'ArrowRight', 214: 'ArrowLeft',
+        215: 'GamepadRightThumbstickUp', 216: 'GamepadRightThumbstickDown', 217: 'GamepadRightThumbstickRight', 218: 'GamepadRightThumbstickLeft' };
+      function padKey(e) {
+        var key = e.key === 'Unidentified' && padKeys[e.keyCode];
+        if (!key) return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        var target = document.activeElement || document.body;
+        var named = new KeyboardEvent(e.type, { key: key, code: key, repeat: e.repeat, bubbles: true, cancelable: true });
+        var go = target.dispatchEvent(named);
+        if (go && key === 'Enter' && e.type === 'keydown' && !e.repeat && target !== document.body && typeof target.click === 'function') target.click();
+      }
+      window.addEventListener('keydown', padKey, true);
+      window.addEventListener('keyup', padKey, true);
+
+      // Chromium's web view on the Xbox never shakes the controller: a page's vibrationActuator takes playEffect and
+      // answers, and nothing happens. In Lamp's host the standard calls go to the host instead, which shakes it itself.
+      if (host && window.Gamepad) {
+        var actuators = {};
+        var actuator = function (index) {
+          var playing = null;
+          var end = function (result) {
+            if (!playing) return;
+            var was = playing;
+            playing = null;
+            clearTimeout(was.timer);
+            was.resolve(result);
+          };
+          var amount = function (v) { v = Number(v); return v > 0 ? Math.min(v, 1) : 0; };
+          var ms = function (v) { v = Number(v); return v > 0 ? Math.min(v, 5000) : 0; };
+          return {
+            type: 'dual-rumble',
+            effects: ['dual-rumble', 'trigger-rumble'],
+            canPlayEffectType: function (type) { return type === 'dual-rumble' || type === 'trigger-rumble'; },
+            playEffect: function (type, params) {
+              if (type !== 'dual-rumble' && type !== 'trigger-rumble') return Promise.reject(new TypeError('Unknown effect ' + type));
+              params = params || {};
+              end('preempted');
+              var delay = ms(params.startDelay), duration = ms(params.duration);
+              // The host numbers controllers in another order than the page, so it's told what this one shows now (its
+              // buttons and sticks) and finds the controller that matches.
+              var pad = navigator.getGamepads()[index], buttons = [], axes = [];
+              if (pad) {
+                for (var i = 0; i < pad.buttons.length; i++) buttons.push(Math.round(pad.buttons[i].value * 100) / 100);
+                for (var j = 0; j < pad.axes.length; j++) axes.push(Math.round(pad.axes[j] * 100) / 100);
+              }
+              host.postMessage({ lamp: 'rumble', pad: index, buttons: buttons, axes: axes, delay: delay, duration: duration,
+                strong: amount(params.strongMagnitude), weak: amount(params.weakMagnitude),
+                leftTrigger: type === 'trigger-rumble' ? amount(params.leftTrigger) : 0,
+                rightTrigger: type === 'trigger-rumble' ? amount(params.rightTrigger) : 0 });
+              return new Promise(function (resolve) {
+                playing = { resolve: resolve, timer: setTimeout(function () { end('complete'); }, delay + duration) };
+              });
+            },
+            reset: function () {
+              end('preempted');
+              host.postMessage({ lamp: 'rumble', pad: index, delay: 0, duration: 0 });
+              return Promise.resolve('complete');
+            }
+          };
+        };
+        try {
+          Object.defineProperty(Gamepad.prototype, 'vibrationActuator', { configurable: true, get: function () {
+            return actuators[this.index] || (actuators[this.index] = actuator(this.index));
+          } });
+        } catch (x) {}
+      }
+
       // Opened by Lamp's install, the app asks for its token now, while Lamp is waiting for it, not at its first call.
       if (installed && !bridge) token().then(null, function () {});
 
       // Lamp's own route for a TV app's phone controllers (Lamp.controllers), the way LampAI's calls go.
       Object.defineProperty(LampAI, '_post', { value: post });
+      // One call to one way to Lamp, as LampAI makes it (through the Xbox's host where there is one), for a wish's key claim.
+      Object.defineProperty(LampAI, '_exchange', { value: exchange });
+
+      /**
+       * What only the app around the page can reach: the person's mail, calendar, reminders, contacts, photos and the
+       * like, read by the app's own Swift (Sources/Native.swift, in a game or a screen on the Mac, iPhone or iPad).
+       * `available` is false everywhere else (a TV, an Xbox, Android, Lamp's preview), where `call` rejects: show
+       * example content then, in the page's own words.
+       *
+       *     LampNative.call('unanswered', { limit: 30 }).then(function (mails) { ... }, function () { ... });
+       */
+      var nativeBridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampNative;
+      var LampNative = {
+        available: !!nativeBridge,
+        call: function (name, args) {
+          if (!nativeBridge) return Promise.reject(new Error('Only the app on the Mac, iPhone or iPad can do that.'));
+          return nativeBridge.postMessage({ name: String(name), args: JSON.stringify(args || {}) }).then(function (text) {
+            return text === undefined || text === null || text === '' ? null : JSON.parse(text);
+          }, function (error) { throw new Error(String(error && error.message || error)); });
+        }
+      };
 
       window.LampAI = LampAI;
       window.LampQuestion = LampQuestion;
+      window.LampNative = LampNative;
       window.LampStore = LampStore;
       window.LampAssets = LampAssets;
     })();
@@ -769,6 +1054,46 @@ enum DeviceSupport {
     """#
 
     // MARK: - BrightScript
+
+    /// `LampWish` for a Roku app of a wish with other apps. A Roku can't join the wish's room yet (it has none of the
+    /// handshake's crypto built in, and no WebSocket before Roku OS 16), so this says it's away, with the reason in the
+    /// words every library uses, and its calls are the shape the link will have: an app written against it now keeps
+    /// working when the link comes. `wishes.md` says what that link needs.
+    static let brightScriptWish = #"""
+    ' LampWish: this app and the wish's other apps. Written by Lamp before every build; don't edit.
+    ' Use it from a component by adding this to its XML:
+    '     <script type="text/brightscript" uri="pkg:/components/Lamp/LampWish.brs" />
+    '
+    ' A Roku app can't reach the wish's other apps yet, and they can't reach it: LampWish_status() is always "away",
+    ' with a reason to show as it is, LampWish_peers() is empty, and LampWish_send() and LampWish_set() send nothing.
+    ' Keep what the app shows its own (LampStore, the web, LampAI) rather than waiting on the others.
+    '     status = LampWish_status()     ' { state: "away", reason: "..." }
+
+    function LampWish_status() as Object
+        return { state: "away", reason: "This app can't reach the wish's other apps yet." }
+    end function
+
+    ' The wish's other apps open now: none can be reached from a Roku yet.
+    function LampWish_peers() as Object
+        return []
+    end function
+
+    ' Sends a message (an associative array) to one app by its name ("iphone"), or to all with "": false, since none can
+    ' be reached.
+    function LampWish_send(peer as String, message as Object) as Boolean
+        return false
+    end function
+
+    ' The values the wish's apps share: none reach a Roku yet, so this is empty and LampWish_set() keeps nothing.
+    function LampWish_values() as Object
+        return {}
+    end function
+
+    function LampWish_set(name as String, value as Dynamic) as Boolean
+        return false
+    end function
+
+    """#
 
     /// The Roku library's functions, for a component's scripts and for Main. Network calls run in `LampAITask`, a Task
     /// node, since SceneGraph refuses roUrlTransfer on the render thread.
@@ -815,8 +1140,8 @@ enum DeviceSupport {
     ' obeying it. For decisions, put it in what the decision is about and keep the question your own words.
     ' Dates: LampAI_ask tells the AI today's date and a calendar of the weeks around it. Ask for dates back as ISO 8601.
     '
-    ' LampStore: the app's saved data, kept on the Roku across launches and changes, as JSON. Roku keeps only 16 KB for
-    ' an app's saved data, so keep it small. People rely on their data through every change: once something is saved,
+    ' LampStore: the app's saved data, kept on the Roku across launches and changes, as JSON. Roku keeps about 32 KB
+    ' (compressed) for a channel's saved data, shared by every app Lamp puts on that Roku, so keep it small. People rely on their data through every change: once something is saved,
     ' only ever add to it, and give a new field a default where it's read.
     '     prefs = LampStore_load("prefs", { theme: "dark" })     LampStore_save(prefs, "prefs")     LampStore_remove("prefs")
     '     notes = LampStore_collection("notes")    ' items are associative arrays with an id

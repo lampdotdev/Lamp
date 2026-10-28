@@ -69,9 +69,11 @@ final class MagicPanel {
 
     // MARK: Handing the chat to the app
 
-    /// Whether this app's chat is shown beside it rather than in Lamp's window: a Mac app with windows (not one
-    /// in the menu bar, a widget or the background), built with the sidebar in it.
-    static func chatsInApp(_ project: LampProject) async -> Bool {
+    /// Whether this wish's chat is shown beside its app rather than in Lamp's window: a Mac app with windows (not one
+    /// in the menu bar, a widget or the background), built with the sidebar in it. For a wish whose apps are all in
+    /// folders, its one Mac app's (`Store.chatApp`).
+    static func chatsInApp(_ wish: LampProject) async -> Bool {
+        let project = Store.shared.chatApp(of: wish)
         guard Sidebar.applies(to: project),
               FileManager.default.fileExists(atPath: Sidebar.extensionURL(in: project.installedURL).path) else { return false }
         return await Task.detached { WishPlace.of(project) }.value == .window
@@ -81,8 +83,12 @@ final class MagicPanel {
     /// Lamp from before it would only come forward, with the chat nowhere. Read off each running copy's own program,
     /// which may be older than the one installed since. The request's name alone, without Lamp's prefix: an app reads
     /// the prefix from its Info.plist (`LampInstall.note`), so its program holds only the name.
-    static func runningCopiesTakeTheChat(_ project: LampProject) -> Bool {
-        Store.shared.macCopies(of: project).allSatisfy { app in
+    static func runningCopiesTakeTheChat(_ wish: LampProject) -> Bool {
+        let project = Store.shared.chatApp(of: wish)
+        // An app of Lamp's own around a page is built from this Lamp's files whenever they change, and in release: Swift
+        // keeps a string this short inside the code there, so the name isn't in the program to find.
+        if project.platform.target.hostedByLamp { return true }
+        return Store.shared.macCopies(of: project).allSatisfy { app in
             guard let program = app.executableURL, let data = try? Data(contentsOf: program, options: .alwaysMapped) else { return false }
             return data.range(of: Data("openSidebar".utf8)) != nil
         }
@@ -94,16 +100,18 @@ final class MagicPanel {
     /// it when there was none: its chat window closes and the app opens the chat beside its content, so the rest of the
     /// making happens in the app itself. Once for each app: a chat the
     /// person opened in Lamp's window afterwards stays there.
+    /// Given the wish or its app: the chat is the wish's, the window its app's (`Store.chatApp`).
     func handOff(_ project: LampProject) async {
-        guard !FileManager.default.fileExists(atPath: Self.handedOff(project).path),
-              await Self.chatsInApp(project), !Store.shared.macCopies(of: project).isEmpty,
-              Self.runningCopiesTakeTheChat(project) else { return }
-        FileManager.default.createFile(atPath: Self.handedOff(project).path, contents: nil)
-        openChat(in: project)
+        let wish = Store.shared.wish(of: project), app = Store.shared.chatApp(of: wish)
+        guard !FileManager.default.fileExists(atPath: Self.handedOff(app).path),
+              await Self.chatsInApp(wish), !Store.shared.macCopies(of: app).isEmpty,
+              Self.runningCopiesTakeTheChat(wish) else { return }
+        FileManager.default.createFile(atPath: Self.handedOff(app).path, contents: nil)
+        openChat(in: app)
         // Lamp's window closes once the chat is up in the app, and not before: with no window of its own and no chat
         // connected, Lamp would quit, and an app that couldn't show the chat would leave it nowhere.
         for _ in 0..<50 {
-            if SidebarServer.shared.isConnected(project.id) { return Self.closeChatWindow(of: project) }
+            if SidebarServer.shared.isConnected(wish.id) { return ChatPanel.close(wish.id) }
             try? await Task.sleep(for: .milliseconds(200))
         }
     }
@@ -114,36 +122,31 @@ final class MagicPanel {
     /// nowhere, with the turn's progress, its errors and Stop. A chat the person closed beside the app keeps its
     /// connection, so it isn't brought back against their wish.
     func keepChatInSight(_ project: LampProject) async {
-        guard FileManager.default.fileExists(atPath: Self.handedOff(project).path) else { return }
-        if await Self.chatsInApp(project) {
+        let wish = Store.shared.wish(of: project)
+        guard FileManager.default.fileExists(atPath: Self.handedOff(Store.shared.chatApp(of: wish)).path) else { return }
+        if await Self.chatsInApp(wish) {
             // A copy that opened brings its chat back as its window comes up: give it the time that takes.
             for _ in 0..<40 {
-                if SidebarServer.shared.isConnected(project.id) || Store.shared.chatWindows.contains(project.id) { return }
+                if SidebarServer.shared.isConnected(wish.id) || ChatPanel.isOpen(wish.id) { return }
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
-        guard !SidebarServer.shared.isConnected(project.id), !Store.shared.chatWindows.contains(project.id) else { return }
-        Store.shared.showChat(project.id)
+        guard !SidebarServer.shared.isConnected(wish.id), !ChatPanel.isOpen(wish.id) else { return }
+        // Beside whatever shows it now, without taking the keyboard from what the person is in.
+        ChatPanel.show(wish.id, activate: NSApp.isActive)
     }
 
-    /// An app's chat is in one place at a time: when it opens beside the app, its window in Lamp closes. Not while
-    /// someone is using that window (Lamp in front, with it), which they opened on purpose (a setup card's button,
-    /// the Window menu) and may be typing in.
+    /// An app's chat is in one place at a time: when it opens beside the app, Lamp's panel for it closes.
     func chatOpenedInApp(_ project: LampProject) {
-        let store = Store.shared
         // Only once the chat Lamp checked is there (`SidebarServer.accepted`): the app's word that it's opening is a
-        // notification anything could send, and a window closed with no chat to take its place would leave it nowhere.
-        guard SidebarServer.shared.isConnected(project.id), !(NSApp.isActive && store.selection == project.id) else { return }
-        Self.closeChatWindow(of: project)
-    }
-
-    private static func closeChatWindow(of project: LampProject) {
-        guard Store.shared.chatWindows.contains(project.id) else { return }
-        Store.shared.chatsHandedOff.insert(project.id)
+        // notification anything could send, and a panel closed with no chat to take its place would leave it nowhere.
+        let wish = Store.shared.wish(of: project)
+        guard SidebarServer.shared.isConnected(wish.id) else { return }
+        ChatPanel.close(wish.id)
     }
 
     /// The app was opened to show its chat beside it: if no chat has come by the time it should have (the app
-    /// couldn't start, or quit as it opened), the chat is shown in Lamp's window, so it's never nowhere. A rebuild
+    /// couldn't start, or quit as it opened), the chat is shown in Lamp's panel, so it's never nowhere. A rebuild
     /// first (an app built by an older Lamp) is waited for, since its progress is in that chat.
     func showChatIfAppNeverComes(_ project: LampProject) {
         let id = project.id
@@ -158,8 +161,28 @@ final class MagicPanel {
                 try? await Task.sleep(for: .milliseconds(500))
             }
             guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
-                  Store.shared.macCopies(of: current).isEmpty else { return }
-            Store.shared.showChat(id)
+                  Store.shared.macCopies(of: Store.shared.chatApp(of: current)).isEmpty else { return }
+            ChatPanel.show(id)
+        }
+    }
+
+    /// The app quit while its chat was beside it, and not for a change that reopens it: it crashed, or quit while a
+    /// turn was going on. The chat comes up in Lamp's panel, on its own, without taking the keyboard, once no chat
+    /// has come back beside a copy of the app.
+    func showChatAfterQuit(_ project: LampProject) {
+        // The chat is the wish's, whichever of its apps quit.
+        let id = Store.shared.wish(of: project).id
+        Task {
+            // A change that reopens the app leaves a moment with no copy running: only three seconds with none, and no
+            // chat back beside one, is the app gone.
+            var gone = 0
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
+                      !ChatPanel.isOpen(id) else { return }
+                gone = Store.shared.macCopies(of: Store.shared.chatApp(of: current)).isEmpty ? gone + 1 : 0
+                if gone >= 12 { return ChatPanel.show(id, activate: NSApp.isActive) }
+            }
         }
     }
 
@@ -181,7 +204,8 @@ final class MagicPanel {
 
     /// The chat opened in the app's window: by a file in its runtime folder for a copy that's still starting
     /// (`LampSidebar.restore`), and by a word to one that's already running (`LampSidebar.openForLamp`).
-    func openChat(in project: LampProject) {
+    func openChat(in wish: LampProject) {
+        let project = Store.shared.chatApp(of: wish)
         let folder = Runtime.macFolder(project)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: folder.appendingPathComponent("open-sidebar").path, contents: nil)
@@ -259,7 +283,9 @@ final class MagicPanel {
 
     /// The person chose to point at part of the app (the + menu by the message box): the app lays its outline
     /// over its window (`LampMagic.Picker`), and what's picked comes back as an attachment (`take`).
-    func point(in project: LampProject, fromLamp: Bool) {
+    /// Given the wish, its app beside the chat (`Store.chatApp`); given one of its apps in a folder, that app.
+    func point(in wish: LampProject, fromLamp: Bool) {
+        let project = wish.isPart ? wish : Store.shared.chatApp(of: wish)
         guard let app = Store.shared.macCopies(of: project).first else { return }
         follow(project.id)
         if fromLamp { pointingFromLamp.insert(project.id) } else { pointingFromLamp.remove(project.id) }
@@ -272,7 +298,7 @@ final class MagicPanel {
     private func pointingEnded(_ id: String) {
         guard pointingFromLamp.remove(id) != nil else { return }
         NSApp.activate()
-        LampWindows.showChat(id)
+        ChatPanel.show(Store.shared.projects.first { $0.id == id }.map { Store.shared.wish(of: $0).id } ?? id)
     }
 
     /// The pointed-at thing goes into the message box as a pill: its picture, named after it ("Save button.png"),
@@ -290,7 +316,8 @@ final class MagicPanel {
         let named = place.appendingPathComponent(name + ".png")
         guard (try? FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)) != nil,
               (try? FileManager.default.copyItem(at: picture, to: named)) != nil else { return }
-        Store.shared.point(at: PointedAt(title: name, detail: Self.words(info["context"] as? String ?? ""), picture: named.path), in: project)
+        Store.shared.point(at: PointedAt(title: name, detail: Self.words(info["context"] as? String ?? ""), picture: named.path),
+                           in: Store.shared.wish(of: project))
     }
 
     /// Points again for the message being written: the app lays its pointer over its window, in front. What's
@@ -359,11 +386,10 @@ extension LogLine {
 
 extension Store {
     /// The app is open on this Mac, where it can be pointed at again.
-    func canPoint(in project: LampProject) -> Bool {
-        switch project.platform {
-        case .mac: isOpen(project)
-        case .universal: openOnMac.contains(project.id)
-        case .iphone, .android, .tv, .device: false
-        }
+    func canPoint(in wish: LampProject) -> Bool {
+        let project = chatApp(of: wish)
+        // Only a Mac copy: an app for both may be open elsewhere too.
+        guard project.hasMac else { return false }
+        return project.hasIOS ? openOnMac.contains(project.id) : isOpen(project)
     }
 }
