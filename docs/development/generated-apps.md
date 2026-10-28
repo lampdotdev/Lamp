@@ -289,7 +289,15 @@ a shared file's contents are (`Sharing.open(unpacked:)`): the same review, the s
 afresh and never read from the tree (`Sharing.read` leaves LampSupport.swift and LampScene.swift out of the code, as
 the install does). A folder holding only a shared file opens that file. The chain's last link takes the repository's
 address when it has none (a repository put up before Lamp wrote it, or a folder's git remote, `RepoImport.repository`).
-The person's folder is only read, never changed or removed.
+The person's folder is only read, never changed or removed. A wish whose chain names a repository offers Update from
+GitHub… in its info panel (`AppInfoView.updateFromRepository`): the repository fetched again and opened as any is, which
+lands on Update or Keep Both since the wish kept the sender's identity (`existingCopy`). A wish changed here since it
+arrived (`Store.changedSinceArrival`: its files differ from the last version Lamp saved as an arrival, or something is
+unsaved) isn't replaced by Update: the new code goes to `.lamp/upstream/` without Lamp's own files, the credits are
+merged by Lamp, a version is saved, and a request goes to the agent with a note (`Versions.rememberMerge`) saying which
+version came from there last, to bring in what changed upstream, keep what changed here, settle the obvious itself and
+ask (`ask`) only where it can't tell. The review sheet says so (`ImportReviewCard.changedHere`, "Already here, changed
+here" in the gallery). An unchanged wish takes the new code in place as before.
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with

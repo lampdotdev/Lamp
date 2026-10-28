@@ -519,6 +519,29 @@ enum Versions {
         try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
     }
 
+    /// What the agent hears with the request Lamp sends when the latest of a wish comes from its repository and the wish
+    /// was changed here since it arrived (`Store.mergeUpdate`): where the new code is, which version came from there last,
+    /// and how to bring it in. Written in place of any other note, since that request is the next one.
+    static func rememberMerge(_ project: LampProject, from repository: String?, since arrival: String?) {
+        let place = repository.map { "its repository on GitHub (\($0))" } ?? "where it came from"
+        let base = arrival.map { "Version \($0.prefix(12)) of this wish is the one that came from there last, so `git diff \($0.prefix(12)) HEAD -- . ':!.lamp'` shows what was changed here since" }
+            ?? "This wish's versions (`git log`) show what was changed here since it arrived"
+        let note = """
+
+
+        Note from Lamp: the user chose to bring in the latest version of this wish from \(place). Lamp checked that \
+        code and put it in \(Store.upstreamFolder)/, laid out as this wish is (Sources/, Assets/, APP.md, and any other \
+        app's folder), without Lamp's own files. The wish was changed here since it arrived, so the new code is not in \
+        place yet: that is this request. \(base); the other differences between \(Store.upstreamFolder)/ and the \
+        wish's files are what changed upstream. Bring in what changed upstream and keep what was changed here. Where \
+        both changed the same thing, settle it yourself when what the person wants is clear (a fix upstream to \
+        code they didn't touch, a change here that upstream merely moved); ask them with the ask tool only where it \
+        isn't, then go on. credits.json is already updated by Lamp: leave it. When it's all in, delete \
+        \(Store.upstreamFolder)/ and tell the person what came in and what you kept of theirs.
+        """
+        try? note.write(to: noteURL(project), atomically: true, encoding: .utf8)
+    }
+
     /// Remembers that a request was taken back and sent again in other words, so the agent hears about it
     /// with the new one. Its conversation still holds the old request and everything that followed it.
     static func remember(_ project: LampProject, tookBack request: String) {

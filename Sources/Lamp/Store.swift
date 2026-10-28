@@ -3102,6 +3102,19 @@ final class Store: ObservableObject {
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
+        /// That app was changed here since it arrived: Update then brings the new code in through the agent, keeping
+        /// those changes (`mergeUpdate`), rather than putting it in their place.
+        var changedHere = false
+    }
+
+    /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
+    /// version saved since that touched them, or changes not yet saved. A wish with no such version counts as changed,
+    /// since nothing says what arrived.
+    static let arrivalMessages: Set<String> = ["Imported from a shared file", "Updated from a shared file"]
+    func changedSinceArrival(_ project: LampProject) async -> Bool {
+        guard let arrival = await Versions.list(project).first(where: { Self.arrivalMessages.contains($0.message) }) else { return true }
+        if await Versions.hasUnsavedChanges(project) { return true }
+        return await Versions.git("git diff --quiet \(arrival.id) HEAD -- . ':!.lamp'", cwd: project.dir) != 0
     }
 
     /// The app on this Mac that a shared file is a version of: the one it was shared from, or the copy made
@@ -3166,7 +3179,9 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package))
+            var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package))
+            if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
+            guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -3206,6 +3221,7 @@ final class Store: ObservableObject {
     /// (changes not yet saved included), so Versions can bring it back; without that, nothing is replaced.
     func confirmUpdate() {
         guard let pending = pendingImport else { return }
+        if pending.changedHere { return mergeUpdate(pending) }
         guard let project = pending.existing.flatMap({ existing in projects.first { $0.id == existing.id } }),
               begin(project) != nil else {
             let alert = NSAlert()
@@ -3319,6 +3335,75 @@ final class Store: ObservableObject {
                 log(project, .error, ErrorMessages.appDoesNotBuild)
             }
             await rebuildParts(of: current(project) ?? project, onlyChanged: true)
+        }
+    }
+
+    /// Where the latest of a wish from its repository waits for the agent to bring it in (`mergeUpdate`): inside the
+    /// wish's own folder, outside its versions, and gone once it's in.
+    static let upstreamFolder = ".lamp/upstream"
+
+    /// Update for a wish changed here since it arrived: the new code goes beside the wish, not in place of the person's
+    /// changes, and the agent is asked to bring in what changed upstream while keeping what changed here, asking the
+    /// person only where it can't tell (`Versions.rememberMerge`). What's unsaved is saved as a version first, as for
+    /// an update, so Versions can bring the wish back; the credits take the new file's now, since they're Lamp's to merge.
+    private func mergeUpdate(_ pending: PendingImport) {
+        guard let project = pending.existing.flatMap({ existing in projects.first { $0.id == existing.id } }),
+              begin(project) != nil else {
+            let alert = NSAlert()
+            alert.messageText = "“\(pending.existing?.name ?? pending.package.name)” is busy right now"
+            alert.informativeText = "Try again when it's done, or keep both."
+            alert.runModal()
+            return
+        }
+        importRequest = nil
+        pendingImport = nil
+        showChat(project.id)
+        Task {
+            let fm = FileManager.default
+            let package = pending.package
+            defer { try? fm.removeItem(at: package.folder) }
+            let before = "Before bringing in an update"
+            var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
+            if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
+            let upstream = project.dir.appendingPathComponent(Self.upstreamFolder)
+            try? fm.removeItem(at: upstream)
+            do {
+                guard kept else { throw Sharing.ImportError(Self.updateFailed) }
+                try Self.copyUpstream(package.folder, to: upstream)
+                if let credits = package.credits { try Credits.add(credits, to: project) }
+            } catch {
+                try? fm.removeItem(at: upstream)
+                finish(project)
+                log(project, .error, Self.updateFailed)
+                return
+            }
+            let arrival = await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
+            let repository = package.credits?.remixOf.last(where: { $0.url != nil })?.url
+            Versions.rememberMerge(project, from: repository, since: arrival)
+            finish(project)
+            let place = repository.flatMap(RepoImport.source(from:)).map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
+            send("Bring in what's new in \(place), keeping my changes.", to: project)
+        }
+    }
+
+    /// The new code as the agent reads it: the package's folder without Lamp's own files (this Mac writes its own), the
+    /// repository's README and the shared file beside the code.
+    private static func copyUpstream(_ from: URL, to: URL) throws {
+        let fm = FileManager.default
+        let lampsOwn: Set<String> = ["Package.swift", "build.sh", "README.md", "LampSupport.swift", Template.sceneSupportFile,
+                                     Template.widgetSupportFile, Template.shareSupportFile]
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
+        guard let items = fm.enumerator(at: from, includingPropertiesForKeys: Array(keys)) else { throw Sharing.ImportError(updateFailed) }
+        try fm.createDirectory(at: to, withIntermediateDirectories: true)
+        for case let item as URL in items {
+            let values = try? item.resourceValues(forKeys: keys)
+            if values?.isSymbolicLink == true { items.skipDescendants(); continue }
+            guard values?.isRegularFile == true, item.pathExtension != "lampapp", !lampsOwn.contains(item.lastPathComponent) else { continue }
+            let relative = Sharing.relativePath(of: item, in: from)
+            guard !Template.watchSupportPaths.contains(relative) else { continue }
+            let target = to.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: item, to: target)
         }
     }
 
