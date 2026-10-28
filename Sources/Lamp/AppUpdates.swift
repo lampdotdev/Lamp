@@ -155,6 +155,8 @@ enum AppUpdates {
         var head: String? = nil
         /// The copy's turn finished well, and it waits for the person's Update, Keep Both or Cancel.
         var ready: Bool? = nil
+        /// The agent's questions asked in the update's own turns, by their cards' ids: answers to these are the update's.
+        var cards: [String]? = nil
 
         static let folder = ".lamp/update"
         static func url(_ project: LampProject) -> URL { project.dir.appendingPathComponent(folder + "/job.json") }
@@ -217,6 +219,9 @@ enum AppUpdates {
     /// it can do and kept it. It's still built.
     static func mayOpen(_ project: LampProject) -> Bool { Job.load(project) == nil }
 
+    /// Why such a copy wasn't installed, where an install is refused below the usual launch.
+    static let notInstalledYet = "This update is installed once you've reviewed it."
+
     /// What the agent hears when it asks to see or use such a copy.
     static let notOpenedYet = "This app is an update Lamp is preparing, and it isn't opened until the person has reviewed it. "
         + "Check your work by reading the code: Lamp builds it when you finish, and tells you if the build fails."
@@ -231,10 +236,16 @@ enum AppUpdates {
     }
 
     /// Whether a turn in a copy was the update's own: the update's request (the first, or one to try again), or answers
-    /// to the agent's questions about it. A question in the copy's chat about something else doesn't finish the update.
-    static func isUpdateTurn(_ messages: [QueuedMessage]) -> Bool {
-        messages.contains { $0.text == request || $0.card != nil }
+    /// to questions the agent asked in the update's own turns (`Job.cards`). Neither a request about something else nor
+    /// an answer to a question about something else finishes the update.
+    static func isUpdateTurn(_ messages: [QueuedMessage], job: Job) -> Bool {
+        let cards = Set(job.cards ?? [])
+        return messages.contains { $0.text == request || $0.card.map { cards.contains($0.uuidString) } == true }
     }
+
+    /// Whether an app may be duplicated: not a copy waiting for its review, whose duplicate would be an app of its own
+    /// with no review to pass. Keep Both is how such a copy is kept.
+    static func mayDuplicate(_ project: LampProject) -> Bool { mayOpen(project) }
 
     /// The request that makes someone's project into an app, at the version the person opened: the branch, tag or
     /// commit the address named, at the commit Lamp fetched, so the agent works from exactly that.
@@ -547,9 +558,15 @@ extension Store {
             if settled == .ready, end == .changed { openPreparedReview(project, job: job, fromItsTurn: true) }
             return
         }
-        guard AppUpdates.isUpdateTurn(messages) else { return }
+        guard AppUpdates.isUpdateTurn(messages, job: job) else { return }
         switch settled {
         case .waiting:
+            // The questions this turn asked, open or answered already and waiting in line: their answers are the update's.
+            let asked = [Talk.open(in: logs[project.id] ?? [])?.id].compactMap { $0 } + (queued[project.id] ?? []).compactMap(\.card)
+            if !asked.isEmpty {
+                job.cards = Array(Set((job.cards ?? []) + asked.map(\.uuidString)))
+                try? job.save(in: project)
+            }
             return
         case .failed:
             let name = projects.first { $0.id == wish }?.name ?? "your app"
@@ -660,8 +677,11 @@ extension Store {
         if let wish = AppUpdates.Job.load(copy)?.wish.flatMap({ wish in projects.first { $0.id == wish } }) {
             takeUsage(of: copy, into: wish)
         }
+        // Until it's gone, whatever is sent to the copy goes to the app (`queueTarget`); what was already waiting goes now.
+        if let target { retiringCopies[id] = target.id }
+        defer { retiringCopies[id] = nil }
         if let target, let waiting = queued.removeValue(forKey: id), !waiting.isEmpty {
-            queued[target.id, default: []].append(contentsOf: waiting)
+            queued[target.id, default: []].append(contentsOf: forwarded(waiting, from: copy))
             log(target, .status, waiting.count == 1 ? "Your message to the update goes on here." : "Your messages to the update go on here.")
         }
         await delete(copy)

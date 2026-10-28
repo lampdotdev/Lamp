@@ -556,6 +556,21 @@ final class Store: ObservableObject {
     @Published var busy: Set<String> = []
     /// What was last heard of each repository wishes come from, by address (`AppUpdates`).
     @Published var updateChecks: [String: AppUpdates.Check] = [:]
+    /// Copies an update was prepared in that are going, by the app they went into: a message sent to one meanwhile goes
+    /// to that app (`AppUpdates`).
+    @Published var retiringCopies: [String: String] = [:]
+    /// Messages waiting for a copy that's going, as requests to another app: each with its files kept outside the copy
+    /// (its own attached files are in the copy's folder, which goes), and no longer the answer to the copy's question.
+    func forwarded(_ messages: [QueuedMessage], from copy: LampProject) -> [QueuedMessage] {
+        messages.map { message in
+            let own = message.kept.map { copy.dir.appendingPathComponent(Attachments.folder).appendingPathComponent($0) }
+            return QueuedMessage(text: message.text, attachments: message.attachments + keepForLater(own), pointed: message.pointed)
+        }
+    }
+    /// Where a message sent to `project` goes.
+    func queueTarget(for project: LampProject) -> LampProject {
+        retiringCopies[project.id].flatMap { id in projects.first { $0.id == id } } ?? project
+    }
     /// Wishes whose update is being set up (saved, copied, fetched), before its copy holds the job (`AppUpdates`).
     @Published var preparingUpdates: Set<String> = []
     @Published var queued: [String: [QueuedMessage]] = [:]
@@ -2776,6 +2791,10 @@ final class Store: ObservableObject {
     /// Makes a copy of an app to try a variation on: "<name> copy", with the same code, history and
     /// icon artwork on a different background, so the two tell apart at a glance. Then builds it.
     func duplicate(_ project: LampProject) async {
+        guard AppUpdates.mayDuplicate(project) else {
+            log(project, .status, "This update can be kept with Keep Both once you've reviewed it.")
+            return
+        }
         guard project.scaffolded, !project.untitled, begin(project) != nil else { return }
         let fm = FileManager.default
         let name = uniqueName("\(project.name) copy")
@@ -3634,6 +3653,10 @@ final class Store: ObservableObject {
     /// Sends a message, or queues it while the app is busy. Everything queued goes out together
     /// as the next turn, so several quick follow-ups cost one agent run and one rebuild.
     func send(_ prompt: String, attachments: [URL] = [], pointed: PointedAt? = nil, answering card: UUID? = nil, to project: LampProject) {
+        // A copy going away with its update: the message goes to the app it went into, as a request of its own (the
+        // copy's question isn't that app's to answer).
+        let target = queueTarget(for: project)
+        if target.id != project.id { return send(prompt, attachments: attachments, pointed: pointed, to: target) }
         // Waiting for setup, or for the person's Reload (`pause`), can outlast this run, and the files may be
         // temporary (a pasted screenshot, the picture of what was pointed at): copies are kept, so the request still
         // has them after a relaunch.
@@ -4189,6 +4212,8 @@ final class Store: ObservableObject {
     /// for the app to close (HeldInstalls says why a running app is never replaced). False when it waits.
     @discardableResult
     private func installIcon(_ project: LampProject) async -> Bool {
+        // An update waiting for its review keeps its new icon in its folder until it's kept (`swapIn` refuses it too).
+        guard AppUpdates.mayOpen(wish(of: project)) else { return false }
         // An app that is only its widget is never something the person has open: when it's running, it's
         // out of sight, waiting to say the widget was placed. It's quit like a build quits an app, gets
         // its icon, and goes back to waiting, so nobody is told to close an app they can't see.
@@ -7176,6 +7201,7 @@ final class Store: ObservableObject {
     /// A place kept current on the simulator: the copy open there opens again with the change, as a look would open it;
     /// one that isn't open is only put on the booted simulator, for next time.
     private func quietlyOnSimulator(_ project: LampProject, owner: Turn) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         if let running = simulatorApps[project.id], Simulator.isRunning(pid: running.pid), simulatorLeases[running.udid] == project.id {
             return await installOnSimulator(project, owner: owner, inFront: false, early: false)
         }
@@ -8390,6 +8416,7 @@ final class Store: ObservableObject {
     /// Opens a TV app in the TV preview, or, when Play asked for it with a TV chosen under Try On, packages it and puts it
     /// on that TV. Nil when it's open; else what went wrong.
     private func installOnTV(_ project: LampProject, inFront: Bool) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         let staged = TVs.stagingFolder(for: project).appendingPathComponent("web")
         if inFront, let id = project.device {
             guard let record = TVs.record(id) else {
@@ -8560,6 +8587,7 @@ final class Store: ObservableObject {
     /// A device app opened in the preview on this Mac, from a copy of its kind's preview folder (`TVs.stage`, as a TV
     /// app's): what the agent looks at and plays. Its LampAI reaches Lamp through the preview, as a TV app's does.
     private func openDevicePreview(_ project: LampProject, folder: String) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         let device = previewDevice(project)
         do {
             let built = Runtime.builtFingerprint(project)
@@ -8594,6 +8622,7 @@ final class Store: ObservableObject {
     }
 
     private func installOnDeviceApp(_ project: LampProject, inFront: Bool, owner: Turn) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         let name = DeviceApps.integration(for: project)?.name ?? "device"
         guard let device = await deviceForApp(project) else {
             let problem = project.device == nil
@@ -8886,6 +8915,7 @@ final class Store: ObservableObject {
     /// Puts an Android app on the device Try On points at (the person's own, or the emulator, started when it
     /// isn't running) and opens it, with its log read into the app's log. Nil when it's open; else what went wrong.
     private func installOnAndroid(_ project: LampProject, owner: Turn, inFront: Bool) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         func stillOwns() -> Bool { exists(project) && turns[project.id] === owner && !owner.stopped }
         let serial: String
         let kind = project.destination.emulator
@@ -9137,6 +9167,7 @@ final class Store: ObservableObject {
     }
 
     private func installOnSimulator(_ project: LampProject, owner: Turn, inFront: Bool, early: Bool) async -> String? {
+        guard AppUpdates.mayOpen(wish(of: project)) else { return AppUpdates.notInstalledYet }
         guard let udid = Simulator.device(project.family, preferring: project.simulator) else {
             let problem = "No \(project.family.name) simulator with iOS \(Simulator.minimumIOS) or later is installed. Open Xcode once and add one in Settings → Components."
             log(project, .error, problem)
@@ -10018,6 +10049,9 @@ final class Store: ObservableObject {
         let fm = FileManager.default, app = copy.app
         var swapped = false
         defer { if !swapped { copy.discard() } }
+        // Every install of a Mac app ends here (a build, a new icon, a refreshed copy): an update waiting for its review
+        // is never put where it can be opened.
+        guard AppUpdates.mayOpen(wish(of: project)) else { throw Sharing.ImportError(AppUpdates.notInstalledYet) }
         // What Lamp signed as the app's sidebar, the one program it will talk to there.
         Sidebar.remember(project, signed: app)
 

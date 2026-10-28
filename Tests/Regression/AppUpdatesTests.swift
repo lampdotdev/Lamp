@@ -261,10 +261,48 @@ final class AppUpdateBoundaryTests: XCTestCase {
     /// After a preparation that failed, a question about why isn't the update: only the update's request, or answers to
     /// the agent's questions during it, can finish it.
     func testOnlyTheUpdatesOwnTurnFinishesIt() {
-        XCTAssertTrue(AppUpdates.isUpdateTurn([QueuedMessage(text: AppUpdates.request)]))
-        XCTAssertTrue(AppUpdates.isUpdateTurn([QueuedMessage(text: "The second one", card: UUID())]))
-        XCTAssertFalse(AppUpdates.isUpdateTurn([QueuedMessage(text: "Why did it fail?")]))
-        XCTAssertFalse(AppUpdates.isUpdateTurn([]))
+        let asked = UUID()
+        var job = AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork", base: "dcb453f", target: "13dd142", wish: "newyork")
+        job.cards = [asked.uuidString]
+        XCTAssertTrue(AppUpdates.isUpdateTurn([QueuedMessage(text: AppUpdates.request)], job: job))
+        XCTAssertTrue(AppUpdates.isUpdateTurn([QueuedMessage(text: "The second one", card: asked)], job: job))
+        XCTAssertFalse(AppUpdates.isUpdateTurn([QueuedMessage(text: "Why did it fail?")], job: job))
+        XCTAssertFalse(AppUpdates.isUpdateTurn([], job: job))
+    }
+
+    /// After a preparation that failed, the person asks for something else and answers the agent's question about
+    /// that: the answer isn't the update's, so it can't finish it.
+    func testAnAnswerToAnotherQuestionIsNotTheUpdates() {
+        var job = AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork", base: "dcb453f", target: "13dd142", wish: "newyork")
+        job.cards = [UUID().uuidString]
+        XCTAssertFalse(AppUpdates.isUpdateTurn([QueuedMessage(text: "Blue", card: UUID())], job: job))
+        XCTAssertFalse(AppUpdates.isUpdateTurn([QueuedMessage(text: "Blue", card: UUID())],
+                                               job: AppUpdates.Job(url: job.url, base: job.base, target: job.target, wish: job.wish)))
+    }
+
+    /// A copy waiting for its review can't be duplicated: the duplicate would be an app of its own with no review to
+    /// pass, and would be built and opened at once.
+    func testACopyAwaitingReviewCannotBeDuplicated() throws {
+        let copy = LampProject(id: "newyorkupdate", name: "New York Update", exe: "NewYorkUpdate", dir: root)
+        XCTAssertTrue(AppUpdates.mayDuplicate(copy))
+        try AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork", base: "dcb453f", target: "13dd142", wish: "newyork").save(in: copy)
+        XCTAssertFalse(AppUpdates.mayDuplicate(copy))
+    }
+
+    /// A message sent to a copy while Update deletes it goes to the app the copy went into, however long deleting takes.
+    @MainActor
+    func testAMessageToACopyBeingDeletedGoesToTheApp() throws {
+        let apps = root.appendingPathComponent("Apps")
+        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
+        let wish = try Template.draft(name: "New York", in: apps)
+        let copy = try Template.draft(name: "New York Update", in: apps)
+        let store = Store(testingAt: apps)
+        let (app, update) = (try XCTUnwrap(store.current(wish)), try XCTUnwrap(store.current(copy)))
+        XCTAssertEqual(store.queueTarget(for: update).id, update.id)
+        store.retiringCopies[update.id] = app.id
+        XCTAssertEqual(store.queueTarget(for: update).id, app.id)
+        store.retiringCopies[update.id] = nil
+        XCTAssertEqual(store.queueTarget(for: update).id, update.id)
     }
 
     /// Review Update… on a copy whose agent asked the person something shows the question; only a preparation that
