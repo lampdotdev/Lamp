@@ -186,7 +186,7 @@ enum StarterRepos {
         let based = Credits(upstream: package.credits?.upstream ?? [], generated: package.credits?.generated ?? [])
         let had = Credits.read(creditsURL).map { Credits(upstream: $0.upstream, generated: $0.generated) } ?? Credits()
         if based != had {
-            if based.isEmpty { try? fm.removeItem(at: creditsURL) } else { try based.encoded().write(to: creditsURL, options: .atomic) }
+            if based.isEmpty { try? fm.removeItem(at: creditsURL) } else { try starterCredits(based).write(to: creditsURL, options: .atomic) }
         }
         // The icon's design, whose pictures are drawn by StarterIconsTests: said when it changed.
         let iconFrom = staged.appendingPathComponent("icon.json"), iconTo = starter.appendingPathComponent("icon.json")
@@ -199,6 +199,16 @@ enum StarterRepos {
             notes.append("Its icon's design changed: draw its pictures again (desk.md, step 5).")
         }
         return notes
+    }
+
+    /// A starter's credits.json as the starters keep it: the work it's based on and its AI pictures, no chain (an empty
+    /// one isn't written), and a final newline, so a pull that changes nothing writes nothing.
+    static func starterCredits(_ credits: Credits) throws -> Data {
+        var object = try JSONSerialization.jsonObject(with: credits.encoded()) as? [String: Any] ?? [:]
+        if (object["remixOf"] as? [Any])?.isEmpty == true { object.removeValue(forKey: "remixOf") }
+        var data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        data.append(Data("\n".utf8))
+        return data
     }
 
     /// Whether two folders hold the same files with the same contents (both missing counts as the same).
