@@ -3102,6 +3102,19 @@ final class Store: ObservableObject {
         var review: ImportReview?
         /// The app already here that this file is another version of, if any: the choice is then Update or Keep Both.
         var existing: LampProject?
+        /// That app was changed here since it arrived: Update then brings the new code in through the agent, keeping
+        /// those changes (`mergeUpdate`), rather than putting it in their place.
+        var changedHere = false
+    }
+
+    /// Whether the wish's files differ from the version that arrived last (a shared file opened, or updated from): any
+    /// version saved since that touched them, or changes not yet saved. A wish with no such version counts as changed,
+    /// since nothing says what arrived.
+    static let arrivalMessages: Set<String> = ["Imported from a shared file", "Updated from a shared file"]
+    func changedSinceArrival(_ project: LampProject) async -> Bool {
+        guard let arrival = await Versions.list(project).first(where: { Self.arrivalMessages.contains($0.message) }) else { return true }
+        if await Versions.hasUnsavedChanges(project) { return true }
+        return await Versions.git("git diff --quiet \(arrival.id) HEAD -- . ':!.lamp'", cwd: project.dir) != 0
     }
 
     /// The app on this Mac that a shared file is a version of: the one it was shared from, or the copy made
@@ -3166,7 +3179,9 @@ final class Store: ObservableObject {
                 return
             }
             guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
-            let pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package))
+            var pending = PendingImport(package: package, request: Self.fetchedRequest(beside: file), existing: existingCopy(of: package))
+            if let existing = pending.existing { pending.changedHere = await changedSinceArrival(existing) }
+            guard importRequest == request else { try? FileManager.default.removeItem(at: package.folder); return }
             pendingImport = pending
             let review = await Sharing.review(package)
             if pendingImport?.id == pending.id { pendingImport?.review = review }
@@ -3221,9 +3236,18 @@ final class Store: ObservableObject {
         // in the box, ready to send, whether or not the file has anything new.
         if let request = pending.request { updateDraft(Draft(text: request), for: project) }
         Task {
+            // Looked at again now that the update owns the wish: a turn that ran while the review waited may have
+            // changed it since the sheet said. Changed here, the new code is brought in rather than put in place.
+            let changed = pending.changedHere ? true : await changedSinceArrival(project)
+            if changed {
+                await mergeUpdate(pending.package, into: project)
+                return
+            }
             defer { finish(project) }
             let package = pending.package
             defer { try? FileManager.default.removeItem(at: package.folder) }
+            // What came from there last is now this version: a tree kept from an earlier merge is older than it.
+            try? FileManager.default.removeItem(at: project.dir.appendingPathComponent(Self.upstreamLastFolder))
             let before = "Before updating from a shared file"
             var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
             if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
@@ -3320,6 +3344,92 @@ final class Store: ObservableObject {
             }
             await rebuildParts(of: current(project) ?? project, onlyChanged: true)
         }
+    }
+
+    /// Where the latest of a wish from its repository waits for the agent to bring it in (`mergeUpdate`): inside the
+    /// wish's own folder, outside its versions. Once it's in, the agent moves it to `upstreamLastFolder`, the tree
+    /// that came from there last, which the next merge measures both sides against; an update that puts the new code
+    /// in place removes it, since the version it saves is then what came from there last.
+    static let upstreamFolder = ".lamp/upstream"
+    static let upstreamLastFolder = ".lamp/upstream-last"
+
+    /// Update for a wish changed here since it arrived, owning the wish (`begin`) as an update does: the new code goes
+    /// beside the wish, not in place of the person's changes, and the agent is asked to bring in what changed upstream
+    /// while keeping what changed here, asking the person only where it can't tell (`Versions.rememberMerge`). What's
+    /// unsaved is saved as a version first, as for an update, so Versions can bring the wish back; the credits take the
+    /// new file's now, since they're Lamp's to merge. Ends the turn, then sends the request.
+    private func mergeUpdate(_ package: Sharing.Package, into project: LampProject) async {
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: package.folder) }
+        let before = "Before bringing in an update"
+        var kept = await Versions.head(project) == nil ? await initRepo(project, message: before) : true
+        if kept, await Versions.hasUnsavedChanges(project) { kept = await Versions.save(project, message: before) }
+        let upstream = project.dir.appendingPathComponent(Self.upstreamFolder)
+        try? fm.removeItem(at: upstream)
+        do {
+            guard kept else { throw Sharing.ImportError(Self.updateFailed) }
+            try Self.stageUpstream(package, into: upstream)
+            if let credits = package.credits { try Credits.add(credits, to: project) }
+        } catch {
+            try? fm.removeItem(at: upstream)
+            finish(project)
+            log(project, .error, Self.updateFailed)
+            return
+        }
+        // What came from there last: the tree an earlier merge brought in, when there is one, else the version that
+        // arrived (the merged result isn't an upstream tree, so the arrival alone would call a merge's changes local).
+        let last = fm.fileExists(atPath: project.dir.appendingPathComponent(Self.upstreamLastFolder).path)
+        let arrival = last ? nil : await Versions.list(project).first { Self.arrivalMessages.contains($0.message) }?.id
+        let repository = package.credits?.remixOf.last(where: { $0.url != nil })?.url
+        Versions.rememberMerge(project, from: repository, since: arrival, lastTree: last)
+        finish(project)
+        let place = repository.flatMap(RepoImport.source(from:)).map { "\($0.owner)/\($0.name) on GitHub" } ?? "the shared wish"
+        send("Bring in what's new in \(place), keeping my changes.", to: project)
+    }
+
+    /// The new code as the agent reads it: what the import accepted and would install, laid out as the wish is, and
+    /// nothing else from the tree. Each app's code from the one list the review read (`Package.sources`), its own files,
+    /// its notes, what it declares as Lamp writes it, the licenses the credits name and the icon; the wish's other apps
+    /// the same way in their folders. Lamp's own files are never among them.
+    private static func stageUpstream(_ package: Sharing.Package, into folder: URL) throws {
+        let fm = FileManager.default
+        let lampsOwn: Set<String> = ["LampSupport.swift", Template.sceneSupportFile, Template.widgetSupportFile, Template.shareSupportFile]
+        // A file may be listed twice (a license the credits name inside a part is in the wish's list and the part's; one
+        // beside the app's own files is among them too): the later copy replaces the earlier, as the install's does.
+        func put(_ file: URL, at relative: String, in to: URL) throws {
+            guard !relative.split(separator: "/").contains(where: { $0 == ".." }) else { return }
+            let target = to.appendingPathComponent(relative)
+            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: file, to: target)
+        }
+        func stage(_ app: Sharing.Package, into to: URL) throws {
+            for file in app.sources where !lampsOwn.contains(file.lastPathComponent) {
+                let relative = app.path(of: file)
+                guard !Template.watchSupportPaths.contains(relative) else { continue }
+                try put(file, at: relative, in: to)
+            }
+            for file in app.attachments { try put(file, at: Sharing.Assets.folder + "/" + app.assetPath(of: file), in: to) }
+            for file in app.androidData + app.webData { try put(file, at: Sharing.relativePath(of: file, in: app.folder), in: to) }
+            for file in app.licences { try put(file, at: Sharing.relativePath(of: file, in: app.folder), in: to) }
+            for name in ["APP.md", "icon.json", "icon-art.png", Sharing.glassEntry] {
+                let file = app.folder.appendingPathComponent(name)
+                if fm.fileExists(atPath: file.path) { try put(file, at: name, in: to) }
+            }
+            if !app.capabilities.isEmpty {
+                let plain = JSONEncoder()
+                plain.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try fm.createDirectory(at: to, withIntermediateDirectories: true)
+                try plain.encode(app.capabilities).write(to: to.appendingPathComponent(Template.Capabilities.file))
+            }
+            if let browser = app.browser {
+                try fm.createDirectory(at: to, withIntermediateDirectories: true)
+                try BrowserCompanions.Declaration.encoded(browser).write(to: to.appendingPathComponent(BrowserCompanions.Declaration.file))
+            }
+        }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try stage(package, into: folder)
+        for part in package.parts { try stage(part.package, into: folder.appendingPathComponent(part.folder)) }
     }
 
     /// An update that didn't happen, in the chat: the app is untouched or was put back, whatever the cause.
