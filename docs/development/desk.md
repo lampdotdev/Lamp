@@ -98,8 +98,16 @@ starter.md; `--dry-run` only stages. A copy carries both on the starter's link o
 Update from GitHub… merges against the exact commit it began from and Send Changes Back… offers a change to the starter
 itself. A copy made before starters named a repository gets the address from the starter this Lamp ships
 (`Starters.located`) and is merged against the version it began with ("From Lamp", an arrival like a shared file's).
-A starter of a kind Lamp doesn't share yet (Home HQ, a screen) has no repository until it can. A starter based on
-someone else's work (New York, Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
+A starter of a kind Lamp doesn't share yet has no repository until it can. A starter based on someone else's work
+(New York, Home HQ) still credits that work in its credits.json; its repository is Lamp's version.
+
+What a starter's repository shows comes from the starter's own files, so they're public as well as on the desk: the
+GitHub description is about.json's line; the README (`GitHubRepo.readme` with a `Showcase`) opens with the shipped
+icon and `preview.png` (both copied to `.github/`), the description, and "Ideas to try" titled with starter.md's
+`offer` and listing its tweaks. A game whose page is the whole game also gets a page anyone plays in a browser
+(`StarterRepos.stagePage`: Publish's page with the credit bar and the tweaks in its Remix panel, on the repository's
+`gh-pages` branch for GitHub Pages, at lampdotdev.github.io/<folder>), which the README links and the repository's
+website points to.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
 the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
@@ -157,8 +165,10 @@ ports, moving the commit in credits.json on.
 Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resources/Starters/<folder>`:
 
 1. Copy its `Sources` without `LampSupport.swift` (and `LampScene.swift`), `Widget/` without `LampWidgetSupport.swift`,
-   `Share/` without `LampShareSupport.swift`, `Assets/`, `capabilities.json` when it has one, `icon.json` and `about.json`. Never `build.sh`, `Package.swift`, `.lamp/`,
-   `Attachments/` or anything else Lamp writes.
+   `Share/` without `LampShareSupport.swift`, `Assets/`, `capabilities.json` when it has one, `icon.json` and `about.json`,
+   and for one built on someone else's work its `credits.json` and the license files it names. Never `build.sh`,
+   `Package.swift`, `.lamp/`, `Attachments/` or anything else Lamp writes. about.json's line is also the starter's
+   description on GitHub: one plain sentence about what it does.
 2. Read the code for what only works for its maker or only for now: a date written in (a deadline, a year) goes
    relative to the first launch and is saved then, so the app means something whenever Lamp was installed; a global
    shortcut mustn't take one the system or common apps use (⌘⇧G is Go to Folder everywhere); a key,
@@ -169,11 +179,15 @@ Dev/Apps/<folder>` (or `Lamp/Apps` for the installed Lamp). Into a new `Resource
 4. Write `starter.md`: `name`, `offer` ("Make <name> yours") and three tweaks of at most six words, each with an SF
    Symbol: a new look, a new thing it does, and a new subject (as above), each big enough to show the person the
    app can become their own rather than be adjusted. They're changes the app doesn't already make, that the agent
-   can make in one request with no key or account, drawn in code rather than pictures.
+   can make in one request with no key or account, drawn in code rather than pictures. The offer and tweaks are also
+   the "Ideas to try" in its repository's README. Leave out `repository:` and `commit:`: step 6 writes them.
 5. Take `preview.png` as above (the app's own `.lamp/runtime/preview.png` is the picture when it shows only example
    content), paint and draw the icon with `LAMP_RENDER_STARTER_ICONS=<folder> LAMP_PAINT_STARTER_ART=1
    OPENROUTER_API_KEY=… swift test --filter StarterIconsTests` and look at the artwork it picked, then run
    `scripts/check-starters.sh <folder>` and `swift test --filter StartersTests`, and update the count of wishes above.
-6. Put it on GitHub with `scripts/publish-starters.sh` (after `./build.sh`) and commit the starter.md it fills in. Run
-   it again whenever a starter changes, before the release that ships the change.
+6. Put it on GitHub: `./build.sh`, then `scripts/publish-starters.sh --dry-run` to see it stage (a game says "with its
+   page"), then `scripts/publish-starters.sh`, signed in with `gh` to an account that can make repositories in
+   lampdotdev. It makes the public repository (and a game's page), and fills in the starter's `repository:` and
+   `commit:`; commit that starter.md with the starter, and look at the repository's README on GitHub. Run it again
+   whenever a starter changes, before the release that ships the change: unchanged starters make no commit.
 

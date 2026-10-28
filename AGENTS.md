@@ -93,7 +93,7 @@ Read the guide for the part you're changing before you change it. A section name
 | [TV](docs/development/tv.md) | TV apps |
 | [wishes](docs/development/wishes.md) | Wishes of more than one app: parts, plans, how a wish's apps reach each other |
 | [Apple services](docs/development/apple-services.md) | iCloud, Apple Health, work while an iPhone app is closed, photos, location, weather, music and the home |
-| [generated apps](docs/development/generated-apps.md) | Generated apps: Lamp's owned files, `Template.swift`, permission reasons, `use_app` and handover, the wand and the chat beside an app, Chrome's sidebar, quitting, `capabilities.json` |
+| [generated apps](docs/development/generated-apps.md) | Generated apps: Lamp's owned files, `Template.swift`, permission reasons, `use_app` and handover, the wand and the chat beside an app, quitting, `capabilities.json` |
 | [live changes](docs/development/live-reload.md) | A change going into an open app: `LiveReload`, `LiveSlots`, the live copy, statics, removed properties and files, the live cases |
 | [app extensions](docs/development/app-extensions.md) | 3D scenes and games, widgets, Home Screen widgets and Live Activities, Apple Watch, App Intents, share extensions and Spotlight |
 | [services](docs/development/services.md) | Services the person already uses: sign-in on the service's page, personal tokens, open data, the app's secrets |

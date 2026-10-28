@@ -331,20 +331,15 @@ struct SettingsView: View {
 }
 
 /// What's in Lamp but not yet for everyone: each switch here brings a feature into the interface. The tab is there
-/// only while there is something to show: now Apps in Chrome, which only a build from source carries (the extension
-/// and its helper are in Lamp Dev's bundle only).
+/// only while there is something to show: now publishing games as web pages, which only a build from source has.
 struct ExperimentalSettings: View {
     static var hasAny: Bool { Edition.isDev }
-    @AppStorage(BrowserBridge.switchKey) private var browser = ProcessInfo.processInfo.environment["LAMP_BROWSER_PROTOTYPE"] == "1"
     @AppStorage(Publish.switchKey) private var publish = false
 
     var body: some View {
         Form {
             Section {
                 SettingsCheckboxes {
-                    Toggle("Apps in Chrome", isOn: $browser)
-                        .checkboxNote("Apps that help with web pages also open beside the page, in Chrome's sidebar.")
-                    if browser { BrowserConnectionUpgrade(compact: true).underCheckbox() }
                     Toggle("Publish games as web pages", isOn: $publish)
                         .checkboxNote("A game's Share menu can put it on GitHub Pages, from your own GitHub account.")
                 }
@@ -355,10 +350,6 @@ struct ExperimentalSettings: View {
             }
         }
         .settingsPane()
-        .onChange(of: browser) { _, on in
-            if on { try? BrowserBridge.shared.prepare() }
-            BrowserSetup.shared.refresh()
-        }
     }
 }
 

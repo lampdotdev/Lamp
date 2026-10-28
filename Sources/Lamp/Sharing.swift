@@ -385,11 +385,6 @@ enum Sharing {
             try plain.encode(capabilities).write(to: stage.appendingPathComponent(Template.Capabilities.file))
             staged.capabilities = true
         }
-        // Where its sidebar in Chrome fits, the same way: Lamp writes what passed the checks. A Lamp from before the
-        // sidebar ignores the file, and has no sidebar to lose.
-        if let browser = BrowserCompanions.Declaration.load(project) {
-            try BrowserCompanions.Declaration.encoded(browser).write(to: stage.appendingPathComponent(BrowserCompanions.Declaration.file))
-        }
         return staged
     }
 
@@ -478,8 +473,6 @@ enum Sharing {
         var licences: [URL] = []
         /// What the sender's capabilities.json declares, through the checks the agent's own goes through.
         var capabilities = Template.Capabilities()
-        /// Where the sender's sidebar in Chrome fits, when it has one that passes the checks.
-        var browser: BrowserCompanions.Declaration? = nil
         var platform = Platform.mac
         var family = DeviceFamily.iphone
         let folder: URL          // unpacked, temporary
@@ -641,7 +634,6 @@ enum Sharing {
             + filesUnder(folder.appendingPathComponent(Attachments.folder))
         return Package(name: name, identity: identity, description: description,
                        capabilities: Template.Capabilities.load(folder.appendingPathComponent(Template.Capabilities.file)).checked,
-                       browser: BrowserCompanions.Declaration.load(folder.appendingPathComponent(BrowserCompanions.Declaration.file)),
                        platform: platform, family: family, folder: folder, sources: sources,
                        attachments: attachments, androidData: android?.data ?? [], fileCount: fileCount, webData: web?.data ?? [])
     }
@@ -835,13 +827,6 @@ enum Sharing {
         // Its capabilities too, written by Lamp from what passed the checks; a file that declares none takes
         // away what an app being updated declared.
         try package.capabilities.save(for: project)
-        // And where its sidebar fits; an app being updated loses a declaration the file doesn't carry.
-        let browserFile = BrowserCompanions.Declaration.url(project)
-        if let browser = package.browser {
-            try BrowserCompanions.Declaration.encoded(browser).write(to: browserFile, options: .atomic)
-        } else if fm.fileExists(atPath: browserFile.path) {
-            try fm.removeItem(at: browserFile)
-        }
         return try installIcon(package, into: project)
     }
 
@@ -1346,10 +1331,6 @@ extension Sharing {
             // sees it as a file, and a background app is listed as starting at login whether or not its code says so.
             if !app.capabilities.isEmpty, let json = try? capabilitiesJSON(app.capabilities) {
                 found.files.append((prefix + Template.Capabilities.file, json))
-            }
-            // Which pages its sidebar in Chrome offers itself on, read with the code.
-            if let browser = app.browser, let data = try? BrowserCompanions.Declaration.encoded(browser) {
-                found.files.append((prefix + BrowserCompanions.Declaration.file, String(decoding: data, as: UTF8.self)))
             }
             if isPage(app.platform) {
                 // A web app's, a screen's or a game's page is read for its reach as a TV app's page is, and the Swift beside

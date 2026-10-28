@@ -205,49 +205,6 @@ thing ("Save button.png", `MagicPanel.name`), and takes a picture only from that
 one pill (`ChatLook.PointedPill`: what it is and what it's part of, from the app's own row or the heading above it),
 which a click points again and its × lets go; pointing again replaces it, and nothing is left drawn over the app.
 
-A Mac app can also open beside a web page, in Chrome's sidebar (Lamp Dev only, an experiment: Settings →
-Experimental, `BrowserBridge.switchKey`; how it fits together is in `experiments/browser-connector/README.md`).
-The sidebar is a web page of the app's own (`Assets/Sidebar/`), which the app serves itself on this Mac's own
-address (`LampBrowser.startPage` in LampSupport.swift), at a name under `.localhost` and a port of its own
-(`Template.sidebarHost`, `sidebarPort`, trying the next few when another program has it), so it works while the app
-is open whether Lamp is or not. One extension frames every app's page: it keeps the app's name and consent
-line above the frame (the page makes its own offer), gives the page no browser powers, and is the page's only way to the person's tab (a read only
-when the page's file declares it, once per click in it). The page asks its app for everything else (`lamp.call`,
-with a key Lamp hands the extension, which passes it on only once the page proves it's the app's: the key's
-signature over a nonce and the port); the app answers only its own name, only that key, never a request another
-site made, and lets only the extension frame the page, whose own policy keeps it talking to the app alone. The page
-looks as if Apple made it, not like a web page and not like a copy of the window's own theme: `/lamp.css` is
-Apple's system look for a narrow Mac list pane, light and dark (grouped gray ground, rounded groups, inset
-separators, SF, parts that rearrange at large text), and an app stands out only through one tint, chosen among
-Apple's system colors with `data-tint` (each shade measured to read, `SidebarTintTests`), and its own content.
-How a page is built (layout, pictures, every state from reading to a failed save, what to check) is the
-`chrome-sidebar` skill, which the builder opens before writing the page. The app serves its own pictures
-(`/assets/`, or hands one it keeps with an item to the page as a `data:` URL) and SF Symbols (`/symbols/`, drawn by
-the app, used as masks), and the extension draws its strip above the page in the page's colors (`look`, plain
-colors only). Apps built before pages still publish a
-surface as data (`LampBrowser.start`), which the extension still draws. The app declares where it fits in
-`browser.json` (`BrowserCompanions.Declaration`), which Chrome matches without the extension reading the page. The
-builder decides from the wish (`Agent.Rules.browserCompanion`, which leaves the rest to the `chrome-sidebar` skill) and tries the sidebar with `look_at_app` and
-`use_app` given `sidebar` and `page`: Lamp opens the app's page itself, out of sight at the sidebar's width
-(`PagePreview`), shows it light, dark and at 200% zoom with the app's window beside it, says what it measured there
-(contrast, the system font, small words, pictures and symbols that didn't load, sideways scrolling, words cut off,
-parts out of line),
-and hands it the page beside it, so every engine tries it the same way; it's the one thing the builder uses in a new app, since it isn't the person's Chrome.
-Each Chrome tab has its own sidebar and the app keeps what one tab prepared by its tab (`call.tab`), so what one
-page prepared never shows on another; keep that when changing either side. The builder may also give an app a
-right-click item (`menu` in browser.json) for what its sidebar does with a page, whatever that is (save it, explain,
-summarize or translate it, answer something about it): it opens that app's sidebar, and shows only on pages a fit
-names by address, the one thing Chrome can check before its menu opens.
-**The one exception to "once per click in it"**: choosing an app's right-click item counts as the person's click in
-that app's page. The sidebar tells that page once (`lamp.onMenu`) and lets it read once without a click in it, only
-within 15 seconds of the choice, only with the proof the page gave in that sidebar, and only of the page the item was
-chosen on (the extension checks the tab's address before reading). A choice the page gets too late (a slow-starting
-app) doesn't run, and the sidebar says so and that choosing the item again runs it. Nothing else stands in for a click: not the
-toolbar icon, not opening the sidebar, not the page asking on its own. From the item a page may also go straight
-through a step it would otherwise stop at for a look first (a save's check, say), since choosing the item already
-said what to do; it then shows what it did where it can be changed or undone. Widening this needs the same say-so as
-making it.
-
 A build asks the app to quit before it replaces it, and the app's answer decides (`AppQuit`). An app may ask
 about unsaved work first: Lamp sends the quit request itself and reads the reply macOS carries back, which is
 "cancelled" when the person keeps the app open and doesn't come while the question is still up. Until then Lamp

@@ -13,7 +13,6 @@ struct SetupCard: View {
     let dir: URL
     @ObservedObject private var local = LocalModels.shared
     @ObservedObject private var images = ImageModels.shared
-    @ObservedObject private var browser = BrowserSetup.shared
     @State private var revision = 0
     @State private var declined = false
 
@@ -94,7 +93,7 @@ struct SetupCard: View {
             return (title(offer), byHand ? "All set. Image Playground creates each app's icon with AI, and you pick the one you like." : doneText(offer, resolution.answer ?? ""), true)
         }
         if offer.declined(in: project) {
-            return (title(offer), offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
+            return (title(offer), "No problem. You can set this up any time in Lamp's Settings, under AI Providers.", false)
         }
         return (title(offer), reason, false)
     }
@@ -121,7 +120,6 @@ struct SetupCard: View {
         case .text: "Use AI in your apps"
         case .decisions: "Let your apps make quick judgments"
         case .pictures: "Make pictures with AI"
-        case .browser: "Use your app in Chrome"
         }
     }
 
@@ -133,7 +131,6 @@ struct SetupCard: View {
         case .text: "All set. Your apps' AI now runs on \(answer)."
         case .decisions: "All set. Your apps' judgments are now made by \(answer)."
         case .pictures: "All set. Pictures are now made by \(answer)."
-        case .browser: "All set. Lamp is connected to Chrome."
         }
     }
 
@@ -147,7 +144,7 @@ struct SetupCard: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             }
         } else if declined {
-            Text(offer.capability == .browser ? "No problem. You can connect Chrome any time in Lamp’s Settings, under Experimental." : "No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
+            Text("No problem. You can set this up any time in Lamp's Settings, under AI Providers.")
         } else {
             Text(reason)
         }
@@ -190,7 +187,6 @@ struct UpgradeView: View {
         case .key(let provider): return Provider.keyProvider(provider) != nil
         case .signIn: return true
         case .drawIcons: return Icons.playgroundAvailable
-        case .browserExtension: return BrowserBridge.enabled
         }
     }
 
@@ -206,8 +202,6 @@ struct UpgradeView: View {
             SignInUpgrade(engine: engine, compact: compact, onChange: onChange)
         case .drawIcons:
             DrawIconsUpgrade(compact: compact)
-        case .browserExtension:
-            BrowserConnectionUpgrade(compact: compact)
         }
     }
 }
@@ -538,18 +532,5 @@ struct CapabilityNote: View {
         .onReceive(NotificationCenter.default.publisher(for: AppModels.changed)) { _ in revision += 1 }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in revision += 1 }
         }
-    }
-}
-
-struct BrowserConnectionUpgrade: View {
-    var compact = false
-    @ObservedObject private var browser = BrowserSetup.shared
-    @State private var showGuide = false
-    var body: some View {
-        OptionRow(symbol: "sidebar.right", title: browser.connected ? "Connected to Chrome" : "Connect Lamp to Chrome",
-                  detail: browser.connected ? "Click Lamp in Chrome’s toolbar beside a page." : (browser.bridgeInstalled ? "Add the Lamp extension in Chrome." : "Add Lamp to Chrome to use apps beside pages."), compact: compact) {
-            Button(browser.connected ? "Open…" : "Set Up…") { showGuide = true }
-        }
-        .sheet(isPresented: $showGuide) { BrowserSetupGuide() }
     }
 }
