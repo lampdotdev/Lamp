@@ -83,7 +83,12 @@ for tree in "$WORK"/trees/*(N/); do
         echo "$repo page: unchanged"
       else
         "$GIT" -c user.name="Lamp" -c user.email="$LOGIN@users.noreply.github.com" commit -q -m "The page to play"
-        "$GIT" -c credential.helper= -c "credential.helper=!gh auth git-credential" push -q "https://github.com/$repo.git" HEAD:gh-pages 2>&1 | grep -v '^remote:' || true
+        # A push that fails stops the script with what git said; GitHub's chatter about a new branch is left out.
+        if ! said="$("$GIT" -c credential.helper= -c "credential.helper=!gh auth git-credential" push -q "https://github.com/$repo.git" HEAD:gh-pages 2>&1)"; then
+          print -u2 -r -- "$said"
+          exit 1
+        fi
+        print -r -- "$said" | grep -v '^remote:' || true
         echo "$repo page: $("$GIT" rev-parse --short HEAD)"
       fi
     )
