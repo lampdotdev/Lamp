@@ -99,4 +99,31 @@ final class PossibleDevicesTests: XCTestCase {
         let list = HomeNetwork.List(devices: [foundTV, keptTV, rokuFound, rokuMine], hosts: [])
         XCTAssertEqual(Set(list.works.map(\.id)), [keptTV.id, rokuMine.id])
     }
+
+    /// A device only found shows Set Up… and nothing else: its first setup step is for the setup window. One set up with
+    /// Lamp still shows its next step.
+    func testAFoundDeviceRowOffersOnlySetUp() {
+        let rokuFound = roku("FOUND", kept: false, address: "10.0.0.41")
+        XCTAssertEqual(DevicesSection.end(for: foundTV, setup: foundTV.setup(), controls: nil), .setUp)
+        XCTAssertEqual(DevicesSection.end(for: rokuFound, setup: rokuFound.setup(), controls: nil), .setUp)
+        var keptHere = keptTV
+        keptHere.connected = true
+        XCTAssertEqual(DevicesSection.end(for: keptHere, setup: .needs("Turn on Developer Mode on it"), controls: nil), .step("Turn on Developer Mode on it"))
+    }
+
+    /// A TV chosen under Try On and forgotten since keeps a way into its setup beside its ticked row.
+    func testAChosenDeviceSinceForgottenKeepsItsSetup() {
+        XCTAssertNotNil(TryOnMenu.setUpAgain(foundTV, id: "tvsetup:\(foundTV.udid)", chosen: true))
+        XCTAssertNil(TryOnMenu.setUpAgain(foundTV, id: "tvsetup:\(foundTV.udid)", chosen: false))
+    }
+
+    /// An away device's last address doesn't make whatever answers there now the person's.
+    func testTheDeviceCardGoesByWhatAnswersAtTheAddressNow() {
+        var newcomer = foundTV
+        newcomer.address = keptTV.address
+        XCTAssertFalse(DevicePermissions.setUp(at: "10.0.0.32", among: [keptTV, newcomer]))
+        var keptHere = keptTV
+        keptHere.connected = true
+        XCTAssertTrue(DevicePermissions.setUp(at: "10.0.0.32", among: [keptHere]))
+    }
 }

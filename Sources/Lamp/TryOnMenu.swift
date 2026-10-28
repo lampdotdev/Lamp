@@ -92,15 +92,17 @@ struct TryOnMenu: Equatable {
             items += store.devices.filter { $0.kind.isTV }.map { tv in
                 Self.item(tv, id: "tv:\(tv.udid)", title: "\(tv.name)\(step(tv))", symbol: "tv", checked: project.onTV && project.device == tv.udid)
             }
+            items += store.devices.filter { $0.kind.isTV }.compactMap { Self.setUpAgain($0, id: "tvsetup:\($0.udid)", chosen: project.onTV && project.device == $0.udid) }
             sections.append(Section(title: older(.tv, "TVs"), items: items))
         }
         if places.contains(.device) {
             let name = DeviceApps.integration(for: project)?.name ?? "Xbox"
             let mine = store.devices.filter { $0.integration != nil && $0.integration == project.deviceIntegration }
-            let items = mine.map { device in
+            var items = mine.map { device in
                 Self.item(device, id: "device:\(device.id)", title: "\(device.name)\(step(device))", symbol: device.kind.symbol,
                           checked: project.onDevice && project.device == device.id)
             }
+            items += mine.compactMap { Self.setUpAgain($0, id: "setup:\($0.id)", chosen: project.onDevice && project.device == $0.id) }
             sections.append(Section(title: older(.device, "Your \(name)s"), items: items.isEmpty
                 ? [Item(id: "look", title: "No \(name) found. Look Again", symbol: Device.Kind.other.symbol, checked: project.onDevice)] : items))
         }
@@ -136,6 +138,13 @@ extension TryOnMenu {
         return Item(id: id, title: "Set Up \(device.name)…", symbol: "gearshape")
     }
 
+    /// The chosen one, when it isn't set up (forgotten since it was chosen): its row keeps the tick, and choosing a row
+    /// already chosen does nothing, so its setup is offered beside it (`tvsetup:`, `setup:`).
+    static func setUpAgain(_ device: Device, id: String, chosen: Bool) -> Item? {
+        guard chosen, !device.isSetUp, !device.isAway else { return nil }
+        return Item(id: id, title: "Set Up \(device.name)…", symbol: "gearshape")
+    }
+
     /// Every list's last section: all the devices, and looking again; and when macOS refused the last look on the
     /// network, the way to allow Lamp there.
     @MainActor static func look(_ store: Store) -> Section {
@@ -167,7 +176,7 @@ extension TryOnMenu {
                     item(device, id: "device:\(device.id)", title: (device.name == device.model ? device.name : "\(device.name) · \(device.model)") + step(device),
                          symbol: device.kind.symbol, checked: project.device == device.id)
                 }))
-            var setups = mine.filter { $0.isSetUp && $0.setup() != .ready && !$0.isAway }.map { Item(id: "setup:\($0.id)", title: "Set Up \($0.name)…", symbol: "gearshape") }
+            var setups = mine.filter { ($0.isSetUp || $0.id == project.device) && $0.setup() != .ready && !$0.isAway }.map { Item(id: "setup:\($0.id)", title: "Set Up \($0.name)…", symbol: "gearshape") }
             if GameKit.isGame(project) { setups.append(Item(id: "check:xbox", title: "Check Xbox Setup for Games…", symbol: "checklist")) }
             if !setups.isEmpty { sections.append(Section(title: nil, items: setups)) }
         } else if project.onTV {
@@ -183,7 +192,7 @@ extension TryOnMenu {
             }
             if items.isEmpty { items.append(Item(id: "look", title: "No Samsung or LG TV found. Look Again", symbol: "tv", disabled: false)) }
             sections.append(Section(title: "Your TVs", items: items))
-            let setups = tvs.filter { $0.isSetUp && $0.setup() != .ready && !$0.isAway }.map { Item(id: "tvsetup:\($0.udid)", title: "Set Up \($0.name)…", symbol: "gearshape") }
+            let setups = tvs.filter { ($0.isSetUp || $0.udid == project.device) && $0.setup() != .ready && !$0.isAway }.map { Item(id: "tvsetup:\($0.udid)", title: "Set Up \($0.name)…", symbol: "gearshape") }
             if !setups.isEmpty { sections.append(Section(title: nil, items: setups)) }
         } else if project.onAndroid {
             let devices = store.devices.filter { $0.kind == .android }

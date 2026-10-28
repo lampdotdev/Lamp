@@ -89,6 +89,13 @@ enum DevicePermissions {
     }
 
     /// The card: one question, three answers, only the person's to give.
+    /// Whether what answers at an address now is set up with Lamp: a set-up device that's away keeps its last address,
+    /// which another device may have taken, so it doesn't count.
+    static func setUp(at address: String, among devices: [Device]) -> Bool {
+        let here = devices.filter { $0.address?.lowercased() == address.lowercased() && !$0.isAway }
+        return !here.isEmpty && here.allSatisfy(\.isSetUp)
+    }
+
     /// `setUp` is Lamp's own word on the device at that address: one it only found isn't called the person's, since it
     /// may be a neighbor's. Allowing it here lets the agent use it, and nothing more: it's no more set up for it.
     static func card(device: String, doing: String, setUp: Bool = true) -> Talk.Ask {

@@ -986,6 +986,22 @@ struct DevicesSection: View {
         }
     }
 
+    /// What a device's row shows at its end. One only found on the network shows Set Up… and nothing else: what its
+    /// setup asks first ("Turn on developer mode on it") is for the setup that button opens, not a warning on a device
+    /// the person may never set up. A device set up with Lamp shows its next step, if it has one.
+    enum RowEnd: Equatable { case controls(String), away(String), ready, setUp, step(String), words(String) }
+
+    static func end(for device: Device, setup: Device.Setup, controls: String?) -> RowEnd {
+        if let controls { return .controls(controls) }
+        if device.isAway { return .away(device.status) }
+        guard device.isSetUp else { return .setUp }
+        switch setup {
+        case .ready: return .ready
+        case .talkOnly: return .words(setup.words)
+        case .needs(let step): return .step(step)
+        }
+    }
+
     /// A device Lamp set up itself, on the network: the ones Reconnect and Forget are for. A phone's pairing is the
     /// Mac's, and an Android device's is the device's own.
     private func keptByLamp(_ device: Device) -> Bool {
@@ -1047,23 +1063,21 @@ struct DevicesSection: View {
                 }
             }
             Spacer()
-            switch setup {
-            case _ where controls != nil:
-                Text("Apps can control it").foregroundStyle(.secondary).help(controls ?? "")
-            case _ where device.isAway:
-                Text(device.status).foregroundStyle(.secondary)
+            switch Self.end(for: device, setup: setup, controls: controls) {
+            case .controls(let words):
+                Text("Apps can control it").foregroundStyle(.secondary).help(words)
+            case .away(let words):
+                Text(words).foregroundStyle(.secondary)
                     .help("Lamp didn't find it on this network just now. It may be off, or somewhere else.")
             case .ready:
                 Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green).labelStyle(.titleAndIcon)
-            case .needs(let step) where device.kind == .other && device.integration == nil:
-                // Found on the network, with nothing yet that knows it: not a problem, an offer.
-                Text(step).foregroundStyle(.secondary)
+            case .setUp:
                 DeviceNextStep(device: device)
-            case .needs(let step):
+            case .step(let step):
                 Label(step, systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange).labelStyle(.titleAndIcon)
                 DeviceNextStep(device: device)
-            case .talkOnly:
-                Text(setup.words).foregroundStyle(.secondary)
+            case .words(let words):
+                Text(words).foregroundStyle(.secondary)
             }
             if keptByLamp(device) {
                 Menu {
