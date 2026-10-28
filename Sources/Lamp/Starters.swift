@@ -85,8 +85,8 @@ enum Starters {
     }
 
     /// Where a starter's drawn icon is in its tree (`iconFolder` under the pictures), and its preview. A repository
-    /// published before the pictures lived there has neither yet: then they're the ones beside starter.md, until the
-    /// next publish puts them up (`StarterRepos.stage`) and that folder goes.
+    /// published before the drawn icon lived there has its preview but not the icon: that's the one beside starter.md,
+    /// until the next publish puts it up (`StarterRepos.stage`) and that folder goes.
     static func iconFolder(of starter: Starter) -> URL { picture(iconFolder, of: starter) }
     static func preview(of starter: Starter) -> URL { picture("preview.png", of: starter) }
     private static func picture(_ name: String, of starter: Starter) -> URL {

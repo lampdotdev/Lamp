@@ -112,8 +112,8 @@ repository's latest and stages it with the built Lamp Dev (`--stage-starter-repo
 with an identity derived from the starter and a fixed export time, so an unchanged repository makes no commit),
 pushes one commit of what's Lamp's, never the app itself, and moves the pin in starter.md to it, fetching the tree;
 `--dry-run` only stages. Run it after changing Lamp's own files, before the release that ships the change, and commit
-the starter.md files it moved. The pictures of a repository published before they lived in it are still read from
-beside starter.md until the publish puts them up (`Starters.iconFolder(of:)`); that folder goes once every one has.
+the starter.md files it moved. The drawn icon of a repository published before it lived there is still read from
+beside starter.md until the publish puts it up (`Starters.iconFolder(of:)`); that folder goes once every one has.
 A starter may be a game: New York is Slop New York's three.js city as a three.js game (its page in `Web/`, its frame
 given to Lamp's runtime with `game()`, its own keys and touch controls, Lamp's three.js with its node materials), so
 the agent looks at it and plays it in the game preview like any game, and it can be played on an iPhone, an iPad,
