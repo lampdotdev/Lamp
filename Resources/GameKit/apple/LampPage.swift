@@ -77,9 +77,10 @@ import UIKit
     }
 }
 
-/// The page's way to Lamp: only the routes LampAI uses, with the app's own token.
+/// The page's way to Lamp: only the routes LampAI uses, and where phones join a game (`Lamp.controllers`), with the
+/// app's own token.
 final class LampPageGateway: NSObject, WKScriptMessageHandlerWithReply {
-    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide"]
+    private static let routes: Set<String> = ["/ai", "/ai/status", "/ai/image", "/ai/decide", "/app/controller"]
     private let scheme: String
     init(scheme: String) { self.scheme = scheme }
 

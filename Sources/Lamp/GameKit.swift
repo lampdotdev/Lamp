@@ -359,14 +359,15 @@ enum GameKit {
         }
     }
 
-    /// lamp.js as a game is given it: Lamp's web building blocks, and `Lamp.wish`, the TV app's block for the wish's
-    /// other apps and its own other copies, for a game that carries it (`Template.carriesWish`).
+    /// lamp.js as a game is given it: Lamp's web building blocks, `Lamp.controllers` (phones on the Wi-Fi as players,
+    /// joining from the game's Phone/ page), and `Lamp.wish`, the TV app's block for the wish's other apps and its own
+    /// other copies, for a game that carries it (`Template.carriesWish`).
     static func lampJS(for project: LampProject) -> String {
-        Template.carriesWish(project) ? DeviceSupport.webJS + wishJS : DeviceSupport.webJS
+        DeviceSupport.webJS + controllersJS + (Template.carriesWish(project) ? TVTemplate.wishJS : "")
     }
 
-    /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the block makes one to hang from.
-    static let wishJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.wishJS
+    /// A game's page has no `Lamp` of its own (a TV app's remote makes it), so the blocks make one to hang from.
+    static let controllersJS = "\nwindow.Lamp = window.Lamp || {};\n" + TVTemplate.controllersJS
 
     /// The page's bridge as an app is given it: with the page's way to `LampWish` for an app that carries it
     /// (`Template.carriesWish`), since only such an app's LampSupport.swift has `LampWish`.

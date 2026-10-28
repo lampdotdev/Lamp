@@ -366,6 +366,28 @@ enum TVs {
         return files
     }
 
+    /// Copies only the app's phone page where it's served, as `stage` does beside a TV app's files: for a game built for
+    /// the Mac, which is played from its own copy rather than a staged one, and takes phones while it's open. No Phone/
+    /// takes the published page away.
+    static func stagePhone(_ project: LampProject) async throws {
+        let fm = FileManager.default
+        let dir = stagingFolder(for: project)
+        let incoming = dir.appendingPathComponent(".phone-" + UUID().uuidString)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: incoming) }
+        let page = Sandbox.quoted(TVTemplate.phoneFolder)
+        let copy = "cd \"$LAMP_FROM\" && if [ -e \(page) ] || [ -L \(page) ]; then /bin/cp -Rp \(page) \"$LAMP_PHONE\"; fi"
+        guard let confined = Sandbox.wrapEngine(copy, for: project, opening: [dir.path]) else { throw Failure(message: "Lamp couldn't copy the game's phone page.") }
+        var output: [String] = []
+        let status = await Shell.run(confined, cwd: dir, env: ["LAMP_FROM": project.dir.path, "LAMP_PHONE": incoming.path], login: false) { output.append($0) }
+        guard status == 0 else { throw Failure(message: "Lamp couldn't copy the game's phone page.\n\n" + output.suffix(4).joined(separator: "\n")) }
+        let linked = ([incoming] + (fm.enumerator(at: incoming, includingPropertiesForKeys: [.isSymbolicLinkKey])?.allObjects as? [URL] ?? []))
+            .contains { (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true }
+        if linked { throw Failure(message: "Some of the phone page's files are shortcuts to other files. Put the files themselves in their place.") }
+        let hasPage = fm.fileExists(atPath: incoming.appendingPathComponent("index.html").path)
+        try publishPhone(hasPage ? incoming : nil, as: phoneFolder(for: project))
+    }
+
     /// A file of the published phone page by the names in its path, when it's a plain file there of a size to hand out.
     /// Each step from the published folder down, the folder itself included, must be no link: the copy was checked for
     /// links, and this keeps a page from ever leading anywhere else whatever is found there.

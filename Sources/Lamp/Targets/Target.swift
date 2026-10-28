@@ -83,6 +83,9 @@ struct Target {
     /// uses in the TV preview on the Mac wherever it's shown, with no build of the app around it, unless Try On points
     /// at a TV, where it's the TV app's (`Store.lookAtApp`, `Store.useApp`).
     var looksInTVPreview = false
+    /// Its page takes phones on the Wi-Fi as players (`Lamp.controllers`, with its phone page in `Phone/`) wherever Lamp
+    /// hosts it, not only on a TV: a game's on the Mac and in the TV preview as on a Samsung or LG TV.
+    var takesPhones = false
 
     /// How Lamp names the kind, the devices it's for, and how it shows it.
     struct Identity {
