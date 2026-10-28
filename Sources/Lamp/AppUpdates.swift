@@ -164,6 +164,7 @@ enum AppUpdates {
         }
 
         func save(in project: LampProject) throws {
+            try FileManager.default.createDirectory(at: Self.url(project).deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(self).write(to: Self.url(project), options: .atomic)
         }
 
@@ -211,6 +212,34 @@ enum AppUpdates {
         return credits.checked
     }
 
+    /// Whether an app may be installed, opened or used: not a copy an update is prepared in until the person has
+    /// reviewed it. Its code is the agent's port of someone else's changes, and runs only once the person has seen what
+    /// it can do and kept it. It's still built.
+    static func mayOpen(_ project: LampProject) -> Bool { Job.load(project) == nil }
+
+    /// What the agent hears when it asks to see or use such a copy.
+    static let notOpenedYet = "This app is an update Lamp is preparing, and it isn't opened until the person has reviewed it. "
+        + "Check your work by reading the code: Lamp builds it when you finish, and tells you if the build fails."
+
+    /// Whether a turn in a copy was the update's own: the update's request (the first, or one to try again), or answers
+    /// to the agent's questions about it. A question in the copy's chat about something else doesn't finish the update.
+    static func isUpdateTurn(_ messages: [QueuedMessage]) -> Bool {
+        messages.contains { $0.text == request || $0.card != nil }
+    }
+
+    /// The request that makes someone's project into an app, at the version the person opened: the branch, tag or
+    /// commit the address named, at the commit Lamp fetched, so the agent works from exactly that.
+    static func adaptRequest(_ source: RepoImport.Source, commit: String?, change: String) -> String {
+        var line = "Make \(source.url) into an app"
+        switch (source.ref, commit) {
+        case let (ref?, commit?) where !commit.hasPrefix(ref.lowercased()): line += ", from its “\(ref)” at commit \(commit)"
+        case let (_, commit?): line += ", from its commit \(commit)"
+        case let (ref?, nil): line += ", from its “\(ref)”"
+        case (nil, nil): break
+        }
+        return line + "." + (change.isEmpty ? "" : " " + change)
+    }
+
     /// Whether the wish changed since its copy was made (`Job.head`): the copy would then put back what was changed.
     static func isStale(_ job: Job, head: String?, unsaved: Bool) -> Bool {
         unsaved || head != job.head
@@ -229,10 +258,12 @@ enum AppUpdates {
     /// out), confined to that folder, with no blobs until the comparison needs them: the latest tree written out whole
     /// beside a list of every file changed and the whole change, which the agent reads. Throws, leaving nothing, when
     /// the commit the wish has isn't there any more: no change is made up from a base that's gone.
-    static func fetch(_ job: Job, for project: LampProject) async throws {
+    /// `started` is handed git's process, so whatever holds the copy can stop it.
+    static func fetch(_ job: Job, for project: LampProject, started: (@MainActor (Process) -> Void)? = nil) async throws {
         let fm = FileManager.default
         let folder = project.dir.appendingPathComponent(Job.folder)
-        try? fm.removeItem(at: folder)
+        // The job itself stays: it's what keeps the copy from being opened meanwhile (`mayOpen`).
+        Job.clearFetched(project)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = Sandbox.quoted(job.base), target = Sandbox.quoted(job.target)
         let command = """
@@ -247,13 +278,14 @@ enum AppUpdates {
             """
         let said = Lines()
         let status = await Versions.git(command, cwd: folder, env: ["GIT_TERMINAL_PROMPT": "0"], started: { process in
+            started?(process)
             Task {
                 try? await Task.sleep(for: .seconds(600))
                 Subprocess.terminateTree(process)
             }
         }, onLine: { said.add($0) })
         guard status == 0 else {
-            try? fm.removeItem(at: folder)
+            Job.clearFetched(project)
             print("Fetching the update for \(project.name) failed (\(status)): \(said.all.suffix(5).joined(separator: " | "))")
             throw Sharing.ImportError("Lamp couldn't prepare this update. Your app hasn't changed.",
                                       detail: "Check that you're online, then try again.")
@@ -279,7 +311,9 @@ enum AppUpdates {
         (fixes, new content, new behaviour, changed numbers or assets), and keep everything that was changed here: the \
         app's own code and the person's changes win where they differ on purpose. Leave out what doesn't apply to the app \
         (the project's build setup, CI, docs). Where the person's choice matters and isn't clear, ask with the ask tool. \
-        Don't change credits.json: Lamp moves it on when the update is in. Update APP.md if the app does something new. \
+        Don't change credits.json: Lamp moves it on when the update is in. The app isn't opened until the person has \
+        reviewed the update, so look_at_app and use_app aren't available: check your work by reading the code, and \
+        Lamp builds it when you finish. Update APP.md if the app does something new. \
         When it's done, tell the person in a few plain sentences what the update brought and what of theirs you kept. \
         To them it's simply "the update": never mention repositories, upstream, the original project or commits.
         """
@@ -329,7 +363,13 @@ extension Store {
         // Being set up: one copy at a time.
         if preparingUpdates.contains(project.id) { return }
         if let prepared = updateCopy(of: project) {
-            if prepared.job.ready == true { openPreparedReview(prepared.copy, job: prepared.job) } else { showChat(prepared.copy.id) }
+            if prepared.job.ready == true {
+                openPreparedReview(prepared.copy, job: prepared.job)
+            } else if busy.contains(prepared.copy.id) || !(queued[prepared.copy.id] ?? []).isEmpty {
+                showChat(prepared.copy.id)
+            } else {
+                retryPreparedUpdate(prepared.copy, job: prepared.job, of: project)
+            }
             return
         }
         guard let route = AppUpdates.route(of: project) else { return }
@@ -341,13 +381,7 @@ extension Store {
                 checkForUpdates(project)
                 return
             }
-            guard !busy.contains(project.id), (queued[project.id] ?? []).isEmpty else {
-                let alert = NSAlert()
-                alert.messageText = "“\(project.name)” is busy right now"
-                alert.informativeText = "Try again when it's done."
-                alert.runModal()
-                return
-            }
+            guard !busy.contains(project.id), (queued[project.id] ?? []).isEmpty else { return tellBusy(project) }
             let alert = NSAlert()
             alert.messageText = "Lamp will prepare this update and keep your changes"
             alert.informativeText = "It's prepared in a separate copy, and your app doesn't change until you review the result and choose Update. "
@@ -359,27 +393,32 @@ extension Store {
         }
     }
 
+    private func tellBusy(_ project: LampProject) {
+        let alert = NSAlert()
+        alert.messageText = "“\(project.name)” is busy right now"
+        alert.informativeText = "Try again when it's done."
+        alert.runModal()
+    }
+
     /// A copy of the wish as it is now, unsaved changes included, made as a shared file of it would be opened
     /// (`Sharing.export`, then a wish of its own with Lamp's files written afresh): its own name, app, data and agent
     /// session, so nothing the agent does or runs reaches the wish or its data. The update is fetched into the copy and
     /// the request sent there; the wish only gets a version saved, so a change made to it meanwhile can be told apart.
+    ///
+    /// The copy is held by a turn of its own from before anything can see it until its request is handed over: its job
+    /// is written first, so it's never opened (`mayOpen`); Stop ends the fetch with that turn, and a copy that was
+    /// stopped, taken by something else or deleted meanwhile gets no request, so nothing is spent on it.
     private func prepareUpdate(_ project: LampProject, job: AppUpdates.Job) {
         guard !preparingUpdates.contains(project.id) else { return }
         // The wish is held while its version is saved and it's copied, so no turn changes it in between: the version
         // the job names is the one the copy is of.
-        guard begin(project) != nil else {
-            let alert = NSAlert()
-            alert.messageText = "“\(project.name)” is busy right now"
-            alert.informativeText = "Try again when it's done."
-            alert.runModal()
-            return
-        }
+        guard begin(project) != nil else { return tellBusy(project) }
         preparingUpdates.insert(project.id)
         Task {
             defer { preparingUpdates.remove(project.id) }
             var job = job
-            var held = true
-            defer { if held { finish(project) } }
+            var holdsWish = true
+            defer { if holdsWish { finish(project) } }
             if await Versions.head(project) != nil, await Versions.hasUnsavedChanges(project) {
                 guard await Versions.save(project, message: "Before update") else {
                     log(project, .error, "Lamp couldn't prepare this update. Your app hasn't changed.")
@@ -388,64 +427,116 @@ extension Store {
                 versionsRevision += 1
             }
             job.head = await Versions.head(project)
-            let copy: LampProject
+            var made: LampProject?
+            var hold: Turn?
             do {
                 let file = try Sharing.export(project)
                 defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
                 let package = try Sharing.open(file)
                 defer { try? FileManager.default.removeItem(at: package.folder) }
-                copy = try Template.scaffold(name: uniqueName("\(project.name) Update"), platform: package.platform, family: package.family, in: root)
+                let copy = try Template.scaffold(name: uniqueName("\(project.name) Update"), platform: package.platform, family: package.family, in: root)
+                made = copy
+                // Held and marked before the desk lists it.
+                hold = begin(copy)
+                try job.save(in: copy)
+                guard hold != nil else { throw Sharing.ImportError("The copy was taken.") }
                 try Sharing.install(package, into: copy)
                 reload()
                 let notIn = await installParts(of: package, into: copy)
-                guard notIn.isEmpty else {
-                    await delete(current(copy) ?? copy)
-                    throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be copied.")
-                }
+                guard notIn.isEmpty else { throw Sharing.ImportError("\(notIn.joined(separator: ", ")) couldn't be copied.") }
             } catch {
                 print("Preparing the update of \(project.name) failed: \(error)")
+                if let made { await abandonCopy(made, hold: hold) }
                 log(project, .error, "Lamp couldn't prepare this update. Your app hasn't changed.")
                 return
             }
-            held = false
+            guard let copy = made, let hold else { return }
+            holdsWish = false
             finish(project)
-            // The copy is held while its update is fetched, so a request typed there waits for the update's.
-            let ownsCopy = begin(copy) != nil
             _ = await initRepo(copy, message: "Before update")
             showChat(copy.id)
             log(copy, .status, "Preparing your update…")
+            var fetched = true
             do {
-                try await AppUpdates.fetch(job, for: copy)
+                // git is the turn's process while it runs, so Stop ends it as it ends a build.
+                try await AppUpdates.fetch(job, for: copy, started: { hold.build = $0 })
             } catch {
-                log(copy, .error, error.localizedDescription)
-                AppUpdates.Job.clear(copy)
-                if ownsCopy { finish(copy) }
+                fetched = false
+            }
+            hold.build = nil
+            // No await from here to the hand-over: what's checked is what's so when the request goes.
+            guard holds(hold, copy.id), !hold.stopped, let copy = current(copy) else {
+                if let still = current(copy) {
+                    AppUpdates.Job.clearFetched(still)
+                    log(still, .status, "Stopped. Nothing was sent to the agent.")
+                    if holds(hold, still.id) { finish(still) }
+                }
+                return
+            }
+            guard fetched else {
+                log(copy, .error, "Lamp couldn't prepare this update. Your app hasn't changed. Check that you're online, then try again.")
+                finish(copy)
                 return
             }
             Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).upstream.first?.name ?? project.name))
             send(AppUpdates.request, to: copy)
             // Handed over: the request queued behind the hold starts as it's let go.
-            if ownsCopy { finish(copy) }
+            finish(copy)
         }
     }
 
-    /// After a turn in a copy an update is prepared in: once it finished well, the copy takes the update's commit in its
-    /// credits and its review opens. Any turn there is the update's: the person's answers, or their own asks to try again.
+    /// A copy that couldn't be made whole goes, under its hold if it still has one.
+    private func abandonCopy(_ copy: LampProject, hold: Turn?) async {
+        if let hold, holds(hold, copy.id) { finish(copy) }
+        reload()
+        if let listed = current(copy) { await delete(listed) } else { try? FileManager.default.removeItem(at: copy.dir) }
+    }
+
+    /// Review Update… on a wish whose copy's update didn't finish: the fetched change is still in the copy, and the
+    /// update's request is sent there again, once the person agrees to what it costs.
+    private func retryPreparedUpdate(_ copy: LampProject, job: AppUpdates.Job, of project: LampProject) {
+        let changes = copy.dir.appendingPathComponent(AppUpdates.Job.folder + "/changes.diff")
+        guard FileManager.default.fileExists(atPath: changes.path) else {
+            // Nothing to try again with: the copy goes, and the update is prepared afresh.
+            Task {
+                await discardPreparedCopy(copy.id, movingQueuedTo: nil)
+                reviewUpdate(project)
+            }
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Try this update again?"
+        alert.informativeText = "Lamp couldn't finish it last time. \(Builder.engine.title) tries again in the separate copy, using your plan or credits."
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "Not Now")
+        guard alert.runModal() == .alertFirstButtonReturn, begin(copy) != nil else { return }
+        Versions.rememberAdaptedUpdate(copy, note: AppUpdates.note(for: job, name: Credits.load(project).upstream.first?.name ?? project.name))
+        send(AppUpdates.request, to: copy)
+        showChat(copy.id)
+        finish(copy)
+    }
+
+    /// After a turn in a copy an update is prepared in. Only the update's own turns settle it (`isUpdateTurn`): once
+    /// one finished well, the copy takes the update's commit in its credits and its review opens. In a copy that's
+    /// already ready, any turn that changed it reviews it again, as it is then.
     /// `asked` is whether the agent asked the person something in this turn: its card may already be answered and
     /// folded, with the answer only in line, so the open card alone doesn't say the update is still going.
     func settleUpdate(_ project: LampProject, messages: [QueuedMessage], end: TurnEnd, asked: Bool) async {
-        guard var job = AppUpdates.Job.load(project), job.wish != nil else { return }
+        guard var job = AppUpdates.Job.load(project), let wish = job.wish else { return }
         let turnLines = (logs[project.id] ?? []).reversed().prefix { $0.kind != .user }
         let asking = asked || Talk.open(in: logs[project.id] ?? []) != nil || (queued[project.id] ?? []).contains { $0.card != nil }
         let settled = AppUpdates.settle(end: end, errors: turnLines.contains { $0.kind == .error }, asking: asking)
-        // A request the person sent in a copy that was already ready: once it's done, the copy is reviewed again as it
-        // is then. Until then there's nothing to say.
-        if job.ready == true, settled != .ready { return }
+        if job.ready == true {
+            if settled == .ready, end == .changed { openPreparedReview(project, job: job, fromItsTurn: true) }
+            return
+        }
+        guard AppUpdates.isUpdateTurn(messages) else { return }
         switch settled {
         case .waiting:
             return
         case .failed:
-            log(project, .error, "Lamp couldn't finish this update. Your app hasn't changed. Ask here to try again.")
+            let name = projects.first { $0.id == wish }?.name ?? "your app"
+            log(project, .error, "Lamp couldn't finish this update. Your app hasn't changed. Review Update… in “\(name)” tries again.")
         case .ready:
             // `add` takes the newer commit for the same work, in the file and in what Lamp keeps of it.
             if let source = AppUpdates.accepted(job, in: Credits.load(project)).upstream.first(where: { $0.url.map(AppUpdates.key) == AppUpdates.key(job.url) }) {
@@ -489,55 +580,73 @@ extension Store {
         }
     }
 
-    /// Whether the copy a review was made of has changed since, or has work going on or waiting: then Update or Keep
-    /// Both would take something other than what was reviewed. Says so, and reviews it again once it's still.
-    func preparedCopyChanged(since pending: PendingImport) async -> Bool {
-        guard let id = pending.copy, let copy = projects.first(where: { $0.id == id }) else { return true }
-        let working = busy.contains(id) || !(queued[id] ?? []).isEmpty
-        var changed = working
-        if !changed { changed = await Versions.head(copy) != pending.copyHead }
+    /// The copy a review was made of, held for Update or Keep Both from the check until it's put in place, kept or
+    /// deleted, so nothing changes it in between: a request sent to it meanwhile waits, and goes to whichever app is
+    /// left. Nil, after saying so (and reviewing it again when it's still), when the copy is working, has work waiting,
+    /// or isn't what was reviewed.
+    func holdPreparedCopy(for pending: PendingImport) async -> (copy: LampProject, hold: Turn)? {
+        guard let id = pending.copy, let copy = projects.first(where: { $0.id == id }) else { return nil }
+        guard let hold = begin(copy) else { return changedSinceReview(copy, working: true) }
+        if !(queued[id] ?? []).isEmpty {
+            finish(copy)
+            return changedSinceReview(copy, working: true)
+        }
+        var changed = await Versions.head(copy) != pending.copyHead
         if !changed { changed = await Versions.hasUnsavedChanges(copy) }
-        guard changed else { return false }
+        guard changed else { return (copy, hold) }
+        if holds(hold, id) { finish(copy) }
+        return changedSinceReview(copy, working: false)
+    }
+
+    private func changedSinceReview(_ copy: LampProject, working: Bool) -> (copy: LampProject, hold: Turn)? {
         let alert = NSAlert()
         alert.messageText = "This update changed after you reviewed it"
         alert.informativeText = working ? "Lamp will show it to you again once it's done." : "Review it again before you choose."
         alert.runModal()
         if !working, let job = AppUpdates.Job.load(copy) { openPreparedReview(copy, job: job) }
-        return true
+        return nil
     }
 
     /// Update on a copy prepared before the wish changed again: putting it in place would take that change away. The
     /// person can prepare it again from the wish as it is now, which is another agent turn, so it's asked.
-    func preparedUpdateIsStale(_ project: LampProject, job: AppUpdates.Job, copy: String?) {
+    func preparedUpdateIsStale(_ project: LampProject, job: AppUpdates.Job, copy: String?) async {
         let alert = NSAlert()
         alert.messageText = "“\(project.name)” changed while this update was being prepared"
         alert.informativeText = "Prepare it again so those changes are kept too. Preparing it again may cost money."
         alert.addButton(withTitle: "Prepare Again")
         alert.addButton(withTitle: "Not Now")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        if let copy { discardPreparedCopy(copy) }
+        if let copy { await discardPreparedCopy(copy, movingQueuedTo: nil) }
         prepareUpdate(project, job: AppUpdates.Job(url: job.url, base: job.base, target: job.target, wish: project.id))
     }
 
-    /// Keep Both on a prepared update: the copy is kept as an app of its own, named as the wish with a number, with the
-    /// update's commit in its credits. The wish and its credits are left as they were. Nothing is built or run again.
-    func keepPreparedCopy(_ id: String) {
-        guard let copy = projects.first(where: { $0.id == id }), let job = AppUpdates.Job.load(copy) else { return }
+    /// Keep Both on a prepared update, under the copy's hold: the copy is kept as an app of its own, named as the wish
+    /// with a number, with the update's commit in its credits, and opened now it's been reviewed. The wish and its
+    /// credits are left as they were. A request sent to the copy meanwhile goes on there once it's let go.
+    func keepPreparedCopy(_ copy: LampProject, hold: Turn) async {
+        let name = AppUpdates.Job.load(copy)?.wish.flatMap { wish in projects.first { $0.id == wish }?.name }
         AppUpdates.Job.clear(copy)
-        let name = job.wish.flatMap { wish in projects.first { $0.id == wish }?.name }
-        Task {
-            if let name { await rename(copy, to: uniqueName(name)) }
-            showChat(copy.id)
-        }
+        var renamed = copy
+        if let name { renamed = await performRename(copy, to: uniqueName(name)) }
+        showChat(renamed.id)
+        guard holds(hold, renamed.id) else { return }
+        finish(renamed)
+        // Built and opened now it's been reviewed, unless a request waiting for it has started, which opens it itself.
+        await run(renamed)
     }
 
-    /// Cancel on a prepared update: the copy goes, with everything made for it. The wish was never touched.
-    /// What preparing it cost goes on the wish, which the work was for.
-    func discardPreparedCopy(_ id: String) {
+    /// Cancel on a prepared update, or Update once the copy is in place: the copy goes, with everything made for it.
+    /// What preparing it cost goes on the wish, which the work was for. Requests sent to the copy that haven't started go
+    /// to `movingQueuedTo` (the wish an Update put the copy into), rather than with the copy.
+    func discardPreparedCopy(_ id: String, movingQueuedTo target: LampProject?) async {
         guard let copy = projects.first(where: { $0.id == id }) else { return }
         if let wish = AppUpdates.Job.load(copy)?.wish.flatMap({ wish in projects.first { $0.id == wish } }) {
             takeUsage(of: copy, into: wish)
         }
-        Task { await delete(copy) }
+        if let target, let waiting = queued.removeValue(forKey: id), !waiting.isEmpty {
+            queued[target.id, default: []].append(contentsOf: waiting)
+            log(target, .status, waiting.count == 1 ? "Your message to the update goes on here." : "Your messages to the update go on here.")
+        }
+        await delete(copy)
     }
 }

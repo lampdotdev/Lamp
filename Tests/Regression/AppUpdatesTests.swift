@@ -223,6 +223,56 @@ final class AppUpdatesTests: XCTestCase {
             try await AppUpdates.fetch(gone, for: project)
             XCTFail("fetched a change from a base that isn't there")
         } catch {}
-        XCTAssertFalse(FileManager.default.fileExists(atPath: update.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: update.appendingPathComponent("files.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: update.appendingPathComponent("latest").path))
+
+        // Stop ends the fetch: git's process, handed to whatever holds the copy, is ended, and nothing is left fetched.
+        do {
+            try await AppUpdates.fetch(job, for: project, started: { Subprocess.terminateTree($0) })
+            XCTFail("a stopped fetch finished")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: update.appendingPathComponent("changes.diff").path))
+    }
+}
+
+/// The boundaries around a prepared update: what may run before review, which turns finish it, and which version of a
+/// project Make App builds.
+final class AppUpdateBoundaryTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("lamp-update-bounds-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".lamp"), withIntermediateDirectories: true)
+    }
+
+    override func tearDown() { try? FileManager.default.removeItem(at: root) }
+
+    /// A copy an update is prepared in isn't installed, opened or used before the person has reviewed it; once it's kept,
+    /// or for any other app, it is.
+    func testACopyAwaitingReviewIsNeverOpened() throws {
+        let copy = LampProject(id: "newyorkupdate", name: "New York Update", exe: "NewYorkUpdate", dir: root)
+        XCTAssertTrue(AppUpdates.mayOpen(copy))
+        try AppUpdates.Job(url: "https://github.com/mrdoob/slop-newyork", base: "dcb453f", target: "13dd142", wish: "newyork").save(in: copy)
+        XCTAssertFalse(AppUpdates.mayOpen(copy))
+        AppUpdates.Job.clear(copy)
+        XCTAssertTrue(AppUpdates.mayOpen(copy))
+    }
+
+    /// After a preparation that failed, a question about why isn't the update: only the update's request, or answers to
+    /// the agent's questions during it, can finish it.
+    func testOnlyTheUpdatesOwnTurnFinishesIt() {
+        XCTAssertTrue(AppUpdates.isUpdateTurn([QueuedMessage(text: AppUpdates.request)]))
+        XCTAssertTrue(AppUpdates.isUpdateTurn([QueuedMessage(text: "The second one", card: UUID())]))
+        XCTAssertFalse(AppUpdates.isUpdateTurn([QueuedMessage(text: "Why did it fail?")]))
+        XCTAssertFalse(AppUpdates.isUpdateTurn([]))
+    }
+
+    /// Make App builds the version the person opened: the branch, tag or commit in the address, at the commit fetched.
+    func testMakeAppBuildsTheVersionThatWasOpened() throws {
+        let source = try XCTUnwrap(RepoImport.source(from: "https://github.com/mrdoob/slop-newyork/tree/v1.2"))
+        let request = AppUpdates.adaptRequest(source, commit: "13dd142b480bcfa01a6b18e36127c87e41cb4d80", change: "Make it snow")
+        XCTAssertTrue(request.contains("13dd142b480bcfa01a6b18e36127c87e41cb4d80"), request)
+        XCTAssertTrue(request.contains("v1.2"), request)
+        XCTAssertTrue(request.hasSuffix("Make it snow"), request)
     }
 }
