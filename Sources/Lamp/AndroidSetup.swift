@@ -191,7 +191,7 @@ struct AndroidSetupView: View {
         switch step {
         case .tools: return ("Android's tools", "Google's free tools for making Android apps")
         case .emulator: return ("Emulator", "An Android phone on your Mac's screen, where Lamp tries your app")
-        case .device: return ("Your Android device", "Plugged in, with USB debugging allowed to this Mac")
+        case .device: return ("Your Android device", "Plugged in or on your Wi‑Fi, with debugging allowed to this Mac")
         }
     }
 
