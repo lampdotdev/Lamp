@@ -165,11 +165,14 @@ struct DeskDevices: View {
     }
 
     /// What a ready device is called in a wish: a phone or watch by what it is ("my iPhone"), since its own name is
-    /// often its owner's; a TV or another device by its name ("my Living Room TV").
+    /// often its owner's; a TV or another device by its name ("my Living Room TV"). Android's say whether they're a TV
+    /// and whether they're the emulator, which is all adb tells of them: a phone and a tablet are both a device.
     static func words(for device: Device) -> String {
+        let tv = device.features.contains("tv")
         switch device.kind {
         case .iphone, .ipad, .watch: return device.kind.name
-        case .android, .androidEmulator: return "Android phone"
+        case .android: return tv ? "Android TV" : "Android device"
+        case .androidEmulator: return tv ? "Android TV emulator" : "Android emulator"
         default: return device.name
         }
     }
@@ -185,8 +188,7 @@ struct DeskDevices: View {
             return device.model.contains(" ") || maker.isEmpty || device.model.localizedCaseInsensitiveContains(maker)
                 ? device.model : "\(maker) \(device.model)"
         }
-        let parts = device.name.components(separatedBy: " - ").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !isNoise($0) }
-        return parts.first ?? device.kind.name
+        return names(device.name).first ?? device.kind.name
     }
 
     /// A maker by the name people call it: "Sonos" for "Sonos, Inc.".
@@ -195,6 +197,11 @@ struct DeskDevices: View {
         let first = maker.components(separatedBy: ",").first ?? maker
         return first.replacingOccurrences(of: #"\s+(Inc\.?|LLC|Ltd\.?|Corporation|Corp\.?|Co\.?|GmbH|AG|S\.?A\.?)$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The parts of a name that mean something to a person: "Kitchen" of "192.168.1.5 - Kitchen - RINCON_…".
+    static func names(_ name: String) -> [String] {
+        name.components(separatedBy: " - ").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !isNoise($0) }
     }
 
     /// An address, or an identifier: long, with no lowercase letter and no space ("RINCON_7828CA96A6DE01400").
@@ -232,11 +239,15 @@ struct DeskDevices: View {
         // Software is said for what people know by it (macOS 27, iOS 27), not a speaker's firmware.
         let os = device.os.isEmpty || ![.mac, .iphone, .ipad, .watch, .android].contains(device.kind) ? "" : " · \(device.os) \(device.osVersion)".trimmingCharacters(in: .whitespaces)
         if !model.isEmpty, model != name || !os.isEmpty { lines.append(model + (os.isEmpty ? "" : " " + os)) }
-        // The names it goes by on the network: often a room ("Kitchen"), which says which one it is.
-        if let address = device.address, let host = store.hosts.first(where: { $0.address == address }) {
-            let called = host.names.filter { !Self.isNoise($0) && $0 != name && !model.localizedCaseInsensitiveContains($0) }.prefix(2)
-            if !called.isEmpty { lines.append("Called \(called.joined(separator: ", ")) on your network") }
+        // The names it goes by: often a room ("Kitchen"), which tells two of one model apart. Its own name, which every
+        // look reads, and those a whole look found for its address.
+        let host = device.address.flatMap { address in store.hosts.first { $0.address == address } }
+        var called: [String] = []
+        for each in Self.names(device.name) + (host?.names ?? [])
+        where each != name && !model.localizedCaseInsensitiveContains(each) && !called.contains(where: { $0.caseInsensitiveCompare(each) == .orderedSame }) {
+            called.append(each)
         }
+        if !called.isEmpty { lines.append("Called \(called.prefix(2).joined(separator: ", ")) on your network") }
         switch device.reach {
         case .thisMac: break
         case .cable: lines.append("Plugged into this Mac")
