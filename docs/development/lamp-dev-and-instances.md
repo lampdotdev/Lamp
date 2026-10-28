@@ -20,7 +20,7 @@ installed Lamp into Lamp Dev, so the development build has something to work on.
 overrides; empty makes the plain Lamp Dev): its bundle id ends in the name, and `Edition.instance` gives it its own
 folders, four ports from a hash of the name, URL scheme and prefixes, so builds from two worktrees run at once without
 sharing a desk, a gateway or Launch Services' idea of which is which. `fresh-start.sh` and `dev-data.sh` work on this
-checkout's instance. The agent's sandbox closes every Lamp's folder (`Edition.lampFolderNames`), instances included. The Chrome experiment's native host is the one thing instances share: the extension names it, and Chrome keeps one registration per name, so the instance that connected last owns it. macOS's Local Network
+checkout's instance. The agent's sandbox closes every Lamp's folder (`Edition.lampFolderNames`), instances included. macOS's Local Network
 setting goes by the executable's build ID (its Mach-O UUID), not only the bundle id: two instances built from the same
 commit have the same executable, so the second is never asked, takes the first's answer and is silently cut off from the
 network. To try the Local Network question as a new person meets it, build the instance with a build ID of its own

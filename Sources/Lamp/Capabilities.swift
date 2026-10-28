@@ -4,7 +4,7 @@ import SwiftUI
 /// is the one place that says which answers now, how well, and what would make it better: the gateway, the
 /// chat's setup card, Settings, the agent's status line and the keys a phone takes away all read it.
 enum Capability: String, CaseIterable, Codable, Identifiable {
-    case text, decisions, pictures, browser
+    case text, decisions, pictures
 
     var id: String { rawValue }
 
@@ -13,7 +13,6 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "Text"
         case .decisions: "Decisions"
         case .pictures: "Pictures"
-        case .browser: "Chrome sidebar"
         }
     }
 
@@ -22,7 +21,6 @@ enum Capability: String, CaseIterable, Codable, Identifiable {
         case .text: "text.bubble"
         case .decisions: "checklist"
         case .pictures: "photo.on.rectangle.angled"
-        case .browser: "sidebar.right"
         }
     }
 }
@@ -45,7 +43,6 @@ enum Upgrade: Hashable, Identifiable {
     /// Drawing each app's icon by hand in Image Playground (`Icons.byHand`): for icon artwork only, and
     /// only on a Mac that has it.
     case drawIcons
-    case browserExtension
 
     var id: String {
         switch self {
@@ -54,7 +51,6 @@ enum Upgrade: Hashable, Identifiable {
         case .decisionModel: "decisionModel"
         case .signIn(let engine): "signIn:\(engine.rawValue)"
         case .drawIcons: "drawIcons"
-        case .browserExtension: "browserExtension"
         }
     }
 }
@@ -98,14 +94,6 @@ extension AppAI {
     /// are made where they're dispatched (`route(for:)`, `pictureRoute`, `decisionModels`); this says what they
     /// amount to, so nothing else has to work that out again.
     @MainActor static func resolve(_ capability: Capability, for project: LampProject? = nil, in context: AIContext = .mac) -> Resolution {
-        if capability == .browser {
-            let available = BrowserBridge.enabled && project?.hasMac != false && context == .mac
-            let connected = available && BrowserSetup.shared.connected
-            return Resolution(capability: .browser, tier: connected ? .best : .none,
-                              answer: connected ? "Lamp in Chrome" : nil, provider: connected ? "browser" : nil,
-                              note: connected ? nil : "Connect Lamp to Chrome to use an app beside a website.",
-                              upgrades: available ? [.browserExtension] : [])
-        }
         let models = project.map(AppModels.load) ?? AppModels()
         switch (capability, context) {
         // Only pictures are asked for an icon; the others are answered as for the app on this Mac.
@@ -113,7 +101,6 @@ extension AppAI {
         case (.decisions, .mac), (.decisions, .icon): return resolveDecisions(choice: models.decision, text: models.text)
         case (.pictures, .mac): return resolvePictures(choice: models.image, text: models.text)
         case (.pictures, .icon): return resolveIconArt()
-        case (.browser, _): preconditionFailure("Browser resolution is handled before AI routes")
         case (_, .phoneAway): return resolveAway(capability, models: models)
         }
     }
@@ -251,7 +238,6 @@ extension AppAI {
                               note: "Apps on your phone can use AI only near this Mac.", upgrades: [.key("openrouter")])
         }
         switch capability {
-        case .browser: return resolve(.browser, in: .phoneAway)
         case .text:
             return Resolution(capability: .text, tier: .best, answer: "\(awayModel(for: models.away).label) via OpenRouter",
                               provider: "openrouter", note: nil, upgrades: [])
@@ -285,6 +271,19 @@ extension AppAI {
 
 // MARK: - The setup offer in the chat
 
+extension KeyedDecodingContainer {
+    /// A chat line's offer (`LogLine.offer`), read so that one for a capability Lamp no longer has is left off
+    /// the line rather than costing the whole line: chats saved while Lamp could offer to connect Chrome hold
+    /// that card (`"browser"`). Any other offer that doesn't read still fails as before.
+    func decodeIfPresent(_ type: SetupOffer.Type, forKey key: Key) throws -> SetupOffer? {
+        guard contains(key), try !decodeNil(forKey: key) else { return nil }
+        if let retired = try? nestedContainer(keyedBy: SetupOffer.RetiredKey.self, forKey: key),
+           let capability = try? retired.decode(String.self, forKey: .capability),
+           SetupOffer.retiredCapabilities.contains(capability) { return nil }
+        return try decode(SetupOffer.self, forKey: key)
+    }
+}
+
 /// A setup offer in an app's chat: which capability, and whether it's about the app on a phone away from
 /// the Mac. Kept on the chat line (`LogLine.offer`).
 struct SetupOffer: Codable, Equatable, Hashable {
@@ -295,6 +294,10 @@ struct SetupOffer: Codable, Equatable, Hashable {
     var icon: Bool? = nil
 
     var context: AIContext { away == true ? .phoneAway : icon == true ? .icon : .mac }
+
+    /// Capabilities Lamp once offered and no longer has, whose saved cards are dropped as they're read.
+    static let retiredCapabilities: Set<String> = ["browser"]
+    enum RetiredKey: String, CodingKey { case capability }
 
     /// One card per capability per app, on this Mac or away, whatever raised it: an app whose icon card is
     /// in the chat isn't given another when it tries to make a picture, so `icon` is no part of which offer
@@ -333,7 +336,7 @@ enum AIStatus {
     @MainActor static func line(for project: LampProject, offered: Set<SetupOffer>) -> String {
         // A device app whose integration takes none of Lamp's building blocks has no AI of Lamp's.
         if let none = project.platform.target.guidance.noAI(project) { return none }
-        var lines = Capability.allCases.filter { $0 != .browser || (BrowserBridge.enabled && project.hasMac) }.map { capability in
+        var lines = Capability.allCases.map { capability in
             let resolution = AppAI.resolve(capability, for: project)
             var line = "- \(capability.title): \(AppAI.summary(resolution))"
             if resolution.tier != .best, offered.contains(SetupOffer(capability: capability)) { line += "; Lamp has offered the person a way to set it up" }

@@ -28,7 +28,7 @@ extension Target {
             try Template.write(Template.withScene(Template.packageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
         }.buildingAlone(),
         part: .swift(.mac, folder: "Mac", word: "mac", menu: ("Mac App", "laptopcomputer")) {
-            Agent.prompt(platform: .mac, device: "Mac", sidebar: false, part: $0, alone: $1)
+            Agent.prompt(platform: .mac, device: "Mac", part: $0, alone: $1)
         },
         setup: .none)
 
@@ -51,7 +51,7 @@ extension Target {
             try Template.write(Template.withWatch(Template.iPhonePackageSwift(widget: widget, share: share), for: project), to: "Package.swift", for: project)
         },
         part: .swift(.iphone, folder: "iPhone", word: "iphone", menu: ("iPhone App", "iphone")) {
-            Agent.prompt(platform: .iphone, device: DeviceFamily.iphone.name, sidebar: false, part: $0, alone: $1)
+            Agent.prompt(platform: .iphone, device: DeviceFamily.iphone.name, part: $0, alone: $1)
         },
         setup: .phone(both: false, made: "iPhone and iPad"), otherSystems: true)
 

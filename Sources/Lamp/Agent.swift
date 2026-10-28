@@ -458,13 +458,9 @@ enum Agent {
 
     static func kindPrompt(for project: LampProject) -> String { project.platform.target.guidance.prompt(project) }
 
-    /// The Mac prompt, made once for each state of Apps in Chrome: its rule is only for a Lamp where it's on, and the
-    /// switch can change while Lamp runs.
-    static var systemPrompt: String { BrowserBridge.enabled ? macPromptWithSidebar : macPrompt }
-    private static let macPrompt = prompt(platform: .mac, device: "Mac", sidebar: false)
-    private static let macPromptWithSidebar = prompt(platform: .mac, device: "Mac", sidebar: true)
+    static let systemPrompt = prompt(platform: .mac, device: "Mac")
 
-    static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name, sidebar: false) }
+    static func iPhonePrompt(for family: DeviceFamily) -> String { prompt(platform: .iphone, device: family.name) }
 
     /// An app for both gets both kinds' rules, each said to be for its half, after one rule on how the halves
     /// share one code: so a block or a design given to one kind is given to the pair in the same place.
@@ -479,10 +475,10 @@ enum Agent {
         let onMac = "On the Mac", onPhone = "On iPhone and iPad"
         let wishRules = part == nil
         var rules = [Rules.edit] + (wishRules ? [Rules.ask, Rules.shell] : []) + [Rules.universal, Rules.universalFrameworks,
-                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks), half(onMac, BrowserBridge.enabled ? Rules.browserCompanion : ""),
+                     half(onMac, Rules.macBlocks), half(onPhone, Rules.iPhoneBlocks),
                      half(onMac, Rules.finder), half(onMac, Rules.menuBar), half(onMac, Rules.permissions),
                      Rules.script, Rules.intents, half(onMac, Rules.macAccounts), half(onPhone, Rules.iPhoneAccounts),
-                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Skills.index(Skills.offered(.universal, sidebar: BrowserBridge.enabled)),
+                     half(onPhone, Rules.iPhoneHardware), half(onPhone, Rules.iPhoneWidget), half(onPhone, Rules.iPhoneWatch), Rules.share, Rules.store, Rules.kinds(mac: true), Skills.index(Skills.offered(.universal)),
                      half(onMac, Rules.macDesign), half(onPhone, Rules.iPhoneDesign), Rules.macGenerated,
                      Rules.icloud, Rules.ai]
         rules += (wishRules ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs, Rules.universalTry]
@@ -498,16 +494,15 @@ enum Agent {
     /// `part`: the folder of a wish's other part this is for (`Parts.pack`): the rules of its kind alone, without the
     /// ones about the wish as a whole (asking, the shell, the icon, how to talk and finish), which the wish's own prompt has.
     /// `alone`: it's the wish's only app, so nothing about reaching the others.
-    static func prompt(platform: Platform, device: String, sidebar: Bool, part: String? = nil, alone: Bool = false) -> String {
+    static func prompt(platform: Platform, device: String, part: String? = nil, alone: Bool = false) -> String {
         let mac = platform == .mac
         var rules = [Rules.edit] + (part == nil ? [Rules.ask, Rules.shell] : []) + [
                      mac ? Rules.macFrameworks : Rules.iPhoneFrameworks,
                      mac ? Rules.macBlocks : Rules.iPhoneBlocks]
         if mac { rules += [Rules.finder, Rules.menuBar, Rules.widget, Rules.share, Rules.permissions] }
-        if mac && sidebar { rules.append(Rules.browserCompanion) }
         rules += [Rules.script, Rules.intents, mac ? Rules.macAccounts : Rules.iPhoneAccounts]
         if !mac { rules += [Rules.iPhoneHardware, Rules.iPhoneWidget, Rules.iPhoneWatch, Rules.share, Rules.icloud] }
-        rules += [Rules.store, Rules.kinds(mac: mac), Skills.index(Skills.offered(platform, sidebar: mac && sidebar))]
+        rules += [Rules.store, Rules.kinds(mac: mac), Skills.index(Skills.offered(platform))]
         rules += [mac ? Rules.macDesign : Rules.iPhoneDesign, mac ? Rules.macGenerated : Rules.iPhoneGenerated, Rules.ai]
             + (part == nil ? [Rules.icon, Rules.about, Rules.attachments] : []) + [Rules.logs]
         if !mac { rules.append(Rules.iPhoneTry) }
@@ -639,20 +634,6 @@ enum Agent {
         `WindowGroup`; the app is built for iPhone and iPad. Package.swift and build.sh belong to Lamp and are \
         written afresh before every build, so an edit to either is lost: no dependencies, plugins, compiler flags \
         or build steps; everything the app needs goes in Sources/.
-        """
-
-        static let browserCompanion = """
-            - Some wishes are about web pages: keeping what's found on them (recipes, articles, products, places), \
-            understanding or comparing what's being read, doing something with a passage. A wish that says online, \
-            from the web, a site, a link or an article is one, even when it doesn't name Chrome. For those, the Mac app \
-            always also gets a sidebar in Chrome, beside the page: a small web page of the app's own, which the app \
-            serves itself with `LampBrowser.startPage`. Decide that from the wish yourself, never ask; make the sidebar one of `plan`'s parts (its \
-            files: browser.json and Assets/Sidebar/), and say it in one line of your reply, like "Recipe Box also works \
-            in Chrome, beside recipe pages." Lamp's one extension frames every app's page: never write extension \
-            code, a web server of your own, or browser automation. Open the chrome-sidebar skill with `read_skill` \
-            before writing or changing browser.json, the page or the app's side of it, and follow it: it says which \
-            pages the sidebar fits, its right-click item, how the page talks to the app and reads the page, how it \
-            looks, and how to try it before finishing.
         """
 
         static let macBlocks = """

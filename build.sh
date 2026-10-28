@@ -147,13 +147,6 @@ fi
 # never pass through Lamp's.
 mkdir -p "$APP/Contents/Helpers"
 cp "$(dirname "$BIN")/LampRelay" "$APP/Contents/Helpers/LampRelay"
-# One generic browser companion, installed through Lamp's setup guide, never generated per app.
-if [ "$FLAVOR" = dev ]; then
-  mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/BrowserCompanion"
-  xcrun swiftc -O -target arm64-apple-macos14 experiments/browser-connector/NativeHost.swift -o "$APP/Contents/Helpers/BrowserNativeHost"
-  cp -R experiments/browser-connector/extension "$APP/Contents/Resources/BrowserCompanion/"
-  cp experiments/browser-connector/extension-id.txt "$APP/Contents/Resources/BrowserCompanion/"
-fi
 # Quick Look for shared .lampapp files: the app's icon as their thumbnail, and its picture when Space is pressed.
 # macOS shows Quick Look only from sandboxed extensions in an app it knows, so they live in Lamp's PlugIns.
 for EXT in LampThumbnail:thumbnail LampPreview:preview; do
@@ -212,13 +205,6 @@ tar xzf "$PI_TARBALL" -C "$APP/Contents/Resources" --exclude 'pi/examples'
 mkdir -p "$APP/Contents/Resources/llama"
 tar xzf "$LLAMA_TARBALL" -C "$APP/Contents/Resources/llama" --strip-components 1 \
   --include "llama-$LLAMA_BUILD/llama-server" --include "llama-$LLAMA_BUILD/LICENSE" --include "llama-$LLAMA_BUILD/*.dylib"
-# Apps in Chrome (Lamp Dev only): an app serves its sidebar page at a name of its own under .localhost, and Lamp's
-# preview of it loads that page and checks it's the app's. macOS lets an app use plain http to localhost but not to
-# names under it without saying so here.
-SIDEBAR_ATS=""
-if [ "$FLAVOR" = dev ]; then
-  SIDEBAR_ATS='<key>NSAppTransportSecurity</key><dict><key>NSExceptionDomains</key><dict><key>localhost</key><dict><key>NSIncludesSubdomains</key><true/><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict></dict></dict>'
-fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -255,7 +241,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSLocalNetworkUsageDescription</key><string>Lamp finds your TVs and phones on your network and puts your apps on them.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Lamp turns your dictation into text for the prompt box.</string>
   <key>NSAppleEventsUsageDescription</key><string>Lamp lists and switches your browser tabs when one of your apps reads a web page you have open.</string>
-  $SIDEBAR_ATS
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>$BUNDLE_ID</string>
     <key>CFBundleURLSchemes</key><array><string>$SCHEME</string></array>
@@ -306,7 +291,6 @@ SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 sign "$SPARKLE/Autoupdate"
 sign "$SPARKLE/Updater.app"
 sign "$APP/Contents/Frameworks/Sparkle.framework"
-if [ "$FLAVOR" = dev ]; then sign "$APP/Contents/Helpers/BrowserNativeHost"; fi
 sign "$APP/Contents/Helpers/LampRelay"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampThumbnail.appex"
 sign --entitlements Resources/QuickLook.entitlements "$APP/Contents/PlugIns/LampPreview.appex"

@@ -359,9 +359,6 @@ enum Upstream {
                 plain.outputFormatting = [.prettyPrinted, .sortedKeys]
                 try plain.encode(app.capabilities).write(to: to.appendingPathComponent(Template.Capabilities.file))
             }
-            if let browser = app.browser {
-                try BrowserCompanions.Declaration.encoded(browser).write(to: to.appendingPathComponent(BrowserCompanions.Declaration.file))
-            }
         }
         let (root, parts) = Sharing.layout(of: project)
         try stage(package, for: root, into: folder)
