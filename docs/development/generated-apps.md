@@ -293,11 +293,16 @@ The person's folder is only read, never changed or removed. A wish whose chain n
 GitHub… in its info panel (`AppInfoView.updateFromRepository`): the repository fetched again and opened as any is, which
 lands on Update or Keep Both since the wish kept the sender's identity (`existingCopy`). A wish changed here since it
 arrived (`Store.changedSinceArrival`: its files differ from the last version Lamp saved as an arrival, or something is
-unsaved) isn't replaced by Update: the new code goes to `.lamp/upstream/` without Lamp's own files, the credits are
-merged by Lamp, a version is saved, and a request goes to the agent with a note (`Versions.rememberMerge`) saying which
-version came from there last, to bring in what changed upstream, keep what changed here, settle the obvious itself and
-ask (`ask`) only where it can't tell. The review sheet says so (`ImportReviewCard.changedHere`, "Already here, changed
-here" in the gallery). An unchanged wish takes the new code in place as before.
+unsaved; looked at again once the update owns the wish, since a turn may have run while the review waited) isn't
+replaced by Update: what the import accepted goes to `.lamp/upstream/` laid out as the wish is (`Store.stageUpstream`:
+the reviewed code, the app's files, its notes and declarations, never Lamp's own files or anything else in the tree),
+the credits are merged by Lamp, a version is saved, and a request goes to the agent with a note (`Versions.rememberMerge`)
+saying what came from there last, to bring in what changed upstream, keep what changed here, settle the obvious itself
+and ask (`ask`) only where it can't tell. What came from there last is `.lamp/upstream-last/`, the tree the agent moves
+the new one to once it's in, so the next merge measures both sides against an upstream tree rather than the merged
+result; before any merge it's the version that arrived, and an update that puts the new code in place removes the kept
+tree, since the version it saves is then the arrival. The review sheet says so (`ImportReviewCard.changedHere`, "Already
+here, changed here" in the gallery). An unchanged wish takes the new code in place as before.
 
 On a Mac without Lamp (an app copied over, or kept after Lamp was removed), the wand is on all the same
 (`LampMagic.isOn` when `LampMagic.lampInstalled` is false) and the chat beside the app is the sidebar extension with
