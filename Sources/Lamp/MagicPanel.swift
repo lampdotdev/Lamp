@@ -25,6 +25,12 @@ final class MagicPanel {
             guard let app = note.userInfo?["app"] as? String else { return }
             MainActor.assumeIsolated { shared.opening(app) }
         }
+        // The person closed the chat beside the app, which only hides it: its connection stays (`LampSidebar.close`).
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(Edition.notificationPrefix + "sidebarClosed"), object: nil, queue: .main) { note in
+            guard let app = note.userInfo?["app"] as? String else { return }
+            MainActor.assumeIsolated { shared.closedInApp(app) }
+        }
         // The app's Reload button (`LampMagic.ReloadButton`): only a change Lamp holds for that app goes in.
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(Edition.notificationPrefix + "reloadNow"), object: nil, queue: .main) { note in
@@ -177,6 +183,7 @@ final class MagicPanel {
             return
         }
         returning[id] = reason
+        let placing = placings[id, default: 0]
         Task {
             defer { returning[id] = nil }
             // A change that reopens the app leaves a moment with no copy running: only three seconds with none, and no
@@ -184,14 +191,17 @@ final class MagicPanel {
             var gone = 0
             for _ in 0..<60 {
                 try? await Task.sleep(for: .milliseconds(250))
-                guard let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
+                // The chat went somewhere since the wait began (Lamp's panel opened, even if closed again between two
+                // looks, or a chat beside a copy): the wait is over.
+                guard placings[id, default: 0] == placing,
+                      let current = Store.shared.projects.first(where: { $0.id == id }), !SidebarServer.shared.isConnected(id),
                       !ChatPanel.isOpen(id) else { return }
                 gone = Store.shared.macCopies(of: Store.shared.chatApp(of: current)).isEmpty ? gone + 1 : 0
                 guard gone >= 12 else { continue }
                 // Looked at as it's shown: the app may have been put back on the Mac, or its chat come back, meanwhile.
                 guard ChatReturn.shows(returning[id] ?? reason, onTheMac: SidebarServer.onTheMac(current),
                                        leftAppLately: leftApp[id].map { Date().timeIntervalSince($0) < ChatReturn.lately } ?? false,
-                                       connected: SidebarServer.shared.isConnected(id), panelOpen: ChatPanel.isOpen(id)) else { return }
+                                       dismissed: dismissed.contains(id), connected: SidebarServer.shared.isConnected(id), panelOpen: ChatPanel.isOpen(id)) else { return }
                 leftApp[id] = nil
                 return ChatPanel.show(id, activate: NSApp.isActive)
             }
@@ -204,7 +214,21 @@ final class MagicPanel {
     private var leftApp: [String: Date] = [:]
     func chatLeftApp(_ id: String) { leftApp[id] = Date() }
     /// The chat is somewhere again (beside the app, or in Lamp's panel, which the person may close on purpose).
-    func chatPlaced(_ id: String) { leftApp[id] = nil }
+    func chatPlaced(_ id: String) {
+        leftApp[id] = nil
+        dismissed.remove(id)
+        placings[id, default: 0] += 1
+    }
+    /// How many times each wish's chat was put somewhere: a wait that began before the last one is over.
+    private var placings: [String: Int] = [:]
+
+    /// Wishes whose chat the person closed beside the app and hasn't opened since: it stays closed when the app moves off
+    /// the Mac and quits.
+    private var dismissed: Set<String> = []
+    func closedInApp(_ id: String) {
+        guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
+        dismissed.insert(Store.shared.wish(of: project).id)
+    }
 
     /// Where an app opens changed (Try On, a place given, a device set up): when it went off the Mac just after its
     /// chat went with the app, the chat comes back in Lamp's panel. While the app is still open the chat stays beside
@@ -248,6 +272,7 @@ final class MagicPanel {
         guard let project = Store.shared.projects.first(where: { $0.id == id }) else { return }
         follow(project.id)
         // A chat closed beside the app keeps its connection, so opening it again is told only this way.
+        dismissed.remove(Store.shared.wish(of: project).id)
         chatOpenedInApp(project)
     }
 
@@ -443,15 +468,18 @@ enum ChatReturn {
     static let lately: TimeInterval = 120
 
     /// `onTheMac`: the wish's chat app opens on this Mac (`SidebarServer.onTheMac`). `leftAppLately`: its chat went with the
-    /// app within `lately`, and nothing took it since.
-    static func shows(_ reason: Reason, onTheMac: Bool, leftAppLately: Bool, connected: Bool, panelOpen: Bool) -> Bool {
+    /// app within `lately`, and nothing took it since. `dismissed`: the person closed the chat beside the app and hasn't
+    /// opened it since.
+    static func shows(_ reason: Reason, onTheMac: Bool, leftAppLately: Bool, dismissed: Bool, connected: Bool, panelOpen: Bool) -> Bool {
         guard !connected, !panelOpen else { return false }
         switch reason {
+        // A turn's progress, questions and Stop, or what Lamp does about a crash, are in the chat, wherever the app opens.
         case .turnGoing, .crashed: return true
-        // A plain quit of an app that still opens on the Mac leaves its chat closed, as the window it was in is.
-        case .appLeft: return !onTheMac
+        // A plain quit of an app that still opens on the Mac leaves its chat closed, as the window it was in is, and a
+        // chat the person closed beside the app stays closed when the app moves off the Mac.
+        case .appLeft: return !onTheMac && !dismissed
         // Only just after the chat went with the app: a device app's chat the person closed in Lamp's panel stays closed.
-        case .placeChanged: return !onTheMac && leftAppLately
+        case .placeChanged: return !onTheMac && leftAppLately && !dismissed
         }
     }
 }

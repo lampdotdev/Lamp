@@ -6244,6 +6244,7 @@ enum Template {
             guard isOpen(in: window), let chat = chat(in: window) else { return }
             chat.wanted = false
             hidePanel(chat)
+            tellLampClosed()
             giveBackWidth(chat)
             LampMagic.refit(window)
             coach(window)
@@ -7018,6 +7019,13 @@ enum Template {
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = false
             NSWorkspace.shared.open(LampInstall.link("sidebar"), configuration: configuration)
+        }
+
+        /// The chat stays connected while it's hidden, so Lamp is told it was closed: it isn't brought back in Lamp's own
+        /// window when the app moves to another device and quits. Only a Lamp that's running is told.
+        @MainActor private static func tellLampClosed() {
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name(LampInstall.note + "sidebarClosed"), object: nil, userInfo: ["app": LampInstall.slug], deliverImmediately: true)
         }
 
         /// No chat in this copy of the app (installed by a Lamp from before it): the chat in Lamp's window.
