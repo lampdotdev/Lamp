@@ -130,6 +130,23 @@ Re-run a release (e.g. to rebuild the DMG) against its tag:
 gh workflow run mac-release.yml --ref v0.2.0 -f version=0.2.0
 ```
 
+## Nightlies
+
+`.github/workflows/nightly.yml` builds, signs, notarizes and publishes **Lamp Nightly** from every push to `main` (and
+on demand with `gh workflow run nightly.yml`): a separate app from Lamp, with its own name, icon, bundle id, folders and
+update feed ("Lamp Nightly" in docs/development/lamp-dev-and-instances.md), so people who want every change early run
+it beside the Lamp they rely on. Each is a pre-release tagged `nightly-<version>`, with `Lamp-Nightly-<version>.dmg`,
+where the version is the last release plus the commits since it as `build.sh` names a build from source (`0.24.0+37`),
+and the build number `0.24.0.37`, so Sparkle orders the nightlies among themselves. A push that is a release tag itself
+makes no nightly. The notes list the commits since the last release. The newest ten nightlies are kept; older ones go,
+tag and all.
+
+Lamp Nightly updates from `https://updates.lamp.dev/nightly/appcast.xml`, which lists nightlies alone
+(`updates/api/appcast.js`, `?stream=nightly`); Lamp's feed and the website's Download never see a nightly. The workflow
+uses the `release` environment's secrets, which `main` may use as `v*` tags may; `main` is protected (pull requests and
+passing checks only), so a nightly is always a reviewed change. To make one by hand: `FLAVOR=nightly ./release.sh
+0.24.0+37`.
+
 ## Trying the first run
 
 `scripts/fresh-start.sh begin` quits Lamp Dev, puts your whole setup aside (the Lamp Dev folder in

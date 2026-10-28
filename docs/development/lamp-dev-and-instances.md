@@ -31,6 +31,18 @@ With `tools` an app's build also runs with no developer folder (`Pretend.buildEn
 makes gets built, as on a bare Mac; git still works, so a game's versions and Undo can be tried, where a bare Mac has
 none until the tools come.
 
+## Lamp Nightly
+
+A third Lamp, for people who want every change as soon as it's merged: `.github/workflows/nightly.yml` builds, signs,
+notarizes and publishes it from every push to `main` ("Nightlies" in RELEASING.md). It is a release in everything but
+its names: `FLAVOR=nightly` in `build.sh` and `release.sh` gives it the name Lamp Nightly, a dark NIGHTLY band on the
+icon (`scripts/dev-icon.swift`), the bundle id `dev.lamp.host.nightly`, and so through `Edition` (`isNightly`) its own
+folders (`~/Library/Application Support/Lamp Nightly`, `~/Applications/Lamp Nightly Apps`), a third fixed set of ports,
+the `lamp-nightly://` scheme, its own prefixes for its apps' bundle ids and notifications, Keychain entries under its
+bundle id, and an update feed of its own (`https://updates.lamp.dev/nightly/appcast.xml`, nightlies alone), so it
+installs beside Lamp and never touches it. Everything gated on `Edition.isDev` (experiments, the gallery, pretending
+tools are missing) is off in it, as in a release.
+
 ## Checking a change beside other work
 
 Several worktrees often build and check Lamp Dev on one Mac at once, on one screen, often beside the person using it.
